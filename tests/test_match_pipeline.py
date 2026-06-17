@@ -29,7 +29,7 @@ def test_graph_proximity_mutual_connections(seeded_profiles, seeded_connections)
 
 @pytest.mark.integration
 def test_graph_proximity_excludes_unconnected(seeded_profiles, seeded_connections):
-    """bob has no connections in the fixture — proximity to alice should be 0."""
+    """bob has no connections in the fixture — he is absent from the graph, so proximity is 0."""
     alice, bob, _carol, _dave = seeded_profiles
 
     import networkx as nx
@@ -39,8 +39,8 @@ def test_graph_proximity_excludes_unconnected(seeded_profiles, seeded_connection
         G.add_edge(conn.user_id_a, conn.user_id_b, weight=conn.connection_strength)
     UG = G.to_undirected()
 
-    jac = list(nx.jaccard_coefficient(UG, [(alice.id, bob.id)]))
-    assert jac[0][2] == 0.0
+    # nx.jaccard_coefficient raises NodeNotFound for absent nodes; score_proximity returns 0 instead.
+    assert bob.id not in UG
 
 
 @pytest.mark.asyncio
@@ -75,3 +75,93 @@ async def test_e2e_producer_to_agent(monkeypatch):
             subject="Hello",
             body="I'm a backend engineer looking for ML folks.",
         )
+
+
+# ---------------------------------------------------------------------------
+# Real pgvector DB integration tests — require seeded_db fixture
+# ---------------------------------------------------------------------------
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_match_candidates_ranks_by_similarity(seeded_db):
+    """match_candidates hits pgvector and returns carol ranked above bob for an ml query."""
+    from thenetwork.search.match import match_candidates
+
+    results = await match_candidates(
+        query_vector=seeded_db["query_ml"],
+        requester_id=seeded_db["alice_id"],
+        top_k=10,
+    )
+
+    assert results, "expected at least one result from pgvector query"
+    returned_ids = [r.user_id for r in results]
+    assert seeded_db["carol_id"] in returned_ids, "carol (similar to ml query) must appear"
+    if seeded_db["bob_id"] in returned_ids:
+        assert returned_ids.index(seeded_db["carol_id"]) < returned_ids.index(seeded_db["bob_id"]), \
+            "carol must rank above bob for an ml-direction query"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_match_candidates_excludes_requester(seeded_db):
+    """The requester's own profile must never appear in results."""
+    from thenetwork.search.match import match_candidates
+
+    results = await match_candidates(
+        query_vector=seeded_db["query_ml"],
+        requester_id=seeded_db["alice_id"],
+        top_k=10,
+    )
+
+    assert all(r.user_id != seeded_db["alice_id"] for r in results), \
+        "requester alice must be absent from results"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_match_candidates_skill_filter(seeded_db):
+    """required_skills=['ml'] keeps carol (has ml) and drops bob (rust) and dave (product)."""
+    from thenetwork.search.match import match_candidates
+
+    results = await match_candidates(
+        query_vector=seeded_db["query_ml"],
+        requester_id=seeded_db["alice_id"],
+        required_skills=["ml"],
+        top_k=10,
+    )
+
+    returned_ids = {r.user_id for r in results}
+    assert seeded_db["carol_id"] in returned_ids, "carol has 'ml' skill and must appear"
+    assert seeded_db["bob_id"] not in returned_ids, "bob lacks 'ml' skill and must be excluded"
+    assert seeded_db["dave_id"] not in returned_ids, "dave lacks 'ml' skill and must be excluded"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_match_candidates_excludes_unavailable(seeded_db, pg_engine):
+    """Profiles with available_to_collaborate=False must be excluded from results."""
+    from sqlalchemy import text
+    from thenetwork.search.match import match_candidates
+
+    with pg_engine.connect() as conn:
+        conn.execute(
+            text("UPDATE profiles SET available_to_collaborate = false WHERE id = :cid"),
+            {"cid": seeded_db["carol_id"]},
+        )
+        conn.commit()
+
+    try:
+        results = await match_candidates(
+            query_vector=seeded_db["query_ml"],
+            requester_id=seeded_db["alice_id"],
+            top_k=10,
+        )
+        assert all(r.user_id != seeded_db["carol_id"] for r in results), \
+            "unavailable carol must not appear in results"
+    finally:
+        with pg_engine.connect() as conn:
+            conn.execute(
+                text("UPDATE profiles SET available_to_collaborate = true WHERE id = :cid"),
+                {"cid": seeded_db["carol_id"]},
+            )
+            conn.commit()

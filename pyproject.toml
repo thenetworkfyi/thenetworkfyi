@@ -37,3 +37,6 @@ include = ["thenetwork*"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "integration: marks tests that require a live pgvector DB (deselect with '-m not integration')",
+]
