@@ -6,17 +6,10 @@ Tests use pydantic-ai FunctionModel / TestModel for deterministic, offline runs.
 from __future__ import annotations
 
 import pytest
-from pydantic_ai import models
 from pydantic_ai.models.test import TestModel
 
 from thenetwork.agent.core import build_agent
 from thenetwork.agent.deps import AgentDeps
-
-
-def _make_test_agent(tool_responses: dict[str, object] | None = None):
-    """Return an agent wired to TestModel for deterministic offline evaluation."""
-    agent = build_agent()
-    return agent
 
 
 # ---------------------------------------------------------------------------
@@ -26,36 +19,16 @@ def _make_test_agent(tool_responses: dict[str, object] | None = None):
 @pytest.mark.asyncio
 async def test_onboarding_calls_save_profile():
     """A new sender's first email should trigger save_or_update_profile."""
-    tool_calls: list[str] = []
-
-    async def fake_save(ctx, **kwargs):
-        tool_calls.append("save_or_update_profile")
-        return {"status": "ok", "user_id": "user-abc"}
-
-    async def fake_inspect(ctx, user_id: str):
-        return {"id": user_id, "name": "Test", "bio": "...", "skills": [], "intent_description": "", "available_to_collaborate": True}
-
-    async def fake_search(ctx, intent_text: str, required_skills=None, top_k=5):
-        return []
-
-    async def fake_dispatch(ctx, recipient_user_id: str, subject: str, body_text: str, body_html=None):
-        tool_calls.append("dispatch_email")
-        return {"status": "sent"}
-
     agent = build_agent()
 
     with agent.override(model=TestModel()):
         deps = AgentDeps(sender_email="new@example.com", sender_user_id=None)
-        # TestModel produces a canned result; we verify the agent builds without error
-        try:
-            result = await agent.run(
-                "Hi, I'm new here. I'm a backend engineer looking to meet ML engineers.",
-                deps=deps,
-            )
-            assert result.data is not None
-        except Exception:
-            # TestModel may not satisfy all tool schemas; structural check is sufficient
-            pass
+        result = await agent.run(
+            "Hi, I'm new here. I'm a backend engineer looking to meet ML engineers.",
+            deps=deps,
+        )
+    assert result.data is not None
+    assert isinstance(result.data, str)
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-"""match_candidates: LlamaIndex PGVectorStore retrieval merged with NetworkX proximity.
+"""match_candidates: direct pgvector similarity + NetworkX proximity.
 
 Returns a ranked list of opaque user IDs with non-identifying rationale —
 never names, emails, or raw bios (THE SEAL: minimal disclosure).
@@ -7,13 +7,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from llama_index.core import VectorStoreIndex
-from llama_index.core.schema import NodeWithScore
-from llama_index.embeddings.openai import OpenAIEmbedding
-from llama_index.vector_stores.postgres import PGVectorStore
+from sqlalchemy import text
 
+from thenetwork.db.session import get_session
 from thenetwork.search.graph import score_proximity
-from thenetwork.settings import get_settings
+
+SIMILARITY_THRESHOLD = 0.0  # postprocessor: filter nodes below this cosine similarity
 
 
 @dataclass
@@ -25,52 +24,49 @@ class MatchResult:
     skill_overlap: list[str]
 
 
-def _make_vector_store() -> PGVectorStore:
-    s = get_settings()
-    url = s.database_url.replace("postgresql+psycopg://", "postgresql://")
-    return PGVectorStore.from_params(
-        connection_string=url,
-        table_name="profiles",
-        embed_dim=1536,
-        hybrid_search=False,
-    )
-
-
 async def match_candidates(
     query_vector: list[float],
     requester_id: str,
     required_skills: list[str] | None = None,
     top_k: int = 10,
 ) -> list[MatchResult]:
-    """Vector-search the profiles table, merge NetworkX proximity, return ranked results.
+    """Pgvector cosine-similarity on profiles.intent_vector + NetworkX proximity blend.
 
     Only opaque IDs and non-identifying metadata are returned (minimal disclosure).
     The LLM never sees names, emails, or raw bios of other users.
     """
-    s = get_settings()
-    store = _make_vector_store()
-    embed_model = OpenAIEmbedding(model=s.embed_model, api_key=s.openai_api_key)
+    # pgvector accepts Python list formatted as "[0.1, 0.2, ...]"
+    vec_literal = str(query_vector)
 
-    index = VectorStoreIndex.from_vector_store(vector_store=store, embed_model=embed_model)
-    retriever = index.as_retriever(similarity_top_k=top_k * 2)
+    with get_session() as session:
+        rows = session.execute(
+            text("""
+                SELECT id, skills, available_to_collaborate,
+                       1 - (intent_vector <=> CAST(:vec AS vector)) AS similarity
+                FROM profiles
+                WHERE intent_vector IS NOT NULL
+                ORDER BY intent_vector <=> CAST(:vec AS vector)
+                LIMIT :limit
+            """),
+            {"vec": vec_literal, "limit": top_k * 2},
+        ).fetchall()
 
-    # Query with the pre-computed intent vector
-    nodes: list[NodeWithScore] = await retriever.aretrieve_from_embedding(query_vector)
-
-    # Filter: exclude requester, apply skill filter if requested
+    # Postprocessor: filter requester, unavailable, low-similarity, and skill mismatches
     candidates: list[tuple[str, float, list[str]]] = []
-    for n in nodes:
-        meta = n.node.metadata or {}
-        uid = meta.get("id")
-        if not uid or uid == requester_id:
+    for row in rows:
+        uid = row.id
+        if uid == requester_id:
             continue
-        if meta.get("available_to_collaborate") is False:
+        if not row.available_to_collaborate:
             continue
-        node_skills: list[str] = meta.get("skills") or []
+        sim = float(row.similarity)
+        if sim < SIMILARITY_THRESHOLD:
+            continue
+        node_skills: list[str] = list(row.skills or [])
         overlap = [sk for sk in (required_skills or []) if sk in node_skills]
         if required_skills and not overlap:
             continue
-        candidates.append((uid, n.score or 0.0, overlap))
+        candidates.append((uid, sim, overlap))
 
     if not candidates:
         return []

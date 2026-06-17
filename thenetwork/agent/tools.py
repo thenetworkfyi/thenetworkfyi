@@ -8,10 +8,11 @@ Security contracts (THE SEAL) are structurally enforced here:
 """
 from __future__ import annotations
 
+import uuid as _uuid
 from typing import Any
 
 from pydantic_ai import RunContext
-from sqlmodel import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from thenetwork.agent.deps import AgentDeps
 from thenetwork.db.models import Profile
@@ -21,6 +22,12 @@ from thenetwork.email.outbound import send_reply
 from thenetwork.search.match import match_candidates
 
 
+def _get_session(ctx: RunContext[AgentDeps]):
+    """Return session context manager: deps.session_factory if injected, else module default."""
+    sf = ctx.deps.session_factory
+    return sf() if sf is not None else get_session()
+
+
 async def inspect_user_profile(ctx: RunContext[AgentDeps], user_id: str) -> dict[str, Any]:
     """Return profile data.
 
@@ -28,7 +35,7 @@ async def inspect_user_profile(ctx: RunContext[AgentDeps], user_id: str) -> dict
     For all other users: opaque ID + non-identifying fields only (minimal disclosure).
     """
     deps = ctx.deps
-    with get_session() as session:
+    with _get_session(ctx) as session:
         profile = session.get(Profile, user_id)
 
     if profile is None:
@@ -61,39 +68,49 @@ async def save_or_update_profile(
     intent_description: str,
     available_to_collaborate: bool = True,
 ) -> dict[str, str]:
-    """Upsert the sender's own profile and recompute vectors atomically."""
+    """Upsert the sender's own profile and recompute vectors atomically.
+
+    Uses INSERT ... ON CONFLICT DO UPDATE to avoid the race condition where
+    two concurrent jobs for the same sender both see no existing profile.
+    """
     deps = ctx.deps
     identity_vec, intent_vec = await embed_profile(bio, intent_description)
 
-    with get_session() as session:
-        existing = session.exec(
-            select(Profile).where(Profile.email == deps.sender_email)
-        ).first()
+    new_id = str(_uuid.uuid4())
+    stmt = (
+        pg_insert(Profile)
+        .values(
+            id=new_id,
+            email=deps.sender_email,
+            name=name,
+            bio=bio,
+            skills=skills,
+            intent_description=intent_description,
+            available_to_collaborate=available_to_collaborate,
+            identity_vector=identity_vec,
+            intent_vector=intent_vec,
+        )
+        .on_conflict_do_update(
+            index_elements=["email"],
+            set_={
+                "name": name,
+                "bio": bio,
+                "skills": skills,
+                "intent_description": intent_description,
+                "available_to_collaborate": available_to_collaborate,
+                "identity_vector": identity_vec,
+                "intent_vector": intent_vec,
+            },
+        )
+        .returning(Profile.id)
+    )
+    with _get_session(ctx) as session:
+        profile_id = session.execute(stmt).scalar_one()
+        session.commit()
 
-        if existing:
-            existing.name = name
-            existing.bio = bio
-            existing.skills = skills
-            existing.intent_description = intent_description
-            existing.available_to_collaborate = available_to_collaborate
-            existing.identity_vector = identity_vec
-            existing.intent_vector = intent_vec
-            session.add(existing)
-            profile_id = existing.id
-        else:
-            profile = Profile(
-                name=name,
-                email=deps.sender_email,
-                bio=bio,
-                skills=skills,
-                intent_description=intent_description,
-                available_to_collaborate=available_to_collaborate,
-                identity_vector=identity_vec,
-                intent_vector=intent_vec,
-            )
-            session.add(profile)
-            session.flush()
-            profile_id = profile.id
+    # Refresh deps so subsequent tool calls in this run (e.g. search_candidates)
+    # see the correct sender_user_id without requiring a DB round-trip
+    ctx.deps.sender_user_id = profile_id
 
     return {"status": "ok", "user_id": profile_id}
 
@@ -145,7 +162,7 @@ async def dispatch_email(
     real address server-side. The LLM never handles or sees raw email addresses
     (capability-style confused-deputy fix).
     """
-    with get_session() as session:
+    with _get_session(ctx) as session:
         profile = session.get(Profile, recipient_user_id)
 
     if profile is None:

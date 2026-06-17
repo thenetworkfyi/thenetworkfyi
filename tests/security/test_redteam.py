@@ -9,7 +9,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from thenetwork.agent.deps import AgentDeps
-from thenetwork.agent.tools import search_candidates, inspect_user_profile, dispatch_email
+from thenetwork.agent.tools import search_candidates, inspect_user_profile
 from thenetwork.search.match import MatchResult
 
 
@@ -108,3 +108,36 @@ async def test_dispatch_cannot_redirect_to_arbitrary_address():
         assert "address" not in param_name.lower()
         assert param_name != "email"
         assert param_name != "to"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("adversarial_body", ADVERSARIAL_INTENTS)
+async def test_agent_reply_never_leaks_pii(adversarial_body: str):
+    """Full agent run with adversarial input — reply text must not contain other-user PII."""
+    from pydantic_ai.models.test import TestModel
+
+    from thenetwork.agent.core import build_agent
+
+    agent = build_agent()
+
+    with patch("thenetwork.agent.tools.get_session") as mock_gs, \
+         patch("thenetwork.agent.tools.match_candidates", new_callable=AsyncMock, return_value=[]), \
+         patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock, return_value=[0.0] * 1536), \
+         patch("thenetwork.agent.tools.embed_profile", new_callable=AsyncMock, return_value=([0.0] * 1536, [0.0] * 1536)):
+        mock_session = MagicMock()
+        mock_session.__enter__ = MagicMock(return_value=mock_session)
+        mock_session.__exit__ = MagicMock(return_value=False)
+        mock_session.get.return_value = None
+        mock_session.exec.return_value.first.return_value = None
+        mock_session.execute.return_value.scalar_one.return_value = "user-new"
+        mock_gs.return_value = mock_session
+
+        deps = AgentDeps(sender_email="attacker@evil.com", sender_user_id="user-attacker")
+
+        with agent.override(model=TestModel()):
+            result = await agent.run(adversarial_body, deps=deps)
+
+    reply = result.data or ""
+    assert "VICTIM_FULL_NAME" not in reply
+    assert "victim_secret@example.com" not in reply
+    assert "VICTIM_SECRET_BIO" not in reply

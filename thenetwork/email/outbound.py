@@ -26,8 +26,8 @@ def send_reply(
     msg["From"] = s.email_account
     msg["To"] = to_address
     msg["Subject"] = subject
-    # RFC 3834 — mark all agent-generated mail so it won't be re-ingested
-    msg["Auto-Submitted"] = "auto-generated"
+    # RFC 3834 §3.1.7 — auto-replied for automatic responses to inbound mail
+    msg["Auto-Submitted"] = "auto-replied"
 
     if in_reply_to:
         msg["In-Reply-To"] = in_reply_to

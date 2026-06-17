@@ -16,10 +16,7 @@ _storage: storage.Storage | None = None
 def _get_limiter() -> tuple[strategies.MovingWindowRateLimiter, object]:
     global _limiter, _storage
     if _limiter is None:
-        s = get_settings()
-        # Use a Postgres-backed storage via the postgresql:// URI
-        pg_url = s.database_url.replace("postgresql+psycopg://", "postgresql://")
-        _storage = storage.PostgreSQLStorage(pg_url)
+        _storage = storage.MemoryStorage()
         _limiter = strategies.MovingWindowRateLimiter(_storage)
     return _limiter, _storage
 
