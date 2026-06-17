@@ -19,16 +19,29 @@ from thenetwork.agent.deps import AgentDeps
 @pytest.mark.asyncio
 async def test_onboarding_calls_save_profile():
     """A new sender's first email should trigger save_or_update_profile."""
+    from unittest.mock import patch, MagicMock, AsyncMock
     agent = build_agent()
 
-    with agent.override(model=TestModel()):
+    with agent.override(model=TestModel()), \
+         patch("thenetwork.agent.tools.get_session") as mock_gs, \
+         patch("thenetwork.agent.tools.send_reply") as mock_send, \
+         patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock, return_value=[0.0] * 1536), \
+         patch("thenetwork.agent.tools.match_candidates", new_callable=AsyncMock, return_value=[]), \
+         patch("thenetwork.agent.tools.embed_profile", new_callable=AsyncMock, return_value=([0.0] * 1536, [0.0] * 1536)):
+        
+        mock_session = MagicMock()
+        mock_session.__enter__ = MagicMock(return_value=mock_session)
+        mock_session.__exit__ = MagicMock(return_value=False)
+        mock_session.execute.return_value.scalar_one.return_value = "user-abc"
+        mock_gs.return_value = mock_session
+
         deps = AgentDeps(sender_email="new@example.com", sender_user_id=None)
         result = await agent.run(
             "Hi, I'm new here. I'm a backend engineer looking to meet ML engineers.",
             deps=deps,
         )
-    assert result.data is not None
-    assert isinstance(result.data, str)
+    assert result.output is not None
+    assert isinstance(result.output, str)
 
 
 # ---------------------------------------------------------------------------
@@ -127,7 +140,7 @@ async def test_double_intro_emails_both_parties():
 
     sent_to: list[str] = []
 
-    async def fake_send_reply(to_address, subject, body_text, body_html=None, **kwargs):
+    def fake_send_reply(to_address, subject, body_text, body_html=None, **kwargs):
         sent_to.append(to_address)
 
     class FakeProfileA:
@@ -144,7 +157,7 @@ async def test_double_intro_emails_both_parties():
     ctx = FakeCtx()
 
     with patch("thenetwork.agent.tools.get_session") as mock_gs, \
-         patch("thenetwork.agent.tools.send_reply", new=AsyncMock(side_effect=fake_send_reply)):
+         patch("thenetwork.agent.tools.send_reply", new=MagicMock(side_effect=fake_send_reply)):
         mock_session = MagicMock()
         mock_session.__enter__ = MagicMock(return_value=mock_session)
         mock_session.__exit__ = MagicMock(return_value=False)

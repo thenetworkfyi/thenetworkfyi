@@ -70,7 +70,7 @@ async def test_e2e_producer_to_agent(monkeypatch):
         mock_session.exec.return_value.first.return_value = None
         mock_gs.return_value = mock_session
 
-        await process_email.fn(
+        await process_email.func(
             sender_email="test@example.com",
             subject="Hello",
             body="I'm a backend engineer looking for ML folks.",

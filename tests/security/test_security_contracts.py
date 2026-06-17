@@ -212,7 +212,7 @@ def test_outbound_has_auto_submitted_header():
         send_reply(to_address="bob@example.com", subject="Hi", body_text="Hello")
 
     assert len(captured) == 1
-    assert captured[0]["Auto-Submitted"] == "auto-generated"
+    assert captured[0]["Auto-Submitted"] == "auto-replied"
 
 
 # ---------------------------------------------------------------------------

@@ -137,7 +137,7 @@ async def test_agent_reply_never_leaks_pii(adversarial_body: str):
         with agent.override(model=TestModel()):
             result = await agent.run(adversarial_body, deps=deps)
 
-    reply = result.data or ""
+    reply = result.output or ""
     assert "VICTIM_FULL_NAME" not in reply
     assert "victim_secret@example.com" not in reply
     assert "VICTIM_SECRET_BIO" not in reply

@@ -22,7 +22,7 @@ def build_agent() -> Agent[AgentDeps, str]:
         model=settings.agent_model,
         system_prompt=SYSTEM_PROMPT,
         deps_type=AgentDeps,
-        result_type=str,
+        output_type=str,
     )
 
     # Register tools via decorator — idiomatic pydantic-ai DI through RunContext
@@ -52,4 +52,4 @@ async def run_agent_for_email(
     agent = build_agent()
     user_message = f"Subject: {email_subject}\n\n{email_body}"
     result = await agent.run(user_message, deps=deps)
-    return result.data
+    return result.output
