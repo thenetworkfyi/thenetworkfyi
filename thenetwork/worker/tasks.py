@@ -9,7 +9,7 @@ import procrastinate
 
 from thenetwork.agent.core import run_agent_for_email
 from thenetwork.db.session import get_session
-from thenetwork.db.models import Profile
+from thenetwork.db.models import Person
 from thenetwork.security.content_scan import scan_content
 from thenetwork.security.rate_limit import check_rate_limit
 from thenetwork.settings import get_settings
@@ -42,7 +42,7 @@ async def process_email(
     sender_user_id: str | None = None
     with get_session() as session:
         profile = session.exec(
-            select(Profile).where(Profile.email == sender_email)
+            select(Person).where(Person.email == sender_email)
         ).first()
         if profile:
             sender_user_id = profile.id

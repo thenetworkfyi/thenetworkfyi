@@ -1,11 +1,11 @@
-"""Shared pytest fixtures including seeded test profiles + graph."""
+"""Shared pytest fixtures: seeded people + memories."""
 from __future__ import annotations
 
 import os
 import uuid
 import pytest
 
-from thenetwork.db.models import Profile, NetworkConnection
+from thenetwork.db.models import Memory, Person
 
 TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL",
@@ -13,44 +13,20 @@ TEST_DATABASE_URL = os.environ.get(
 )
 
 
-def _profile(name: str, email: str, skills: list[str], intent: str) -> Profile:
-    return Profile(
-        id=str(uuid.uuid4()),
-        name=name,
-        email=email,
-        bio=f"Bio of {name}",
-        skills=skills,
-        intent_description=intent,
-        available_to_collaborate=True,
-        identity_vector=[0.1] * 1536,
-        intent_vector=[0.2] * 1536,
-    )
-
-
 @pytest.fixture
-def seeded_profiles():
-    """Multi-user graph fixture. PII present so injection tests can attempt to leak it."""
-    alice = _profile("Alice", "alice@example.com", ["python", "ml"], "I want to meet ML engineers")
-    bob = _profile("Bob", "bob@example.com", ["rust", "systems"], "Looking for systems programmers")
-    carol = _profile("Carol", "carol@example.com", ["python", "ml", "llm"], "Building LLM products")
-    dave = _profile("Dave", "dave@example.com", ["product", "growth"], "Seeking co-founders")
-    return [alice, bob, carol, dave]
-
-
-@pytest.fixture
-def seeded_connections(seeded_profiles):
-    """Directed edges: alice <-> carol (mutual), alice -> dave."""
-    alice, _bob, carol, dave = seeded_profiles
+def seeded_people():
+    """In-memory Person objects for unit tests that don't need a DB."""
     return [
-        NetworkConnection(user_id_a=alice.id, user_id_b=carol.id, connection_strength=1.0),
-        NetworkConnection(user_id_a=carol.id, user_id_b=alice.id, connection_strength=1.0),
-        NetworkConnection(user_id_a=alice.id, user_id_b=dave.id, connection_strength=0.5),
+        Person(id=str(uuid.uuid4()), name="Alice", email="alice@test.com"),
+        Person(id=str(uuid.uuid4()), name="Bob",   email="bob@test.com"),
+        Person(id=str(uuid.uuid4()), name="Carol", email="carol@test.com"),
+        Person(id=str(uuid.uuid4()), name="Dave",  email="dave@test.com"),
     ]
 
 
 @pytest.fixture(scope="session")
 def pg_engine():
-    """Session-scoped test engine; skips entire session if pgvector DB is unreachable."""
+    """Session-scoped test engine; skips entire session if pgvector DB unreachable."""
     from sqlalchemy import create_engine, text
     from sqlmodel import SQLModel
 
@@ -70,92 +46,97 @@ def pg_engine():
 
 @pytest.fixture
 def seeded_db(pg_engine, monkeypatch):
-    """Persist differentiated profiles + connections to real DB; patch session; clean up after.
+    """Persist people + memories with embeddings to real pgvector DB.
 
-    Yields a dict with alice_id, bob_id, carol_id, dave_id, and query_ml (a 1536-dim
-    vector aligned with alice/carol's intent direction).
+    People: alice, bob, carol, dave.
+    Memories (all have gist so they are cross-user eligible):
+      alice-mem:  refs=[alice_id], e0            gist="ml engineer"
+      bob-mem:    refs=[bob_id],   e1            gist="systems programmer"
+      carol-mem:  refs=[carol_id], 0.9*e0+0.1*e1 gist="llm builder"
+      intro-mem:  refs=[alice_id, carol_id], e0  gist="connected two ml people"
 
-    Graph: alice <-> carol (mutual strength 1.0), alice -> dave (0.5).
-    Vectors:
-      alice  = e_0  (ml direction, used as requester)
-      bob    = e_1  (rust direction, dissimilar to query)
-      carol  = 0.9*e_0 + 0.1*e_1  (close to alice; has ml skill)
-      dave   = e_2  (product direction)
+    query_ml = e0 — nearest memories: alice-mem ≈ intro-mem > carol-mem > bob-mem.
     """
     from sqlalchemy import text
     from sqlalchemy.orm import sessionmaker
     import thenetwork.db.session as sess_mod
 
-    def _vec(dim0: float = 0.0, dim1: float = 0.0, dim2: float = 0.0) -> list[float]:
+    def _vec_str(dim0: float = 0.0, dim1: float = 0.0) -> str:
         v = [0.0] * 1536
         v[0] = dim0
         v[1] = dim1
-        v[2] = dim2
+        return "[" + ",".join(str(x) for x in v) + "]"
+
+    def _vec(dim0: float = 0.0, dim1: float = 0.0) -> list[float]:
+        v = [0.0] * 1536
+        v[0] = dim0
+        v[1] = dim1
         return v
 
-    alice_id = str(uuid.uuid4())
-    bob_id = str(uuid.uuid4())
-    carol_id = str(uuid.uuid4())
-    dave_id = str(uuid.uuid4())
+    alice_id    = str(uuid.uuid4())
+    bob_id      = str(uuid.uuid4())
+    carol_id    = str(uuid.uuid4())
+    dave_id     = str(uuid.uuid4())
+    mem_alice_id = str(uuid.uuid4())
+    mem_bob_id   = str(uuid.uuid4())
+    mem_carol_id = str(uuid.uuid4())
+    mem_intro_id = str(uuid.uuid4())
 
     test_factory = sessionmaker(bind=pg_engine, autocommit=False, autoflush=False)
-    monkeypatch.setattr(sess_mod, "_engine", pg_engine)
+    monkeypatch.setattr(sess_mod, "_engine",       pg_engine)
     monkeypatch.setattr(sess_mod, "_SessionLocal", test_factory)
+
+    test_emails = ["alice@test.com", "bob@test.com", "carol@test.com", "dave@test.com"]
 
     with pg_engine.connect() as conn:
         conn.execute(text("""
-            DELETE FROM network_connections
-            WHERE user_id_a IN (SELECT id FROM profiles WHERE email = ANY(:emails))
-               OR user_id_b IN (SELECT id FROM profiles WHERE email = ANY(:emails))
-        """), {"emails": ["alice@test.com", "bob@test.com", "carol@test.com", "dave@test.com"]})
-        conn.execute(text(
-            "DELETE FROM profiles WHERE email = ANY(:emails)"
-        ), {"emails": ["alice@test.com", "bob@test.com", "carol@test.com", "dave@test.com"]})
+            DELETE FROM memories
+            WHERE refs && ARRAY(SELECT id FROM people WHERE email = ANY(:e))::text[]
+        """), {"e": test_emails})
+        conn.execute(text("DELETE FROM people WHERE email = ANY(:e)"), {"e": test_emails})
         conn.commit()
 
     with pg_engine.connect() as conn:
         conn.execute(text("""
-            INSERT INTO profiles
-              (id, name, email, bio, skills, intent_description, available_to_collaborate, intent_vector)
-            VALUES
-              (:aid, 'Alice', 'alice@test.com', '', ARRAY['python','ml']::text[],
-               'ml engineer', true, CAST(:av AS vector)),
-              (:bid, 'Bob', 'bob@test.com', '', ARRAY['rust','systems']::text[],
-               'systems', true, CAST(:bv AS vector)),
-              (:cid, 'Carol', 'carol@test.com', '', ARRAY['python','ml','llm']::text[],
-               'llm builder', true, CAST(:cv AS vector)),
-              (:did, 'Dave', 'dave@test.com', '', ARRAY['product']::text[],
-               'co-founder', true, CAST(:dv AS vector))
-        """), {
-            "aid": alice_id, "av": str(_vec(1.0, 0.0, 0.0)),
-            "bid": bob_id,   "bv": str(_vec(0.0, 1.0, 0.0)),
-            "cid": carol_id, "cv": str(_vec(0.9, 0.1, 0.0)),
-            "did": dave_id,  "dv": str(_vec(0.0, 0.0, 1.0)),
-        })
-        conn.execute(text("""
-            INSERT INTO network_connections (user_id_a, user_id_b, connection_strength)
-            VALUES
-              (:aid, :cid, 1.0),
-              (:cid, :aid, 1.0),
-              (:aid, :did, 0.5)
-        """), {"aid": alice_id, "cid": carol_id, "did": dave_id})
+            INSERT INTO people (id, name, email) VALUES
+              (:aid, 'Alice', 'alice@test.com'),
+              (:bid, 'Bob',   'bob@test.com'),
+              (:cid, 'Carol', 'carol@test.com'),
+              (:did, 'Dave',  'dave@test.com')
+        """), {"aid": alice_id, "bid": bob_id, "cid": carol_id, "did": dave_id})
+        conn.commit()
+
+    mem_rows = [
+        (mem_alice_id, "Alice is an ML engineer",             (1.0, 0.0), [alice_id],           "ml engineer"),
+        (mem_bob_id,   "Bob writes systems software in Rust", (0.0, 1.0), [bob_id],             "systems programmer"),
+        (mem_carol_id, "Carol builds LLM products",           (0.9, 0.1), [carol_id],           "llm builder"),
+        (mem_intro_id, "Introduced Alice and Carol",          (1.0, 0.0), [alice_id, carol_id], "connected two ml people"),
+    ]
+
+    with pg_engine.connect() as conn:
+        for mem_id, mem_text, emb_dims, refs, gist in mem_rows:
+            refs_sql = "ARRAY[" + ",".join(f"'{r}'" for r in refs) + "]::text[]"
+            conn.execute(text(f"""
+                INSERT INTO memories (id, text, embedding, refs, gist, created_at)
+                VALUES (:mid, :txt, CAST(:emb AS vector), {refs_sql}, :gist, NOW())
+            """), {"mid": mem_id, "txt": mem_text, "emb": _vec_str(*emb_dims), "gist": gist})
         conn.commit()
 
     yield {
-        "alice_id": alice_id,
-        "bob_id":   bob_id,
-        "carol_id": carol_id,
-        "dave_id":  dave_id,
-        "query_ml": _vec(1.0, 0.0, 0.0),
+        "alice_id":    alice_id,
+        "bob_id":      bob_id,
+        "carol_id":    carol_id,
+        "dave_id":     dave_id,
+        "mem_alice_id": mem_alice_id,
+        "mem_bob_id":   mem_bob_id,
+        "mem_carol_id": mem_carol_id,
+        "mem_intro_id": mem_intro_id,
+        "query_ml":    _vec(1.0, 0.0),
     }
 
     with pg_engine.connect() as conn:
-        conn.execute(
-            text("DELETE FROM network_connections WHERE user_id_a = ANY(:ids) OR user_id_b = ANY(:ids)"),
-            {"ids": [alice_id, bob_id, carol_id, dave_id]},
-        )
-        conn.execute(
-            text("DELETE FROM profiles WHERE id = ANY(:ids)"),
-            {"ids": [alice_id, bob_id, carol_id, dave_id]},
-        )
+        conn.execute(text("DELETE FROM memories WHERE id = ANY(:ids)"),
+                     {"ids": [mem_alice_id, mem_bob_id, mem_carol_id, mem_intro_id]})
+        conn.execute(text("DELETE FROM people WHERE id = ANY(:ids)"),
+                     {"ids": [alice_id, bob_id, carol_id, dave_id]})
         conn.commit()

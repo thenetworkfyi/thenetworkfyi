@@ -7,41 +7,6 @@ from __future__ import annotations
 
 import pytest
 
-from thenetwork.search.graph import score_proximity
-
-
-@pytest.mark.integration
-def test_graph_proximity_mutual_connections(seeded_profiles, seeded_connections):
-    """alice <-> carol (mutual), so proximity > 0 for alice->carol and vice versa."""
-    alice, _bob, carol, dave = seeded_profiles
-
-    import networkx as nx
-
-    G = nx.DiGraph()
-    for conn in seeded_connections:
-        G.add_edge(conn.user_id_a, conn.user_id_b, weight=conn.connection_strength)
-    UG = G.to_undirected()
-
-    jac = list(nx.jaccard_coefficient(UG, [(alice.id, carol.id)]))
-    # They have a direct mutual edge — both are in each other's neighbors
-    assert jac[0][2] >= 0.0  # Jaccard may be 0 with only direct edge, that's fine
-
-
-@pytest.mark.integration
-def test_graph_proximity_excludes_unconnected(seeded_profiles, seeded_connections):
-    """bob has no connections in the fixture — he is absent from the graph, so proximity is 0."""
-    alice, bob, _carol, _dave = seeded_profiles
-
-    import networkx as nx
-
-    G = nx.DiGraph()
-    for conn in seeded_connections:
-        G.add_edge(conn.user_id_a, conn.user_id_b, weight=conn.connection_strength)
-    UG = G.to_undirected()
-
-    # nx.jaccard_coefficient raises NodeNotFound for absent nodes; score_proximity returns 0 instead.
-    assert bob.id not in UG
-
 
 @pytest.mark.asyncio
 async def test_e2e_producer_to_agent(monkeypatch):
@@ -49,16 +14,8 @@ async def test_e2e_producer_to_agent(monkeypatch):
     from unittest.mock import AsyncMock, MagicMock, patch
     from thenetwork.worker.tasks import process_email
 
-    emails_sent: list[dict] = []
-
     async def fake_run_agent(sender_email, sender_user_id, email_subject, email_body):
         return "Thanks for your email!"
-
-    async def fake_check_rate(_):
-        return True
-
-    async def fake_scan(_):
-        return True, "ok"
 
     with patch("thenetwork.worker.tasks.run_agent_for_email", new_callable=AsyncMock, side_effect=fake_run_agent), \
          patch("thenetwork.worker.tasks.check_rate_limit", return_value=True), \
@@ -77,91 +34,108 @@ async def test_e2e_producer_to_agent(monkeypatch):
         )
 
 
-# ---------------------------------------------------------------------------
-# Real pgvector DB integration tests — require seeded_db fixture
-# ---------------------------------------------------------------------------
-
 @pytest.mark.integration
-@pytest.mark.asyncio
-async def test_match_candidates_ranks_by_similarity(seeded_db):
-    """match_candidates hits pgvector and returns carol ranked above bob for an ml query."""
-    from thenetwork.search.match import match_candidates
+def test_match_memories_ranks_by_similarity(seeded_db):
+    """match_memories hits pgvector and returns carol ranked above bob for an ml query."""
+    from thenetwork.db.session import get_session
+    from thenetwork.search.match import match_memories
 
-    results = await match_candidates(
-        query_vector=seeded_db["query_ml"],
-        requester_id=seeded_db["alice_id"],
-        top_k=10,
-    )
+    with get_session() as session:
+        results = match_memories(seeded_db["query_ml"], session, limit=10)
 
     assert results, "expected at least one result from pgvector query"
-    returned_ids = [r.user_id for r in results]
-    assert seeded_db["carol_id"] in returned_ids, "carol (similar to ml query) must appear"
-    if seeded_db["bob_id"] in returned_ids:
-        assert returned_ids.index(seeded_db["carol_id"]) < returned_ids.index(seeded_db["bob_id"]), \
+    person_ids = [r.person_id for r in results]
+    assert seeded_db["carol_id"] in person_ids, "carol (similar to ml query) must appear"
+    if seeded_db["bob_id"] in person_ids:
+        assert person_ids.index(seeded_db["carol_id"]) < person_ids.index(seeded_db["bob_id"]), \
             "carol must rank above bob for an ml-direction query"
 
 
 @pytest.mark.integration
-@pytest.mark.asyncio
-async def test_match_candidates_excludes_requester(seeded_db):
-    """The requester's own profile must never appear in results."""
-    from thenetwork.search.match import match_candidates
+def test_match_memories_returns_gist_not_raw_text(seeded_db):
+    """match_memories results contain gist; the MemoryMatch dataclass has no raw text field."""
+    from thenetwork.db.session import get_session
+    from thenetwork.search.match import match_memories
 
-    results = await match_candidates(
-        query_vector=seeded_db["query_ml"],
-        requester_id=seeded_db["alice_id"],
-        top_k=10,
-    )
+    with get_session() as session:
+        results = match_memories(seeded_db["query_ml"], session, limit=10)
 
-    assert all(r.user_id != seeded_db["alice_id"] for r in results), \
-        "requester alice must be absent from results"
-
-
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_match_candidates_skill_filter(seeded_db):
-    """required_skills=['ml'] keeps carol (has ml) and drops bob (rust) and dave (product)."""
-    from thenetwork.search.match import match_candidates
-
-    results = await match_candidates(
-        query_vector=seeded_db["query_ml"],
-        requester_id=seeded_db["alice_id"],
-        required_skills=["ml"],
-        top_k=10,
-    )
-
-    returned_ids = {r.user_id for r in results}
-    assert seeded_db["carol_id"] in returned_ids, "carol has 'ml' skill and must appear"
-    assert seeded_db["bob_id"] not in returned_ids, "bob lacks 'ml' skill and must be excluded"
-    assert seeded_db["dave_id"] not in returned_ids, "dave lacks 'ml' skill and must be excluded"
+    assert results
+    for m in results:
+        assert m.gist is not None, "all returned memories must have a non-null gist"
+        assert not hasattr(m, "text"), "MemoryMatch must not expose raw memory text"
 
 
 @pytest.mark.integration
-@pytest.mark.asyncio
-async def test_match_candidates_excludes_unavailable(seeded_db, pg_engine):
-    """Profiles with available_to_collaborate=False must be excluded from results."""
+def test_match_memories_excludes_ungisted(seeded_db, pg_engine):
+    """Memories where gist IS NULL must not appear in match_memories results."""
+    import uuid
     from sqlalchemy import text
-    from thenetwork.search.match import match_candidates
+    from thenetwork.db.session import get_session
+    from thenetwork.search.match import match_memories
 
+    def _vec_str(dim0=0.0, dim1=0.0):
+        v = [0.0] * 1536
+        v[0] = dim0
+        v[1] = dim1
+        return "[" + ",".join(str(x) for x in v) + "]"
+
+    nogist_id = str(uuid.uuid4())
+    alice_id = seeded_db["alice_id"]
     with pg_engine.connect() as conn:
-        conn.execute(
-            text("UPDATE profiles SET available_to_collaborate = false WHERE id = :cid"),
-            {"cid": seeded_db["carol_id"]},
-        )
+        conn.execute(text(f"""
+            INSERT INTO memories (id, text, embedding, refs, gist, created_at)
+            VALUES (:mid, 'ungisted memory', CAST(:emb AS vector), ARRAY['{alice_id}']::text[], NULL, NOW())
+        """), {"mid": nogist_id, "emb": _vec_str(1.0, 0.0)})
         conn.commit()
 
     try:
-        results = await match_candidates(
-            query_vector=seeded_db["query_ml"],
-            requester_id=seeded_db["alice_id"],
-            top_k=10,
-        )
-        assert all(r.user_id != seeded_db["carol_id"] for r in results), \
-            "unavailable carol must not appear in results"
+        with get_session() as session:
+            results = match_memories(seeded_db["query_ml"], session, limit=20)
+        returned_ids = [r.memory_id for r in results]
+        assert nogist_id not in returned_ids, "memory with gist=NULL must be excluded by match_memories"
     finally:
         with pg_engine.connect() as conn:
-            conn.execute(
-                text("UPDATE profiles SET available_to_collaborate = true WHERE id = :cid"),
-                {"cid": seeded_db["carol_id"]},
-            )
+            conn.execute(text("DELETE FROM memories WHERE id = :id"), {"id": nogist_id})
             conn.commit()
+
+
+@pytest.mark.integration
+def test_build_graph_contains_alice_carol_edge(seeded_db):
+    """intro-mem refs=[alice, carol] => both appear as nodes with a shared edge."""
+    from thenetwork.search.graph import build_graph
+
+    G = build_graph()
+    assert seeded_db["alice_id"] in G.nodes, "alice must be in graph (linked by intro-mem)"
+    assert seeded_db["carol_id"] in G.nodes, "carol must be in graph (linked by intro-mem)"
+    assert G.has_edge(seeded_db["alice_id"], seeded_db["carol_id"]), \
+        "alice and carol must share an edge via intro-mem"
+
+
+@pytest.mark.integration
+def test_build_graph_excludes_solo_person(seeded_db):
+    """dave has no multi-ref memories — he must be absent from the graph."""
+    from thenetwork.search.graph import build_graph
+
+    G = build_graph()
+    assert seeded_db["dave_id"] not in G.nodes, "dave has no multi-ref memories; must not appear in graph"
+
+
+@pytest.mark.integration
+def test_score_proximity_absent_node_returns_zero(seeded_db):
+    """score_proximity returns 0 for a requester not in the graph."""
+    from thenetwork.search.graph import score_proximity
+
+    scores = score_proximity(seeded_db["dave_id"], [seeded_db["alice_id"], seeded_db["carol_id"]])
+    for cid, v in scores.items():
+        assert v == 0.0, f"dave has no graph presence; score for {cid} must be 0, got {v}"
+
+
+@pytest.mark.integration
+def test_score_proximity_direct_edge_no_common_neighbors(seeded_db):
+    """alice-carol share a direct edge but no common neighbors — Jaccard is 0."""
+    from thenetwork.search.graph import score_proximity
+
+    scores = score_proximity(seeded_db["alice_id"], [seeded_db["carol_id"]])
+    assert scores[seeded_db["carol_id"]] == 0.0, \
+        "Jaccard coefficient is 0 when two nodes share only a direct edge with no common neighbors"

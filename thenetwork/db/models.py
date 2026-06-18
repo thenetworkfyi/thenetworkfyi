@@ -38,6 +38,9 @@ class Memory(SQLModel, table=True):
         default_factory=list,
         sa_column=Column(ARRAY(Text()), nullable=False, server_default="{}"),
     )
+    gist: Optional[str] = Field(
+        default=None, sa_column=Column(Text(), nullable=True)
+    )
     created_at: datetime = Field(
         default_factory=_utcnow,
         sa_column=Column(DateTime(timezone=True), nullable=False),
