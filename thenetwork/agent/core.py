@@ -5,12 +5,7 @@ from pydantic_ai import Agent
 
 from thenetwork.agent.deps import AgentDeps
 from thenetwork.agent.prompts import SYSTEM_PROMPT
-from thenetwork.agent.tools import (
-    dispatch_email,
-    inspect_user_profile,
-    save_or_update_profile,
-    search_candidates,
-)
+from thenetwork.agent.tools import dispatch_email, forget, remember, search
 from thenetwork.settings import get_settings
 
 
@@ -25,10 +20,9 @@ def build_agent() -> Agent[AgentDeps, str]:
         output_type=str,
     )
 
-    # Register tools via decorator — idiomatic pydantic-ai DI through RunContext
-    agent.tool(inspect_user_profile)
-    agent.tool(save_or_update_profile)
-    agent.tool(search_candidates)
+    agent.tool(remember)
+    agent.tool(forget)
+    agent.tool(search)
     agent.tool(dispatch_email)
 
     return agent
