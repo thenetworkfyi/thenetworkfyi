@@ -14,7 +14,6 @@ _client: BaseEmbedding | None = None
 
 
 def _make_embed_client(model: str, api_key: str) -> BaseEmbedding:
-    """Resolve embedding provider from model name prefix."""
     if model.startswith("text-embedding"):
         return OpenAIEmbedding(model=model, api_key=api_key)
     raise ValueError(
@@ -42,7 +41,4 @@ async def embed_batch(texts: list[str]) -> list[list[float]]:
     return await client.aget_text_embedding_batch(texts)
 
 
-async def embed_profile(bio: str, intent_description: str) -> tuple[list[float], list[float]]:
-    """Return (identity_vector, intent_vector) for a profile in one batched call."""
-    vectors = await embed_batch([bio, intent_description])
-    return vectors[0], vectors[1]
+embed = embed_text
