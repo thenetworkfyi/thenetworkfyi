@@ -1,6 +1,8 @@
 """pydantic-ai agent wiring: model selection, tool registration, run entrypoint."""
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic_ai import Agent
 
 from thenetwork.agent.deps import AgentDeps
@@ -9,12 +11,14 @@ from thenetwork.agent.tools import dispatch_email, forget, remember, search
 from thenetwork.settings import get_settings
 
 
-def build_agent() -> Agent[AgentDeps, str]:
+def build_agent(model: Any = None) -> Agent[AgentDeps, str]:
     """Construct the pydantic-ai agent with all tools registered."""
-    settings = get_settings()
+    if model is None:
+        settings = get_settings()
+        model = settings.agent_model
 
     agent: Agent[AgentDeps, str] = Agent(
-        model=settings.agent_model,
+        model=model,
         system_prompt=SYSTEM_PROMPT,
         deps_type=AgentDeps,
         output_type=str,

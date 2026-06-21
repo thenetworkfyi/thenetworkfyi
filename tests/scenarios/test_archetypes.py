@@ -20,14 +20,11 @@ from thenetwork.agent.deps import AgentDeps
 async def test_onboarding_calls_save_profile():
     """A new sender's first email should trigger save_or_update_profile."""
     from unittest.mock import patch, MagicMock, AsyncMock
-    agent = build_agent()
+    agent = build_agent(model=TestModel())
 
-    with agent.override(model=TestModel()), \
-         patch("thenetwork.agent.tools.get_session") as mock_gs, \
+    with patch("thenetwork.agent.tools.get_session") as mock_gs, \
          patch("thenetwork.agent.tools.send_reply") as mock_send, \
-         patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock, return_value=[0.0] * 1536), \
-         patch("thenetwork.agent.tools.match_candidates", new_callable=AsyncMock, return_value=[]), \
-         patch("thenetwork.agent.tools.embed_profile", new_callable=AsyncMock, return_value=([0.0] * 1536, [0.0] * 1536)):
+         patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock, return_value=[0.0] * 1536):
         
         mock_session = MagicMock()
         mock_session.__enter__ = MagicMock(return_value=mock_session)
@@ -50,19 +47,18 @@ async def test_onboarding_calls_save_profile():
 
 @pytest.mark.asyncio
 async def test_matchmaking_returns_opaque_ids_only():
-    """search_candidates must never expose names/emails/bios in its return value."""
-    from thenetwork.agent.tools import search_candidates
+    """search must never expose names/emails/bios in its return value."""
+    from thenetwork.agent.tools import search
     from thenetwork.agent.deps import AgentDeps
-    from unittest.mock import AsyncMock, patch
-    from thenetwork.search.match import MatchResult
+    from unittest.mock import AsyncMock, patch, MagicMock
+    from thenetwork.search.match import MemoryMatch
 
     mock_results = [
-        MatchResult(
-            user_id="opaque-id-1",
+        MemoryMatch(
+            memory_id="mem-1",
+            person_id="opaque-id-1",
+            gist="backend engineer interested in ML",
             similarity=0.9,
-            mutual_connections=0.5,
-            combined_score=0.78,
-            skill_overlap=["python"],
         )
     ]
 
@@ -74,14 +70,19 @@ async def test_matchmaking_returns_opaque_ids_only():
     ctx = FakeCtx()
     ctx.deps = deps
 
+    mock_session = MagicMock()
+    mock_session.__enter__ = MagicMock(return_value=mock_session)
+    mock_session.__exit__ = MagicMock(return_value=False)
+
     with patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock, return_value=[0.0] * 1536), \
-         patch("thenetwork.agent.tools.match_candidates", new_callable=AsyncMock, return_value=mock_results):
-        result = await search_candidates(ctx, intent_text="looking for ML engineers")
+         patch("thenetwork.agent.tools.get_session", return_value=mock_session), \
+         patch("thenetwork.agent.tools.match_memories", return_value=mock_results):
+        result = await search(ctx, query="looking for ML engineers")
 
     assert len(result) == 1
     candidate = result[0]
     # Opaque ID present
-    assert candidate["user_id"] == "opaque-id-1"
+    assert candidate["person_id"] == "opaque-id-1"
     # No PII fields
     assert "name" not in candidate
     assert "email" not in candidate
