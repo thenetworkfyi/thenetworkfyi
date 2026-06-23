@@ -1,0 +1,58 @@
+# Design decisions & rejected approaches
+
+The *why* behind the architecture — read this before proposing a "cleaner" schema or a
+new abstraction, because most obvious-looking alternatives were considered and rejected
+on purpose.
+
+## Guiding principle
+
+**Use mainstream, well-adopted open-source frameworks and prior art. Do not reinvent
+solved problems. Do not depend on flimsy low-star libraries.** Hand-write only the
+genuine domain glue; for everything else (queues, rate limiting, ORM, migrations,
+embeddings, graph math, mail) use the established solution — sometimes that's just the
+Python stdlib.
+
+The genuine glue here is exactly one thing: **memory + the privacy seal over freeform
+memory** (`thenetwork/memory/`, the SEAL — see @docs/security.md). Everything else is a
+thin wrapper over a well-adopted library, swappable by config.
+
+## Design judgment calls
+
+- **Freeform `memories.text` is the substrate, not a schema.** Meaning (is this an
+  attribute? an intro? an event?) is drawn by the agent from the text at reasoning time,
+  never enforced by columns. Adding a `kind`/`status`/`category` column is the thing this
+  whole design exists to avoid.
+- **Small append-only chunks, not one blob per person.** Small chunks embed cleanly; a
+  big per-person notepad smears semantic recall.
+- **Build `refs` plumbing day one; defer proximity *scoring* until the graph is dense
+  enough to earn it.** The graph edges exist from the start (any 2+-ref memory), but
+  Jaccard scoring only becomes meaningful once there's real connection density.
+- **The graph is a projection, never a table.** "Who knows whom" is derived from
+  multi-ref memories at query time; there is no curated edge table to keep in sync.
+- **Behaviors are emergent, not scripted.** Onboarding, matchmaking, introductions, and
+  one-way FYIs come from system-prompt guidance plus `pydantic-evals` cases asserting
+  *reasonable* behavior — no branching control flow, no scenario `if user_record IS NULL`.
+
+## Explicitly rejected (anti-patterns)
+
+Each of these was deliberately chosen *against*. Don't reintroduce one without
+understanding why it was dropped.
+
+- ❌ Domain columns (`skills[]`, `available_to_collaborate`, `intent_*`) → freeform `memories.text`.
+- ❌ Typed object tables (`events`, `items`, `subscriptions`) or `kind`/`direction`/`status` discriminators → meaning lives in text + agent reasoning.
+- ❌ A curated `network_connections` edge table → graph projected from multi-ref memories.
+- ❌ One big notepad blob per person → small append-only chunks (clean recall).
+- ❌ In-place memory edits → delete + create (keeps embeddings/gists consistent).
+- ❌ Withhold-a-column privacy → two-layer raw/gist with a dedicated sanitizer.
+- ❌ LLM computing graph proximity at query time → NetworkX over projected edges.
+- ❌ Raw `psycopg2` + hand-written SQL strings → SQLModel + pgvector.
+- ❌ `MIMEMultipart` → stdlib `EmailMessage`.
+- ❌ `while True: ... time.sleep()` daemon → Procrastinate worker.
+- ❌ IMAP seen-flag as the unit of durability → Postgres job row.
+- ❌ Scenario branching (`if user_record IS NULL`) → emergent behavior + evals.
+- ❌ Tools returning other users' names/emails/bios → minimal disclosure (gist only).
+- ❌ LLM handling raw email addresses → capability tool, server-side resolution.
+- ❌ LiteLLM / proxy glue → pydantic-ai native multi-provider.
+- ❌ `np.random.rand(1536)` placeholder embeddings → provider-agnostic embed wrapper.
+- ❌ Bespoke rate limiting → `limits`.
+- ❌ Heavyweight guardrail frameworks (NeMo, Guardrails-AI) → architectural least-privilege + RFC 3834 + optional scanner.

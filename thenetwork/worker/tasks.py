@@ -17,7 +17,13 @@ from sqlmodel import select
 
 app = procrastinate.App(
     connector=procrastinate.PsycopgConnector(),
-    import_paths=["thenetwork.worker.tasks"],
+    # All modules that register tasks/periodics must be imported so the worker
+    # discovers them: email processing (here), IMAP polling, proactive scans.
+    import_paths=[
+        "thenetwork.worker.tasks",
+        "thenetwork.worker.producer",
+        "thenetwork.worker.proactive",
+    ],
 )
 
 
@@ -56,8 +62,27 @@ async def process_email(
 
 
 async def run_worker() -> None:
-    """Start the Procrastinate worker with concurrency from settings."""
+    """Start the Procrastinate worker with concurrency from settings.
+
+    Procrastinate handles graceful shutdown: on SIGINT/SIGTERM it stops
+    fetching new jobs and lets in-flight jobs finish before exiting. Give the
+    process a generous stop grace period (see compose ``stop_grace_period``).
+    """
     s = get_settings()
     dsn = s.database_url.replace("postgresql+psycopg://", "postgresql://")
     async with app.open_async(conninfo=dsn):
         await app.run_worker_async(concurrency=s.worker_concurrency)
+
+
+def main() -> None:
+    """Console entrypoint: run the long-lived worker (intake + processing + scans)."""
+    import asyncio
+
+    asyncio.run(run_worker())
+
+
+def producer_main() -> None:
+    """Console entrypoint: run a single IMAP poll cycle (for manual/cron use)."""
+    from thenetwork.worker.producer import run_producer_cycle
+
+    print(run_producer_cycle())

@@ -12,11 +12,11 @@ all behavior (onboarding, attribute capture, introductions, one-way FYIs) is
 
 The whole thing runs on a single VPS against Postgres.
 
-> **Status:** active development. See [`PLAN.md`](./PLAN.md) for the authoritative
-> design rationale and the wave-by-wave build order. One component
-> (`thenetwork/worker/proactive.py`) still references the pre-rewrite `Profile`
-> schema and is not wired to the current memory model — treat proactive outreach
-> as planned, not working.
+> **Status:** active development. See [`docs/design-decisions.md`](./docs/design-decisions.md)
+> for the design rationale and the list of deliberately rejected approaches. Proactive outreach
+> (`thenetwork/worker/proactive.py`) is ported to the Person/Memory model and wired
+> as the hourly periodic scan; it is intentionally conservative — it only enqueues
+> candidate pairs and lets the agent decide whether to introduce.
 
 ---
 
@@ -234,21 +234,69 @@ docker compose up -d db        # local pgvector/pgvector:pg17
 alembic upgrade head           # creates the vector extension + tables
 ```
 
-### 4. Run the producer and worker
+### 4. Run the worker
 
-There are no console entry points yet; the producer cycle and worker are library
-functions you invoke directly.
+The worker is a single long-running process. It drains the Procrastinate queue
+and, via periodic tasks, polls the IMAP inbox every minute (`poll_inbox`) and
+runs the hourly proactive scan (`scan_for_opportunities`) — no separate producer
+process is needed.
 
 ```bash
-# Worker — long-running, drains the Procrastinate queue
-python -c "import asyncio; from thenetwork.worker.tasks import run_worker; asyncio.run(run_worker())"
-
-# Producer — one polling cycle (run on a timer / cron)
-python -c "from thenetwork.worker.producer import run_producer_cycle; print(run_producer_cycle())"
+thenetwork-worker            # long-running: intake + processing + scans
+thenetwork-producer          # optional: one manual IMAP poll cycle
 ```
 
-In production, run these under a process supervisor (e.g. systemd
-`Restart=always`) and point `DATABASE_URL` at managed Postgres (e.g. Neon).
+---
+
+## Deployment
+
+This service needs **no inbound network access** — it polls IMAP (outbound),
+pulls jobs from local Postgres, and calls LLM/SMTP APIs (outbound). So there's
+no web server, reverse proxy, or public port to expose. A single small VPS with
+SSH access is enough.
+
+### Single-VPS Docker Compose
+
+`docker-compose.yml` runs two services: `db` (pgvector Postgres, bound to
+`127.0.0.1` only, state in the `pgdata` volume) and `worker`. Postgres on the
+box is fine at this scale.
+
+```bash
+cp .env.example .env          # fill in secrets
+docker compose up -d --build  # builds the image, starts db + worker
+docker compose logs -f worker
+```
+
+The container entrypoint runs `alembic upgrade head` before starting, so
+migrations apply automatically on every deploy.
+
+### Safe redeploys (no lost or half-processed jobs)
+
+Procrastinate makes this safe by design — durable job rows in Postgres,
+`SKIP LOCKED` dequeue, and graceful shutdown on SIGTERM (the worker stops
+fetching new jobs and finishes in-flight ones before exiting). `process_email`
+also retries (`max_attempts=3`) and the intake is idempotent (IMAP messages are
+marked seen only *after* enqueue). So even an ungraceful kill only re-runs a job;
+nothing is lost. `stop_grace_period: 300s` in compose gives in-flight agent runs
+time to drain.
+
+A deploy is therefore just:
+
+```bash
+docker compose pull && docker compose up -d   # recreates only changed services
+```
+
+### Pushing new images
+
+`.github/workflows/publish.yml` builds and pushes to GHCR
+(`ghcr.io/<owner>/<repo>`) on every push to `main` and on `v*` tags. On the
+server, set `IMAGE` in `.env` to that path and run the deploy command above.
+(`ghcr.io` images may need `docker login ghcr.io` once if the package is private.)
+
+### Backups
+
+The DB is the only source of truth. `scripts/backup.sh` dumps it via the `db`
+container; install it as a host cron job (example invocation is in the script).
 
 ---
 
@@ -276,9 +324,9 @@ thenetwork/
   memory/     the SEAL: sanitize (gist) + seal (self/other gate)
   search/     semantic match over memories + NetworkX graph projection
   security/   rate limiting + optional content scan
-  worker/     Procrastinate producer/tasks (+ proactive, WIP)
+  worker/     Procrastinate producer/tasks + proactive (hourly scan)
   settings.py pydantic-settings config
 alembic/      migrations (vector extension lives here)
 tests/        security, scenarios, pipeline
-PLAN.md       authoritative design rationale + build order
+CLAUDE.md     guidance for Claude Code (imports docs/ for architecture, the SEAL, rationale)
 ```

@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Apply pending DB migrations, then exec the requested process.
+#
+# Running migrations here is safe because there is exactly one worker. `exec`
+# replaces the shell with the worker so it receives SIGTERM directly and can
+# shut down gracefully (drain in-flight jobs) on `docker compose up`/redeploy.
+set -euo pipefail
+
+echo "Applying database migrations (alembic upgrade head)..."
+alembic upgrade head
+
+echo "Starting: $*"
+exec "$@"

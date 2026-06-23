@@ -1,0 +1,88 @@
+# Architecture
+
+The "big picture" that requires reading several files to reconstruct. See
+@docs/design-decisions.md for the rationale behind each choice.
+
+## Message flow
+
+```
+[Inbox] --IMAP--> Producer (imap-tools poll)
+                    | enqueue ONE Procrastinate job per message, THEN mark seen
+                    v
+            [Postgres job row]  <- durable source of truth
+                    | LISTEN/NOTIFY + SKIP LOCKED
+                    v
+                Worker (Procrastinate task: process_email)
+                    | rate-limit + optional content scan
+                    | run the pydantic-ai agent: Think / Act / Observe
+                    | tools: remember / forget / search / dispatch_email
+                    v
+                Reply --SMTP--> [Sender]
+```
+
+There is **one** long-lived process (`thenetwork-worker` → `worker/tasks.py:main`). It
+drains the Procrastinate queue *and*, via periodic tasks, polls IMAP every minute
+(`producer.poll_inbox`) and runs the hourly proactive scan. No separate producer daemon
+is required; `thenetwork-producer` is just a manual one-shot poll for cron/debugging.
+
+- **Producer** (`worker/producer.py`): polls IMAP for unseen mail, enqueues exactly one
+  durable job per message, and marks the message seen *only after* enqueue. Durability
+  lives in the Postgres job row, not the IMAP seen-flag — a mid-run crash means the job
+  retries (`max_attempts=3`) and nothing is lost.
+- **Worker** (`worker/tasks.py`): Postgres-native Procrastinate (LISTEN/NOTIFY +
+  `SKIP LOCKED`, no Redis/broker). Enforces per-sender rate limit and optional content
+  scan, resolves whether the sender is a known `Person`, then calls
+  `agent/core.py:run_agent_for_email`. Worker concurrency is the global LLM-spend ceiling.
+- **Agent** (`agent/core.py`): pydantic-ai ReAct agent. The untrusted email body is
+  passed as **user-role** content (`f"Subject: {subject}\n\n{body}"`), never concatenated
+  into the system prompt. Tools registered in `build_agent`; deps in `agent/deps.py`
+  carry `sender_email` + `sender_user_id` (None on first contact).
+
+## Data model — two tables, that is all
+
+`db/models.py`. Everything durable is here.
+
+**`people`** — pure identity / addressing / the security boundary:
+- `id` (uuid str, pk) — opaque internal id, *the only person reference the LLM ever sees*
+- `email` (unique, indexed) — resolved server-side by the mailer, never by the LLM
+- `name`
+
+**`memories`** — the agent's freeform substrate:
+- `text` — freeform content, the source of truth
+- `embedding` `Vector(1536)` — pgvector, HNSW cosine, for semantic recall
+- `refs` `text[]` — the `people.id`s a memory concerns (0..N)
+- `gist` — PII-stripped summary; the **only** thing cross-user search may return
+- `created_at` — recency / perishability signal
+
+There is no `kind`/`direction`/`status`/`category`/`tags`. Those are distinctions the
+agent draws from `text` at reasoning time, not columns the DB enforces. The cardinality
+of `refs` is the only structure, and it is incidental:
+
+- **0 refs** → general knowledge / agent notes ("a Rust meetup Thursday")
+- **1 ref** → an attribute about a person ("just moved to Berlin")
+- **2+ refs** → *also* an undirected edge between those people
+
+## The graph is a projection, not a table
+
+"Who knows whom" is derived at query time (`search/graph.py`): nodes are people, an edge
+exists because some memory references both, edge weight comes from count/recency of shared
+memories. NetworkX does multi-hop proximity math; the LLM does the language→reference
+mapping at write time. Semantic match over memories lives in `search/match.py`.
+
+## Agent surface — four tools (`agent/tools.py`)
+
+| tool | description |
+|---|---|
+| `remember(text, refs)` | write a chunk; a PII-stripped gist is auto-produced for any memory with refs |
+| `forget(memory_id)` | delete a chunk (edit = forget + remember, so embeddings never go stale) |
+| `search(query) -> [{person_id, gist, similarity}]` | semantic recall returning **opaque ids + gist only** for other people |
+| `dispatch_email(recipient_user_id, …)` | opaque id in; the real address is resolved server-side at send time |
+
+## Stack
+
+SQLModel over psycopg 3 · Alembic (the `CREATE EXTENSION vector` lives in a migration) ·
+pgvector `Vector(1536)` HNSW cosine · pydantic-ai (multi-provider, chosen by config
+string) · provider-agnostic `embed_text` wrapper (`embed/`) · NetworkX · pydantic-settings ·
+imap-tools · stdlib `EmailMessage`/`smtplib` · Procrastinate · `limits` · pytest +
+pydantic-evals. Vendor-agnosticism comes from pydantic-ai and the embedding wrapper being
+multi-provider, selected by `AGENT_MODEL` / `EMBED_MODEL` — no LiteLLM, no proxy glue.
