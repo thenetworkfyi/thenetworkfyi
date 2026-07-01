@@ -4,6 +4,7 @@ from __future__ import annotations
 import smtplib
 from email.message import EmailMessage
 
+from thenetwork.audit import audit_span
 from thenetwork.settings import get_settings
 
 
@@ -20,26 +21,33 @@ def send_reply(
     Uses Auto-Submitted: auto-generated header (RFC 3834) so recipients'
     IMAP pollers skip our outbound replies and don't create a loop.
     """
-    s = get_settings()
+    with audit_span(
+        "email.smtp_send",
+        recipient_id_present=bool(to_address),
+        subject_chars=len(subject),
+        body_chars=len(body_text),
+        html_present=body_html is not None,
+    ):
+        s = get_settings()
 
-    msg = EmailMessage()
-    msg["From"] = s.email_account
-    msg["To"] = to_address
-    msg["Subject"] = subject
-    # RFC 3834 §3.1.7 — auto-replied for automatic responses to inbound mail
-    msg["Auto-Submitted"] = "auto-replied"
+        msg = EmailMessage()
+        msg["From"] = s.email_account
+        msg["To"] = to_address
+        msg["Subject"] = subject
+        # RFC 3834 §3.1.7 — auto-replied for automatic responses to inbound mail
+        msg["Auto-Submitted"] = "auto-replied"
 
-    if in_reply_to:
-        msg["In-Reply-To"] = in_reply_to
-    if references:
-        msg["References"] = references
+        if in_reply_to:
+            msg["In-Reply-To"] = in_reply_to
+        if references:
+            msg["References"] = references
 
-    msg.set_content(body_text)
-    if body_html:
-        msg.add_alternative(body_html, subtype="html")
+        msg.set_content(body_text)
+        if body_html:
+            msg.add_alternative(body_html, subtype="html")
 
-    with smtplib.SMTP(s.smtp_host, s.smtp_port) as smtp:
-        smtp.ehlo()
-        smtp.starttls()
-        smtp.login(s.email_account, s.email_password)
-        smtp.send_message(msg)
+        with smtplib.SMTP(s.smtp_host, s.smtp_port) as smtp:
+            smtp.ehlo()
+            smtp.starttls()
+            smtp.login(s.email_account, s.email_password)
+            smtp.send_message(msg)

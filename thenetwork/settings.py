@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     # Rate limiting: max emails per sender per hour
     rate_limit_per_hour: int = 10
 
+    # Admin channel: allowlisted senders + shared-secret token
+    admin_emails: list[str] = []
+    admin_token: str = ""
+
 
 _settings: Settings | None = None
 
