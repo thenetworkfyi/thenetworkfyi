@@ -45,3 +45,18 @@ class Memory(SQLModel, table=True):
         default_factory=_utcnow,
         sa_column=Column(DateTime(timezone=True), nullable=False),
     )
+
+
+class AdminNonce(SQLModel, table=True):
+    """Replay guard for the admin channel's HMAC-signed requests.
+
+    Rows are pruned by admin/auth.py whenever a request is checked; there is
+    no separate cleanup job because admin traffic is low-volume by design.
+    """
+    __tablename__ = "admin_nonces"
+
+    nonce: str = Field(primary_key=True)
+    created_at: datetime = Field(
+        default_factory=_utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )

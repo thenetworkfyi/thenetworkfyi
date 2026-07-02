@@ -7,7 +7,14 @@ from pydantic_ai import Agent
 
 from thenetwork.agent.deps import AgentDeps
 from thenetwork.agent.prompts import SYSTEM_PROMPT
-from thenetwork.agent.tools import dispatch_email, escalate, forget, remember, search
+from thenetwork.agent.tools import (
+    dispatch_email,
+    escalate,
+    forget,
+    register_person,
+    remember,
+    search,
+)
 from thenetwork.audit import audit_event, audit_model_trace, audit_run, audit_span
 from thenetwork.settings import get_settings
 
@@ -30,6 +37,7 @@ def build_agent(model: Any = None) -> Agent[AgentDeps, str]:
     agent.tool(search)
     agent.tool(escalate)
     agent.tool(dispatch_email)
+    agent.tool(register_person)
 
     return agent
 
@@ -39,6 +47,7 @@ async def run_agent_for_email(
     sender_user_id: str | None,
     email_subject: str,
     email_body: str,
+    sender_authenticated: bool = False,
 ) -> str:
     """Run the agent for one inbound email.
 
@@ -54,6 +63,7 @@ async def run_agent_for_email(
         deps = AgentDeps(
             sender_email=sender_email,
             sender_user_id=sender_user_id,
+            sender_authenticated=sender_authenticated,
         )
         agent = build_agent()
         user_message = f"Subject: {email_subject}\n\n{email_body}"

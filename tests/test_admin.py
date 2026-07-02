@@ -1,72 +1,134 @@
 """Tests for the admin channel: auth, command parsing, and task routing."""
 from __future__ import annotations
 
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
 # ─── Auth ────────────────────────────────────────────────────────────────────
 
-def _settings(emails=("admin@example.com",), token="s3cr3t"):
+def _settings(emails=("admin@example.com",), token="s3cr3t", window=300):
     s = MagicMock()
     s.admin_emails = list(emails)
     s.admin_token = token
+    s.admin_replay_window_seconds = window
     return s
+
+
+def _signed(token: str, subject: str) -> str:
+    from thenetwork.admin.auth import sign_admin_request
+    return sign_admin_request(token, subject)
+
+
+def _fresh_nonce_session():
+    """A get_session() mock whose nonce store is always empty (no replay seen)."""
+    session = MagicMock()
+    session.get.return_value = None
+    cm = MagicMock()
+    cm.__enter__ = MagicMock(return_value=session)
+    cm.__exit__ = MagicMock(return_value=False)
+    return cm, session
 
 
 def test_is_admin_request_valid():
     from thenetwork.admin.auth import is_admin_request
-    body = "TOKEN: s3cr3t\nDo the thing."
-    with patch("thenetwork.admin.auth.get_settings", return_value=_settings()):
-        assert is_admin_request("admin@example.com", "ADMIN: status", body)
+    subject = "ADMIN: status"
+    body = _signed("s3cr3t", subject) + "\nDo the thing."
+    cm, session = _fresh_nonce_session()
+    with patch("thenetwork.admin.auth.get_settings", return_value=_settings()), \
+         patch("thenetwork.admin.auth.get_session", return_value=cm):
+        assert is_admin_request("admin@example.com", subject, body)
+    session.add.assert_called_once()
 
 
 def test_is_admin_request_case_insensitive_subject():
     from thenetwork.admin.auth import is_admin_request
-    body = "TOKEN: s3cr3t"
-    with patch("thenetwork.admin.auth.get_settings", return_value=_settings()):
-        assert is_admin_request("admin@example.com", "admin: status", body)
+    subject = "admin: status"
+    body = _signed("s3cr3t", subject)
+    cm, _ = _fresh_nonce_session()
+    with patch("thenetwork.admin.auth.get_settings", return_value=_settings()), \
+         patch("thenetwork.admin.auth.get_session", return_value=cm):
+        assert is_admin_request("admin@example.com", subject, body)
 
 
 def test_is_admin_request_wrong_sender():
     from thenetwork.admin.auth import is_admin_request
-    body = "TOKEN: s3cr3t"
+    subject = "ADMIN: status"
+    body = _signed("s3cr3t", subject)
     with patch("thenetwork.admin.auth.get_settings", return_value=_settings()):
-        assert not is_admin_request("attacker@evil.com", "ADMIN: status", body)
+        assert not is_admin_request("attacker@evil.com", subject, body)
 
 
 def test_is_admin_request_wrong_token():
     from thenetwork.admin.auth import is_admin_request
-    body = "TOKEN: wrongtoken"
+    subject = "ADMIN: status"
+    body = _signed("wrongtoken", subject)
     with patch("thenetwork.admin.auth.get_settings", return_value=_settings()):
-        assert not is_admin_request("admin@example.com", "ADMIN: status", body)
+        assert not is_admin_request("admin@example.com", subject, body)
 
 
-def test_is_admin_request_missing_token_line():
+def test_is_admin_request_missing_signature_lines():
     from thenetwork.admin.auth import is_admin_request
-    body = "Just some text without token."
+    body = "Just some text without a signature."
     with patch("thenetwork.admin.auth.get_settings", return_value=_settings()):
         assert not is_admin_request("admin@example.com", "ADMIN: status", body)
 
 
 def test_is_admin_request_not_admin_subject():
     from thenetwork.admin.auth import is_admin_request
-    body = "TOKEN: s3cr3t"
+    body = _signed("s3cr3t", "Hello there")
     with patch("thenetwork.admin.auth.get_settings", return_value=_settings()):
         assert not is_admin_request("admin@example.com", "Hello there", body)
 
 
 def test_is_admin_request_disabled_when_no_token():
     from thenetwork.admin.auth import is_admin_request
-    body = "TOKEN: s3cr3t"
+    subject = "ADMIN: status"
+    body = _signed("s3cr3t", subject)
     with patch("thenetwork.admin.auth.get_settings", return_value=_settings(token="")):
-        assert not is_admin_request("admin@example.com", "ADMIN: status", body)
+        assert not is_admin_request("admin@example.com", subject, body)
 
 
 def test_is_admin_request_disabled_when_no_emails():
     from thenetwork.admin.auth import is_admin_request
-    body = "TOKEN: s3cr3t"
+    subject = "ADMIN: status"
+    body = _signed("s3cr3t", subject)
     with patch("thenetwork.admin.auth.get_settings", return_value=_settings(emails=[])):
-        assert not is_admin_request("admin@example.com", "ADMIN: status", body)
+        assert not is_admin_request("admin@example.com", subject, body)
+
+
+def test_is_admin_request_expired_timestamp():
+    from thenetwork.admin.auth import _expected_signature, is_admin_request
+    subject = "ADMIN: status"
+    ts = str(int(time.time()) - 600)
+    nonce = "a" * 32
+    sig = _expected_signature("s3cr3t", subject, ts, nonce)
+    body = f"TS: {ts}\nNONCE: {nonce}\nSIG: {sig}"
+    with patch("thenetwork.admin.auth.get_settings", return_value=_settings(window=300)):
+        assert not is_admin_request("admin@example.com", subject, body)
+
+
+def test_is_admin_request_rejects_replayed_nonce():
+    from thenetwork.admin.auth import is_admin_request
+    subject = "ADMIN: status"
+    body = _signed("s3cr3t", subject)
+    session = MagicMock()
+    session.get.return_value = object()  # nonce already seen
+    cm = MagicMock()
+    cm.__enter__ = MagicMock(return_value=session)
+    cm.__exit__ = MagicMock(return_value=False)
+    with patch("thenetwork.admin.auth.get_settings", return_value=_settings()), \
+         patch("thenetwork.admin.auth.get_session", return_value=cm):
+        assert not is_admin_request("admin@example.com", subject, body)
+    session.add.assert_not_called()
+
+
+def test_is_admin_request_signature_bound_to_subject():
+    """A signature made for one subject must not authorize a different one."""
+    from thenetwork.admin.auth import is_admin_request
+    body = _signed("s3cr3t", "ADMIN: status")
+    with patch("thenetwork.admin.auth.get_settings", return_value=_settings()):
+        assert not is_admin_request("admin@example.com", "ADMIN: forget xyz", body)
 
 
 def test_extract_command():
@@ -76,11 +138,13 @@ def test_extract_command():
     assert extract_command("admin: forget abc-123") == "forget abc-123"
 
 
-def test_extract_body_text_strips_token_and_quotes():
+def test_extract_body_text_strips_signature_and_quotes():
     from thenetwork.admin.auth import extract_body_text
-    body = "TOKEN: s3cr3t\nReal content here.\n> Quoted line\nMore content."
+    body = "TS: 123\nNONCE: abc\nSIG: def\nReal content here.\n> Quoted line\nMore content."
     result = extract_body_text(body)
-    assert "TOKEN" not in result
+    assert "TS:" not in result
+    assert "NONCE:" not in result
+    assert "SIG:" not in result
     assert "Quoted line" not in result
     assert "Real content here." in result
     assert "More content." in result
@@ -108,7 +172,7 @@ def test_process_email_routes_admin_to_handler():
         asyncio.run(process_email.func(
             sender_email="admin@example.com",
             subject="ADMIN: status",
-            body="TOKEN: s3cr3t",
+            body="TS: 1\nNONCE: abc\nSIG: def",
         ))
 
     mock_reply.assert_called_once_with("status", "")
@@ -127,17 +191,16 @@ def test_process_email_non_admin_goes_to_agent():
     with patch("thenetwork.worker.tasks.check_rate_limit", return_value=True), \
          patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)), \
          patch("thenetwork.worker.tasks.is_admin_request", return_value=False), \
-         patch("thenetwork.worker.tasks.get_session") as mock_sess, \
+         patch("thenetwork.worker.tasks.get_session") as mock_gs, \
          patch("thenetwork.worker.tasks.run_agent_for_email", mock_agent):
-        sess_cm = MagicMock()
-        sess_cm.__enter__ = MagicMock(return_value=MagicMock(
-            exec=MagicMock(return_value=MagicMock(first=MagicMock(return_value=None)))
-        ))
-        sess_cm.__exit__ = MagicMock(return_value=False)
-        mock_sess.return_value = sess_cm
+        mock_session = MagicMock()
+        mock_session.__enter__ = MagicMock(return_value=mock_session)
+        mock_session.__exit__ = MagicMock(return_value=False)
+        mock_session.exec.return_value.first.return_value = None
+        mock_gs.return_value = mock_session
         asyncio.run(process_email.func(
             sender_email="user@example.com",
-            subject="Hello!",
+            subject="Hello",
             body="I'm looking for a cofounder.",
         ))
 

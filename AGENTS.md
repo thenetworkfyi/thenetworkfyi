@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 address; a pydantic-ai agent reads each message, decides what (if anything) to do, and
 acts: capture a fact, surface an event, introduce two people, or do nothing. There is
 no networking schema and no scenario script — all behavior is *emergent* from a system
-prompt plus four tools over a store of freeform **memories**. Runs as a single
+prompt plus six tools over a store of freeform **memories**. Runs as a single
 long-lived worker on one VPS against Postgres (pgvector). No inbound network access.
 
 The README has the full prose; the docs below are the working details. The one rule that
@@ -53,6 +53,11 @@ it has no database, so anything DB-backed must be marked `integration`.
 - @docs/development.md — settings, migrations, test fixtures, deployment, proactive scan, sharp edges
 - @docs/design-decisions.md — the *why*: guiding principle + the list of deliberately rejected approaches
 
+## Tone
+
+Never use "!" or other fake happy copy (e.g. "Great!", "Awesome!", "You're all set!") in
+code, commit messages, docs, or responses. Keep it straightforward and professional.
+
 ## Gotchas worth knowing up front
 
 - `DATABASE_URL` uses the `postgresql+psycopg://` (SQLModel) form. Procrastinate needs
@@ -60,7 +65,9 @@ it has no database, so anything DB-backed must be marked `integration`.
   pass the SQLModel DSN to Procrastinate directly.
 - Editing a memory = `forget` + `remember` (never mutate in place), so embeddings and
   gists never go stale.
-- `thenetwork/worker/proactive.py` is wired as the hourly periodic scan
-  (`scan_for_opportunities`): it finds high-proximity person pairs from the graph and
-  `defer`s a synthetic `process_email` job per pair — it never introduces people itself,
-  the agent decides. Covered by `tests/test_proactive.py`.
+- `thenetwork/worker/proactive.py` holds two hourly periodic scans, both of which only
+  `defer` a synthetic `process_email` job per candidate pair — they never introduce
+  people themselves, the agent decides. `scan_for_opportunities` finds high graph-proximity
+  pairs; `scan_for_matches` is the semantic rematch that re-engages a dormant user when a
+  later arrival finally matches an older standing note (SEAL-safe trigger body: opaque ids
+  + gists only). Both covered by `tests/test_proactive.py`.

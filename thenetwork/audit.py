@@ -18,16 +18,20 @@ _SAFE_FIELDS = frozenset({
     "action", "auto_submitted_present", "body_chars", "duration_ms", "error_type",
     "header_names", "html_present", "message_count", "outcome", "part_kinds",
     "query_chars", "reason", "recipient_id_present", "record_type", "refs_count",
-    "result_count", "sender_known", "sender_present", "subject_chars", "tool_name",
-    "top_k", "user_message_chars",
+    "result_count", "sender_authenticated", "sender_known", "sender_present",
+    "subject_chars", "tool_name", "top_k", "user_message_chars",
 })
 _SAFE_TOKEN = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
 _SAFE_CATEGORIES = {
     "action": frozenset({"delete", "insert", "lookup", "search"}),
-    "outcome": frozenset({"error", "found", "not_found", "success"}),
+    "outcome": frozenset({
+        "error", "exists", "found", "not_found", "rejected_unauthenticated", "success",
+    }),
     "reason": frozenset({"content_scan", "rate_limit"}),
     "record_type": frozenset({"memory", "person"}),
-    "tool_name": frozenset({"dispatch_email", "escalate", "forget", "remember", "search"}),
+    "tool_name": frozenset({
+        "dispatch_email", "escalate", "forget", "register_person", "remember", "search",
+    }),
 }
 _SAFE_HEADERS = frozenset({"auto-submitted", "from", "subject"})
 

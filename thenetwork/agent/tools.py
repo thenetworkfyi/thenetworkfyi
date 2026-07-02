@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from pydantic_ai import RunContext
+from sqlmodel import select
 
 from thenetwork.agent.deps import AgentDeps
 from thenetwork.audit import audit_event, audit_span
@@ -150,9 +151,73 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
                 f"Please reply to {sender} manually."
             )
             for admin_email in s.admin_emails:
-                send_reply(to_address=admin_email, subject=subject, body_text=body)
+                send_reply(
+                    to_address=admin_email,
+                    subject=subject,
+                    body_text=body,
+                    include_footer=False,
+                )
 
         return {"status": "escalated", "memory_id": memory.id}
+
+
+async def register_person(
+    ctx: RunContext[AgentDeps],
+    email: str,
+    name: str,
+) -> dict[str, str]:
+    """Create a Person record for a brand-new sender's first contact.
+
+    Self-registration only: `email` must match the sender's own authenticated
+    From: address, and the sender must not already be a known Person. This
+    cannot be used to register anyone else — accepting an arbitrary raw
+    address out of message content (e.g. to onboard a stranger mentioned in
+    an introduction) would reopen the confused-deputy risk dispatch_email's
+    opaque-id design exists to prevent, so that stays out of scope here.
+
+    Returns the new person_id — use it for `refs` on subsequent `remember`
+    calls and as the target of `dispatch_email` to reply to this sender.
+    """
+    with audit_span("agent.tool", tool_name="register_person"):
+        if not ctx.deps.sender_authenticated:
+            audit_event(
+                "database.action",
+                action="insert",
+                record_type="person",
+                outcome="rejected_unauthenticated",
+            )
+            return {"status": "error", "reason": "sender_not_authenticated"}
+
+        if ctx.deps.sender_user_id is not None:
+            return {
+                "status": "error",
+                "reason": "already_registered",
+                "person_id": ctx.deps.sender_user_id,
+            }
+
+        if email.strip().lower() != ctx.deps.sender_email.strip().lower():
+            return {"status": "error", "reason": "email_mismatch"}
+
+        with _get_session(ctx) as session:
+            existing = session.exec(
+                select(Person).where(Person.email == ctx.deps.sender_email)
+            ).first()
+            if existing:
+                return {"status": "exists", "person_id": existing.id}
+
+            person = Person(email=ctx.deps.sender_email, name=name)
+            session.add(person)
+            session.commit()
+            session.refresh(person)
+            person_id = person.id
+
+        audit_event(
+            "database.action",
+            action="insert",
+            record_type="person",
+            outcome="success",
+        )
+        return {"status": "created", "person_id": person_id}
 
 
 async def dispatch_email(

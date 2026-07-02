@@ -14,8 +14,8 @@ async def test_e2e_producer_to_agent(monkeypatch):
     from unittest.mock import AsyncMock, MagicMock, patch
     from thenetwork.worker.tasks import process_email
 
-    async def fake_run_agent(sender_email, sender_user_id, email_subject, email_body):
-        return "Thanks for your email!"
+    async def fake_run_agent(sender_email, sender_user_id, email_subject, email_body, sender_authenticated=False):
+        return "Thanks for your email."
 
     with patch("thenetwork.worker.tasks.run_agent_for_email", new_callable=AsyncMock, side_effect=fake_run_agent), \
          patch("thenetwork.worker.tasks.check_rate_limit", return_value=True), \

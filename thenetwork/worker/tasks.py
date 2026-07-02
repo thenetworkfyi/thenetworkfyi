@@ -36,18 +36,27 @@ async def process_email(
     sender_email: str,
     subject: str,
     body: str,
+    sender_authenticated: bool = False,
 ) -> None:
     """Procrastinate worker task: run the agent for one inbound email.
 
     Checks rate limit and optional content scan before handing off.
     Admin requests are handled directly; regular mail goes to the agent.
     Agent runs with sender's existing user_id (None if first contact).
+
+    ``sender_authenticated`` reflects the receiving server's DKIM/SPF
+    verdict on the From: header (see email/inbound.py). An unauthenticated
+    From is never resolved to an existing Person — that header alone is
+    spoofable, and treating a spoofed sender as a known identity would let
+    anyone impersonate a real user (write memories in their name, dispatch
+    email as them, or burn their rate-limit quota).
     """
     with audit_run(), audit_span(
         "worker.process_email",
         sender_present=bool(sender_email),
         subject_chars=len(subject),
         body_chars=len(body),
+        sender_authenticated=sender_authenticated,
     ):
         if not check_rate_limit(sender_email):
             audit_event("worker.message_rejected", reason="rate_limit")
@@ -62,16 +71,22 @@ async def process_email(
             command = extract_command(subject)
             body_text = extract_body_text(body)
             reply = await handle_admin_command(command, body_text)
-            send_reply(to_address=sender_email, subject=f"Re: {subject}", body_text=reply)
+            send_reply(
+                to_address=sender_email,
+                subject=f"Re: {subject}",
+                body_text=reply,
+                include_footer=False,
+            )
             return
 
         sender_user_id: str | None = None
-        with get_session() as session:
-            profile = session.exec(
-                select(Person).where(Person.email == sender_email)
-            ).first()
-            if profile:
-                sender_user_id = profile.id
+        if sender_authenticated:
+            with get_session() as session:
+                profile = session.exec(
+                    select(Person).where(Person.email == sender_email)
+                ).first()
+                if profile:
+                    sender_user_id = profile.id
 
         audit_event(
             "database.action",
@@ -83,6 +98,7 @@ async def process_email(
         await run_agent_for_email(
             sender_email=sender_email,
             sender_user_id=sender_user_id,
+            sender_authenticated=sender_authenticated,
             email_subject=subject,
             email_body=body,
         )

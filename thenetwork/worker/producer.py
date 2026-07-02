@@ -37,6 +37,7 @@ def _poll_and_enqueue() -> int:
                 sender_email=msg.sender,
                 subject=msg.subject,
                 body=msg.body,
+                sender_authenticated=msg.sender_authenticated,
             )
             enqueued_uids.append(msg.uid)
             count += 1

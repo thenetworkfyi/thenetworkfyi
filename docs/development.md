@@ -70,13 +70,28 @@ DB (the only source of truth) via the `db` container — wire it as a host cron 
 
 ## Proactive outreach
 
-`thenetwork/worker/proactive.py` is the hourly periodic task `scan_for_opportunities`
-(`cron="0 * * * *"`, registered via `import_paths` in `worker/tasks.py`). It builds the
-NetworkX graph, scores person pairs by Jaccard proximity over shared neighbours, and for
-each pair above `PROXIMITY_THRESHOLD` (0.3) `defer`s a synthetic `process_email` job. The
-trigger only surfaces candidates — the agent run decides whether and how to introduce, so
-the SEAL still governs what leaves the system. Unit-tested in `tests/test_proactive.py`
-(enqueue, threshold, dedup, empty-graph early return).
+`thenetwork/worker/proactive.py` holds two hourly periodic tasks (registered via
+`import_paths` in `worker/tasks.py`). Both only surface candidates — the agent run
+decides whether and how to introduce, so the SEAL still governs what leaves the system.
+Unit-tested in `tests/test_proactive.py`.
+
+`scan_for_opportunities` (`cron="0 * * * *"`, graph proximity). Builds the NetworkX
+graph, scores person pairs by Jaccard proximity over shared neighbours, and for each pair
+above `PROXIMITY_THRESHOLD` (0.3) `defer`s a synthetic `process_email` job. Requires
+pre-existing connection density, so it says nothing at cold start.
+
+`scan_for_matches` (`cron="30 * * * *"`, semantic rematch). This is the cold-start /
+dormant-user path: it re-evaluates standing intents against *new* arrivals rather than
+only at write time. Driven by memories created within
+`proactive_rematch_lookback_minutes` (65) so a pair surfaces once, when the counterpart
+shows up; for each such arrival it runs `match_memories` and, for any older
+person-referencing memory about a *different* person scoring at least
+`proactive_match_threshold` (0.5), `defer`s a job that re-engages the dormant owner of the
+older note. Guards: pairs already connected in the projected graph are skipped (the
+introduction memory is the durable dedup record); the similarity floor is conservative
+*here specifically* because unsolicited outreach makes a false positive costly — the
+interactive `search` tool deliberately takes no such floor. The trigger body carries only
+opaque ids + PII-stripped gists; real addresses and raw memory text never enter it.
 
 ## Sharp edges
 

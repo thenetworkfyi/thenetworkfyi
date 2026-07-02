@@ -143,6 +143,7 @@ def test_intake_logs_header_metadata_without_values(caplog):
         subject="Confidential acquisition",
         body="Project Finch closes Friday",
         auto_submitted=None,
+        sender_authenticated=True,
     )
     caplog.set_level(logging.INFO, logger=LOGGER_NAME)
 
@@ -155,6 +156,7 @@ def test_intake_logs_header_metadata_without_values(caplog):
         sender_email=message.sender,
         subject=message.subject,
         body=message.body,
+        sender_authenticated=message.sender_authenticated,
     )
     mark_seen.assert_called_once_with(["123"])
     serialized = "\n".join(record.message for record in caplog.records)

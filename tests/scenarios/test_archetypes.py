@@ -119,7 +119,7 @@ async def test_dispatch_email_resolves_address_server_side():
             ctx,
             recipient_user_id="user-bob",
             subject="Hello",
-            body_text="Let's connect!",
+            body_text="Let's connect.",
         )
 
     assert result["status"] == "sent"
@@ -165,8 +165,8 @@ async def test_double_intro_emails_both_parties():
         mock_session.get.side_effect = lambda _, uid: profiles.get(uid)
         mock_gs.return_value = mock_session
 
-        await dispatch_email(ctx, recipient_user_id="user-alice", subject="Intro", body_text="Hi Alice!")
-        await dispatch_email(ctx, recipient_user_id="user-bob", subject="Intro", body_text="Hi Bob!")
+        await dispatch_email(ctx, recipient_user_id="user-alice", subject="Intro", body_text="Hi Alice.")
+        await dispatch_email(ctx, recipient_user_id="user-bob", subject="Intro", body_text="Hi Bob.")
 
     assert "alice@example.com" in sent_to
     assert "bob@example.com" in sent_to

@@ -9,7 +9,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from thenetwork.agent.deps import AgentDeps
-from thenetwork.agent.tools import dispatch_email
+from thenetwork.agent.tools import dispatch_email, register_person
 from thenetwork.db.models import Person
 from thenetwork.search.match import MemoryMatch
 
@@ -19,13 +19,19 @@ from thenetwork.search.match import MemoryMatch
 # ---------------------------------------------------------------------------
 
 class FakeCtx:
-    def __init__(self, sender_email="alice@example.com", sender_user_id="user-alice"):
+    def __init__(
+        self,
+        sender_email: str = "alice@example.com",
+        sender_user_id: str | None = "user-alice",
+        sender_authenticated: bool = False,
+    ):
         mock_sess = MagicMock()
         mock_sess.__enter__ = MagicMock(return_value=mock_sess)
         mock_sess.__exit__ = MagicMock(return_value=False)
         self.deps = AgentDeps(
             sender_email=sender_email,
             sender_user_id=sender_user_id,
+            sender_authenticated=sender_authenticated,
             session_factory=lambda: mock_sess,
         )
         self._mock_sess = mock_sess
@@ -68,6 +74,108 @@ async def test_dispatch_unknown_id_returns_error():
     result = await dispatch_email(ctx, recipient_user_id="nonexistent", subject="Hi", body_text="Hello")
 
     assert result["status"] == "error"
+
+
+# ---------------------------------------------------------------------------
+# register_person: self-registration only — no confused-deputy re-opening
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_register_person_rejects_unauthenticated_sender():
+    """An unauthenticated From: header must never mint a new identity."""
+    ctx = FakeCtx(sender_user_id=None, sender_authenticated=False)
+
+    result = await register_person(ctx, email="alice@example.com", name="Alice")
+
+    assert result["status"] == "error"
+    assert result["reason"] == "sender_not_authenticated"
+
+
+@pytest.mark.asyncio
+async def test_register_person_rejects_already_registered_sender():
+    """A sender who already has a person_id cannot re-register (or hijack another id)."""
+    ctx = FakeCtx(sender_user_id="user-alice", sender_authenticated=True)
+
+    result = await register_person(ctx, email="alice@example.com", name="Alice")
+
+    assert result["status"] == "error"
+    assert result["reason"] == "already_registered"
+    assert result["person_id"] == "user-alice"
+
+
+@pytest.mark.asyncio
+async def test_register_person_rejects_email_mismatch():
+    """The tool cannot be used to register a third party — email must match the sender."""
+    ctx = FakeCtx(
+        sender_email="alice@example.com",
+        sender_user_id=None,
+        sender_authenticated=True,
+    )
+
+    result = await register_person(ctx, email="bob@example.com", name="Bob")
+
+    assert result["status"] == "error"
+    assert result["reason"] == "email_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_register_person_idempotent_when_already_exists():
+    """A race/case-difference that left a DB row must return it, not raise."""
+    ctx = FakeCtx(
+        sender_email="alice@example.com",
+        sender_user_id=None,
+        sender_authenticated=True,
+    )
+    existing = MagicMock(spec=Person, id="existing-id")
+    ctx._mock_sess.exec.return_value.first.return_value = existing
+
+    result = await register_person(ctx, email="alice@example.com", name="Alice")
+
+    assert result["status"] == "exists"
+    assert result["person_id"] == "existing-id"
+    ctx._mock_sess.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_register_person_creates_for_authenticated_new_sender():
+    """The golden path: authenticated, unknown sender registering their own address."""
+    ctx = FakeCtx(
+        sender_email="alice@example.com",
+        sender_user_id=None,
+        sender_authenticated=True,
+    )
+    ctx._mock_sess.exec.return_value.first.return_value = None
+
+    def fake_refresh(person):
+        person.id = "new-person-id"
+
+    ctx._mock_sess.refresh.side_effect = fake_refresh
+
+    result = await register_person(ctx, email="alice@example.com", name="Alice")
+
+    assert result["status"] == "created"
+    assert result["person_id"] == "new-person-id"
+    ctx._mock_sess.add.assert_called_once()
+    added_person = ctx._mock_sess.add.call_args.args[0]
+    assert isinstance(added_person, Person)
+    assert added_person.email == "alice@example.com"
+    assert added_person.name == "Alice"
+
+
+@pytest.mark.asyncio
+async def test_register_person_case_insensitive_email_match():
+    """Sender's own address should match regardless of case."""
+    ctx = FakeCtx(
+        sender_email="Alice@Example.com",
+        sender_user_id=None,
+        sender_authenticated=True,
+    )
+    ctx._mock_sess.exec.return_value.first.return_value = None
+    ctx._mock_sess.refresh.side_effect = lambda person: setattr(person, "id", "new-id")
+
+    result = await register_person(ctx, email="alice@example.com", name="Alice")
+
+    assert result["status"] == "created"
 
 
 # ---------------------------------------------------------------------------

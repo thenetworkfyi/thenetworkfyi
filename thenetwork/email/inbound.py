@@ -1,6 +1,7 @@
 """IMAP inbox polling via imap-tools."""
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from email.message import Message
 from html.parser import HTMLParser
@@ -12,6 +13,9 @@ from thenetwork.settings import get_settings
 
 
 MAX_BODY_CHARS = 50_000
+
+_AUTH_RESULT_RE = re.compile(r"\b(dkim|spf)=(\w+)", re.IGNORECASE)
+_AUTHSERV_ID_RE = re.compile(r"^\s*([^;]+)")
 
 _HTML_HIDDEN_ELEMENTS = frozenset({"head", "script", "style", "template", "title"})
 _HTML_BREAK_ELEMENTS = frozenset(
@@ -27,6 +31,12 @@ class InboundMessage:
     body: str
     # RFC 3834 loop prevention headers, if present
     auto_submitted: str | None
+    # True if the receiving mail server's own Authentication-Results header
+    # reports dkim=pass or spf=pass for this message. The From: header alone
+    # is spoofable (imap-tools has no access to the SMTP envelope), so
+    # callers must not trust `sender` for identity resolution unless this
+    # is True.
+    sender_authenticated: bool
 
 
 class _VisibleTextParser(HTMLParser):
@@ -127,6 +137,35 @@ def extract_body(message: Message) -> str:
     return body[:MAX_BODY_CHARS]
 
 
+def _is_sender_authenticated(msg) -> bool:
+    """True if the receiving server vouches for this message's DKIM/SPF.
+
+    Trusts only the Authentication-Results header nearest the top of the
+    message — the one added last, by our own receiving MTA — since every
+    intermediate hop pushes prior (potentially attacker-forged) copies of
+    this header further down. If ``trusted_authserv_id`` is configured, that
+    header's authserv-id must also match, guarding against an untrusted
+    relay in between.
+    """
+    s = get_settings()
+    if not s.require_sender_auth:
+        return True
+
+    values = msg.headers.get("authentication-results")
+    if not values:
+        return False
+
+    header_value = values[0]
+    if s.trusted_authserv_id:
+        m = _AUTHSERV_ID_RE.match(header_value)
+        authserv_id = m.group(1).strip() if m else ""
+        if authserv_id.lower() != s.trusted_authserv_id.lower():
+            return False
+
+    verdicts = {mech.lower(): result.lower() for mech, result in _AUTH_RESULT_RE.findall(header_value)}
+    return verdicts.get("dkim") == "pass" or verdicts.get("spf") == "pass"
+
+
 def _is_auto_message(msg) -> bool:
     """Return True if inbound mail should be skipped per RFC 3834 loop prevention."""
     auto = msg.headers.get("auto-submitted")
@@ -169,6 +208,7 @@ def poll_unseen() -> list[InboundMessage]:
                     subject=msg.subject,
                     body=extract_body(msg.obj),
                     auto_submitted=auto_sub[0] if auto_sub else None,
+                    sender_authenticated=_is_sender_authenticated(msg),
                 )
             )
     return messages
