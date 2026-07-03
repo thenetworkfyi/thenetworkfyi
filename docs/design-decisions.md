@@ -32,6 +32,12 @@ thin wrapper over a well-adopted library, swappable by config.
 - **Behaviors are emergent, not scripted.** Onboarding, matchmaking, introductions, and
   one-way FYIs come from system-prompt guidance plus `pydantic-evals` cases asserting
   *reasonable* behavior — no branching control flow, no scenario `if user_record IS NULL`.
+- **Inbound body extraction leans on imap-tools + BeautifulSoup, not hand-rolled MIME
+  walking.** Strict attachment-boundary pruning was deliberately relaxed: `MAX_BODY_CHARS`
+  truncation is the real size guard regardless of how the body was assembled, and the
+  inbound body is untrusted content either way — the SEAL governs what can leave the
+  system, not what can enter it. Chasing exact attachment-subtree exclusion added
+  bespoke parsing code for a property the size cap and the SEAL already cover.
 
 ## Explicitly rejected (anti-patterns)
 
