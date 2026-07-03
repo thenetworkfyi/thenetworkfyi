@@ -11,8 +11,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from thenetwork.agent.deps import AgentDeps
 from thenetwork.agent.tools import dispatch_email, register_person
 from thenetwork.db.models import Person
-from thenetwork.settings import Settings
 from thenetwork.search.match import MemoryMatch
+from thenetwork.settings import Settings
 
 
 # ---------------------------------------------------------------------------
@@ -30,11 +30,7 @@ class FakeCtx:
         mock_sess.__enter__ = MagicMock(return_value=mock_sess)
         mock_sess.__exit__ = MagicMock(return_value=False)
         self.deps = AgentDeps(
-            settings=Settings(
-                dispatch_max_sends_per_run=3,
-                dispatch_recipient_daily_cap=3,
-                dispatch_sender_reply_daily_cap=1,
-            ),
+            settings=Settings(),
             sender_email=sender_email,
             sender_user_id=sender_user_id,
             sender_authenticated=sender_authenticated,
@@ -258,6 +254,31 @@ async def test_register_person_case_insensitive_email_match():
     assert result["status"] == "created"
 
 
+@pytest.mark.asyncio
+async def test_register_person_enforces_global_daily_quota():
+    """New registrations stop when the configured global daily quota is exhausted."""
+    ctx = FakeCtx(
+        sender_email="alice@example.com",
+        sender_user_id=None,
+        sender_authenticated=True,
+    )
+    ctx.deps.settings.registration_limit_per_day = 1
+    ctx._mock_sess.exec.return_value.first.return_value = None
+
+    limiter = MagicMock()
+    limiter.hit.return_value = False
+
+    with patch("thenetwork.agent.tools._get_registration_limiter", return_value=(limiter, None)):
+        result = await register_person(ctx, email="alice@example.com", name="Alice")
+
+    assert result == {
+        "status": "error",
+        "reason": "registration_quota_exceeded",
+        "limit": 1,
+    }
+    ctx._mock_sess.add.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # SEAL: memory storage creates gist; search returns only gist + opaque id
 # ---------------------------------------------------------------------------
@@ -297,6 +318,56 @@ async def test_remember_zero_ref_does_not_sanitize_or_set_gist():
     mock_sanitize.assert_not_awaited()
     mock_embed.assert_awaited_once_with(raw)
     assert added[0].gist is None
+
+
+@pytest.mark.asyncio
+async def test_remember_rejects_text_over_configured_cap():
+    """Oversized memory text must fail before sanitize, embed, or insert."""
+    from thenetwork.agent.tools import remember
+
+    ctx = FakeCtx()
+    ctx.deps.settings.remember_text_max_chars = 5
+
+    with patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock) as mock_embed, \
+         patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock) as mock_sanitize:
+        result = await remember(ctx, text="too long", refs=["user-alice"])
+
+    assert result == {
+        "status": "error",
+        "reason": "memory_text_too_long",
+        "limit": 5,
+    }
+    mock_sanitize.assert_not_awaited()
+    mock_embed.assert_not_awaited()
+    ctx._mock_sess.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_remember_rejects_when_person_memory_ceiling_reached():
+    """Per-person memory ceilings stop additional writes with a visible status."""
+    from thenetwork.agent.tools import remember
+
+    class FakeExecResult:
+        def all(self):
+            return [MagicMock()]
+
+    ctx = FakeCtx()
+    ctx.deps.settings.person_memory_limit = 1
+    ctx._mock_sess.exec.return_value = FakeExecResult()
+
+    with patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock) as mock_embed, \
+         patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock) as mock_sanitize:
+        result = await remember(ctx, text="Alice is an ML engineer", refs=["user-alice"])
+
+    assert result == {
+        "status": "error",
+        "reason": "person_memory_limit_exceeded",
+        "person_id": "user-alice",
+        "limit": 1,
+    }
+    mock_sanitize.assert_not_awaited()
+    mock_embed.assert_not_awaited()
+    ctx._mock_sess.add.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -504,6 +575,21 @@ async def test_search_result_keys_sealed():
     for r in results:
         leaked = set(r.keys()) - allowed_keys
         assert not leaked, f"unexpected keys leaked into search result: {leaked}"
+
+
+@pytest.mark.asyncio
+async def test_search_rejects_query_over_configured_cap():
+    """Oversized search queries must fail before embedding or retrieval."""
+    from thenetwork.agent.tools import search
+
+    ctx = FakeCtx()
+    ctx.deps.settings.search_query_max_chars = 5
+
+    with patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock) as mock_embed, \
+         pytest.raises(ValueError, match="length cap"):
+        await search(ctx, query="too long")
+
+    mock_embed.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------

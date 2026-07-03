@@ -45,7 +45,8 @@ _SAFE_TOKEN = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
 _SAFE_CATEGORIES = {
     "action": frozenset({"delete", "insert", "lookup", "search"}),
     "outcome": frozenset({
-        "error", "exists", "found", "not_found", "rejected_unauthenticated", "success",
+        "error", "exists", "found", "not_found", "rate_limited",
+        "rejected_unauthenticated", "success",
     }),
     "reason": frozenset({
         "body_empty", "body_oversize", "content_scan", "rate_limit",

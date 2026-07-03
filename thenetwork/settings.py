@@ -52,6 +52,13 @@ class Settings(BaseSettings):
     dispatch_max_sends_per_run: int = 3
     dispatch_recipient_daily_cap: int = 3
     dispatch_sender_reply_daily_cap: int = 1
+    registration_limit_per_day: int = 50
+
+    # Tool abuse bounds. Set a value to 0 or lower to disable that specific
+    # guard in controlled development environments.
+    remember_text_max_chars: int = 8_000
+    search_query_max_chars: int = 1_000
+    person_memory_limit: int = 500
 
     # Admin channel: allowlisted senders + HMAC-signed request (see admin/auth.py)
     admin_emails: list[str] = []
