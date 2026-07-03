@@ -14,6 +14,14 @@ from thenetwork.agent.core import run_agent_for_email
 from thenetwork.audit import audit_event, audit_run, audit_span, configure_audit_logging
 from thenetwork.db.models import Person
 from thenetwork.db.session import get_session
+from thenetwork.email.inbound import (
+    REJECT_BODY_EMPTY,
+    REJECT_BODY_OVERSIZE,
+    BodyTooLargeError,
+    cap_body,
+    cap_subject,
+    is_near_empty_body,
+)
 from thenetwork.email.outbound import send_reply
 from thenetwork.security.content_scan import scan_content
 from thenetwork.security.rate_limit import check_rate_limit
@@ -51,13 +59,25 @@ async def process_email(
     anyone impersonate a real user (write memories in their name, dispatch
     email as them, or burn their rate-limit quota).
     """
+    subject = cap_subject(subject)
+    original_body_chars = len(body)
     with audit_run(), audit_span(
         "worker.process_email",
         sender_present=bool(sender_email),
         subject_chars=len(subject),
-        body_chars=len(body),
+        body_chars=original_body_chars,
         sender_authenticated=sender_authenticated,
     ):
+        try:
+            body = cap_body(body)
+        except BodyTooLargeError:
+            audit_event("worker.message_rejected", reason=REJECT_BODY_OVERSIZE)
+            return
+
+        if is_near_empty_body(body):
+            audit_event("worker.message_rejected", reason=REJECT_BODY_EMPTY)
+            return
+
         if not check_rate_limit(
             sender_email,
             sender_authenticated=sender_authenticated,

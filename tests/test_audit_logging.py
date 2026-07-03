@@ -253,6 +253,37 @@ def test_intake_logs_header_metadata_without_values(caplog):
     assert received["header_names"] == ["from", "subject", "auto-submitted"]
 
 
+def test_intake_rejects_bad_shape_without_enqueueing_or_replying(caplog):
+    from thenetwork.email.inbound import REJECT_BODY_OVERSIZE, InboundMessage
+    from thenetwork.worker.producer import _poll_and_enqueue
+
+    message = InboundMessage(
+        uid="123",
+        sender="alice.private@example.com",
+        subject="Confidential acquisition",
+        body="",
+        auto_submitted=None,
+        sender_authenticated=True,
+        rejection_reason=REJECT_BODY_OVERSIZE,
+        body_chars=100_001,
+    )
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    with patch("thenetwork.worker.producer.poll_unseen", return_value=[message]), patch(
+        "thenetwork.worker.producer.process_email"
+    ) as process_email, patch("thenetwork.worker.producer.mark_messages_seen") as mark_seen:
+        assert _poll_and_enqueue() == 0
+
+    process_email.defer.assert_not_called()
+    mark_seen.assert_called_once_with(["123"])
+    serialized = "\n".join(record.message for record in caplog.records)
+    assert message.sender not in serialized
+    assert message.subject not in serialized
+    rejected = next(event for event in _events(caplog) if event["event"] == "intake.message_rejected")
+    assert rejected["reason"] == REJECT_BODY_OVERSIZE
+    assert rejected["body_chars"] == 100_001
+
+
 @pytest.mark.asyncio
 async def test_worker_rejection_logs_reason_without_message_content(caplog):
     from thenetwork.worker.tasks import process_email
@@ -271,5 +302,84 @@ async def test_worker_rejection_logs_reason_without_message_content(caplog):
     assert "Project Finch closes Friday" not in serialized
     assert any(
         event["event"] == "worker.message_rejected" and event["reason"] == "rate_limit"
+        for event in _events(caplog)
+    )
+
+
+@pytest.mark.asyncio
+async def test_worker_caps_subject_and_body_before_agent():
+    from thenetwork.email.inbound import MAX_BODY_CHARS, MAX_SUBJECT_CHARS
+    from thenetwork.worker.tasks import process_email
+
+    mock_agent = AsyncMock()
+
+    with patch("thenetwork.worker.tasks.check_rate_limit", return_value=True), patch(
+        "thenetwork.worker.tasks.scan_content", return_value=(True, None)
+    ) as scan_content, patch("thenetwork.worker.tasks.is_admin_request", return_value=False), patch(
+        "thenetwork.worker.tasks.run_agent_for_email", mock_agent
+    ):
+        await process_email.func(
+            sender_email="alice@example.com",
+            subject="s" * (MAX_SUBJECT_CHARS + 20),
+            body="b" * (MAX_BODY_CHARS + 20),
+        )
+
+    scan_content.assert_called_once_with("b" * MAX_BODY_CHARS)
+    mock_agent.assert_awaited_once()
+    _, kwargs = mock_agent.await_args
+    assert kwargs["email_subject"] == "s" * MAX_SUBJECT_CHARS
+    assert kwargs["email_body"] == "b" * MAX_BODY_CHARS
+
+
+@pytest.mark.asyncio
+async def test_worker_rejects_oversized_body_without_reply_or_agent(caplog):
+    from thenetwork.email.inbound import MAX_RAW_BODY_CHARS, REJECT_BODY_OVERSIZE
+    from thenetwork.worker.tasks import process_email
+
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+    with patch("thenetwork.worker.tasks.check_rate_limit") as check_rate_limit, patch(
+        "thenetwork.worker.tasks.scan_content"
+    ) as scan_content, patch("thenetwork.worker.tasks.send_reply") as send_reply, patch(
+        "thenetwork.worker.tasks.run_agent_for_email", AsyncMock()
+    ) as mock_agent:
+        await process_email.func(
+            sender_email="alice@example.com",
+            subject="Hello",
+            body="a" * (MAX_RAW_BODY_CHARS + 1),
+        )
+
+    check_rate_limit.assert_not_called()
+    scan_content.assert_not_called()
+    send_reply.assert_not_called()
+    mock_agent.assert_not_called()
+    assert any(
+        event["event"] == "worker.message_rejected" and event["reason"] == REJECT_BODY_OVERSIZE
+        for event in _events(caplog)
+    )
+
+
+@pytest.mark.asyncio
+async def test_worker_skips_empty_body_before_reply_or_agent(caplog):
+    from thenetwork.email.inbound import REJECT_BODY_EMPTY
+    from thenetwork.worker.tasks import process_email
+
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+    with patch("thenetwork.worker.tasks.check_rate_limit") as check_rate_limit, patch(
+        "thenetwork.worker.tasks.scan_content"
+    ) as scan_content, patch("thenetwork.worker.tasks.send_reply") as send_reply, patch(
+        "thenetwork.worker.tasks.run_agent_for_email", AsyncMock()
+    ) as mock_agent:
+        await process_email.func(
+            sender_email="alice@example.com",
+            subject="Hello",
+            body=" \n",
+        )
+
+    check_rate_limit.assert_not_called()
+    scan_content.assert_not_called()
+    send_reply.assert_not_called()
+    mock_agent.assert_not_called()
+    assert any(
+        event["event"] == "worker.message_rejected" and event["reason"] == REJECT_BODY_EMPTY
         for event in _events(caplog)
     )
