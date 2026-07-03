@@ -5,7 +5,34 @@ Run with: pytest -m integration
 """
 from __future__ import annotations
 
+import uuid
+
 import pytest
+from sqlalchemy import text
+
+
+def _vec_str(dim0: float = 0.0, dim1: float = 0.0) -> str:
+    v = [0.0] * 1536
+    v[0] = dim0
+    v[1] = dim1
+    return "[" + ",".join(str(x) for x in v) + "]"
+
+
+def _insert_memory(
+    conn,
+    *,
+    memory_id: str,
+    raw_text: str,
+    emb: str,
+    refs: list[str],
+    gist: str | None,
+    created_at_sql: str = "NOW()",
+) -> None:
+    refs_sql = "ARRAY[" + ",".join(f"'{r}'" for r in refs) + "]::text[]"
+    conn.execute(text(f"""
+        INSERT INTO memories (id, text, embedding, refs, gist, created_at)
+        VALUES (:mid, :txt, CAST(:emb AS vector), {refs_sql}, :gist, {created_at_sql})
+    """), {"mid": memory_id, "txt": raw_text, "emb": emb, "gist": gist})
 
 
 @pytest.mark.asyncio
@@ -67,18 +94,163 @@ def test_match_memories_returns_gist_not_raw_text(seeded_db):
 
 
 @pytest.mark.integration
-def test_match_memories_excludes_ungisted(seeded_db, pg_engine):
-    """Memories where gist IS NULL must not appear in match_memories results."""
-    import uuid
-    from sqlalchemy import text
+def test_match_memories_returns_only_gist_for_matching_memory(seeded_db, pg_engine):
+    """A matching memory returns the sanitized gist, not the raw memory text."""
     from thenetwork.db.session import get_session
     from thenetwork.search.match import match_memories
 
-    def _vec_str(dim0=0.0, dim1=0.0):
-        v = [0.0] * 1536
-        v[0] = dim0
-        v[1] = dim1
-        return "[" + ",".join(str(x) for x in v) + "]"
+    memory_id = str(uuid.uuid4())
+    raw_text = "Alice Secret alice.secret@example.com is evaluating Acme"
+    gist = "evaluating a company"
+    with pg_engine.connect() as conn:
+        _insert_memory(
+            conn,
+            memory_id=memory_id,
+            raw_text=raw_text,
+            emb=_vec_str(1.0, 0.0),
+            refs=[seeded_db["alice_id"]],
+            gist=gist,
+        )
+        conn.commit()
+
+    try:
+        with get_session() as session:
+            results = match_memories(seeded_db["query_ml"], session, limit=20)
+        match = next(r for r in results if r.memory_id == memory_id)
+        assert match.gist == gist
+        assert "alice.secret@example.com" not in match.gist
+        assert "Alice Secret" not in match.gist
+        assert not hasattr(match, "text")
+    finally:
+        with pg_engine.connect() as conn:
+            conn.execute(text("DELETE FROM memories WHERE id = :id"), {"id": memory_id})
+            conn.commit()
+
+
+@pytest.mark.integration
+def test_match_memories_recency_can_rank_fresh_over_stale(seeded_db, pg_engine):
+    """Blended ranking can prefer a fresh, slightly weaker match over a stale exact match."""
+    from thenetwork.db.session import get_session
+    from thenetwork.search.match import match_memories
+
+    stale_id = str(uuid.uuid4())
+    fresh_id = str(uuid.uuid4())
+    with pg_engine.connect() as conn:
+        _insert_memory(
+            conn,
+            memory_id=stale_id,
+            raw_text="stale exact ml match",
+            emb=_vec_str(1.0, 0.0),
+            refs=[f"stale-ref-{stale_id}"],
+            gist="stale exact ml match",
+            created_at_sql="NOW() - INTERVAL '720 days'",
+        )
+        _insert_memory(
+            conn,
+            memory_id=fresh_id,
+            raw_text="fresh approximate ml match",
+            emb=_vec_str(0.85, 0.526782687642637),
+            refs=[f"fresh-ref-{fresh_id}"],
+            gist="fresh approximate ml match",
+        )
+        conn.commit()
+
+    try:
+        with get_session() as session:
+            results = match_memories(
+                seeded_db["query_ml"],
+                session,
+                limit=50,
+                min_similarity=0.5,
+            )
+        by_id = {r.memory_id: r for r in results}
+        assert stale_id in by_id
+        assert fresh_id in by_id
+        assert by_id[stale_id].similarity > by_id[fresh_id].similarity
+
+        memory_order = [r.memory_id for r in results]
+        assert memory_order.index(fresh_id) < memory_order.index(stale_id)
+    finally:
+        with pg_engine.connect() as conn:
+            conn.execute(
+                text("DELETE FROM memories WHERE id = ANY(:ids)"),
+                {"ids": [stale_id, fresh_id]},
+            )
+            conn.commit()
+
+
+@pytest.mark.integration
+def test_match_memories_min_similarity_filters_raw_similarity(seeded_db, pg_engine):
+    """min_similarity filters semantic similarity, not recency-blended rank score."""
+    from thenetwork.db.session import get_session
+    from thenetwork.search.match import match_memories
+
+    low_similarity_id = str(uuid.uuid4())
+    with pg_engine.connect() as conn:
+        _insert_memory(
+            conn,
+            memory_id=low_similarity_id,
+            raw_text="fresh but orthogonal match",
+            emb=_vec_str(0.0, 1.0),
+            refs=[f"low-ref-{low_similarity_id}"],
+            gist="fresh but orthogonal match",
+        )
+        conn.commit()
+
+    try:
+        with get_session() as session:
+            results = match_memories(
+                seeded_db["query_ml"],
+                session,
+                limit=50,
+                min_similarity=0.8,
+            )
+        assert low_similarity_id not in {r.memory_id for r in results}
+        assert all(r.similarity >= 0.8 for r in results)
+    finally:
+        with pg_engine.connect() as conn:
+            conn.execute(text("DELETE FROM memories WHERE id = :id"), {"id": low_similarity_id})
+            conn.commit()
+
+
+@pytest.mark.integration
+def test_match_memories_returns_one_match_per_ref(seeded_db, pg_engine):
+    """A memory with refs A and B attributes the match to both refs."""
+    from thenetwork.db.session import get_session
+    from thenetwork.search.match import match_memories
+
+    memory_id = str(uuid.uuid4())
+    ref_a = f"ref-a-{memory_id}"
+    ref_b = f"ref-b-{memory_id}"
+    with pg_engine.connect() as conn:
+        _insert_memory(
+            conn,
+            memory_id=memory_id,
+            raw_text="two people share an ml interest",
+            emb=_vec_str(1.0, 0.0),
+            refs=[ref_a, ref_b],
+            gist="two people share an ml interest",
+        )
+        conn.commit()
+
+    try:
+        with get_session() as session:
+            results = match_memories(seeded_db["query_ml"], session, limit=50)
+        refs_for_memory = sorted(
+            r.person_id for r in results if r.memory_id == memory_id
+        )
+        assert refs_for_memory == sorted([ref_a, ref_b])
+    finally:
+        with pg_engine.connect() as conn:
+            conn.execute(text("DELETE FROM memories WHERE id = :id"), {"id": memory_id})
+            conn.commit()
+
+
+@pytest.mark.integration
+def test_match_memories_excludes_ungisted(seeded_db, pg_engine):
+    """Memories where gist IS NULL must not appear in match_memories results."""
+    from thenetwork.db.session import get_session
+    from thenetwork.search.match import match_memories
 
     nogist_id = str(uuid.uuid4())
     alice_id = seeded_db["alice_id"]

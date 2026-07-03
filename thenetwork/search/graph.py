@@ -8,7 +8,13 @@ from sqlalchemy import text
 from thenetwork.db.session import get_session
 
 
-def _recency_weight(created_at: datetime, half_life_days: float = 180.0) -> float:
+RECENCY_HALF_LIFE_DAYS = 180.0
+
+
+def _recency_weight(
+    created_at: datetime,
+    half_life_days: float = RECENCY_HALF_LIFE_DAYS,
+) -> float:
     age_days = (datetime.now(timezone.utc) - created_at).total_seconds() / 86400
     return 2 ** (-age_days / half_life_days)
 
