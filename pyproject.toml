@@ -26,22 +26,13 @@ dependencies = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "pydantic-evals>=0.0.14",
+    "presidio-analyzer>=2.2",
+    "spacy>=3.7",
 ]
 
 [project.optional-dependencies]
 content-scan = [
     "llm-guard>=0.3",
-]
-# Presidio (Microsoft, a mainstream/well-adopted NER-based PII library, per
-# the "use established libraries, don't reinvent" principle in
-# docs/design-decisions.md) strengthens the deterministic sanitizer with
-# person/org/location redaction beyond the email/phone regexes. Optional
-# because the spacy model download needs network access some deploy
-# environments lack; thenetwork/memory/sanitize.py falls back to the
-# regex-only strip when this extra (or its model) isn't available.
-pii-ner = [
-    "presidio-analyzer>=2.2",
-    "spacy>=3.7",
 ]
 dev = [
     "pytest>=8.3",

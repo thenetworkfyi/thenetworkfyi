@@ -131,11 +131,11 @@ column." Instead:
 3. **Self/other gate** (`thenetwork/memory/seal.py`): sole-ref-is-sender → raw
    text; otherwise → gist only.
 4. **The sanitizer is a separate, narrowly-scoped step**
-   (`thenetwork/memory/sanitize.py`) — a deterministic PII strip (emails, phones),
-   strengthened with Presidio NER redaction of names/orgs/locations when the optional
-   `pii-ner` extra is installed (regex-only fallback otherwise), plus an optional
-   higher-fidelity LLM pass that has a fixed prompt and no tools. The component that
-   sees raw cross-user data stays small and auditable; the main agent never
+   (`thenetwork/memory/sanitize.py`) — mandatory Presidio redaction of names, email
+   addresses, and phone numbers while keeping organizations and locations for search
+   recall, plus an optional higher-fidelity LLM pass that has a fixed prompt and no
+   tools. Missing Presidio is a deployment error, not a silent downgrade. The component
+   that sees raw cross-user data stays small and auditable; the main agent never
    self-censors.
 5. **Capability-style email tool (confused-deputy fix).** `dispatch_email` takes
    an opaque `recipient_user_id`; the address is resolved server-side at send time.
@@ -229,8 +229,6 @@ POSTGRES_PASSWORD=network
 pip install -e .
 # optional content scanner:
 # pip install -e ".[content-scan]"
-# optional NER-based sanitizer strengthening (names/orgs/locations):
-# pip install -e ".[pii-ner]"
 ```
 
 ### 3. Start Postgres and apply migrations
