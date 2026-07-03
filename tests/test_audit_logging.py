@@ -43,6 +43,92 @@ def test_audit_categories_replace_arbitrary_values(caplog):
 
 
 @pytest.mark.asyncio
+async def test_agent_run_applies_configured_usage_limits():
+    from thenetwork.agent.core import run_agent_for_email
+
+    class FakeUsageLimits:
+        def __init__(self, *, request_limit, total_tokens_limit):
+            self.request_limit = request_limit
+            self.total_tokens_limit = total_tokens_limit
+
+    fake_result = SimpleNamespace(output="ok", all_messages=lambda: [])
+    fake_agent = SimpleNamespace(run=AsyncMock(return_value=fake_result))
+    settings = SimpleNamespace(
+        agent_model="test:model",
+        agent_request_limit=3,
+        agent_total_tokens_limit=1234,
+    )
+
+    with patch("thenetwork.agent.core.get_settings", return_value=settings), \
+         patch("thenetwork.agent.core.build_agent", return_value=fake_agent) as build_agent, \
+         patch("thenetwork.agent.core.UsageLimits", side_effect=FakeUsageLimits) as usage_limits:
+        result = await run_agent_for_email(
+            sender_email="alice.private@example.com",
+            sender_user_id="opaque-person-id",
+            email_subject="Hello",
+            email_body="Please remember this",
+        )
+
+    assert result == "ok"
+    build_agent.assert_called_once_with(model="test:model")
+    usage_limits.assert_called_once_with(request_limit=3, total_tokens_limit=1234)
+    fake_agent.run.assert_awaited_once()
+    assert fake_agent.run.await_args.kwargs["usage_limits"].request_limit == 3
+    assert fake_agent.run.await_args.kwargs["usage_limits"].total_tokens_limit == 1234
+
+
+@pytest.mark.asyncio
+async def test_agent_usage_limit_breach_is_audited_without_raising(caplog):
+    from thenetwork.agent.core import run_agent_for_email
+
+    class FakeUsageLimitExceeded(Exception):
+        pass
+
+    class FakeUsageLimits:
+        def __init__(self, *, request_limit, total_tokens_limit):
+            self.request_limit = request_limit
+            self.total_tokens_limit = total_tokens_limit
+
+    secrets = {
+        "sender": "alice.private@example.com",
+        "subject": "Confidential acquisition",
+        "body": "Call me at 415-555-0100 about Project Finch",
+    }
+    fake_agent = SimpleNamespace(
+        run=AsyncMock(side_effect=FakeUsageLimitExceeded("Project Finch token ceiling"))
+    )
+    settings = SimpleNamespace(
+        agent_model="test:model",
+        agent_request_limit=1,
+        agent_total_tokens_limit=50,
+    )
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    with patch("thenetwork.agent.core.get_settings", return_value=settings), \
+         patch("thenetwork.agent.core.build_agent", return_value=fake_agent), \
+         patch("thenetwork.agent.core.UsageLimits", side_effect=FakeUsageLimits), \
+         patch("thenetwork.agent.core.UsageLimitExceeded", FakeUsageLimitExceeded):
+        result = await run_agent_for_email(
+            sender_email=secrets["sender"],
+            sender_user_id="opaque-person-id",
+            email_subject=secrets["subject"],
+            email_body=secrets["body"],
+        )
+
+    assert result == ""
+    serialized = "\n".join(record.message for record in caplog.records)
+    for secret in secrets.values():
+        assert secret not in serialized
+    assert "Project Finch token ceiling" not in serialized
+    assert any(
+        event["event"] == "agent.usage_limit_exceeded"
+        and event["outcome"] == "error"
+        and event["error_type"] == "FakeUsageLimitExceeded"
+        for event in _events(caplog)
+    )
+
+
+@pytest.mark.asyncio
 async def test_agent_trace_logs_structure_but_never_content(caplog):
     from thenetwork.agent.core import run_agent_for_email
 

@@ -4,6 +4,8 @@ from __future__ import annotations
 from typing import Any
 
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.usage import UsageLimits
 
 from thenetwork.agent.deps import AgentDeps
 from thenetwork.agent.prompts import SYSTEM_PROMPT
@@ -65,7 +67,12 @@ async def run_agent_for_email(
             sender_user_id=sender_user_id,
             sender_authenticated=sender_authenticated,
         )
-        agent = build_agent()
+        settings = get_settings()
+        agent = build_agent(model=settings.agent_model)
+        usage_limits = UsageLimits(
+            request_limit=settings.agent_request_limit,
+            total_tokens_limit=settings.agent_total_tokens_limit,
+        )
         user_message = f"Subject: {email_subject}\n\n{email_body}"
         audit_event(
             "agent.prompt_constructed",
@@ -74,7 +81,15 @@ async def run_agent_for_email(
             body_chars=len(email_body),
             user_message_chars=len(user_message),
         )
-        result = await agent.run(user_message, deps=deps)
+        try:
+            result = await agent.run(user_message, deps=deps, usage_limits=usage_limits)
+        except UsageLimitExceeded as exc:
+            audit_event(
+                "agent.usage_limit_exceeded",
+                outcome="error",
+                error_type=type(exc).__name__,
+            )
+            return ""
         audit_model_trace(result)
         audit_event("agent.response_generated", body_chars=len(result.output))
         return result.output

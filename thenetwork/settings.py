@@ -9,6 +9,8 @@ class Settings(BaseSettings):
 
     # LLM — provider selected by config string (no vendor lock-in, no LiteLLM)
     agent_model: str = "anthropic:claude-sonnet-4-6"
+    agent_request_limit: int = 12
+    agent_total_tokens_limit: int = 100_000
     embed_model: str = "text-embedding-3-small"
 
     # API keys (only the ones in use need to be set)
