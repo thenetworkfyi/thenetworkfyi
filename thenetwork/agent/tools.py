@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from limits import parse, storage, strategies
 from pydantic_ai import RunContext
 from sqlmodel import select
 
@@ -26,11 +27,56 @@ MAX_CONSOLIDATION_CANDIDATES = 3
 # occupy several rows; over-fetch before deduping by memory_id so a run of
 # duplicate rows doesn't crowd out a genuinely distinct candidate.
 _CONSOLIDATION_QUERY_LIMIT = MAX_CONSOLIDATION_CANDIDATES * 4
+_registration_limiter: strategies.MovingWindowRateLimiter | None = None
+_registration_storage: storage.Storage | None = None
 
 
 def _get_session(ctx: RunContext[AgentDeps]):
     sf = ctx.deps.session_factory
     return sf() if sf is not None else get_session()
+
+
+def _get_registration_limiter() -> tuple[strategies.MovingWindowRateLimiter, object]:
+    global _registration_limiter, _registration_storage
+    if _registration_limiter is None:
+        _registration_storage = storage.MemoryStorage()
+        _registration_limiter = strategies.MovingWindowRateLimiter(_registration_storage)
+    return _registration_limiter, _registration_storage
+
+
+def _hit_registration_quota(ctx: RunContext[AgentDeps]) -> bool:
+    limit_per_day = ctx.deps.settings.registration_limit_per_day
+    if limit_per_day <= 0:
+        return True
+    limiter, _ = _get_registration_limiter()
+    return limiter.hit(parse(f"{limit_per_day}/day"), "registrations:global")
+
+
+def _person_memory_count(session, person_id: str) -> int:
+    result = session.exec(
+        select(Memory).where(Memory.refs.contains([person_id]))
+    )
+    return len(result.all())
+
+
+def _memory_ceiling_error(
+    ctx: RunContext[AgentDeps],
+    session,
+    refs: list[str],
+) -> dict[str, Any] | None:
+    limit = ctx.deps.settings.person_memory_limit
+    if limit <= 0:
+        return None
+
+    for person_id in sorted(set(refs)):
+        if _person_memory_count(session, person_id) >= limit:
+            return {
+                "status": "error",
+                "reason": "person_memory_limit_exceeded",
+                "person_id": person_id,
+                "limit": limit,
+            }
+    return None
 
 
 async def _embed_memory_for_write(memory: Memory, session) -> None:
@@ -61,8 +107,20 @@ async def remember(
     so the memory is eligible for cross-user retrieval (SEAL requirement).
     """
     with audit_span("agent.tool", tool_name="remember", refs_count=len(refs)):
+        max_chars = ctx.deps.settings.remember_text_max_chars
+        if max_chars > 0 and len(text) > max_chars:
+            return {
+                "status": "error",
+                "reason": "memory_text_too_long",
+                "limit": max_chars,
+            }
+
         memory = Memory(text=text, refs=refs)
         with _get_session(ctx) as session:
+            ceiling_error = _memory_ceiling_error(ctx, session, refs)
+            if ceiling_error is not None:
+                return ceiling_error
+
             session.add(memory)
             await _embed_memory_for_write(memory, session)
             memory_id = memory.id
@@ -146,6 +204,10 @@ async def search(
         query_chars=len(query),
         top_k=top_k,
     ):
+        max_chars = ctx.deps.settings.search_query_max_chars
+        if max_chars > 0 and len(query) > max_chars:
+            raise ValueError("search query exceeds configured length cap")
+
         query_vec = await embed_text(query)
         with _get_session(ctx) as session:
             matches: list[MemoryMatch] = match_memories(query_vec, session, limit=top_k)
@@ -251,6 +313,19 @@ async def register_person(
             ).first()
             if existing:
                 return {"status": "exists", "person_id": existing.id}
+
+            if not _hit_registration_quota(ctx):
+                audit_event(
+                    "database.action",
+                    action="insert",
+                    record_type="person",
+                    outcome="rate_limited",
+                )
+                return {
+                    "status": "error",
+                    "reason": "registration_quota_exceeded",
+                    "limit": ctx.deps.settings.registration_limit_per_day,
+                }
 
             person = Person(email=ctx.deps.sender_email, name=name)
             session.add(person)
