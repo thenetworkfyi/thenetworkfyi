@@ -96,6 +96,37 @@ def test_sanitize_memory_fails_loud_when_presidio_unavailable(monkeypatch):
     assert session.flushes == 0
 
 
+@pytest.mark.integration
+@pytest.mark.real_presidio
+def test_sanitize_memory_redacts_with_real_presidio_analyzer():
+    """Exercise the real Presidio analyzer path when its model is installed."""
+    pytest.importorskip("presidio_analyzer")
+    sanitize_mod._get_presidio_analyzer.cache_clear()
+    try:
+        analyzer = sanitize_mod._get_presidio_analyzer()
+        if analyzer is None:
+            pytest.skip("real Presidio analyzer unavailable; install its local Spacy model")
+
+        text = "Alice Smith lives in Seattle. Email alice.smith@example.com or call 415-555-0199."
+        memory = Memory(text=text, refs=["person-1"])
+        session = FakeSession()
+
+        result = sanitize_mod.sanitize_memory(memory, session)
+
+        assert "[email]" in result
+        assert "[phone]" in result
+        assert "[name]" in result
+        assert "[location]" in result
+        assert "Alice" not in result
+        assert "alice.smith@example.com" not in result
+        assert "415-555-0199" not in result
+        assert memory.gist == result
+        assert session.added == [memory]
+        assert session.flushes == 1
+    finally:
+        sanitize_mod._get_presidio_analyzer.cache_clear()
+
+
 def test_get_presidio_analyzer_raises_when_not_installed(monkeypatch):
     sanitize_mod._get_presidio_analyzer.cache_clear()
 
