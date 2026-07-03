@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -19,6 +20,88 @@ class FakeSession:
 
     def flush(self) -> None:
         self.flushes += 1
+
+
+@dataclass
+class _FakeRecognizerResult:
+    entity_type: str
+    start: int
+    end: int
+
+
+class _FakeAnalyzer:
+    """Stands in for presidio_analyzer.AnalyzerEngine in tests.
+
+    Real Presidio needs a downloaded spacy model, which the sandboxed test
+    environment can't fetch, so these tests exercise the redaction logic
+    (span lookup + right-to-left substitution) against a fake analyzer with
+    the same `.analyze(text=..., entities=..., language=...) -> [result]`
+    surface, and separately prove the ImportError fallback path.
+    """
+
+    def __init__(self, results: list[_FakeRecognizerResult]) -> None:
+        self._results = results
+
+    def analyze(self, text: str, entities: list[str], language: str) -> list[_FakeRecognizerResult]:
+        return self._results
+
+
+def test_sanitize_memory_redacts_names_orgs_locations_when_presidio_available(monkeypatch):
+    text = "Alice Smith works at Acme Corp in Berlin. Email alice@example.com or call 415-555-0199."
+    memory = Memory(text=text, refs=["person-1"])
+    session = FakeSession()
+
+    fake_results = [
+        _FakeRecognizerResult("PERSON", text.index("Alice Smith"), text.index("Alice Smith") + len("Alice Smith")),
+        _FakeRecognizerResult("ORGANIZATION", text.index("Acme Corp"), text.index("Acme Corp") + len("Acme Corp")),
+        _FakeRecognizerResult("LOCATION", text.index("Berlin"), text.index("Berlin") + len("Berlin")),
+    ]
+    monkeypatch.setattr(
+        sanitize_mod, "_get_presidio_analyzer", lambda: _FakeAnalyzer(fake_results)
+    )
+
+    result = sanitize_mod.sanitize_memory(memory, session)
+
+    assert result == "[name] works at [org] in [location]. Email [email] or call [phone]."
+    assert memory.gist == result
+    assert "Alice" not in result
+    assert "Acme Corp" not in result
+    assert "Berlin" not in result
+    assert "alice@example.com" not in result
+    assert "415-555-0199" not in result
+
+
+def test_sanitize_memory_falls_back_to_regex_only_when_presidio_unavailable(monkeypatch):
+    text = "Alice Smith works at Acme Corp in Berlin. Email alice@example.com or call 415-555-0199."
+    memory = Memory(text=text, refs=["person-1"])
+    session = FakeSession()
+
+    monkeypatch.setattr(sanitize_mod, "_get_presidio_analyzer", lambda: None)
+
+    result = sanitize_mod.sanitize_memory(memory, session)
+
+    assert result == "Alice Smith works at Acme Corp in Berlin. Email [email] or call [phone]."
+    assert memory.gist == result
+
+
+def test_get_presidio_analyzer_returns_none_when_not_installed(monkeypatch):
+    sanitize_mod._get_presidio_analyzer.cache_clear()
+
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "presidio_analyzer":
+            raise ImportError("no module named presidio_analyzer")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    try:
+        assert sanitize_mod._get_presidio_analyzer() is None
+    finally:
+        sanitize_mod._get_presidio_analyzer.cache_clear()
 
 
 @pytest.mark.asyncio
@@ -72,6 +155,10 @@ async def test_high_fidelity_sanitizer_falls_back_to_deterministic_strip(monkeyp
 
     mock_llm = AsyncMock(side_effect=fail_llm)
     monkeypatch.setattr(sanitize_mod, "sanitize_memory_llm", mock_llm)
+    # Pin the deterministic fallback to its regex-only behavior regardless of
+    # whether Presidio happens to be installed in the environment running
+    # this test — the NER-strengthened path is covered separately below.
+    monkeypatch.setattr(sanitize_mod, "_get_presidio_analyzer", lambda: None)
 
     result = await sanitize_mod.sanitize_memory_high_fidelity(memory, session)
 

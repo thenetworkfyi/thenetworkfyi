@@ -132,9 +132,11 @@ column." Instead:
    text; otherwise → gist only.
 4. **The sanitizer is a separate, narrowly-scoped step**
    (`thenetwork/memory/sanitize.py`) — a deterministic PII strip (emails, phones),
-   with an optional higher-fidelity LLM pass that has a fixed prompt and no tools.
-   The component that sees raw cross-user data stays small and auditable; the main
-   agent never self-censors.
+   strengthened with Presidio NER redaction of names/orgs/locations when the optional
+   `pii-ner` extra is installed (regex-only fallback otherwise), plus an optional
+   higher-fidelity LLM pass that has a fixed prompt and no tools. The component that
+   sees raw cross-user data stays small and auditable; the main agent never
+   self-censors.
 5. **Capability-style email tool (confused-deputy fix).** `dispatch_email` takes
    an opaque `recipient_user_id`; the address is resolved server-side at send time.
    The LLM never sees or supplies a raw address.
@@ -225,6 +227,8 @@ POSTGRES_PASSWORD=network
 pip install -e .
 # optional content scanner:
 # pip install -e ".[content-scan]"
+# optional NER-based sanitizer strengthening (names/orgs/locations):
+# pip install -e ".[pii-ner]"
 ```
 
 ### 3. Start Postgres and apply migrations
