@@ -28,14 +28,19 @@ def _settings() -> Settings:
     )
 
 
-def _fake_message(uid: str = "1", from_: str = "alice@example.com"):
+def _fake_message(
+    uid: str = "1",
+    from_: str = "alice@example.com",
+    subject: str = "hello",
+    body_text: str = "hello there",
+):
     body = EmailMessage()
-    body.set_content("hello there")
+    body.set_content(body_text)
 
     msg = MagicMock()
     msg.uid = uid
     msg.from_ = from_
-    msg.subject = "hello"
+    msg.subject = subject
     msg.headers = {}
     msg.obj = body
     return msg
@@ -93,6 +98,39 @@ def test_poll_unseen_fetches_with_mark_seen_false(fake_mailbox: _FakeMailBox):
     fake_mailbox.fetch.assert_called_once()
     _, kwargs = fake_mailbox.fetch.call_args
     assert kwargs["mark_seen"] is False
+
+
+def test_poll_unseen_caps_subject(fake_mailbox: _FakeMailBox):
+    fake_mailbox.fetch.return_value = [
+        _fake_message(subject="s" * (inbound.MAX_SUBJECT_CHARS + 10))
+    ]
+
+    messages = inbound.poll_unseen()
+
+    assert len(messages) == 1
+    assert messages[0].subject == "s" * inbound.MAX_SUBJECT_CHARS
+
+
+def test_poll_unseen_marks_empty_body_as_rejected(fake_mailbox: _FakeMailBox):
+    fake_mailbox.fetch.return_value = [_fake_message(body_text=" \n")]
+
+    messages = inbound.poll_unseen()
+
+    assert len(messages) == 1
+    assert messages[0].rejection_reason == inbound.REJECT_BODY_EMPTY
+
+
+def test_poll_unseen_marks_oversized_body_as_rejected(fake_mailbox: _FakeMailBox):
+    fake_mailbox.fetch.return_value = [
+        _fake_message(body_text="a" * (inbound.MAX_RAW_BODY_CHARS + 1))
+    ]
+
+    messages = inbound.poll_unseen()
+
+    assert len(messages) == 1
+    assert messages[0].body == ""
+    assert messages[0].rejection_reason == inbound.REJECT_BODY_OVERSIZE
+    assert messages[0].body_chars > inbound.MAX_RAW_BODY_CHARS
 
 
 def test_poll_unseen_never_mutates_the_mailbox(fake_mailbox: _FakeMailBox):

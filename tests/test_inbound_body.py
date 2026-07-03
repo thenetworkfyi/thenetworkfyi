@@ -3,7 +3,14 @@ from __future__ import annotations
 
 from email.message import EmailMessage
 
-from thenetwork.email.inbound import MAX_BODY_CHARS, extract_body
+import pytest
+
+from thenetwork.email.inbound import (
+    MAX_BODY_CHARS,
+    MAX_RAW_BODY_CHARS,
+    BodyTooLargeError,
+    extract_body,
+)
 
 
 def test_plain_text_body_is_extracted_without_binary_attachment():
@@ -83,3 +90,13 @@ def test_body_is_bounded_before_it_reaches_the_agent():
     message.set_content("a" * (MAX_BODY_CHARS + 100))
 
     assert extract_body(message) == "a" * MAX_BODY_CHARS
+
+
+def test_absurdly_large_body_is_rejected_instead_of_truncated():
+    message = EmailMessage()
+    message.set_content("a" * (MAX_RAW_BODY_CHARS + 1))
+
+    with pytest.raises(BodyTooLargeError) as exc_info:
+        extract_body(message)
+
+    assert exc_info.value.body_chars > MAX_RAW_BODY_CHARS

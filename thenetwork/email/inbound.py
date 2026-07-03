@@ -12,7 +12,12 @@ from imap_tools import AND, MailBox, MailMessageFlags
 from thenetwork.settings import get_settings
 
 
-MAX_BODY_CHARS = 50_000
+MAX_SUBJECT_CHARS = 300
+MAX_BODY_CHARS = 10_000
+MAX_RAW_BODY_CHARS = 100_000
+MIN_BODY_TEXT_CHARS = 3
+REJECT_BODY_EMPTY = "body_empty"
+REJECT_BODY_OVERSIZE = "body_oversize"
 
 _AUTH_RESULT_RE = re.compile(r"\b(dkim|spf)=(\w+)", re.IGNORECASE)
 _AUTHSERV_ID_RE = re.compile(r"^\s*([^;]+)")
@@ -37,6 +42,33 @@ class InboundMessage:
     # callers must not trust `sender` for identity resolution unless this
     # is True.
     sender_authenticated: bool
+    rejection_reason: str | None = None
+    body_chars: int | None = None
+
+
+class BodyTooLargeError(ValueError):
+    """Raised when decoded body text crosses the hard inbound reject limit."""
+
+    def __init__(self, body_chars: int) -> None:
+        super().__init__("decoded inbound body exceeds hard limit")
+        self.body_chars = body_chars
+
+
+def cap_subject(subject: str | None) -> str:
+    """Return a subject bounded for audit, queues, and model context."""
+    return (subject or "")[:MAX_SUBJECT_CHARS]
+
+
+def is_near_empty_body(body: str) -> bool:
+    """Return True for body text too small to spend an agent run on."""
+    return len(body.strip()) < MIN_BODY_TEXT_CHARS
+
+
+def cap_body(body: str) -> str:
+    """Return body text bounded for downstream scanners and model context."""
+    if len(body) > MAX_RAW_BODY_CHARS:
+        raise BodyTooLargeError(len(body))
+    return body[:MAX_BODY_CHARS]
 
 
 class _VisibleTextParser(HTMLParser):
@@ -134,7 +166,7 @@ def extract_body(message: Message) -> str:
             html_parts.append(text)
 
     body = "".join(plain_parts) if plain_parts else _html_to_text("".join(html_parts))
-    return body[:MAX_BODY_CHARS]
+    return cap_body(body)
 
 
 def _is_sender_authenticated(msg) -> bool:
@@ -201,14 +233,34 @@ def poll_unseen() -> list[InboundMessage]:
             if msg.from_.lower() == own_address:
                 continue
             auto_sub = msg.headers.get("auto-submitted")
+            subject = cap_subject(msg.subject)
+            try:
+                body = extract_body(msg.obj)
+            except BodyTooLargeError as exc:
+                messages.append(
+                    InboundMessage(
+                        uid=msg.uid,
+                        sender=msg.from_,
+                        subject=subject,
+                        body="",
+                        auto_submitted=auto_sub[0] if auto_sub else None,
+                        sender_authenticated=_is_sender_authenticated(msg),
+                        rejection_reason=REJECT_BODY_OVERSIZE,
+                        body_chars=exc.body_chars,
+                    )
+                )
+                continue
+            rejection_reason = REJECT_BODY_EMPTY if is_near_empty_body(body) else None
             messages.append(
                 InboundMessage(
                     uid=msg.uid,
                     sender=msg.from_,
-                    subject=msg.subject,
-                    body=extract_body(msg.obj),
+                    subject=subject,
+                    body=body,
                     auto_submitted=auto_sub[0] if auto_sub else None,
                     sender_authenticated=_is_sender_authenticated(msg),
+                    rejection_reason=rejection_reason,
+                    body_chars=len(body),
                 )
             )
     return messages

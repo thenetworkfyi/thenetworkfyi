@@ -22,14 +22,27 @@ def _poll_and_enqueue() -> int:
     with audit_run(), audit_span("producer.poll"):
         messages = poll_unseen()   # does NOT mark seen
         count = 0
-        enqueued_uids: list[str] = []
+        handled_uids: list[str] = []
         for msg in messages:
             auto_submitted = msg.auto_submitted
+            body_chars = msg.body_chars if msg.body_chars is not None else len(msg.body)
+            if msg.rejection_reason:
+                audit_event(
+                    "intake.message_rejected",
+                    sender_present=bool(msg.sender),
+                    subject_chars=len(msg.subject),
+                    body_chars=body_chars,
+                    auto_submitted_present=bool(auto_submitted),
+                    header_names=["from", "subject", "auto-submitted"],
+                    reason=msg.rejection_reason,
+                )
+                handled_uids.append(msg.uid)
+                continue
             audit_event(
                 "intake.message_received",
                 sender_present=bool(msg.sender),
                 subject_chars=len(msg.subject),
-                body_chars=len(msg.body),
+                body_chars=body_chars,
                 auto_submitted_present=bool(auto_submitted),
                 header_names=["from", "subject", "auto-submitted"],
             )
@@ -39,10 +52,11 @@ def _poll_and_enqueue() -> int:
                 body=msg.body,
                 sender_authenticated=msg.sender_authenticated,
             )
-            enqueued_uids.append(msg.uid)
+            handled_uids.append(msg.uid)
             count += 1
-        # Mark seen AFTER successful enqueue — crash before here → email retried
-        mark_messages_seen(enqueued_uids)
+        # Mark seen only after each message has either been enqueued or
+        # intentionally rejected. Crash before here means the email is retried.
+        mark_messages_seen(handled_uids)
         audit_event("producer.poll_completed", message_count=count, outcome="success")
         return count
 
