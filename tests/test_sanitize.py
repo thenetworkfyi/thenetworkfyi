@@ -36,7 +36,7 @@ class _FakeAnalyzer:
     environment can't fetch, so these tests exercise the redaction logic
     (span lookup + right-to-left substitution) against a fake analyzer with
     the same `.analyze(text=..., entities=..., language=...) -> [result]`
-    surface, and separately prove the ImportError fallback path.
+    surface, and separately prove the ImportError fail-loud path.
     """
 
     def __init__(self, results: list[_FakeRecognizerResult]) -> None:
@@ -46,15 +46,23 @@ class _FakeAnalyzer:
         return self._results
 
 
-def test_sanitize_memory_redacts_names_orgs_locations_when_presidio_available(monkeypatch):
+def test_sanitize_memory_redacts_names_emails_phones_with_presidio(monkeypatch):
     text = "Alice Smith works at Acme Corp in Berlin. Email alice@example.com or call 415-555-0199."
     memory = Memory(text=text, refs=["person-1"])
     session = FakeSession()
 
     fake_results = [
         _FakeRecognizerResult("PERSON", text.index("Alice Smith"), text.index("Alice Smith") + len("Alice Smith")),
-        _FakeRecognizerResult("ORGANIZATION", text.index("Acme Corp"), text.index("Acme Corp") + len("Acme Corp")),
-        _FakeRecognizerResult("LOCATION", text.index("Berlin"), text.index("Berlin") + len("Berlin")),
+        _FakeRecognizerResult(
+            "EMAIL_ADDRESS",
+            text.index("alice@example.com"),
+            text.index("alice@example.com") + len("alice@example.com"),
+        ),
+        _FakeRecognizerResult(
+            "PHONE_NUMBER",
+            text.index("415-555-0199"),
+            text.index("415-555-0199") + len("415-555-0199"),
+        ),
     ]
     monkeypatch.setattr(
         sanitize_mod, "_get_presidio_analyzer", lambda: _FakeAnalyzer(fake_results)
@@ -62,29 +70,33 @@ def test_sanitize_memory_redacts_names_orgs_locations_when_presidio_available(mo
 
     result = sanitize_mod.sanitize_memory(memory, session)
 
-    assert result == "[name] works at [org] in [location]. Email [email] or call [phone]."
+    assert result == "[name] works at Acme Corp in Berlin. Email [email] or call [phone]."
     assert memory.gist == result
     assert "Alice" not in result
-    assert "Acme Corp" not in result
-    assert "Berlin" not in result
+    assert "Acme Corp" in result
+    assert "Berlin" in result
     assert "alice@example.com" not in result
     assert "415-555-0199" not in result
 
 
-def test_sanitize_memory_falls_back_to_regex_only_when_presidio_unavailable(monkeypatch):
+def test_sanitize_memory_fails_loud_when_presidio_unavailable(monkeypatch):
     text = "Alice Smith works at Acme Corp in Berlin. Email alice@example.com or call 415-555-0199."
     memory = Memory(text=text, refs=["person-1"])
     session = FakeSession()
 
-    monkeypatch.setattr(sanitize_mod, "_get_presidio_analyzer", lambda: None)
+    def unavailable():
+        raise RuntimeError("presidio missing")
 
-    result = sanitize_mod.sanitize_memory(memory, session)
+    monkeypatch.setattr(sanitize_mod, "_get_presidio_analyzer", unavailable)
 
-    assert result == "Alice Smith works at Acme Corp in Berlin. Email [email] or call [phone]."
-    assert memory.gist == result
+    with pytest.raises(RuntimeError, match="presidio missing"):
+        sanitize_mod.sanitize_memory(memory, session)
+    assert memory.gist is None
+    assert session.added == []
+    assert session.flushes == 0
 
 
-def test_get_presidio_analyzer_returns_none_when_not_installed(monkeypatch):
+def test_get_presidio_analyzer_raises_when_not_installed(monkeypatch):
     sanitize_mod._get_presidio_analyzer.cache_clear()
 
     import builtins
@@ -99,7 +111,8 @@ def test_get_presidio_analyzer_returns_none_when_not_installed(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", fake_import)
 
     try:
-        assert sanitize_mod._get_presidio_analyzer() is None
+        with pytest.raises(RuntimeError, match="presidio-analyzer is required"):
+            sanitize_mod._get_presidio_analyzer()
     finally:
         sanitize_mod._get_presidio_analyzer.cache_clear()
 
@@ -168,15 +181,27 @@ async def test_high_fidelity_sanitizer_falls_back_to_deterministic_strip_on_llm_
 
     mock_llm = AsyncMock(side_effect=fail_llm)
     monkeypatch.setattr(sanitize_mod, "sanitize_memory_llm", mock_llm)
-    # Pin the deterministic fallback to its regex-only behavior regardless of
-    # whether Presidio happens to be installed in the environment running
-    # this test — the NER-strengthened path is covered separately below.
-    monkeypatch.setattr(sanitize_mod, "_get_presidio_analyzer", lambda: None)
+    fake_results = [
+        _FakeRecognizerResult("PERSON", raw_text.index("Alice Smith"), raw_text.index("Alice Smith") + len("Alice Smith")),
+        _FakeRecognizerResult(
+            "EMAIL_ADDRESS",
+            raw_text.index("alice@example.com"),
+            raw_text.index("alice@example.com") + len("alice@example.com"),
+        ),
+        _FakeRecognizerResult(
+            "PHONE_NUMBER",
+            raw_text.index("415-555-0199"),
+            raw_text.index("415-555-0199") + len("415-555-0199"),
+        ),
+    ]
+    monkeypatch.setattr(
+        sanitize_mod, "_get_presidio_analyzer", lambda: _FakeAnalyzer(fake_results)
+    )
 
     result = await sanitize_mod.sanitize_memory_high_fidelity(memory, session)
 
     assert result == (
-        "Alice Smith lives at 123 Main Street and can discuss compilers "
+        "[name] lives at 123 Main Street and can discuss compilers "
         "via [email] or [phone]."
     )
     assert memory.gist == result
@@ -198,14 +223,29 @@ async def test_high_fidelity_sanitizer_skips_llm_when_tier_disabled(monkeypatch)
         "thenetwork.settings.get_settings",
         lambda: SimpleNamespace(agent_model="test:model", sanitize_llm_tier_enabled=False),
     )
-    monkeypatch.setattr(sanitize_mod, "_get_presidio_analyzer", lambda: None)
+    fake_results = [
+        _FakeRecognizerResult("PERSON", raw_text.index("Alice Smith"), raw_text.index("Alice Smith") + len("Alice Smith")),
+        _FakeRecognizerResult(
+            "EMAIL_ADDRESS",
+            raw_text.index("alice@example.com"),
+            raw_text.index("alice@example.com") + len("alice@example.com"),
+        ),
+        _FakeRecognizerResult(
+            "PHONE_NUMBER",
+            raw_text.index("415-555-0199"),
+            raw_text.index("415-555-0199") + len("415-555-0199"),
+        ),
+    ]
+    monkeypatch.setattr(
+        sanitize_mod, "_get_presidio_analyzer", lambda: _FakeAnalyzer(fake_results)
+    )
     mock_llm = AsyncMock(side_effect=AssertionError("LLM sanitizer must not run when tier is disabled"))
     monkeypatch.setattr(sanitize_mod, "sanitize_memory_llm", mock_llm)
 
     result = await sanitize_mod.sanitize_memory_high_fidelity(memory, session)
 
     mock_llm.assert_not_awaited()
-    assert result == "Alice Smith lives in Berlin. Email [email] or call [phone]."
+    assert result == "[name] lives in Berlin. Email [email] or call [phone]."
     assert memory.gist == result
 
 

@@ -35,10 +35,10 @@ class Settings(BaseSettings):
 
     # Optional higher-fidelity gist tier: run the LLM sanitizer (fixed prompt,
     # no tools — see docs/security.md THE SEAL layer 4) in addition to the
-    # deterministic regex + Presidio NER pass before a person-referencing
+    # deterministic Presidio pass before a person-referencing
     # memory becomes eligible for cross-user search. Off by default (costs an
     # LLM call and adds latency on every such write); when off,
-    # sanitize_memory_high_fidelity uses the deterministic + NER pass only.
+    # sanitize_memory_high_fidelity uses the deterministic Presidio pass only.
     sanitize_llm_tier_enabled: bool = False
 
     # Procrastinate worker concurrency (global LLM-spend ceiling)

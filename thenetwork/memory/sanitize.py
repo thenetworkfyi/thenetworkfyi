@@ -1,61 +1,43 @@
 from __future__ import annotations
 
-import re
 from functools import lru_cache
 
 from sqlmodel import Session
 
 from thenetwork.db.models import Memory
 
-_EMAIL_RE = re.compile(r'\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b')
-_PHONE_RE = re.compile(r'\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b')
-
 # NER entity types redacted via Presidio, mapped to the same bracket-token
-# style as the deterministic regex strip.
+# style used throughout sanitized gists.
 _PRESIDIO_ENTITY_LABELS = {
     "PERSON": "[name]",
-    "ORGANIZATION": "[org]",
-    "LOCATION": "[location]",
+    "EMAIL_ADDRESS": "[email]",
+    "PHONE_NUMBER": "[phone]",
 }
-
-
-def _strip_pii(text: str) -> str:
-    text = _EMAIL_RE.sub("[email]", text)
-    text = _PHONE_RE.sub("[phone]", text)
-    return text
 
 
 @lru_cache(maxsize=1)
 def _get_presidio_analyzer():
-    """Build (and cache) a Presidio AnalyzerEngine, or None if unavailable.
+    """Build and cache a Presidio AnalyzerEngine.
 
-    Presidio (plus its spacy model) is an optional dependency (the
-    `pii-ner` extra) — some deploy environments can't reach the network to
-    fetch the spacy model. Callers must treat None as "fall back to the
-    regex-only strip", never crash.
+    Presidio is a required dependency for the deterministic sanitizer. If the
+    package or its NLP model is unavailable, fail loudly so deploy setup cannot
+    silently produce raw cross-user gists.
     """
     try:
         from presidio_analyzer import AnalyzerEngine
-    except ImportError:
-        return None
+    except ImportError as exc:
+        raise RuntimeError("presidio-analyzer is required for memory sanitization") from exc
     try:
         return AnalyzerEngine()
-    except Exception:
-        # e.g. the spacy model isn't downloaded/available locally.
-        return None
+    except Exception as exc:
+        raise RuntimeError(
+            "Presidio AnalyzerEngine could not start; install its required NLP model"
+        ) from exc
 
 
 def _strip_pii_ner(text: str) -> str:
-    """Apply Presidio NER redaction for names, orgs, and locations.
-
-    Returns the input unchanged if Presidio (or its model) isn't available;
-    this is a pure enhancement layered on top of `_strip_pii`, never a
-    replacement for it.
-    """
+    """Apply Presidio redaction for names, email addresses, and phone numbers."""
     analyzer = _get_presidio_analyzer()
-    if analyzer is None:
-        return text
-
     results = analyzer.analyze(
         text=text,
         entities=list(_PRESIDIO_ENTITY_LABELS),
@@ -73,20 +55,17 @@ def _strip_pii_ner(text: str) -> str:
 def sanitize_memory(memory: Memory, session: Session) -> str:
     """Produce and persist a gist for a person-referencing memory.
 
-    Runs a deterministic PII strip (emails, phone numbers) plus, when
-    Presidio is installed and its model is available, NER-based redaction of
-    person names, organizations, and locations. When Presidio isn't
-    available this degrades gracefully to the regex-only strip so the
-    function never hard-crashes on the optional dependency. Writes the
-    result back as memory.gist. Call for any memory with refs before it is
-    eligible for cross-user search (SEAL requirement).
+    Runs mandatory Presidio redaction for person names, email addresses, and
+    phone numbers. Organizations and locations are kept so gists still carry
+    useful search recall for companies and places. Writes the result back as
+    memory.gist. Call for any memory with refs before it is eligible for
+    cross-user search (SEAL requirement).
     """
     if not memory.refs:
         raise ValueError(
             f"Memory {memory.id} has no refs; only person-referencing memories require sanitization"
         )
-    gist = _strip_pii(memory.text)
-    gist = _strip_pii_ner(gist)
+    gist = _strip_pii_ner(memory.text)
     memory.gist = gist
     session.add(memory)
     session.flush()
@@ -100,8 +79,8 @@ async def sanitize_memory_llm(memory: Memory, session: Session) -> str:
     docs/security.md). Slower and costs an LLM call, so it is not the
     always-on default; see sanitize_memory_high_fidelity and
     settings.sanitize_llm_tier_enabled for how it's gated in. Beyond the
-    deterministic regex + Presidio NER pass (names, emails, phones,
-    addresses, orgs), this prompt also asks the model to catch what pattern
+    deterministic Presidio pass (names, emails, phones), this prompt also
+    asks the model to catch what pattern
     matching structurally can't: social handles, URLs, and "quasi-identifying
     combinations" — otherwise-innocuous facts that, combined, single out one
     person (e.g. "the only Rust developer in Fargo").
@@ -150,7 +129,7 @@ async def sanitize_memory_high_fidelity(memory: Memory, session: Session) -> str
 
     The LLM pass is an opt-in tier (settings.sanitize_llm_tier_enabled,
     default off — it's slower and costs a model call on every write) that
-    catches quasi-identifiers and free-text PII the deterministic + NER pass
+    catches quasi-identifiers and free-text PII the deterministic Presidio pass
     can't pattern-match. When the tier is disabled, or the LLM pass fails for
     any reason, this falls back to the deterministic sanitizer so
     person-referencing memories always get a gist before cross-user search.
