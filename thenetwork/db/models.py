@@ -60,3 +60,13 @@ class AdminNonce(SQLModel, table=True):
         default_factory=_utcnow,
         sa_column=Column(DateTime(timezone=True), nullable=False),
     )
+
+
+class RateLimit(SQLModel, table=True):
+    """Durable counters for the inbound email rate limiter."""
+
+    __tablename__ = "rate_limits"
+
+    key: str = Field(primary_key=True)
+    count: int = Field(nullable=False)
+    expires_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))

@@ -495,18 +495,26 @@ def test_rate_limit_blocks_after_quota():
     """A sender who exceeds their hourly quota must be blocked."""
     from thenetwork.security.rate_limit import check_rate_limit
 
-    call_count = 0
+    sender_count = 0
 
     def fake_hit(limit, key):
-        nonlocal call_count
-        call_count += 1
-        return call_count <= 10  # allow first 10, block 11th
+        nonlocal sender_count
+        if key == "authenticated-sender:flood@attacker.com":
+            sender_count += 1
+            return sender_count <= 10  # allow first 10, block 11th
+        return True
 
     mock_limiter = MagicMock()
+    mock_limiter.test.return_value = True
     mock_limiter.hit.side_effect = fake_hit
+    mock_storage = MagicMock()
+    mock_storage.check.return_value = True
 
-    with patch("thenetwork.security.rate_limit._get_limiter", return_value=(mock_limiter, None)):
-        results = [check_rate_limit("flood@attacker.com") for _ in range(12)]
+    with patch("thenetwork.security.rate_limit._get_limiter", return_value=(mock_limiter, mock_storage)):
+        results = [
+            check_rate_limit("flood@attacker.com", sender_authenticated=True)
+            for _ in range(12)
+        ]
 
     assert all(results[:10])   # first 10 allowed
     assert not results[10]     # 11th blocked

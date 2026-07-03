@@ -58,7 +58,10 @@ async def process_email(
         body_chars=len(body),
         sender_authenticated=sender_authenticated,
     ):
-        if not check_rate_limit(sender_email):
+        if not check_rate_limit(
+            sender_email,
+            sender_authenticated=sender_authenticated,
+        ):
             audit_event("worker.message_rejected", reason="rate_limit")
             return
 

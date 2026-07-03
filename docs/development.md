@@ -17,8 +17,10 @@ EMAIL_PASSWORD=...
 IMAP_HOST=imap.gmail.com
 SMTP_HOST=smtp.gmail.com
 IMAP_SENT_FOLDER=Sent       # outbound replies are IMAP-appended here after SMTP send
-WORKER_CONCURRENCY=4        # global LLM-spend ceiling
-RATE_LIMIT_PER_HOUR=10      # per sender
+WORKER_CONCURRENCY=4        # worker concurrency ceiling
+RATE_LIMIT_PER_HOUR=10      # authenticated sender bucket
+UNAUTHENTICATED_RATE_LIMIT_PER_HOUR=3
+GLOBAL_EMAIL_RATE_LIMIT_PER_HOUR=100
 CONTENT_SCAN_ENABLED=false
 SANITIZE_LLM_TIER_ENABLED=false   # opt-in higher-fidelity gist pass, see docs/security.md layer 4
 ```

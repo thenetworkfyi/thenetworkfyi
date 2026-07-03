@@ -1,0 +1,127 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import pytest
+from sqlalchemy import text
+
+
+class FakeLimiter:
+    def __init__(self, *, test_results: dict[str, bool] | None = None) -> None:
+        self.test_results = test_results or {}
+        self.tested: list[tuple[str, str]] = []
+        self.hit_keys: list[str] = []
+
+    def test(self, limit, key: str) -> bool:
+        self.tested.append((str(limit), key))
+        return self.test_results.get(key, True)
+
+    def hit(self, limit, key: str) -> bool:
+        self.hit_keys.append(key)
+        return True
+
+
+class HealthyStorage:
+    def check(self) -> bool:
+        return True
+
+
+def _settings(**overrides):
+    defaults = {
+        "rate_limit_per_hour": 10,
+        "unauthenticated_rate_limit_per_hour": 3,
+        "global_email_rate_limit_per_hour": 100,
+    }
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
+
+
+def test_rate_limit_normalizes_sender_keys():
+    from thenetwork.security.rate_limit import check_rate_limit
+
+    limiter = FakeLimiter()
+
+    with patch("thenetwork.security.rate_limit.get_settings", return_value=_settings()), patch(
+        "thenetwork.security.rate_limit._get_limiter",
+        return_value=(limiter, HealthyStorage()),
+    ):
+        assert check_rate_limit(" Alice@Example.COM ", sender_authenticated=True)
+
+    assert "authenticated-sender:alice@example.com" in limiter.hit_keys
+
+
+def test_unauthenticated_sender_uses_smaller_separate_bucket():
+    from thenetwork.security.rate_limit import check_rate_limit
+
+    limiter = FakeLimiter()
+
+    with patch("thenetwork.security.rate_limit.get_settings", return_value=_settings()), patch(
+        "thenetwork.security.rate_limit._get_limiter",
+        return_value=(limiter, HealthyStorage()),
+    ):
+        assert check_rate_limit("real@example.com", sender_authenticated=False)
+
+    assert limiter.tested[0] == ("3 per 1 hour", "unauthenticated-sender:real@example.com")
+    assert "authenticated-sender:real@example.com" not in limiter.hit_keys
+
+
+def test_global_cap_blocks_without_consuming_sender_bucket():
+    from thenetwork.security.rate_limit import check_rate_limit
+
+    limiter = FakeLimiter(test_results={"global:emails-processed": False})
+
+    with patch("thenetwork.security.rate_limit.get_settings", return_value=_settings()), patch(
+        "thenetwork.security.rate_limit._get_limiter",
+        return_value=(limiter, HealthyStorage()),
+    ):
+        assert check_rate_limit("person@example.com", sender_authenticated=True) is False
+
+    assert limiter.hit_keys == []
+
+
+def test_rate_limit_fails_closed_when_storage_unhealthy():
+    from thenetwork.security.rate_limit import check_rate_limit
+
+    storage = SimpleNamespace(check=lambda: False)
+
+    with patch("thenetwork.security.rate_limit.get_settings", return_value=_settings()), patch(
+        "thenetwork.security.rate_limit._get_limiter",
+        return_value=(FakeLimiter(), storage),
+    ):
+        assert check_rate_limit("person@example.com", sender_authenticated=True) is False
+
+
+@pytest.mark.integration
+def test_postgres_rate_limit_state_survives_limiter_rebuild(pg_engine, monkeypatch):
+    import thenetwork.db.session as sess_mod
+    import thenetwork.security.rate_limit as rate_limit
+    from thenetwork.settings import Settings
+
+    monkeypatch.setattr(sess_mod, "_engine", pg_engine)
+    monkeypatch.setattr(
+        rate_limit,
+        "get_settings",
+        lambda: Settings(
+            rate_limit_per_hour=2,
+            unauthenticated_rate_limit_per_hour=1,
+            global_email_rate_limit_per_hour=10,
+        ),
+    )
+    rate_limit._limiter = None
+    rate_limit._storage = None
+
+    with pg_engine.begin() as conn:
+        conn.execute(text("DELETE FROM rate_limits"))
+
+    assert rate_limit.check_rate_limit("persist@example.com", sender_authenticated=True)
+    assert rate_limit.check_rate_limit("persist@example.com", sender_authenticated=True)
+
+    rate_limit._limiter = None
+    rate_limit._storage = None
+
+    try:
+        assert not rate_limit.check_rate_limit("persist@example.com", sender_authenticated=True)
+    finally:
+        rate_limit._limiter = None
+        rate_limit._storage = None

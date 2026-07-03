@@ -1,30 +1,153 @@
-"""Per-sender rate limiting via the `limits` library (Flask-Limiter's engine).
-
-Backed by Postgres so state survives restarts and is consistent across workers.
-No bespoke token bucket — just the established library.
-"""
+"""Durable inbound email rate limiting via the `limits` library."""
 from __future__ import annotations
 
-from limits import parse, storage, strategies
+from email.utils import parseaddr
+import unicodedata
 
+from limits import parse, strategies
+from limits.storage import Storage
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
+
+from thenetwork.db.session import get_engine
 from thenetwork.settings import get_settings
 
-_limiter: strategies.MovingWindowRateLimiter | None = None
-_storage: storage.Storage | None = None
+_limiter: strategies.FixedWindowRateLimiter | None = None
+_storage: Storage | None = None
 
 
-def _get_limiter() -> tuple[strategies.MovingWindowRateLimiter, object]:
+class PostgresFixedWindowStorage(Storage):
+    """`limits` fixed-window storage backed by the app Postgres database."""
+
+    STORAGE_SCHEME = ["thenetwork-postgres"]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._engine = get_engine()
+
+    @property
+    def base_exceptions(self) -> type[Exception] | tuple[type[Exception], ...]:
+        return SQLAlchemyError
+
+    def incr(self, key: str, expiry: int, amount: int = 1) -> int:
+        with self._engine.begin() as conn:
+            return int(
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO rate_limits (key, count, expires_at)
+                        VALUES (
+                            :key,
+                            :amount,
+                            now() + (:expiry * INTERVAL '1 second')
+                        )
+                        ON CONFLICT (key) DO UPDATE
+                        SET
+                            count = CASE
+                                WHEN rate_limits.expires_at <= now()
+                                    THEN :amount
+                                ELSE rate_limits.count + :amount
+                            END,
+                            expires_at = CASE
+                                WHEN rate_limits.expires_at <= now()
+                                    THEN now() + (:expiry * INTERVAL '1 second')
+                                ELSE rate_limits.expires_at
+                            END
+                        RETURNING count
+                        """
+                    ),
+                    {"key": key, "amount": amount, "expiry": expiry},
+                ).scalar_one()
+            )
+
+    def get(self, key: str) -> int:
+        with self._engine.begin() as conn:
+            row = conn.execute(
+                text(
+                    """
+                    SELECT count
+                    FROM rate_limits
+                    WHERE key = :key AND expires_at > now()
+                    """
+                ),
+                {"key": key},
+            ).first()
+        return int(row[0]) if row else 0
+
+    def get_expiry(self, key: str) -> float:
+        with self._engine.begin() as conn:
+            expires_at = conn.execute(
+                text(
+                    """
+                    SELECT EXTRACT(EPOCH FROM expires_at)
+                    FROM rate_limits
+                    WHERE key = :key
+                    """
+                ),
+                {"key": key},
+            ).scalar_one_or_none()
+        return float(expires_at or 0)
+
+    def check(self) -> bool:
+        with self._engine.begin() as conn:
+            conn.execute(text("SELECT 1"))
+        return True
+
+    def reset(self) -> int | None:
+        with self._engine.begin() as conn:
+            result = conn.execute(text("DELETE FROM rate_limits"))
+            return result.rowcount
+
+    def clear(self, key: str) -> None:
+        with self._engine.begin() as conn:
+            conn.execute(text("DELETE FROM rate_limits WHERE key = :key"), {"key": key})
+
+
+def _get_limiter() -> tuple[strategies.FixedWindowRateLimiter, Storage]:
     global _limiter, _storage
     if _limiter is None:
-        _storage = storage.MemoryStorage()
-        _limiter = strategies.MovingWindowRateLimiter(_storage)
+        _storage = PostgresFixedWindowStorage()
+        _limiter = strategies.FixedWindowRateLimiter(_storage)
     return _limiter, _storage
 
 
-def check_rate_limit(sender_email: str) -> bool:
-    """Return True if the sender is within their hourly quota, False if over limit."""
+def normalize_rate_limit_identity(sender_email: str) -> str:
+    """Return the canonical, non-empty email identity used in quota keys."""
+    raw = unicodedata.normalize("NFKC", sender_email).strip()
+    _, parsed = parseaddr(raw)
+    normalized = parsed or raw
+    return normalized.strip().casefold() or "unknown"
+
+
+def _sender_key(sender_email: str, *, sender_authenticated: bool) -> str:
+    identity = normalize_rate_limit_identity(sender_email)
+    prefix = "authenticated-sender" if sender_authenticated else "unauthenticated-sender"
+    return f"{prefix}:{identity}"
+
+
+def check_rate_limit(sender_email: str, *, sender_authenticated: bool = True) -> bool:
+    """Return True when sender and global hourly quotas both allow processing."""
     s = get_settings()
-    limiter, _ = _get_limiter()
-    limit = parse(f"{s.rate_limit_per_hour}/hour")
-    key = f"sender:{sender_email}"
-    return limiter.hit(limit, key)
+    sender_quota = (
+        s.rate_limit_per_hour
+        if sender_authenticated
+        else s.unauthenticated_rate_limit_per_hour
+    )
+    sender_limit = parse(f"{sender_quota}/hour")
+    global_limit = parse(f"{s.global_email_rate_limit_per_hour}/hour")
+    sender_key = _sender_key(sender_email, sender_authenticated=sender_authenticated)
+    global_key = "global:emails-processed"
+
+    try:
+        limiter, limit_storage = _get_limiter()
+        if not limit_storage.check():
+            return False
+        if not limiter.test(sender_limit, sender_key):
+            return False
+        if not limiter.test(global_limit, global_key):
+            return False
+        if not limiter.hit(sender_limit, sender_key):
+            return False
+        return limiter.hit(global_limit, global_key)
+    except Exception:
+        return False

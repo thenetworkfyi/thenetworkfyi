@@ -34,8 +34,13 @@ prompt-injection exfiltrate it, so the privacy boundary cannot be "withhold a co
 7. **Mail-loop prevention (RFC 3834).** Inbound carrying `Auto-Submitted` /
    `Precedence: bulk|list` / `List-*` is skipped; all outbound sets
    `Auto-Submitted: auto-replied`.
-8. **Rate limiting / anti-DoS.** Per-sender quota via `limits` (Postgres-backed), plus
-   bounded Procrastinate worker concurrency as the global LLM-spend ceiling.
+8. **Rate limiting / anti-DoS.** Per-sender quota via `limits` with Postgres-backed
+   state so counters survive restarts. Keys are normalized and split by
+   authentication state: authenticated senders use the normal bucket, while
+   unauthenticated `From:` headers use a smaller unauthenticated bucket that cannot
+   consume the matching real user's quota. A separate global emails-processed-per-hour
+   bucket caps total LLM spend and fails closed if the rate-limit store is unavailable;
+   bounded Procrastinate worker concurrency remains an additional ceiling.
 9. **Credentials.** Loaded from env / `.env` via pydantic-settings; never hardcoded.
 10. **Optional content scanner.** Provider moderation / LLM Guard as opt-in
     defense-in-depth, never the primary defense (`security/content_scan.py`).

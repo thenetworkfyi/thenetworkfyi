@@ -41,8 +41,10 @@ class Settings(BaseSettings):
     # Procrastinate worker concurrency (global LLM-spend ceiling)
     worker_concurrency: int = 4
 
-    # Rate limiting: max emails per sender per hour
+    # Rate limiting: max inbound emails per hour
     rate_limit_per_hour: int = 10
+    unauthenticated_rate_limit_per_hour: int = 3
+    global_email_rate_limit_per_hour: int = 100
 
     # Admin channel: allowlisted senders + HMAC-signed request (see admin/auth.py)
     admin_emails: list[str] = []
