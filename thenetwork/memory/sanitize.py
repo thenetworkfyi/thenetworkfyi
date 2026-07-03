@@ -35,6 +35,11 @@ def _get_presidio_analyzer():
         ) from exc
 
 
+def assert_presidio_ready() -> None:
+    """Fail fast if the required Presidio analyzer cannot initialize."""
+    _get_presidio_analyzer()
+
+
 def _strip_pii_ner(text: str) -> str:
     """Apply Presidio redaction for names, email addresses, and phone numbers."""
     analyzer = _get_presidio_analyzer()
