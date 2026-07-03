@@ -54,4 +54,5 @@ testpaths = ["tests"]
 markers = [
     "integration: marks tests that require a live pgvector DB (deselect with '-m not integration')",
     "live_model: marks tests that call the real configured AGENT_MODEL (also marked integration, so '-m not integration' already excludes them; select explicitly with '-m live_model')",
+    "real_presidio: marks tests that require presidio-analyzer plus its local Spacy model",
 ]
