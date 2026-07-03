@@ -47,7 +47,9 @@ Presidio (`presidio-analyzer` + `spacy`) is a core dependency. It powers
 `thenetwork/memory/sanitize.py`'s deterministic `sanitize_memory`, which redacts person
 names, email addresses, and phone numbers. Organizations and locations stay in the gist
 to preserve company/place search recall. Missing Presidio or a missing NLP model is a
-deployment error, not a silent downgrade.
+deployment error, not a silent downgrade. The Docker image downloads `en_core_web_lg` at
+build time; for local worker runs outside Docker, install the same model with
+`python -m spacy download en_core_web_lg`.
 
 ## Migrations
 
