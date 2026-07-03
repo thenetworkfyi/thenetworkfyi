@@ -42,7 +42,7 @@ async def test_escalate_returns_escalated_status():
     with patch("thenetwork.agent.tools.embed_text", new=AsyncMock(return_value=[0.0] * 1536)), \
          patch("thenetwork.agent.tools.get_session", return_value=cm), \
          patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock), \
-         patch("thenetwork.agent.tools.send_reply"):
+         patch("thenetwork.agent.tools.notify_admins"):
         result = await escalate(_ctx(), reason="Intent unclear")
 
     assert result["status"] == "escalated"
@@ -61,7 +61,7 @@ async def test_escalate_stores_memory_with_escalation_marker():
     with patch("thenetwork.agent.tools.embed_text", new=AsyncMock(return_value=[0.0] * 1536)), \
          patch("thenetwork.agent.tools.get_session", return_value=cm), \
          patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock), \
-         patch("thenetwork.agent.tools.send_reply"):
+         patch("thenetwork.agent.tools.notify_admins"):
         await escalate(_ctx(), reason="Cannot determine intent")
 
     assert len(added_objects) == 1
@@ -90,7 +90,7 @@ async def test_escalate_includes_sender_id_in_refs_when_known():
              "thenetwork.agent.tools.sanitize_memory_high_fidelity",
              new=AsyncMock(side_effect=fake_sanitize),
          ) as mock_sanitize, \
-         patch("thenetwork.agent.tools.send_reply"):
+         patch("thenetwork.agent.tools.notify_admins"):
         await escalate(_ctx(sender_user_id="user-abc"), reason="Unclear")
 
     mem = added_objects[0]
@@ -112,7 +112,7 @@ async def test_escalate_empty_refs_for_unknown_sender():
     with patch("thenetwork.agent.tools.embed_text", new=AsyncMock(return_value=[0.0] * 1536)) as mock_embed, \
          patch("thenetwork.agent.tools.get_session", return_value=cm), \
          patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock) as mock_sanitize, \
-         patch("thenetwork.agent.tools.send_reply"):
+         patch("thenetwork.agent.tools.notify_admins"):
         await escalate(_ctx(sender_user_id=None), reason=reason)
 
     mem = added_objects[0]
@@ -129,7 +129,7 @@ async def test_escalate_notifies_all_admin_emails():
     with patch("thenetwork.agent.tools.embed_text", new=AsyncMock(return_value=[0.0] * 1536)), \
          patch("thenetwork.agent.tools.get_session", return_value=cm), \
          patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock), \
-         patch("thenetwork.agent.tools.send_reply") as mock_send:
+         patch("thenetwork.email.outbound.send_reply") as mock_send:
         await escalate(
             _ctx(
                 sender_email="user@test.com",
@@ -151,7 +151,7 @@ async def test_escalate_no_notification_when_no_admin_emails():
     with patch("thenetwork.agent.tools.embed_text", new=AsyncMock(return_value=[0.0] * 1536)), \
          patch("thenetwork.agent.tools.get_session", return_value=cm), \
          patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock), \
-         patch("thenetwork.agent.tools.send_reply") as mock_send:
+         patch("thenetwork.email.outbound.send_reply") as mock_send:
         await escalate(_ctx(admin_emails=[]), reason="Unclear")
 
     mock_send.assert_not_called()
@@ -165,7 +165,7 @@ async def test_escalate_notification_includes_sender_and_reason():
     with patch("thenetwork.agent.tools.embed_text", new=AsyncMock(return_value=[0.0] * 1536)), \
          patch("thenetwork.agent.tools.get_session", return_value=cm), \
          patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock), \
-         patch("thenetwork.agent.tools.send_reply") as mock_send:
+         patch("thenetwork.email.outbound.send_reply") as mock_send:
         await escalate(
             _ctx(
                 sender_email="user@example.com",
