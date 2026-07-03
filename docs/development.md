@@ -46,6 +46,18 @@ under `alembic/versions/`.
 - Suites: `tests/security/` (the SEAL), `tests/scenarios/` (emergent-behavior evals via
   pydantic-evals), `tests/test_match_pipeline.py` (semantic match), `tests/test_proactive.py`.
 - `asyncio_mode = "auto"` — async tests need no decorator.
+- `tests/scenarios/test_live_archetypes.py` — a pydantic-evals `Dataset` of five archetype
+  emails (onboarding, weak match, strong match, prompt-injection attempt, ambiguous intent)
+  run against the *real* configured `AGENT_MODEL`, not `TestModel`/`FunctionModel` like the
+  rest of `tests/scenarios/`. Each case is scored by structural assertions (was the expected
+  tool called, did the reply leak another person's PII, etc.) plus a pydantic-evals
+  `LLMJudge` evaluator that grades reasonableness of the action against a rubric. DB access
+  and outbound mail are mocked the same way as `test_archetypes.py`, so a run only costs
+  model calls, not a live Postgres/SMTP round trip. Every case is marked both `integration`
+  and `live_model` (both declared in `pyproject.toml`) and the module skips itself if no
+  `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` is set, so `pytest -m "not integration"` (CI) never
+  reaches a live model. Run deliberately with
+  `pytest -m live_model tests/scenarios/test_live_archetypes.py`.
 
 ## Deployment
 
