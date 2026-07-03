@@ -25,6 +25,7 @@ from thenetwork.email.inbound import (
     is_near_empty_body,
 )
 from thenetwork.email.outbound import send_reply
+from thenetwork.memory.sanitize import assert_presidio_ready
 from thenetwork.security.content_scan import scan_content
 from thenetwork.security.rate_limit import check_rate_limit
 from thenetwork.settings import get_settings
@@ -156,6 +157,7 @@ def main() -> None:
     import asyncio
 
     configure_audit_logging()
+    assert_presidio_ready()
     asyncio.run(run_worker())
 
 
