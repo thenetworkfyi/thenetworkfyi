@@ -116,7 +116,7 @@ async def sanitize_memory_llm(memory: Memory, session: Session) -> str:
 
     s = get_settings()
     _sanitizer: Agent[None, str] = Agent(
-        model=s.agent_model,
+        model=s.small_agent_model,
         system_prompt=(
             "You are a PII sanitizer. You will receive a memory about a person. "
             "Return a version with all personally-identifying information removed: "

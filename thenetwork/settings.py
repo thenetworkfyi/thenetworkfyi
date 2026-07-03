@@ -10,6 +10,9 @@ class Settings(BaseSettings):
 
     # LLM — provider selected by config string (no vendor lock-in, no LiteLLM)
     agent_model: str = "anthropic:claude-sonnet-5"
+    # Cheaper/smaller-model tier for subtasks that don't need the main agent
+    # model (currently: the sanitize_memory_llm gist pass, see memory/sanitize.py).
+    small_agent_model: str = "anthropic:claude-haiku-4-5"
     agent_request_limit: int = 12
     agent_total_tokens_limit: int = 100_000
     embed_model: str = "text-embedding-3-small"
