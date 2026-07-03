@@ -5,9 +5,9 @@ crosses the user boundary (via search, consolidation candidates, or a
 proactive-scan trigger body) must never carry it back out, in any surface
 form: plain ("Alice Chen"), possessive ("Alice Chen's"), or lowercase
 ("alice chen" / "alice's"). These tests prove that for both gist-production
-paths: the deterministic + Presidio NER sanitizer (`sanitize_memory`) and the
-high-fidelity path `remember()` actually calls in production
-(`sanitize_memory_high_fidelity`, LLM-first with deterministic fallback).
+    paths: the deterministic Presidio sanitizer (`sanitize_memory`) and the
+    high-fidelity path `remember()` actually calls in production
+    (`sanitize_memory_high_fidelity`, optional LLM with deterministic fallback).
 """
 from __future__ import annotations
 
@@ -74,7 +74,7 @@ def _assert_no_name_variants(gist: str, name: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Deterministic + Presidio NER path (sanitize_memory), Presidio active
+# Deterministic Presidio path (sanitize_memory)
 # ---------------------------------------------------------------------------
 
 NAME_VARIANT_TEXTS = [
@@ -133,7 +133,7 @@ def test_sanitize_memory_gist_never_contains_any_variant_in_single_multivariant_
 
 # ---------------------------------------------------------------------------
 # High-fidelity path (remember()'s actual production call:
-# sanitize_memory_high_fidelity), LLM primary + Presidio-unavailable fallback
+# sanitize_memory_high_fidelity), LLM path
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -146,9 +146,6 @@ async def test_high_fidelity_gist_never_contains_name_variant_via_llm(monkeypatc
 
     memory = Memory(text=text, refs=["person-1"])
     session = FakeSession()
-    # Presidio unavailable in this deploy — the LLM path is what actually
-    # runs and must not depend on the NER layer for correctness.
-    monkeypatch.setattr(sanitize_mod, "_get_presidio_analyzer", lambda: None)
     # The LLM sanitizer is an opt-in tier (settings.sanitize_llm_tier_enabled,
     # default off); enable it here so this test exercises the LLM path it
     # asserts on rather than silently falling back to the deterministic one.
