@@ -57,6 +57,26 @@ def _append_to_sent(msg: EmailMessage) -> None:
     )
 
 
+def notify_admins(settings, subject: str, body: str) -> None:
+    """Send an internal ops notification to every configured admin address.
+
+    Shared by `agent/tools.py::escalate` and `agent/core.py`'s
+    usage-limit-exceeded handler — both need to alert a human operator
+    without routing through the user-facing growth surface, so this wraps
+    `send_reply` with `include_footer=False` and a no-op when no admin
+    addresses are configured.
+    """
+    if not settings.admin_emails:
+        return
+    for admin_email in settings.admin_emails:
+        send_reply(
+            to_address=admin_email,
+            subject=subject,
+            body_text=body,
+            include_footer=False,
+        )
+
+
 def send_reply(
     to_address: str,
     subject: str,
