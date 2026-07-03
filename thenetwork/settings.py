@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     imap_port: int = 993
     smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587
+    # Folder outbound replies are appended to after a successful SMTP send, so
+    # sent mail shows up in the account like it would from a normal mail
+    # client rather than relying on provider-side auto-save.
+    imap_sent_folder: str = "Sent"
 
     # Optional content scanner
     content_scan_enabled: bool = False
