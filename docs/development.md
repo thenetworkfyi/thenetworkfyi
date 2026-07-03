@@ -19,6 +19,7 @@ SMTP_HOST=smtp.gmail.com
 WORKER_CONCURRENCY=4        # global LLM-spend ceiling
 RATE_LIMIT_PER_HOUR=10      # per sender
 CONTENT_SCAN_ENABLED=false
+SANITIZE_LLM_TIER_ENABLED=false   # opt-in higher-fidelity gist pass, see docs/security.md layer 4
 ```
 
 Provider selection is by model-string prefix, not by code paths — there is no LiteLLM /

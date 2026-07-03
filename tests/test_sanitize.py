@@ -104,8 +104,19 @@ def test_get_presidio_analyzer_returns_none_when_not_installed(monkeypatch):
         sanitize_mod._get_presidio_analyzer.cache_clear()
 
 
+def _enable_llm_tier(monkeypatch) -> None:
+    """Point sanitize_mod's local `get_settings` import at a stub with the
+    opt-in LLM tier switched on, matching the pattern of the fixed-prompt
+    test below (sanitize_* functions re-import get_settings per call, so
+    patching the module attribute is enough)."""
+    monkeypatch.setattr(
+        "thenetwork.settings.get_settings",
+        lambda: SimpleNamespace(agent_model="test:model", sanitize_llm_tier_enabled=True),
+    )
+
+
 @pytest.mark.asyncio
-async def test_high_fidelity_sanitizer_uses_llm_output(monkeypatch):
+async def test_high_fidelity_sanitizer_uses_llm_output_when_tier_enabled(monkeypatch):
     memory = Memory(
         text=(
             "Alice Smith can mentor founders. Email alice@example.com, "
@@ -118,6 +129,7 @@ async def test_high_fidelity_sanitizer_uses_llm_output(monkeypatch):
         "[name] can mentor founders. Email [email], call [phone], "
         "or meet at [address]."
     )
+    _enable_llm_tier(monkeypatch)
 
     async def fake_llm(mem: Memory, sess: FakeSession) -> str:
         mem.gist = sanitized
@@ -142,13 +154,14 @@ async def test_high_fidelity_sanitizer_uses_llm_output(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_high_fidelity_sanitizer_falls_back_to_deterministic_strip(monkeypatch):
+async def test_high_fidelity_sanitizer_falls_back_to_deterministic_strip_on_llm_error(monkeypatch):
     raw_text = (
         "Alice Smith lives at 123 Main Street and can discuss compilers "
         "via alice@example.com or 415-555-0199."
     )
     memory = Memory(text=raw_text, refs=["person-1"])
     session = FakeSession()
+    _enable_llm_tier(monkeypatch)
 
     async def fail_llm(_memory: Memory, _session: FakeSession) -> str:
         raise RuntimeError(f"provider failed while handling: {raw_text}")
@@ -170,6 +183,30 @@ async def test_high_fidelity_sanitizer_falls_back_to_deterministic_strip(monkeyp
     assert session.added == [memory]
     assert session.flushes == 1
     mock_llm.assert_awaited_once_with(memory, session)
+
+
+@pytest.mark.asyncio
+async def test_high_fidelity_sanitizer_skips_llm_when_tier_disabled(monkeypatch):
+    """Default settings (sanitize_llm_tier_enabled=False) must never call the
+    LLM sanitizer — the opt-in tier is off by default because it costs a
+    model call and adds latency on every person-referencing write."""
+    raw_text = "Alice Smith lives in Berlin. Email alice@example.com or call 415-555-0199."
+    memory = Memory(text=raw_text, refs=["person-1"])
+    session = FakeSession()
+
+    monkeypatch.setattr(
+        "thenetwork.settings.get_settings",
+        lambda: SimpleNamespace(agent_model="test:model", sanitize_llm_tier_enabled=False),
+    )
+    monkeypatch.setattr(sanitize_mod, "_get_presidio_analyzer", lambda: None)
+    mock_llm = AsyncMock(side_effect=AssertionError("LLM sanitizer must not run when tier is disabled"))
+    monkeypatch.setattr(sanitize_mod, "sanitize_memory_llm", mock_llm)
+
+    result = await sanitize_mod.sanitize_memory_high_fidelity(memory, session)
+
+    mock_llm.assert_not_awaited()
+    assert result == "Alice Smith lives in Berlin. Email [email] or call [phone]."
+    assert memory.gist == result
 
 
 @pytest.mark.asyncio
@@ -222,9 +259,64 @@ async def test_llm_sanitizer_uses_fixed_no_tools_prompt(monkeypatch):
     assert "email addresses" in kwargs["system_prompt"]
     assert "phone numbers" in kwargs["system_prompt"]
     assert "specific street addresses" in kwargs["system_prompt"]
+    assert "employers" in kwargs["system_prompt"] or "organizations" in kwargs["system_prompt"]
+    assert "social media handles" in kwargs["system_prompt"]
+    assert "URLs" in kwargs["system_prompt"] or "links" in kwargs["system_prompt"]
+    assert "quasi-identifying combinations" in kwargs["system_prompt"]
     assert "Return only the sanitized text" in kwargs["system_prompt"]
     assert captured["prompt"] == memory.text
     assert "Dana Jones" not in result
     assert "dana@example.com" not in result
     assert "212-555-1212" not in result
     assert "7 Market Street" not in result
+
+
+@pytest.mark.asyncio
+async def test_llm_sanitizer_prompt_contract_via_function_model(monkeypatch):
+    """Exercise sanitize_memory_llm through a real pydantic-ai Agent wired to
+    FunctionModel, so this proves the prompt/no-tools contract against the
+    actual pydantic-ai message plumbing rather than a hand-rolled Agent
+    double (matches the FunctionModel/TestModel convention used elsewhere,
+    e.g. tests/scenarios/test_archetypes.py, tests/security/test_redteam.py)."""
+    from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, SystemPromptPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    memory = Memory(
+        text="Erin Cole works at Globex and tweets @erincodes, see erin.dev.",
+        refs=["person-1"],
+    )
+    session = FakeSession()
+    captured: dict[str, object] = {}
+
+    def capture_and_respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        captured["info"] = info
+        system_texts = [
+            part.content
+            for message in messages
+            for part in message.parts
+            if isinstance(part, SystemPromptPart)
+        ]
+        captured["system_prompt"] = "\n".join(system_texts)
+        return ModelResponse(parts=[TextPart(content="[name] works at [org] and tweets [handle], see [url].")])
+
+    monkeypatch.setattr(
+        "thenetwork.settings.get_settings",
+        lambda: SimpleNamespace(agent_model=FunctionModel(capture_and_respond)),
+    )
+
+    result = await sanitize_mod.sanitize_memory_llm(memory, session)
+
+    assert result == "[name] works at [org] and tweets [handle], see [url]."
+    assert memory.gist == result
+    info = captured["info"]
+    assert info.function_tools == []
+    assert info.output_tools == []
+    prompt = captured["system_prompt"]
+    assert "employers" in prompt
+    assert "social media handles" in prompt
+    assert "URLs" in prompt
+    assert "quasi-identifying combinations" in prompt
+    assert "Erin Cole" not in result
+    assert "Globex" not in result
+    assert "@erincodes" not in result
+    assert "erin.dev" not in result

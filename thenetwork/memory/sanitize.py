@@ -96,8 +96,15 @@ def sanitize_memory(memory: Memory, session: Session) -> str:
 async def sanitize_memory_llm(memory: Memory, session: Session) -> str:
     """LLM-based sanitization: broader PII removal than the deterministic strip.
 
-    Fixed system prompt, no tools, no external influence. Slower than
-    sanitize_memory(); use when higher-fidelity gists are needed.
+    Fixed system prompt, no tools, no external influence (SEAL layer 4 — see
+    docs/security.md). Slower and costs an LLM call, so it is not the
+    always-on default; see sanitize_memory_high_fidelity and
+    settings.sanitize_llm_tier_enabled for how it's gated in. Beyond the
+    deterministic regex + Presidio NER pass (names, emails, phones,
+    addresses, orgs), this prompt also asks the model to catch what pattern
+    matching structurally can't: social handles, URLs, and "quasi-identifying
+    combinations" — otherwise-innocuous facts that, combined, single out one
+    person (e.g. "the only Rust developer in Fargo").
     """
     from pydantic_ai import Agent
     from thenetwork.settings import get_settings
@@ -114,8 +121,18 @@ async def sanitize_memory_llm(memory: Memory, session: Session) -> str:
             "You are a PII sanitizer. You will receive a memory about a person. "
             "Return a version with all personally-identifying information removed: "
             "replace names with [name], email addresses with [email], phone numbers "
-            "with [phone], and specific street addresses with [address]. "
-            "Keep factual content (skills, interests, context). "
+            "with [phone], specific street addresses with [address], employers or "
+            "other organizations with [org], social media handles or platform "
+            "usernames (e.g. @someuser) with [handle], and URLs or links with "
+            "[url]. Also watch for quasi-identifying combinations: a set of "
+            "otherwise-innocuous facts that, taken together, would let a reader "
+            "single out this one person (e.g. 'the only Rust developer in "
+            "Fargo', or 'the CTO's college roommate who now lives in a town of "
+            "2,000 people') — when you see one, generalize the specific detail "
+            "(e.g. drop the town, broaden the role, widen the timeframe) so the "
+            "combination no longer narrows to one identifiable individual. "
+            "Keep factual content (skills, interests, context) that is not "
+            "identifying, on its own or in combination. "
             "Return only the sanitized text, nothing else."
         ),
         output_type=str,
@@ -129,12 +146,20 @@ async def sanitize_memory_llm(memory: Memory, session: Session) -> str:
 
 
 async def sanitize_memory_high_fidelity(memory: Memory, session: Session) -> str:
-    """Produce and persist a SEAL-safe gist, preferring the LLM sanitizer.
+    """Produce and persist a SEAL-safe gist, using the LLM sanitizer when enabled.
 
-    The LLM path removes broader PII such as names and street addresses. If
-    that path fails for any reason, fall back to the deterministic sanitizer so
-    person-referencing memories still get a gist before cross-user search.
+    The LLM pass is an opt-in tier (settings.sanitize_llm_tier_enabled,
+    default off — it's slower and costs a model call on every write) that
+    catches quasi-identifiers and free-text PII the deterministic + NER pass
+    can't pattern-match. When the tier is disabled, or the LLM pass fails for
+    any reason, this falls back to the deterministic sanitizer so
+    person-referencing memories always get a gist before cross-user search.
     """
+    from thenetwork.settings import get_settings
+
+    s = get_settings()
+    if not s.sanitize_llm_tier_enabled:
+        return sanitize_memory(memory, session)
     try:
         return await sanitize_memory_llm(memory, session)
     except Exception:
