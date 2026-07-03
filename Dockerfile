@@ -17,7 +17,8 @@ RUN apt-get update \
 # Install dependencies first (cached unless pyproject changes), then the app.
 COPY pyproject.toml README.md ./
 COPY thenetwork ./thenetwork
-RUN pip install .
+RUN pip install . \
+    && python -m spacy download en_core_web_lg
 
 # Alembic config + migrations needed at runtime for `alembic upgrade head`.
 COPY alembic.ini ./
