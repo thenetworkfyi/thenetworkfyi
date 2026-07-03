@@ -38,6 +38,11 @@ thin wrapper over a well-adopted library, swappable by config.
   inbound body is untrusted content either way — the SEAL governs what can leave the
   system, not what can enter it. Chasing exact attachment-subtree exclusion added
   bespoke parsing code for a property the size cap and the SEAL already cover.
+- **Presidio is mandatory for deterministic gist sanitization.** Names, email addresses,
+  and phone numbers are redacted by a mainstream PII library, with the spaCy model baked
+  into the Docker image at build time and checked at worker startup. Organizations and
+  locations stay in gists because those gists are embedded for company/place recall; the
+  opt-in fixed-prompt LLM tier handles quasi-identifying combinations.
 
 ## Explicitly rejected (anti-patterns)
 
@@ -58,6 +63,8 @@ understanding why it was dropped.
 - ❌ Scenario branching (`if user_record IS NULL`) → emergent behavior + evals.
 - ❌ Tools returning other users' names/emails/bios → minimal disclosure (gist only).
 - ❌ LLM handling raw email addresses → capability tool, server-side resolution.
+- ❌ Regex-only sanitizer fallback when Presidio is unavailable → fail fast; a silent
+  downgrade can produce cross-user gists with raw names.
 - ❌ LiteLLM / proxy glue → pydantic-ai native multi-provider.
 - ❌ `np.random.rand(1536)` placeholder embeddings → provider-agnostic embed wrapper.
 - ❌ Bespoke rate limiting → `limits`.
