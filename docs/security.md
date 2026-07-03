@@ -24,8 +24,11 @@ prompt-injection exfiltrate it, so the privacy boundary cannot be "withhold a co
    deterministic PII strip (emails, phones), strengthened with Presidio NER redaction of
    person names, organizations, and locations when the optional `pii-ner` extra is
    installed (falls back to the regex-only strip if it isn't), plus an optional
-   higher-fidelity LLM pass with a *fixed* prompt and no tools. The component that sees
-   raw cross-user data stays small and auditable; the main agent never self-censors.
+   higher-fidelity LLM pass with a *fixed* prompt and no tools, run on `small_agent_model`
+   (a cheaper/smaller model tier, separate from `AGENT_MODEL` which drives the main ReAct
+   agent — this fixed-prompt subtask doesn't need the main agent's model). The component
+   that sees raw cross-user data stays small and auditable; the main agent never
+   self-censors.
 5. **Capability-style email tool (confused-deputy fix).** `dispatch_email` takes an opaque
    `recipient_user_id`; the address is resolved server-side at send time. The LLM never
    sees or supplies a raw address.
