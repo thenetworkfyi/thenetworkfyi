@@ -5,10 +5,12 @@ Retries and backoff are Procrastinate's responsibility — no hand-rolled loops.
 """
 from __future__ import annotations
 
+import base64
+
 import procrastinate
 from sqlmodel import select
 
-from thenetwork.admin.auth import extract_body_text, extract_command, is_admin_request
+from thenetwork.admin.auth import extract_body_text, extract_command, verify_admin_request
 from thenetwork.admin.commands import handle_admin_command
 from thenetwork.agent.core import run_agent_for_email
 from thenetwork.audit import audit_event, audit_run, audit_span, configure_audit_logging
@@ -45,6 +47,7 @@ async def process_email(
     subject: str,
     body: str,
     sender_authenticated: bool = False,
+    raw_message_b64: str | None = None,
 ) -> None:
     """Procrastinate worker task: run the agent for one inbound email.
 
@@ -90,9 +93,11 @@ async def process_email(
             audit_event("worker.message_rejected", reason="content_scan")
             return
 
-        if is_admin_request(sender_email, subject, body):
-            command = extract_command(subject)
-            body_text = extract_body_text(body)
+        raw_message = base64.b64decode(raw_message_b64) if raw_message_b64 else None
+        verified_body = verify_admin_request(sender_email, subject, raw_message)
+        if verified_body is not None:
+            command = extract_command(verified_body)
+            body_text = extract_body_text(verified_body)
             reply = await handle_admin_command(command, body_text)
             send_reply(
                 to_address=sender_email,

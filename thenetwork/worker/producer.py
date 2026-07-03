@@ -11,6 +11,7 @@ scans. ``run_producer_cycle`` remains for manual/one-shot CLI use.
 from __future__ import annotations
 
 import asyncio
+import base64
 
 from thenetwork.audit import audit_event, audit_run, audit_span
 from thenetwork.email.inbound import mark_messages_seen, poll_unseen
@@ -46,11 +47,13 @@ def _poll_and_enqueue() -> int:
                 auto_submitted_present=bool(auto_submitted),
                 header_names=["from", "subject", "auto-submitted"],
             )
+            raw_message_b64 = base64.b64encode(msg.raw_message).decode() if msg.raw_message else None
             process_email.defer(
                 sender_email=msg.sender,
                 subject=msg.subject,
                 body=msg.body,
                 sender_authenticated=msg.sender_authenticated,
+                raw_message_b64=raw_message_b64,
             )
             handled_uids.append(msg.uid)
             count += 1

@@ -199,7 +199,7 @@ the common overrides:
 DATABASE_URL=postgresql+psycopg://network:network@localhost:5432/network_db
 
 # LLM — provider is chosen by the model string prefix
-AGENT_MODEL=anthropic:claude-sonnet-4-6
+AGENT_MODEL=anthropic:claude-sonnet-5
 EMBED_MODEL=text-embedding-3-small
 OPENAI_API_KEY=
 ANTHROPIC_API_KEY=

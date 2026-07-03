@@ -8,9 +8,10 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Build deps for psycopg/llama-index wheels; kept minimal for slim image.
+# Build deps for psycopg/llama-index wheels, plus gnupg for admin channel
+# PGP/MIME verification (python-gnupg shells out to the gpg binary).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential libpq5 \
+    && apt-get install -y --no-install-recommends build-essential libpq5 gnupg \
     && rm -rf /var/lib/apt/lists/*
 
 # Install dependencies first (cached unless pyproject changes), then the app.

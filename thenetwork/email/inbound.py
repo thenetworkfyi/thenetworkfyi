@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from bs4 import BeautifulSoup
 from imap_tools import AND, MailBox, MailMessageFlags
+from imap_tools.message import MailMessage
 
 from thenetwork.settings import get_settings
 
@@ -39,6 +40,28 @@ class InboundMessage:
     sender_authenticated: bool
     rejection_reason: str | None = None
     body_chars: int | None = None
+    # Original raw MIME bytes, exactly as received. Only captured for
+    # messages whose subject looks like an admin request — PGP/MIME
+    # signature verification (admin/auth.py) needs the byte-exact original
+    # bytes of the signed part, which re-serializing the parsed
+    # email.message.Message does not round-trip (CRLF normalizes to LF).
+    raw_message: bytes | None = None
+
+
+class _RawCapturingMailMessage(MailMessage):
+    """MailMessage subclass that also retains the original raw bytes.
+
+    imap-tools parses fetch data into `self.obj` via
+    `email.message_from_bytes()` but discards the raw bytes afterward.
+    `BaseMailBox.email_message_class` is a designed extension point for
+    swapping in a subclass like this one, so no hand-rolled IMAP FETCH is
+    needed to recover them.
+    """
+
+    def __init__(self, fetch_data: list) -> None:
+        super().__init__(fetch_data)
+        raw_message_data, _, _ = self._get_message_data_parts(fetch_data)
+        self.raw_message_bytes: bytes = raw_message_data
 
 
 class BodyTooLargeError(ValueError):
@@ -136,6 +159,7 @@ def poll_unseen() -> list[InboundMessage]:
     own_address = s.email_account.lower()
 
     with MailBox(s.imap_host, s.imap_port).login(s.email_account, s.email_password) as mb:
+        mb.email_message_class = _RawCapturingMailMessage
         for msg in mb.fetch(AND(seen=False), mark_seen=False, bulk=True):
             if _is_auto_message(msg):
                 continue
@@ -144,6 +168,10 @@ def poll_unseen() -> list[InboundMessage]:
                 continue
             auto_sub = msg.headers.get("auto-submitted")
             subject = cap_subject(msg.subject)
+            # Only admin-looking subjects need the raw bytes (PGP/MIME
+            # verification in admin/auth.py); everything else discards them
+            # to avoid holding the full raw message in memory.
+            raw_message = msg.raw_message_bytes if subject.strip().lower().startswith("admin:") else None
             try:
                 body = cap_body(msg.text or _html_to_text(msg.html))
             except BodyTooLargeError as exc:
@@ -157,6 +185,7 @@ def poll_unseen() -> list[InboundMessage]:
                         sender_authenticated=_is_sender_authenticated(msg),
                         rejection_reason=REJECT_BODY_OVERSIZE,
                         body_chars=exc.body_chars,
+                        raw_message=raw_message,
                     )
                 )
                 continue
@@ -171,6 +200,7 @@ def poll_unseen() -> list[InboundMessage]:
                     sender_authenticated=_is_sender_authenticated(msg),
                     rejection_reason=rejection_reason,
                     body_chars=len(body),
+                    raw_message=raw_message,
                 )
             )
     return messages

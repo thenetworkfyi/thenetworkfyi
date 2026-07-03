@@ -2,13 +2,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # Database
     database_url: str = "postgresql+psycopg://network:network@localhost:5432/network_db"
 
     # LLM — provider selected by config string (no vendor lock-in, no LiteLLM)
-    agent_model: str = "anthropic:claude-sonnet-4-6"
+    agent_model: str = "anthropic:claude-sonnet-5"
     agent_request_limit: int = 12
     agent_total_tokens_limit: int = 100_000
     embed_model: str = "text-embedding-3-small"
@@ -60,9 +61,9 @@ class Settings(BaseSettings):
     search_query_max_chars: int = 1_000
     person_memory_limit: int = 500
 
-    # Admin channel: allowlisted senders + HMAC-signed request (see admin/auth.py)
+    # Admin channel: allowlisted senders + PGP/MIME-signed request (see admin/auth.py)
     admin_emails: list[str] = []
-    admin_token: str = ""  # HMAC key, never sent over the wire itself
+    admin_gpg_public_key: str = ""  # armored public key of the trusted admin signer
     admin_replay_window_seconds: int = 300
 
     # Sender authentication: the From: header alone is spoofable (no envelope

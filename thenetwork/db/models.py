@@ -48,7 +48,7 @@ class Memory(SQLModel, table=True):
 
 
 class AdminNonce(SQLModel, table=True):
-    """Replay guard for the admin channel's HMAC-signed requests.
+    """Replay guard for the admin channel's PGP/MIME-signed requests.
 
     Rows are pruned by admin/auth.py whenever a request is checked; there is
     no separate cleanup job because admin traffic is low-volume by design.
