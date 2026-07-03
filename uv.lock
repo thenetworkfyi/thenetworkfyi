@@ -3566,6 +3566,15 @@ wheels = [
 ]
 
 [[package]]
+name = "python-gnupg"
+version = "0.5.6"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/98/2c/6cd2c7cff4bdbb434be5429ef6b8e96ee6b50155551361f30a1bb2ea3c1d/python_gnupg-0.5.6.tar.gz", hash = "sha256:5743e96212d38923fc19083812dc127907e44dbd3bcf0db4d657e291d3c21eac", size = 66825, upload-time = "2025-12-31T17:19:33.19Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d2/ab/0ea9de971caf3cd2e268d2b05dfe9883b21cfe686a59249bd2dccb4bae33/python_gnupg-0.5.6-py2.py3-none-any.whl", hash = "sha256:b5050a55663d8ab9fcc8d97556d229af337a87a3ebebd7054cbd8b7e2043394a", size = 22082, upload-time = "2025-12-31T17:16:22.743Z" },
+]
+
+[[package]]
 name = "python-multipart"
 version = "0.0.32"
 source = { registry = "https://pypi.org/simple" }
@@ -4222,6 +4231,7 @@ dependencies = [
     { name = "llama-index-vector-stores-postgres" },
     { name = "networkx" },
     { name = "pgvector" },
+    { name = "presidio-analyzer" },
     { name = "procrastinate", extra = ["sqlalchemy"] },
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic-ai" },
@@ -4229,6 +4239,8 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
+    { name = "python-gnupg" },
+    { name = "spacy" },
     { name = "sqlmodel" },
     { name = "structlog" },
 ]
@@ -4241,10 +4253,6 @@ dev = [
     { name = "pydantic-evals" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
-]
-pii-ner = [
-    { name = "presidio-analyzer" },
-    { name = "spacy" },
 ]
 
 [package.metadata]
@@ -4259,7 +4267,7 @@ requires-dist = [
     { name = "llm-guard", marker = "extra == 'content-scan'", specifier = ">=0.3" },
     { name = "networkx", specifier = ">=3.3" },
     { name = "pgvector", specifier = ">=0.3" },
-    { name = "presidio-analyzer", marker = "extra == 'pii-ner'", specifier = ">=2.2" },
+    { name = "presidio-analyzer", specifier = ">=2.2" },
     { name = "procrastinate", extras = ["sqlalchemy"], specifier = ">=2.9" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "pydantic-ai", extras = ["openai", "anthropic"], specifier = ">=0.0.14" },
@@ -4270,11 +4278,12 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3" },
     { name = "pytest-asyncio", specifier = ">=0.24" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
-    { name = "spacy", marker = "extra == 'pii-ner'", specifier = ">=3.7" },
+    { name = "python-gnupg", specifier = ">=0.5" },
+    { name = "spacy", specifier = ">=3.7" },
     { name = "sqlmodel", specifier = ">=0.0.21" },
     { name = "structlog", specifier = ">=24.1" },
 ]
-provides-extras = ["content-scan", "pii-ner", "dev"]
+provides-extras = ["content-scan", "dev"]
 
 [[package]]
 name = "thinc"
