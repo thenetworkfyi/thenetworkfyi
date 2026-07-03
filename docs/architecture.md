@@ -18,6 +18,9 @@ The "big picture" that requires reading several files to reconstruct. See
                     | tools: remember / forget / search / dispatch_email / escalate / register_person
                     v
                 Reply --SMTP--> [Sender]
+                    | append to IMAP Sent folder (best-effort, post-send)
+                    v
+              [Sent folder]
 ```
 
 There is **one** long-lived process (`thenetwork-worker` → `worker/tasks.py:main`). It
@@ -28,11 +31,20 @@ is required; `thenetwork-producer` is just a manual one-shot poll for cron/debug
 - **Producer** (`worker/producer.py`): polls IMAP for unseen mail, enqueues exactly one
   durable job per message, and marks the message seen *only after* enqueue. Durability
   lives in the Postgres job row, not the IMAP seen-flag — a mid-run crash means the job
-  retries (`max_attempts=3`) and nothing is lost.
+  retries (`max_attempts=3`) and nothing is lost. The producer only ever flips `\Seen`;
+  it never deletes or moves inbound mail, so everything the account has received stays
+  in INBOX permanently, the same as a normal mailbox.
 - **Worker** (`worker/tasks.py`): Postgres-native Procrastinate (LISTEN/NOTIFY +
   `SKIP LOCKED`, no Redis/broker). Enforces per-sender rate limit and optional content
   scan, resolves whether the sender is a known `Person`, then calls
   `agent/core.py:run_agent_for_email`. Worker concurrency is the global LLM-spend ceiling.
+- **Outbound** (`email/outbound.py`): after the SMTP send succeeds, `send_reply` also
+  appends the sent message to an IMAP folder (`imap_sent_folder`, default `Sent`),
+  flagged `\Seen`, so the account looks like a normal end-to-end mailbox with both
+  received and sent mail visible. This append is best-effort visibility, not part of the
+  delivery guarantee — a failure there is caught and audit-logged
+  (`email.imap_append.completed`, outcome `success`/`error`) but never fails the job or
+  retries the send.
 - **Agent** (`agent/core.py`): pydantic-ai ReAct agent. The untrusted email body is
   passed as **user-role** content (`f"Subject: {subject}\n\n{body}"`), never concatenated
   into the system prompt. Tools registered in `build_agent`; deps in `agent/deps.py`
