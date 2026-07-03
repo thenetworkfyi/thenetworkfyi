@@ -30,7 +30,7 @@ must keep the `tests/security/` red-team suite green.
 ```bash
 pip install -e ".[dev]"            # install with test deps
 pip install -e ".[content-scan]"   # optional content scanner (llm-guard)
-pip install -e ".[pii-ner]"        # optional Presidio NER sanitizer (names/orgs/locations)
+python -m spacy download en_core_web_lg  # required Presidio model for local worker runs; Docker bakes it in
 
 docker compose up -d db            # local pgvector Postgres
 alembic upgrade head               # create vector extension + tables
