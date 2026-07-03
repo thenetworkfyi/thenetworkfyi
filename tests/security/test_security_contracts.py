@@ -189,14 +189,15 @@ async def test_remember_stores_with_gist():
 
     ctx = FakeCtx()
     ctx._mock_sess.get.return_value = MagicMock(spec=Person, id="user-alice")
+    sanitized = "[name] is an ml engineer"
 
     with patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock, return_value=[0.0] * 1536) as mock_embed, \
          patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock) as mock_sanitize:
-        mock_sanitize.return_value = "alice is an ml engineer"
+        mock_sanitize.return_value = sanitized
         await remember(ctx, text="Alice Smith is an ML engineer at Acme Corp, alice@acme.com", refs=["user-alice"])
 
     mock_sanitize.assert_awaited_once()
-    mock_embed.assert_called_once()
+    mock_embed.assert_awaited_once_with(sanitized)
 
 
 @pytest.mark.asyncio
@@ -207,12 +208,14 @@ async def test_remember_zero_ref_does_not_sanitize_or_set_gist():
     ctx = FakeCtx()
     added: list[object] = []
     ctx._mock_sess.add.side_effect = added.append
+    raw = "General system note with no person refs"
 
-    with patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock, return_value=[0.0] * 1536), \
+    with patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock, return_value=[0.0] * 1536) as mock_embed, \
          patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock) as mock_sanitize:
-        await remember(ctx, text="General system note with no person refs", refs=[])
+        await remember(ctx, text=raw, refs=[])
 
     mock_sanitize.assert_not_awaited()
+    mock_embed.assert_awaited_once_with(raw)
     assert added[0].gist is None
 
 

@@ -27,6 +27,21 @@ def _get_session(ctx: RunContext[AgentDeps]):
     return sf() if sf is not None else get_session()
 
 
+async def _embed_memory_for_write(memory: Memory, session) -> None:
+    if memory.refs:
+        gist = await sanitize_memory_high_fidelity(memory, session)
+        if memory.gist is None and isinstance(gist, str):
+            memory.gist = gist
+        if memory.gist is None:
+            raise RuntimeError(
+                f"Memory {memory.id} has refs but no gist after sanitization"
+            )
+        memory.embedding = await embed_text(memory.gist)
+        return
+
+    memory.embedding = await embed_text(memory.text)
+
+
 async def remember(
     ctx: RunContext[AgentDeps],
     text: str,
@@ -40,12 +55,10 @@ async def remember(
     so the memory is eligible for cross-user retrieval (SEAL requirement).
     """
     with audit_span("agent.tool", tool_name="remember", refs_count=len(refs)):
-        vec = await embed_text(text)
-        memory = Memory(text=text, refs=refs, embedding=vec)
+        memory = Memory(text=text, refs=refs)
         with _get_session(ctx) as session:
             session.add(memory)
-            if refs:
-                await sanitize_memory_high_fidelity(memory, session)
+            await _embed_memory_for_write(memory, session)
             session.commit()
         audit_event(
             "database.action",
@@ -129,12 +142,10 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
         refs = [ctx.deps.sender_user_id] if ctx.deps.sender_user_id else []
 
         text = f"[ESCALATED] {reason}"
-        vec = await embed_text(text)
-        memory = Memory(text=text, refs=refs, embedding=vec)
+        memory = Memory(text=text, refs=refs)
         with _get_session(ctx) as session:
             session.add(memory)
-            if refs:
-                await sanitize_memory_high_fidelity(memory, session)
+            await _embed_memory_for_write(memory, session)
             session.commit()
         audit_event(
             "database.action",

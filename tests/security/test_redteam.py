@@ -121,12 +121,21 @@ async def test_remember_stored_gist_drops_person_names_before_commit():
         "Alice Smith should meet Bob because Alice Smith builds ML systems "
         "and Bob researches privacy."
     )
-    with patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock, return_value=[0.0] * 1536), \
+    async def fake_embed(text):
+        events.append(f"embed:{text}")
+        return [0.0] * 1536
+
+    with patch("thenetwork.agent.tools.embed_text", new=AsyncMock(side_effect=fake_embed)) as mock_embed, \
          patch("thenetwork.memory.sanitize.sanitize_memory_llm", side_effect=fake_llm_sanitize):
         await remember(ctx, text=raw, refs=["user-alice", "user-bob"])
 
     stored = added[0]
-    assert events == ["sanitize", "commit"]
+    assert events == [
+        "sanitize",
+        "embed:[name] builds ML systems and researches privacy.",
+        "commit",
+    ]
+    mock_embed.assert_awaited_once_with("[name] builds ML systems and researches privacy.")
     assert stored.gist is not None
     assert "Alice Smith" not in stored.gist
     assert "Alice" not in stored.gist
@@ -157,9 +166,13 @@ async def test_agent_reply_never_leaks_pii(adversarial_body: str):
         mock_settings.return_value.agent_model = test_model
         agent = build_agent()
 
+    async def fake_sanitize(memory, session):
+        memory.gist = "sanitized memory"
+        return memory.gist
+
     with patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock, return_value=[0.0] * 1536), \
          patch("thenetwork.agent.tools.match_memories", return_value=[]), \
-         patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock):
+         patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new=AsyncMock(side_effect=fake_sanitize)):
         result = await agent.run(adversarial_body, deps=deps)
 
     reply = result.output or ""

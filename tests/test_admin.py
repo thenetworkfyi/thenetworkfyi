@@ -270,7 +270,7 @@ def test_handle_admin_command_remember_refs_awaits_high_fidelity_sanitizer():
         memory.gist = "[name] knows privacy-preserving ML."
         return memory.gist
 
-    with patch("thenetwork.admin.commands.embed_text", new=AsyncMock(return_value=[0.0] * 1536)), \
+    with patch("thenetwork.admin.commands.embed_text", new=AsyncMock(return_value=[0.0] * 1536)) as mock_embed, \
          patch("thenetwork.admin.commands.get_session", side_effect=[resolve_cm, write_cm]), \
          patch(
              "thenetwork.admin.commands.sanitize_memory_high_fidelity",
@@ -285,6 +285,7 @@ def test_handle_admin_command_remember_refs_awaits_high_fidelity_sanitizer():
 
     assert "Stored memory" in result
     mock_sanitize.assert_awaited_once()
+    mock_embed.assert_awaited_once_with("[name] knows privacy-preserving ML.")
     assert added[0].refs == ["user-alice"]
     assert "Alice" not in added[0].gist
     assert "Bob" not in added[0].gist
@@ -301,12 +302,15 @@ def test_handle_admin_command_remember_without_refs_does_not_sanitize():
     write_cm.__enter__ = MagicMock(return_value=write_session)
     write_cm.__exit__ = MagicMock(return_value=False)
 
-    with patch("thenetwork.admin.commands.embed_text", new=AsyncMock(return_value=[0.0] * 1536)), \
+    raw = "General note with no refs."
+
+    with patch("thenetwork.admin.commands.embed_text", new=AsyncMock(return_value=[0.0] * 1536)) as mock_embed, \
          patch("thenetwork.admin.commands.get_session", return_value=write_cm), \
          patch("thenetwork.admin.commands.sanitize_memory_high_fidelity", new_callable=AsyncMock) as mock_sanitize:
-        result = asyncio.run(handle_admin_command("remember", "General note with no refs."))
+        result = asyncio.run(handle_admin_command("remember", raw))
 
     assert "Stored memory" in result
     mock_sanitize.assert_not_awaited()
+    mock_embed.assert_awaited_once_with(raw)
     assert added[0].refs == []
     assert added[0].gist is None

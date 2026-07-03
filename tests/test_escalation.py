@@ -79,16 +79,25 @@ async def test_escalate_includes_sender_id_in_refs_when_known():
     cm, session = _mock_session()
     added_objects = []
     session.add.side_effect = added_objects.append
+    sanitized = "[name] asked for human review."
 
-    with patch("thenetwork.agent.tools.embed_text", new=AsyncMock(return_value=[0.0] * 1536)), \
+    async def fake_sanitize(memory, session):
+        memory.gist = sanitized
+        return memory.gist
+
+    with patch("thenetwork.agent.tools.embed_text", new=AsyncMock(return_value=[0.0] * 1536)) as mock_embed, \
          patch("thenetwork.agent.tools.get_session", return_value=cm), \
-         patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock) as mock_sanitize, \
+         patch(
+             "thenetwork.agent.tools.sanitize_memory_high_fidelity",
+             new=AsyncMock(side_effect=fake_sanitize),
+         ) as mock_sanitize, \
          patch("thenetwork.agent.tools.send_reply"):
         await escalate(_ctx(sender_user_id="user-abc"), reason="Unclear")
 
     mem = added_objects[0]
     assert mem.refs == ["user-abc"]
     mock_sanitize.assert_awaited_once()
+    mock_embed.assert_awaited_once_with(sanitized)
 
 
 @pytest.mark.asyncio
@@ -98,16 +107,19 @@ async def test_escalate_empty_refs_for_unknown_sender():
     cm, session = _mock_session()
     added_objects = []
     session.add.side_effect = added_objects.append
+    reason = "New sender, unclear intent"
+    raw = f"[ESCALATED] {reason}"
 
-    with patch("thenetwork.agent.tools.embed_text", new=AsyncMock(return_value=[0.0] * 1536)), \
+    with patch("thenetwork.agent.tools.embed_text", new=AsyncMock(return_value=[0.0] * 1536)) as mock_embed, \
          patch("thenetwork.agent.tools.get_session", return_value=cm), \
          patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock) as mock_sanitize, \
          patch("thenetwork.agent.tools.send_reply"):
-        await escalate(_ctx(sender_user_id=None), reason="New sender, unclear intent")
+        await escalate(_ctx(sender_user_id=None), reason=reason)
 
     mem = added_objects[0]
     assert mem.refs == []
     mock_sanitize.assert_not_awaited()
+    mock_embed.assert_awaited_once_with(raw)
 
 
 @pytest.mark.asyncio
