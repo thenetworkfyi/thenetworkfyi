@@ -101,6 +101,7 @@ async def test_agent_usage_limit_breach_is_audited_without_raising(caplog):
         agent_model="test:model",
         agent_request_limit=1,
         agent_total_tokens_limit=50,
+        admin_emails=[],
     )
     caplog.set_level(logging.INFO, logger=LOGGER_NAME)
 
@@ -126,6 +127,59 @@ async def test_agent_usage_limit_breach_is_audited_without_raising(caplog):
         and event["error_type"] == "FakeUsageLimitExceeded"
         for event in _events(caplog)
     )
+
+
+@pytest.mark.asyncio
+async def test_agent_usage_limit_breach_notifies_admins(caplog):
+    from thenetwork.agent.core import run_agent_for_email
+
+    class FakeUsageLimitExceeded(Exception):
+        pass
+
+    class FakeUsageLimits:
+        def __init__(self, *, request_limit, total_tokens_limit):
+            self.request_limit = request_limit
+            self.total_tokens_limit = total_tokens_limit
+
+    secrets = {
+        "sender": "alice.private@example.com",
+        "subject": "Confidential acquisition",
+        "body": "Call me at 415-555-0100 about Project Finch",
+    }
+    fake_agent = SimpleNamespace(
+        run=AsyncMock(side_effect=FakeUsageLimitExceeded("Project Finch token ceiling"))
+    )
+    settings = SimpleNamespace(
+        agent_model="test:model",
+        agent_request_limit=1,
+        agent_total_tokens_limit=50,
+        admin_emails=["admin@example.com"],
+    )
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    with patch("thenetwork.agent.core.get_settings", return_value=settings), \
+         patch("thenetwork.agent.core.build_agent", return_value=fake_agent), \
+         patch("thenetwork.agent.core.UsageLimits", side_effect=FakeUsageLimits), \
+         patch("thenetwork.agent.core.UsageLimitExceeded", FakeUsageLimitExceeded), \
+         patch("thenetwork.agent.core.notify_admins") as mock_notify:
+        result = await run_agent_for_email(
+            sender_email=secrets["sender"],
+            sender_user_id=None,
+            email_subject=secrets["subject"],
+            email_body=secrets["body"],
+        )
+
+    assert result == ""
+    mock_notify.assert_called_once()
+    call_args = mock_notify.call_args
+    assert call_args.args[0] is settings
+    notified_subject = call_args.args[1]
+    notified_body = call_args.args[2]
+    assert secrets["subject"] not in notified_subject
+    assert secrets["subject"] not in notified_body
+    assert secrets["body"] not in notified_body
+    assert secrets["sender"] in notified_body
+    assert "Sender known: False" in notified_body
 
 
 @pytest.mark.asyncio
