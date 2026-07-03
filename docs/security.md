@@ -24,9 +24,12 @@ prompt-injection exfiltrate it, so the privacy boundary cannot be "withhold a co
    mandatory Presidio pass redacts person names, email addresses, and phone numbers.
    Organizations and locations are deliberately kept in gists because those gists are what
    get embedded for company/place search recall. Quasi-identifying combinations are handled
-   by the optional higher-fidelity LLM pass with a *fixed* prompt and no tools. Missing
-   Presidio is a deployment error, not a silent downgrade. The component that sees raw
-   cross-user data stays small and auditable; the main agent never self-censors.
+   by the optional higher-fidelity LLM pass with a *fixed* prompt and no tools, run on
+   `small_agent_model` (a cheaper/smaller model tier, separate from `AGENT_MODEL` which
+   drives the main ReAct agent — this fixed-prompt subtask doesn't need the main agent's
+   model). Missing Presidio is a deployment error, not a silent downgrade. The component
+   that sees raw cross-user data stays small and auditable; the main agent never
+   self-censors.
 5. **Capability-style email tool (confused-deputy fix).** `dispatch_email` takes an opaque
    `recipient_user_id`; the address is resolved server-side at send time. The LLM never
    sees or supplies a raw address.
