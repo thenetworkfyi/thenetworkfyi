@@ -80,20 +80,26 @@ async def process_email(
             return
 
         sender_user_id: str | None = None
-        if sender_authenticated:
-            with get_session() as session:
-                profile = session.exec(
-                    select(Person).where(Person.email == sender_email)
-                ).first()
-                if profile:
-                    sender_user_id = profile.id
+        with get_session() as session:
+            profile = session.exec(
+                select(Person).where(Person.email == sender_email)
+            ).first()
+            if profile and sender_authenticated:
+                sender_user_id = profile.id
 
         audit_event(
             "database.action",
             action="lookup",
             record_type="person",
-            outcome="found" if sender_user_id is not None else "not_found",
+            outcome="found" if profile is not None else "not_found",
         )
+
+        if not sender_authenticated and profile is None:
+            audit_event(
+                "worker.message_rejected",
+                reason="unauthenticated_unknown_sender",
+            )
+            return
 
         await run_agent_for_email(
             sender_email=sender_email,

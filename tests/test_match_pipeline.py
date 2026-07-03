@@ -58,6 +58,7 @@ async def test_e2e_producer_to_agent(monkeypatch):
             sender_email="test@example.com",
             subject="Hello",
             body="I'm a backend engineer looking for ML folks.",
+            sender_authenticated=True,
         )
 
 
