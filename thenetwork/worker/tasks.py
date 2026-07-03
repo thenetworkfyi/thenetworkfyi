@@ -40,6 +40,55 @@ app = procrastinate.App(
     ],
 )
 
+REJECT_RATE_LIMIT = "rate_limit"
+REJECT_CONTENT_SCAN = "content_scan"
+
+_INFRASTRUCTURE_REJECTION_REPLIES = {
+    REJECT_BODY_OVERSIZE: (
+        "We could not process your email because the message body was too large. "
+        "Please send a shorter message and try again."
+    ),
+    REJECT_RATE_LIMIT: (
+        "We could not process your email because this address is sending too many "
+        "messages right now. Please wait and try again later."
+    ),
+    REJECT_CONTENT_SCAN: (
+        "We could not process your email because it was blocked by an automated "
+        "safety scan. Please revise the message and try again."
+    ),
+}
+
+
+def _is_known_authenticated_sender(sender_email: str, sender_authenticated: bool) -> bool:
+    if not sender_authenticated:
+        return False
+
+    with get_session() as session:
+        sender_id = session.exec(
+            select(Person.id).where(Person.email == sender_email)
+        ).first()
+
+    return sender_id is not None
+
+
+def _send_infrastructure_rejection_reply(
+    *,
+    sender_email: str,
+    subject: str,
+    sender_authenticated: bool,
+    reason: str,
+) -> None:
+    body_text = _INFRASTRUCTURE_REJECTION_REPLIES[reason]
+    if not _is_known_authenticated_sender(sender_email, sender_authenticated):
+        return
+
+    send_reply(
+        to_address=sender_email,
+        subject=f"Re: {subject}",
+        body_text=body_text,
+        include_footer=False,
+    )
+
 
 @app.task(retry=procrastinate.RetryStrategy(max_attempts=3, wait=60))
 async def process_email(
@@ -75,6 +124,12 @@ async def process_email(
             body = cap_body(body)
         except BodyTooLargeError:
             audit_event("worker.message_rejected", reason=REJECT_BODY_OVERSIZE)
+            _send_infrastructure_rejection_reply(
+                sender_email=sender_email,
+                subject=subject,
+                sender_authenticated=sender_authenticated,
+                reason=REJECT_BODY_OVERSIZE,
+            )
             return
 
         if is_near_empty_body(body):
@@ -85,12 +140,24 @@ async def process_email(
             sender_email,
             sender_authenticated=sender_authenticated,
         ):
-            audit_event("worker.message_rejected", reason="rate_limit")
+            audit_event("worker.message_rejected", reason=REJECT_RATE_LIMIT)
+            _send_infrastructure_rejection_reply(
+                sender_email=sender_email,
+                subject=subject,
+                sender_authenticated=sender_authenticated,
+                reason=REJECT_RATE_LIMIT,
+            )
             return
 
         is_safe, _ = scan_content(body)
         if not is_safe:
-            audit_event("worker.message_rejected", reason="content_scan")
+            audit_event("worker.message_rejected", reason=REJECT_CONTENT_SCAN)
+            _send_infrastructure_rejection_reply(
+                sender_email=sender_email,
+                subject=subject,
+                sender_authenticated=sender_authenticated,
+                reason=REJECT_CONTENT_SCAN,
+            )
             return
 
         raw_message = base64.b64decode(raw_message_b64) if raw_message_b64 else None

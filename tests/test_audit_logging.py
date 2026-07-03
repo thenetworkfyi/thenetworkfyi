@@ -15,6 +15,14 @@ def _events(caplog) -> list[dict]:
     return [json.loads(record.message) for record in caplog.records if record.name == LOGGER_NAME]
 
 
+def _mock_sender_lookup(sender_id: str | None) -> MagicMock:
+    mock_session = MagicMock()
+    mock_session.__enter__ = MagicMock(return_value=mock_session)
+    mock_session.__exit__ = MagicMock(return_value=False)
+    mock_session.exec.return_value.first.return_value = sender_id
+    return mock_session
+
+
 def test_audit_events_are_json_and_correlated(caplog):
     caplog.set_level(logging.INFO, logger=LOGGER_NAME)
 
@@ -365,6 +373,99 @@ async def test_worker_rejects_oversized_body_without_reply_or_agent(caplog):
         event["event"] == "worker.message_rejected" and event["reason"] == REJECT_BODY_OVERSIZE
         for event in _events(caplog)
     )
+
+
+@pytest.mark.parametrize("reason", ["body_oversize", "rate_limit", "content_scan"])
+@pytest.mark.asyncio
+async def test_worker_replies_to_known_authenticated_sender_on_infrastructure_rejection(reason):
+    from thenetwork.email.inbound import MAX_RAW_BODY_CHARS, REJECT_BODY_OVERSIZE
+    from thenetwork.worker.tasks import (
+        REJECT_CONTENT_SCAN,
+        REJECT_RATE_LIMIT,
+        _INFRASTRUCTURE_REJECTION_REPLIES,
+        process_email,
+    )
+
+    body = "Project Finch closes Friday"
+    if reason == REJECT_BODY_OVERSIZE:
+        body = "a" * (MAX_RAW_BODY_CHARS + 1)
+
+    mock_session = _mock_sender_lookup("person-id")
+
+    with patch("thenetwork.worker.tasks.get_session", return_value=mock_session), patch(
+        "thenetwork.worker.tasks.check_rate_limit",
+        return_value=reason != REJECT_RATE_LIMIT,
+    ) as check_rate_limit, patch(
+        "thenetwork.worker.tasks.scan_content",
+        return_value=(reason != REJECT_CONTENT_SCAN, None),
+    ) as scan_content, patch("thenetwork.worker.tasks.send_reply") as send_reply, patch(
+        "thenetwork.worker.tasks.run_agent_for_email", AsyncMock()
+    ) as mock_agent:
+        await process_email.func(
+            sender_email="alice@example.com",
+            subject="Hello",
+            body=body,
+            sender_authenticated=True,
+        )
+
+    send_reply.assert_called_once_with(
+        to_address="alice@example.com",
+        subject="Re: Hello",
+        body_text=_INFRASTRUCTURE_REJECTION_REPLIES[reason],
+        include_footer=False,
+    )
+    mock_agent.assert_not_called()
+
+    if reason == REJECT_BODY_OVERSIZE:
+        check_rate_limit.assert_not_called()
+        scan_content.assert_not_called()
+
+
+@pytest.mark.parametrize("reason", ["body_oversize", "rate_limit", "content_scan"])
+@pytest.mark.parametrize(
+    ("sender_authenticated", "sender_id"),
+    [(False, "person-id"), (True, None)],
+)
+@pytest.mark.asyncio
+async def test_worker_keeps_infrastructure_rejection_silent_for_unauthenticated_or_unknown_sender(
+    reason,
+    sender_authenticated,
+    sender_id,
+):
+    from thenetwork.email.inbound import MAX_RAW_BODY_CHARS, REJECT_BODY_OVERSIZE
+    from thenetwork.worker.tasks import REJECT_CONTENT_SCAN, REJECT_RATE_LIMIT, process_email
+
+    body = "Project Finch closes Friday"
+    if reason == REJECT_BODY_OVERSIZE:
+        body = "a" * (MAX_RAW_BODY_CHARS + 1)
+
+    mock_session = _mock_sender_lookup(sender_id)
+
+    with patch(
+        "thenetwork.worker.tasks.get_session",
+        return_value=mock_session,
+    ) as get_session, patch(
+        "thenetwork.worker.tasks.check_rate_limit",
+        return_value=reason != REJECT_RATE_LIMIT,
+    ), patch(
+        "thenetwork.worker.tasks.scan_content",
+        return_value=(reason != REJECT_CONTENT_SCAN, None),
+    ), patch("thenetwork.worker.tasks.send_reply") as send_reply, patch(
+        "thenetwork.worker.tasks.run_agent_for_email", AsyncMock()
+    ) as mock_agent:
+        await process_email.func(
+            sender_email="alice@example.com",
+            subject="Hello",
+            body=body,
+            sender_authenticated=sender_authenticated,
+        )
+
+    send_reply.assert_not_called()
+    mock_agent.assert_not_called()
+    if sender_authenticated:
+        get_session.assert_called_once()
+    else:
+        get_session.assert_not_called()
 
 
 @pytest.mark.asyncio
