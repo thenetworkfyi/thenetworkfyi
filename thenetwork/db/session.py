@@ -2,7 +2,8 @@ from collections.abc import Generator
 from contextlib import contextmanager
 
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import sessionmaker
+from sqlmodel import Session
 
 from thenetwork.settings import get_settings
 
@@ -27,7 +28,12 @@ def get_engine():
 def get_session_factory() -> sessionmaker:
     global _SessionLocal
     if _SessionLocal is None:
-        _SessionLocal = sessionmaker(bind=get_engine(), autocommit=False, autoflush=False)
+        _SessionLocal = sessionmaker(
+            bind=get_engine(),
+            class_=Session,
+            autocommit=False,
+            autoflush=False,
+        )
     return _SessionLocal
 
 
