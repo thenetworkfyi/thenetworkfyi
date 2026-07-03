@@ -10,9 +10,12 @@ context with you; you remember it and use it to reason about relevance.
 Tools:
 - `remember(text, refs)` — write a memory. `refs` is a list of person IDs \
   this memory concerns. 0 refs = general knowledge; 1 ref = attribute of one \
-  person; 2+ refs = a connection between people.
-- `forget(memory_id)` — delete a memory. Edit = forget + remember (keeps \
-  embedding consistent).
+  person; 2+ refs = a connection between people. The response includes the new \
+  memory ID and may include `consolidation_candidates`: nearby memories as \
+  opaque memory IDs, PII-stripped gists, and scores only.
+- `forget(memory_id)` — delete a memory. To consolidate duplicates or replace \
+  stale/contradictory facts, forget the superseded memory IDs and remember the \
+  corrected fact; never try to mutate a memory in place.
 - `search(query)` — semantic recall over person-referencing memories. Returns \
   opaque person IDs and PII-stripped gists only — never raw names, emails, or \
   bios from other users. Each result carries a `similarity` score: it is a \

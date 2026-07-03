@@ -21,6 +21,8 @@ from thenetwork.email.outbound import send_reply
 from thenetwork.memory.sanitize import sanitize_memory_high_fidelity
 from thenetwork.search.match import MemoryMatch, match_memories
 
+MAX_CONSOLIDATION_CANDIDATES = 3
+
 
 def _get_session(ctx: RunContext[AgentDeps]):
     sf = ctx.deps.session_factory
@@ -46,8 +48,8 @@ async def remember(
     ctx: RunContext[AgentDeps],
     text: str,
     refs: list[str],
-) -> dict[str, str]:
-    """Persist a new memory and return its ID.
+) -> dict[str, Any]:
+    """Persist a new memory and return its ID plus sealed consolidation hints.
 
     refs is a list of person ids this memory is about. 0 refs = general
     knowledge; 1 ref = attribute of one person; 2+ refs = graph edge.
@@ -59,7 +61,17 @@ async def remember(
         with _get_session(ctx) as session:
             session.add(memory)
             await _embed_memory_for_write(memory, session)
+            memory_id = memory.id
+            query_embedding = list(memory.embedding or [])
             session.commit()
+            matches: list[MemoryMatch] = []
+            if query_embedding:
+                matches = match_memories(
+                    query_embedding,
+                    session,
+                    limit=MAX_CONSOLIDATION_CANDIDATES,
+                    exclude_memory_id=memory_id,
+                )
         audit_event(
             "database.action",
             action="insert",
@@ -67,7 +79,16 @@ async def remember(
             refs_count=len(refs),
             outcome="success",
         )
-        return {"memory_id": memory.id}
+        candidates = [
+            {
+                "memory_id": m.memory_id,
+                "gist": m.gist,
+                "score": round(m.similarity, 3),
+            }
+            for m in matches
+            if m.memory_id != memory_id
+        ][:MAX_CONSOLIDATION_CANDIDATES]
+        return {"memory_id": memory_id, "consolidation_candidates": candidates}
 
 
 async def forget(ctx: RunContext[AgentDeps], memory_id: str) -> dict[str, str]:

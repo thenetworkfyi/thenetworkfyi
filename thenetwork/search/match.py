@@ -20,6 +20,7 @@ def match_memories(
     *,
     limit: int = 10,
     min_similarity: float = 0.0,
+    exclude_memory_id: str | None = None,
 ) -> list[MemoryMatch]:
     """Semantic search over person-referencing memories with a gist (SEAL-sanitized)."""
     vec_literal = '[' + ','.join(str(v) for v in query_vec) + ']'
@@ -34,12 +35,19 @@ def match_memories(
             m.embedding IS NOT NULL
             AND m.gist IS NOT NULL
             AND array_length(m.refs, 1) >= 1
+            AND (:exclude_id IS NULL OR m.id != :exclude_id)
             AND 1 - (m.embedding <=> CAST(:vec AS vector)) >= :min_sim
         ORDER BY m.embedding <=> CAST(:vec AS vector)
         LIMIT :limit
     """)
     rows = session.execute(
-        sql, {"vec": vec_literal, "min_sim": min_similarity, "limit": limit}
+        sql,
+        {
+            "vec": vec_literal,
+            "min_sim": min_similarity,
+            "limit": limit,
+            "exclude_id": exclude_memory_id,
+        },
     ).fetchall()
     return [
         MemoryMatch(

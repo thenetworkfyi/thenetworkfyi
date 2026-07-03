@@ -220,6 +220,114 @@ async def test_remember_zero_ref_does_not_sanitize_or_set_gist():
 
 
 @pytest.mark.asyncio
+async def test_remember_returns_empty_consolidation_candidates():
+    """remember() always returns a bounded consolidation_candidates list."""
+    from thenetwork.agent.tools import MAX_CONSOLIDATION_CANDIDATES, remember
+
+    ctx = FakeCtx()
+    added: list[object] = []
+    ctx._mock_sess.add.side_effect = added.append
+    sanitized = "[name] is an ml engineer"
+
+    with patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock, return_value=[0.0] * 1536), \
+         patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock, return_value=sanitized), \
+         patch("thenetwork.agent.tools.match_memories", return_value=[]) as mock_match:
+        result = await remember(
+            ctx,
+            text="Alice Smith is an ML engineer at Acme Corp, alice@acme.com",
+            refs=["user-alice"],
+        )
+
+    assert result == {
+        "memory_id": added[0].id,
+        "consolidation_candidates": [],
+    }
+    mock_match.assert_called_once()
+    assert mock_match.call_args.kwargs["limit"] == MAX_CONSOLIDATION_CANDIDATES
+    assert mock_match.call_args.kwargs["exclude_memory_id"] == added[0].id
+
+
+@pytest.mark.asyncio
+async def test_remember_returns_sealed_duplicate_consolidation_candidates():
+    """Consolidation candidates expose only memory IDs, gists, and scores."""
+    from thenetwork.agent.tools import remember
+
+    ctx = FakeCtx()
+    added: list[object] = []
+    ctx._mock_sess.add.side_effect = added.append
+    raw_other_person_text = (
+        "Bob Stone can be reached at bob.secret@example.com and researches privacy."
+    )
+
+    def fake_match_memories(_query_vec, _session, *, limit, exclude_memory_id):
+        assert limit == 3
+        return [
+            MemoryMatch(
+                memory_id=exclude_memory_id,
+                person_id="new-person-id",
+                gist="newly stored memory",
+                similarity=1.0,
+            ),
+            MemoryMatch(
+                memory_id="old-memory-1",
+                person_id="other-person-id",
+                gist="[name] researches privacy.",
+                similarity=0.9819,
+            ),
+            MemoryMatch(
+                memory_id="old-memory-2",
+                person_id="another-person-id",
+                gist="[name] works on ML systems.",
+                similarity=0.8765,
+            ),
+            MemoryMatch(
+                memory_id="old-memory-3",
+                person_id="third-person-id",
+                gist="[name] is seeking privacy collaborators.",
+                similarity=0.7654,
+            ),
+            MemoryMatch(
+                memory_id="old-memory-4",
+                person_id="fourth-person-id",
+                gist="[name] should be trimmed by the bound.",
+                similarity=0.6543,
+            ),
+        ]
+
+    with patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock, return_value=[0.0] * 1536), \
+         patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock, return_value="[name] researches privacy."), \
+         patch("thenetwork.agent.tools.match_memories", side_effect=fake_match_memories):
+        result = await remember(
+            ctx,
+            text=raw_other_person_text,
+            refs=["user-bob"],
+        )
+
+    assert result["memory_id"] == added[0].id
+    candidates = result["consolidation_candidates"]
+    assert len(candidates) == 3
+    assert [c["memory_id"] for c in candidates] == [
+        "old-memory-1",
+        "old-memory-2",
+        "old-memory-3",
+    ]
+    assert candidates[0]["score"] == 0.982
+    for candidate in candidates:
+        assert set(candidate) == {"memory_id", "gist", "score"}
+        assert "person_id" not in candidate
+        assert "similarity" not in candidate
+        assert "text" not in candidate
+        assert "name" not in candidate
+        assert "email" not in candidate
+
+    serialized = repr(result)
+    assert raw_other_person_text not in serialized
+    assert "Bob Stone" not in serialized
+    assert "bob.secret@example.com" not in serialized
+    assert added[0].id not in [c["memory_id"] for c in candidates]
+
+
+@pytest.mark.asyncio
 async def test_search_returns_gist_not_raw_text():
     """search() results must not include raw memory text — only gist (PII-stripped)."""
     from thenetwork.agent.tools import search
