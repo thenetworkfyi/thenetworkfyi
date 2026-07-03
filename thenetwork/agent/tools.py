@@ -18,8 +18,14 @@ from thenetwork.db.models import Memory, Person
 from thenetwork.db.session import get_session
 from thenetwork.embed.embeddings import embed_text
 from thenetwork.email.outbound import send_reply
-from thenetwork.memory.sanitize import sanitize_memory
+from thenetwork.memory.sanitize import sanitize_memory_high_fidelity
 from thenetwork.search.match import MemoryMatch, match_memories
+
+MAX_CONSOLIDATION_CANDIDATES = 3
+# match_memories returns one row per ref, so a single multi-ref memory can
+# occupy several rows; over-fetch before deduping by memory_id so a run of
+# duplicate rows doesn't crowd out a genuinely distinct candidate.
+_CONSOLIDATION_QUERY_LIMIT = MAX_CONSOLIDATION_CANDIDATES * 4
 
 
 def _get_session(ctx: RunContext[AgentDeps]):
@@ -27,12 +33,27 @@ def _get_session(ctx: RunContext[AgentDeps]):
     return sf() if sf is not None else get_session()
 
 
+async def _embed_memory_for_write(memory: Memory, session) -> None:
+    if memory.refs:
+        gist = await sanitize_memory_high_fidelity(memory, session)
+        if memory.gist is None and isinstance(gist, str):
+            memory.gist = gist
+        if memory.gist is None:
+            raise RuntimeError(
+                f"Memory {memory.id} has refs but no gist after sanitization"
+            )
+        memory.embedding = await embed_text(memory.gist)
+        return
+
+    memory.embedding = await embed_text(memory.text)
+
+
 async def remember(
     ctx: RunContext[AgentDeps],
     text: str,
     refs: list[str],
-) -> dict[str, str]:
-    """Persist a new memory and return its ID.
+) -> dict[str, Any]:
+    """Persist a new memory and return its ID plus sealed consolidation hints.
 
     refs is a list of person ids this memory is about. 0 refs = general
     knowledge; 1 ref = attribute of one person; 2+ refs = graph edge.
@@ -40,13 +61,21 @@ async def remember(
     so the memory is eligible for cross-user retrieval (SEAL requirement).
     """
     with audit_span("agent.tool", tool_name="remember", refs_count=len(refs)):
-        vec = await embed_text(text)
-        memory = Memory(text=text, refs=refs, embedding=vec)
+        memory = Memory(text=text, refs=refs)
         with _get_session(ctx) as session:
             session.add(memory)
-            if refs:
-                sanitize_memory(memory, session)
+            await _embed_memory_for_write(memory, session)
+            memory_id = memory.id
+            query_embedding = list(memory.embedding or [])
             session.commit()
+            matches: list[MemoryMatch] = []
+            if query_embedding:
+                matches = match_memories(
+                    query_embedding,
+                    session,
+                    limit=_CONSOLIDATION_QUERY_LIMIT,
+                    exclude_memory_id=memory_id,
+                )
         audit_event(
             "database.action",
             action="insert",
@@ -54,7 +83,22 @@ async def remember(
             refs_count=len(refs),
             outcome="success",
         )
-        return {"memory_id": memory.id}
+        candidates = []
+        seen_memory_ids: set[str] = set()
+        for m in matches:
+            if m.memory_id == memory_id or m.memory_id in seen_memory_ids:
+                continue
+            seen_memory_ids.add(m.memory_id)
+            candidates.append(
+                {
+                    "memory_id": m.memory_id,
+                    "gist": m.gist,
+                    "score": round(m.similarity, 3),
+                }
+            )
+            if len(candidates) == MAX_CONSOLIDATION_CANDIDATES:
+                break
+        return {"memory_id": memory_id, "consolidation_candidates": candidates}
 
 
 async def forget(ctx: RunContext[AgentDeps], memory_id: str) -> dict[str, str]:
@@ -129,12 +173,10 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
         refs = [ctx.deps.sender_user_id] if ctx.deps.sender_user_id else []
 
         text = f"[ESCALATED] {reason}"
-        vec = await embed_text(text)
-        memory = Memory(text=text, refs=refs, embedding=vec)
+        memory = Memory(text=text, refs=refs)
         with _get_session(ctx) as session:
             session.add(memory)
-            if refs:
-                sanitize_memory(memory, session)
+            await _embed_memory_for_write(memory, session)
             session.commit()
         audit_event(
             "database.action",

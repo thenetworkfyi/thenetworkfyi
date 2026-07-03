@@ -19,7 +19,7 @@ from thenetwork.audit import audit_event, audit_span
 from thenetwork.db.models import Memory, Person
 from thenetwork.db.session import get_session
 from thenetwork.embed.embeddings import embed_text
-from thenetwork.memory.sanitize import sanitize_memory
+from thenetwork.memory.sanitize import sanitize_memory_high_fidelity
 
 
 async def handle_admin_command(command: str, body_text: str) -> str:
@@ -128,13 +128,21 @@ async def _cmd_remember(args: str, body_text: str) -> str:
                     refs.append(p.id)
                 else:
                     return f"Person not found for ref email: {email!r}"
-    vec = await embed_text(text_content)
-    mem = Memory(text=text_content, embedding=vec, refs=refs)
+    mem = Memory(text=text_content, refs=refs)
     with get_session() as session:
         session.add(mem)
         session.flush()
         if refs:
-            sanitize_memory(mem, session)
+            gist = await sanitize_memory_high_fidelity(mem, session)
+            if mem.gist is None and isinstance(gist, str):
+                mem.gist = gist
+            if mem.gist is None:
+                raise RuntimeError(
+                    f"Memory {mem.id} has refs but no gist after sanitization"
+                )
+            mem.embedding = await embed_text(mem.gist)
+        else:
+            mem.embedding = await embed_text(text_content)
         session.commit()
         session.refresh(mem)
         mem_id = mem.id

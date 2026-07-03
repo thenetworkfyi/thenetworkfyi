@@ -184,19 +184,197 @@ async def test_register_person_case_insensitive_email_match():
 
 @pytest.mark.asyncio
 async def test_remember_stores_with_gist():
-    """remember() must invoke sanitize_memory to produce a gist for cross-user eligibility."""
+    """remember() must await high-fidelity sanitization for cross-user eligibility."""
     from thenetwork.agent.tools import remember
 
     ctx = FakeCtx()
     ctx._mock_sess.get.return_value = MagicMock(spec=Person, id="user-alice")
+    sanitized = "[name] is an ml engineer"
 
     with patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock, return_value=[0.0] * 1536) as mock_embed, \
-         patch("thenetwork.agent.tools.sanitize_memory") as mock_sanitize:
-        mock_sanitize.return_value = "alice is an ml engineer"
+         patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock) as mock_sanitize:
+        mock_sanitize.return_value = sanitized
         await remember(ctx, text="Alice Smith is an ML engineer at Acme Corp, alice@acme.com", refs=["user-alice"])
 
-    mock_sanitize.assert_called_once()
-    mock_embed.assert_called_once()
+    mock_sanitize.assert_awaited_once()
+    mock_embed.assert_awaited_once_with(sanitized)
+
+
+@pytest.mark.asyncio
+async def test_remember_zero_ref_does_not_sanitize_or_set_gist():
+    """Zero-ref memories remain raw general notes and do not get cross-user gists."""
+    from thenetwork.agent.tools import remember
+
+    ctx = FakeCtx()
+    added: list[object] = []
+    ctx._mock_sess.add.side_effect = added.append
+    raw = "General system note with no person refs"
+
+    with patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock, return_value=[0.0] * 1536) as mock_embed, \
+         patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock) as mock_sanitize:
+        await remember(ctx, text=raw, refs=[])
+
+    mock_sanitize.assert_not_awaited()
+    mock_embed.assert_awaited_once_with(raw)
+    assert added[0].gist is None
+
+
+@pytest.mark.asyncio
+async def test_remember_returns_empty_consolidation_candidates():
+    """remember() always returns a bounded consolidation_candidates list."""
+    from thenetwork.agent.tools import remember
+
+    ctx = FakeCtx()
+    added: list[object] = []
+    ctx._mock_sess.add.side_effect = added.append
+    sanitized = "[name] is an ml engineer"
+
+    with patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock, return_value=[0.0] * 1536), \
+         patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock, return_value=sanitized), \
+         patch("thenetwork.agent.tools.match_memories", return_value=[]) as mock_match:
+        result = await remember(
+            ctx,
+            text="Alice Smith is an ML engineer at Acme Corp, alice@acme.com",
+            refs=["user-alice"],
+        )
+
+    assert result == {
+        "memory_id": added[0].id,
+        "consolidation_candidates": [],
+    }
+    mock_match.assert_called_once()
+    assert mock_match.call_args.kwargs["exclude_memory_id"] == added[0].id
+
+
+@pytest.mark.asyncio
+async def test_remember_returns_sealed_duplicate_consolidation_candidates():
+    """Consolidation candidates expose only memory IDs, gists, and scores."""
+    from thenetwork.agent.tools import remember
+
+    ctx = FakeCtx()
+    added: list[object] = []
+    ctx._mock_sess.add.side_effect = added.append
+    raw_other_person_text = (
+        "Bob Stone can be reached at bob.secret@example.com and researches privacy."
+    )
+
+    def fake_match_memories(_query_vec, _session, *, limit, exclude_memory_id):
+        return [
+            MemoryMatch(
+                memory_id=exclude_memory_id,
+                person_id="new-person-id",
+                gist="newly stored memory",
+                similarity=1.0,
+            ),
+            MemoryMatch(
+                memory_id="old-memory-1",
+                person_id="other-person-id",
+                gist="[name] researches privacy.",
+                similarity=0.9819,
+            ),
+            MemoryMatch(
+                memory_id="old-memory-2",
+                person_id="another-person-id",
+                gist="[name] works on ML systems.",
+                similarity=0.8765,
+            ),
+            MemoryMatch(
+                memory_id="old-memory-3",
+                person_id="third-person-id",
+                gist="[name] is seeking privacy collaborators.",
+                similarity=0.7654,
+            ),
+            MemoryMatch(
+                memory_id="old-memory-4",
+                person_id="fourth-person-id",
+                gist="[name] should be trimmed by the bound.",
+                similarity=0.6543,
+            ),
+        ]
+
+    with patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock, return_value=[0.0] * 1536), \
+         patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock, return_value="[name] researches privacy."), \
+         patch("thenetwork.agent.tools.match_memories", side_effect=fake_match_memories):
+        result = await remember(
+            ctx,
+            text=raw_other_person_text,
+            refs=["user-bob"],
+        )
+
+    assert result["memory_id"] == added[0].id
+    candidates = result["consolidation_candidates"]
+    assert len(candidates) == 3
+    assert [c["memory_id"] for c in candidates] == [
+        "old-memory-1",
+        "old-memory-2",
+        "old-memory-3",
+    ]
+    assert candidates[0]["score"] == 0.982
+    for candidate in candidates:
+        assert set(candidate) == {"memory_id", "gist", "score"}
+        assert "person_id" not in candidate
+        assert "similarity" not in candidate
+        assert "text" not in candidate
+        assert "name" not in candidate
+        assert "email" not in candidate
+
+    serialized = repr(result)
+    assert raw_other_person_text not in serialized
+    assert "Bob Stone" not in serialized
+    assert "bob.secret@example.com" not in serialized
+
+
+@pytest.mark.asyncio
+async def test_remember_dedupes_consolidation_candidates_by_memory_id():
+    """A multi-ref memory returns one MemoryMatch row per ref; remember()
+    must collapse those into a single candidate rather than surfacing the
+    same memory_id repeatedly and crowding out a distinct candidate.
+    """
+    from thenetwork.agent.tools import MAX_CONSOLIDATION_CANDIDATES, remember
+
+    ctx = FakeCtx()
+    added: list[object] = []
+    ctx._mock_sess.add.side_effect = added.append
+
+    def fake_match_memories(_query_vec, _session, *, limit, exclude_memory_id):
+        return [
+            # a 2-ref memory: match_memories attributes it once per ref,
+            # so it shows up twice with the same memory_id/gist/score.
+            MemoryMatch(
+                memory_id="intro-memory",
+                person_id="person-a",
+                gist="[name] introduced [name] to [name].",
+                similarity=0.95,
+            ),
+            MemoryMatch(
+                memory_id="intro-memory",
+                person_id="person-b",
+                gist="[name] introduced [name] to [name].",
+                similarity=0.95,
+            ),
+            MemoryMatch(
+                memory_id="other-memory",
+                person_id="person-c",
+                gist="[name] is looking for a cofounder.",
+                similarity=0.80,
+            ),
+        ]
+
+    with patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock, return_value=[0.0] * 1536), \
+         patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock, return_value="[name] is a cofounder."), \
+         patch("thenetwork.agent.tools.match_memories", side_effect=fake_match_memories):
+        result = await remember(
+            ctx,
+            text="Alice is a cofounder",
+            refs=["user-alice"],
+        )
+
+    candidates = result["consolidation_candidates"]
+    memory_ids = [c["memory_id"] for c in candidates]
+    assert memory_ids == sorted(set(memory_ids), key=memory_ids.index)
+    assert memory_ids == ["intro-memory", "other-memory"]
+    assert len(candidates) <= MAX_CONSOLIDATION_CANDIDATES
+    assert added[0].id not in [c["memory_id"] for c in candidates]
 
 
 @pytest.mark.asyncio

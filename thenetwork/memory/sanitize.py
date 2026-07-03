@@ -67,3 +67,16 @@ async def sanitize_memory_llm(memory: Memory, session: Session) -> str:
     session.add(memory)
     session.flush()
     return gist
+
+
+async def sanitize_memory_high_fidelity(memory: Memory, session: Session) -> str:
+    """Produce and persist a SEAL-safe gist, preferring the LLM sanitizer.
+
+    The LLM path removes broader PII such as names and street addresses. If
+    that path fails for any reason, fall back to the deterministic sanitizer so
+    person-referencing memories still get a gist before cross-user search.
+    """
+    try:
+        return await sanitize_memory_llm(memory, session)
+    except Exception:
+        return sanitize_memory(memory, session)
