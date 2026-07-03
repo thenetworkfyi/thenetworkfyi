@@ -243,3 +243,70 @@ def test_handle_admin_command_remember_no_body():
     from thenetwork.admin.commands import handle_admin_command
     result = asyncio.run(handle_admin_command("remember", "   "))
     assert "No memory text" in result
+
+
+def test_handle_admin_command_remember_refs_awaits_high_fidelity_sanitizer():
+    import asyncio
+    from thenetwork.admin.commands import handle_admin_command
+    from thenetwork.db.models import Person
+
+    person = MagicMock(spec=Person)
+    person.id = "user-alice"
+
+    resolve_session = MagicMock()
+    resolve_session.exec.return_value.first.return_value = person
+    resolve_cm = MagicMock()
+    resolve_cm.__enter__ = MagicMock(return_value=resolve_session)
+    resolve_cm.__exit__ = MagicMock(return_value=False)
+
+    write_session = MagicMock()
+    added: list[object] = []
+    write_session.add.side_effect = added.append
+    write_cm = MagicMock()
+    write_cm.__enter__ = MagicMock(return_value=write_session)
+    write_cm.__exit__ = MagicMock(return_value=False)
+
+    async def fake_sanitize(memory, session):
+        memory.gist = "[name] knows privacy-preserving ML."
+        return memory.gist
+
+    with patch("thenetwork.admin.commands.embed_text", new=AsyncMock(return_value=[0.0] * 1536)), \
+         patch("thenetwork.admin.commands.get_session", side_effect=[resolve_cm, write_cm]), \
+         patch(
+             "thenetwork.admin.commands.sanitize_memory_high_fidelity",
+             new=AsyncMock(side_effect=fake_sanitize),
+         ) as mock_sanitize:
+        result = asyncio.run(
+            handle_admin_command(
+                "remember refs:alice@example.com",
+                "Alice Smith knows Bob through privacy-preserving ML.",
+            )
+        )
+
+    assert "Stored memory" in result
+    mock_sanitize.assert_awaited_once()
+    assert added[0].refs == ["user-alice"]
+    assert "Alice" not in added[0].gist
+    assert "Bob" not in added[0].gist
+
+
+def test_handle_admin_command_remember_without_refs_does_not_sanitize():
+    import asyncio
+    from thenetwork.admin.commands import handle_admin_command
+
+    write_session = MagicMock()
+    added: list[object] = []
+    write_session.add.side_effect = added.append
+    write_cm = MagicMock()
+    write_cm.__enter__ = MagicMock(return_value=write_session)
+    write_cm.__exit__ = MagicMock(return_value=False)
+
+    with patch("thenetwork.admin.commands.embed_text", new=AsyncMock(return_value=[0.0] * 1536)), \
+         patch("thenetwork.admin.commands.get_session", return_value=write_cm), \
+         patch("thenetwork.admin.commands.sanitize_memory_high_fidelity", new_callable=AsyncMock) as mock_sanitize:
+        result = asyncio.run(handle_admin_command("remember", "General note with no refs."))
+
+    assert "Stored memory" in result
+    mock_sanitize.assert_not_awaited()
+    assert added[0].refs == []
+    assert added[0].gist is None

@@ -18,7 +18,7 @@ from thenetwork.db.models import Memory, Person
 from thenetwork.db.session import get_session
 from thenetwork.embed.embeddings import embed_text
 from thenetwork.email.outbound import send_reply
-from thenetwork.memory.sanitize import sanitize_memory
+from thenetwork.memory.sanitize import sanitize_memory_high_fidelity
 from thenetwork.search.match import MemoryMatch, match_memories
 
 
@@ -45,7 +45,7 @@ async def remember(
         with _get_session(ctx) as session:
             session.add(memory)
             if refs:
-                sanitize_memory(memory, session)
+                await sanitize_memory_high_fidelity(memory, session)
             session.commit()
         audit_event(
             "database.action",
@@ -134,7 +134,7 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
         with _get_session(ctx) as session:
             session.add(memory)
             if refs:
-                sanitize_memory(memory, session)
+                await sanitize_memory_high_fidelity(memory, session)
             session.commit()
         audit_event(
             "database.action",

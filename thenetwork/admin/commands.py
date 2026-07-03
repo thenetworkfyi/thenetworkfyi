@@ -19,7 +19,7 @@ from thenetwork.audit import audit_event, audit_span
 from thenetwork.db.models import Memory, Person
 from thenetwork.db.session import get_session
 from thenetwork.embed.embeddings import embed_text
-from thenetwork.memory.sanitize import sanitize_memory
+from thenetwork.memory.sanitize import sanitize_memory_high_fidelity
 
 
 async def handle_admin_command(command: str, body_text: str) -> str:
@@ -134,7 +134,7 @@ async def _cmd_remember(args: str, body_text: str) -> str:
         session.add(mem)
         session.flush()
         if refs:
-            sanitize_memory(mem, session)
+            await sanitize_memory_high_fidelity(mem, session)
         session.commit()
         session.refresh(mem)
         mem_id = mem.id
