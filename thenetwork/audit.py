@@ -1,6 +1,5 @@
 """PII-safe structured audit events for the agent execution lifecycle."""
 from __future__ import annotations
-import json
 import logging
 import re
 from contextlib import contextmanager
@@ -10,9 +9,30 @@ from time import monotonic
 from typing import Iterator
 from uuid import uuid4
 
+import structlog
+
 LOGGER_NAME = "thenetwork.audit"
-_logger = logging.getLogger(LOGGER_NAME)
 _run_id: ContextVar[str | None] = ContextVar("thenetwork_audit_run_id", default=None)
+
+
+def _iso_timestamp(logger: object, method_name: str, event_dict: dict) -> dict:
+    event_dict.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
+    return event_dict
+
+
+# Shared by both chains below so audit events and third-party logs (e.g.
+# Procrastinate's job-lifecycle logging) end up in the same JSON shape.
+_SHARED_PROCESSORS = [
+    structlog.stdlib.add_log_level,
+    structlog.stdlib.add_logger_name,
+    _iso_timestamp,
+]
+_JSON_RENDERER = structlog.processors.JSONRenderer(sort_keys=True, separators=(",", ":"))
+
+_logger = structlog.wrap_logger(
+    logging.getLogger(LOGGER_NAME),
+    processors=[*_SHARED_PROCESSORS, _JSON_RENDERER],
+)
 
 _SAFE_FIELDS = frozenset({
     "action", "auto_submitted_present", "body_chars", "duration_ms", "error_type",
@@ -37,13 +57,33 @@ _SAFE_HEADERS = frozenset({"auto-submitted", "from", "subject"})
 
 
 def configure_audit_logging() -> None:
-    """Emit audit JSON to stderr for worker/producer entrypoints."""
-    if not _logger.handlers:
+    """Emit audit JSON to stderr, and route everything else's stdlib logging
+    (Procrastinate's job-lifecycle logs, any other library) through the same
+    JSON shape so `docker compose logs | jq` sees one consistent schema
+    regardless of source.
+    """
+    stdlib_logger = logging.getLogger(LOGGER_NAME)
+    if not stdlib_logger.handlers:
         handler = logging.StreamHandler()
         handler.setFormatter(logging.Formatter("%(message)s"))
-        _logger.addHandler(handler)
-    _logger.setLevel(logging.INFO)
-    _logger.propagate = False
+        stdlib_logger.addHandler(handler)
+    stdlib_logger.setLevel(logging.INFO)
+    stdlib_logger.propagate = False
+
+    # Non-structlog (plain stdlib) log records land here via the standard
+    # foreign_pre_chain/ProcessorFormatter bridge, rendered to the same JSON.
+    root_handler = logging.StreamHandler()
+    root_handler.setFormatter(structlog.stdlib.ProcessorFormatter(
+        foreign_pre_chain=_SHARED_PROCESSORS,
+        processors=[structlog.stdlib.ProcessorFormatter.remove_processors_meta, _JSON_RENDERER],
+    ))
+    root_logger = logging.getLogger()
+    root_logger.handlers = [root_handler]
+    root_logger.setLevel(logging.WARNING)  # keep third-party libraries quiet by default
+
+    # Procrastinate's job start/finish/retry/failure logs are worth surfacing
+    # at INFO rather than vanishing under root's default WARNING threshold.
+    logging.getLogger("procrastinate").setLevel(logging.INFO)
 
 
 def _safe_token(value: object) -> str:
@@ -69,15 +109,12 @@ def audit_event(event: str, **fields: object) -> None:
     unknown = fields.keys() - _SAFE_FIELDS
     if unknown:
         raise ValueError(f"unsafe audit fields: {', '.join(sorted(unknown))}")
-    payload: dict[str, object] = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "event": _safe_token(event),
-    }
+    payload: dict[str, object] = {}
     run_id = _run_id.get()
     if run_id is not None:
         payload["run_id"] = run_id
     payload.update({name: _validate_value(name, value) for name, value in fields.items()})
-    _logger.info(json.dumps(payload, separators=(",", ":"), sort_keys=True))
+    _logger.info(_safe_token(event), **payload)
 
 
 @contextmanager
