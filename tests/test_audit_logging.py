@@ -243,6 +243,7 @@ def test_intake_logs_header_metadata_without_values(caplog):
         subject=message.subject,
         body=message.body,
         sender_authenticated=message.sender_authenticated,
+        raw_message_b64=None,
     )
     mark_seen.assert_called_once_with(["123"])
     serialized = "\n".join(record.message for record in caplog.records)
@@ -316,7 +317,7 @@ async def test_worker_caps_subject_and_body_before_agent():
     with patch("thenetwork.worker.tasks.check_rate_limit", return_value=True), patch(
         "thenetwork.worker.tasks.scan_content", return_value=(True, None)
     ) as scan_content, patch(
-        "thenetwork.worker.tasks.is_admin_request", return_value=False
+        "thenetwork.worker.tasks.verify_admin_request", return_value=None
     ), patch("thenetwork.worker.tasks.get_session") as mock_get_session, patch(
         "thenetwork.worker.tasks.run_agent_for_email", mock_agent
     ):

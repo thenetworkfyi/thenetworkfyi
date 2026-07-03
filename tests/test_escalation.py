@@ -11,7 +11,6 @@ from thenetwork.settings import Settings
 def _make_settings(admin_emails=None):
     s = MagicMock(spec=Settings)
     s.admin_emails = admin_emails or []
-    s.admin_token = "secret"
     return s
 
 

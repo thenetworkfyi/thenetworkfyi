@@ -45,6 +45,28 @@ prompt-injection exfiltrate it, so the privacy boundary cannot be "withhold a co
 10. **Optional content scanner.** Provider moderation / LLM Guard as opt-in
     defense-in-depth, never the primary defense (`security/content_scan.py`).
 
+## The admin channel
+
+A separate concern from the SEAL above (which governs what the *agent* can leak about
+users) — this is how a human operator proves they're the operator. `admin/auth.py`
+requires all of: sender in `ADMIN_EMAILS`, subject starting with `ADMIN:` (a cheap
+pre-filter only — RFC 3156 never signs headers, so the subject carries no authority),
+the message a `multipart/signed` PGP/MIME (RFC 3156) envelope whose detached signature
+verifies against `ADMIN_GPG_PUBLIC_KEY` using the byte-exact original signed part, and a
+verified cleartext body containing a `COMMAND:` line. Freshness and replay protection
+come from inside the verified signature itself, not from operator-typed tokens: the
+OpenPGP signature packet carries its own creation timestamp (must be within
+`ADMIN_REPLAY_WINDOW_SECONDS` of now) and the signature bytes are hashed and checked
+against `admin_nonces` for reuse. Both values are cryptographically bound to a valid
+signature, so neither can be forged or replayed independent of it — no hand-typed
+`TS:`/`NONCE:` lines to author. Replay protection deliberately doesn't key off any
+unsigned header (e.g. `Message-ID`): RFC 3156 never signs headers, so an attacker could
+rewrite one on a captured signed email without invalidating the signature. The actual
+command comes from the signed body's `COMMAND:` line, never the `Subject` header, so an
+in-transit header rewrite can't swap which command runs without invalidating the
+signature. No shared secret to generate or rotate by hand — any PGP/MIME-capable mail
+client's "digitally sign" action produces a valid request.
+
 ## What the red-team enforces
 
 `tests/security/` proves the property: adversarial emails must produce **zero** raw

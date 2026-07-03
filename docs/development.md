@@ -8,7 +8,7 @@ defaults in that file. `get_settings()` caches a singleton. Common overrides
 
 ```dotenv
 DATABASE_URL=postgresql+psycopg://network:network@localhost:5432/network_db
-AGENT_MODEL=anthropic:claude-sonnet-4-6   # provider chosen by the string prefix
+AGENT_MODEL=anthropic:claude-sonnet-5   # provider chosen by the string prefix
 EMBED_MODEL=text-embedding-3-small
 OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
@@ -105,8 +105,14 @@ docker compose pull && docker compose up -d   # redeploy only changed services
 ```
 
 `.github/workflows/publish.yml` builds + pushes images to GHCR on pushes to `main` and
-`v*` tags; set `IMAGE` in `.env` on the server to that path. `scripts/backup.sh` dumps the
-DB (the only source of truth) via the `db` container — wire it as a host cron job.
+`v*` tags; set `IMAGE` in `.env` on the server to that path. The VPS is a **GHCR
+consumer, not a git checkout** — it needs only `.env`, `docker-compose.yml`, and
+`scripts/deploy.sh`/`scripts/backup.sh` present in one directory (place them with `scp`
+or a small separate ops repo; there is no `git pull` step on the server and the worker
+image is never built there). `scripts/deploy.sh` wraps the redeploy line above
+(`docker compose pull` then `docker compose up -d`, no `--build`) and prints the
+resulting `worker` status. `scripts/backup.sh` dumps the DB (the only source of truth)
+via the `db` container — wire it as a host cron job.
 
 ## Proactive outreach
 
