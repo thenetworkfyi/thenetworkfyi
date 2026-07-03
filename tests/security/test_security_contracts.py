@@ -457,12 +457,16 @@ def test_outbound_has_auto_submitted_header():
         captured.append(msg)
 
     with patch("thenetwork.email.outbound.get_settings") as mock_settings, \
-         patch("smtplib.SMTP") as mock_smtp:
+         patch("smtplib.SMTP") as mock_smtp, \
+         patch("thenetwork.email.outbound.MailBox") as mock_mailbox:
         s = MagicMock()
         s.smtp_host = "smtp.example.com"
         s.smtp_port = 587
         s.email_account = "agent@example.com"
         s.email_password = "secret"
+        s.imap_host = "imap.example.com"
+        s.imap_port = 993
+        s.imap_sent_folder = "Sent"
         mock_settings.return_value = s
 
         smtp_instance = MagicMock()
@@ -470,6 +474,11 @@ def test_outbound_has_auto_submitted_header():
         smtp_instance.__exit__ = MagicMock(return_value=False)
         smtp_instance.send_message.side_effect = fake_send_message
         mock_smtp.return_value = smtp_instance
+
+        mb_instance = MagicMock()
+        mb_instance.__enter__ = MagicMock(return_value=mb_instance)
+        mb_instance.__exit__ = MagicMock(return_value=False)
+        mock_mailbox.return_value.login.return_value = mb_instance
 
         from thenetwork.email.outbound import send_reply
         send_reply(to_address="bob@example.com", subject="Hi", body_text="Hello")

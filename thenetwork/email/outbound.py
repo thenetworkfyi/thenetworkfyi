@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import smtplib
 from email.message import EmailMessage
+from time import monotonic
 
-from thenetwork.audit import audit_span
+from imap_tools import MailBox, MailMessageFlags
+
+from thenetwork.audit import audit_event, audit_span
 from thenetwork.settings import get_settings
 
 
@@ -22,6 +25,35 @@ def _growth_footer_html(account: str) -> str:
         f"The Network. Reply anytime. Know someone who should be on this? Forward this along "
         f"&mdash; they can join by emailing {account} directly."
         "</p>"
+    )
+
+
+def _append_to_sent(msg: EmailMessage) -> None:
+    """Append the just-sent message to the IMAP Sent folder, flagged \\Seen.
+
+    Called only after the SMTP send has already succeeded, so this is
+    best-effort visibility (mirroring a normal mail client) rather than part
+    of the delivery guarantee: a failure here must not fail the job. Only
+    outcome/duration/error-type are audit-logged — never the folder name,
+    address, or message content.
+    """
+    s = get_settings()
+    started = monotonic()
+    try:
+        with MailBox(s.imap_host, s.imap_port).login(s.email_account, s.email_password) as mb:
+            mb.append(msg.as_bytes(), s.imap_sent_folder, flag_set=[MailMessageFlags.SEEN])
+    except Exception as exc:
+        audit_event(
+            "email.imap_append.completed",
+            outcome="error",
+            error_type=type(exc).__name__,
+            duration_ms=round((monotonic() - started) * 1000, 3),
+        )
+        return
+    audit_event(
+        "email.imap_append.completed",
+        outcome="success",
+        duration_ms=round((monotonic() - started) * 1000, 3),
     )
 
 
@@ -80,3 +112,5 @@ def send_reply(
             smtp.starttls()
             smtp.login(s.email_account, s.email_password)
             smtp.send_message(msg)
+
+        _append_to_sent(msg)
