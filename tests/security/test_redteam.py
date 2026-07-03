@@ -100,9 +100,19 @@ async def test_dispatch_signature_has_no_raw_address_param():
 
 
 @pytest.mark.asyncio
-async def test_remember_stored_gist_drops_person_names_before_commit():
+async def test_remember_stored_gist_drops_person_names_before_commit(monkeypatch):
     """Names in a person-referencing memory must not survive into the stored gist."""
+    from types import SimpleNamespace
+
     from thenetwork.agent.tools import remember
+
+    # The LLM sanitizer is an opt-in tier (settings.sanitize_llm_tier_enabled,
+    # default off); enable it here so this test exercises the mocked
+    # sanitize_memory_llm path it asserts on.
+    monkeypatch.setattr(
+        "thenetwork.settings.get_settings",
+        lambda: SimpleNamespace(agent_model="test:model", sanitize_llm_tier_enabled=True),
+    )
 
     ctx = FakeCtx(sender_email="alice@example.com", sender_user_id="user-alice")
     added: list[object] = []
