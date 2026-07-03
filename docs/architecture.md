@@ -34,6 +34,13 @@ is required; `thenetwork-producer` is just a manual one-shot poll for cron/debug
   retries (`max_attempts=3`) and nothing is lost. The producer only ever flips `\Seen`;
   it never deletes or moves inbound mail, so everything the account has received stays
   in INBOX permanently, the same as a normal mailbox.
+- **Inbound body extraction** (`email/inbound.py`): prefers imap-tools'
+  `MailMessage.text`, falling back to `MailMessage.html` run through BeautifulSoup to
+  recover visible text when a message has no plain-text part. No hand-rolled MIME
+  walking or attachment traversal — imap-tools has already done that. The result is
+  bounded by `MAX_BODY_CHARS`, which is the size guard for downstream scanners and model
+  context; a message whose decoded body exceeds the hard reject limit is flagged rather
+  than truncated silently.
 - **Worker** (`worker/tasks.py`): Postgres-native Procrastinate (LISTEN/NOTIFY +
   `SKIP LOCKED`, no Redis/broker). Enforces per-sender rate limit and optional content
   scan, resolves whether the sender is a known `Person`, then calls
@@ -97,6 +104,7 @@ mapping at write time. Semantic match over memories lives in `search/match.py`.
 SQLModel over psycopg 3 · Alembic (the `CREATE EXTENSION vector` lives in a migration) ·
 pgvector `Vector(1536)` HNSW cosine · pydantic-ai (multi-provider, chosen by config
 string) · provider-agnostic `embed_text` wrapper (`embed/`) · NetworkX · pydantic-settings ·
-imap-tools · stdlib `EmailMessage`/`smtplib` · Procrastinate · `limits` · pytest +
+imap-tools · BeautifulSoup (HTML-to-visible-text fallback for inbound bodies) · stdlib
+`EmailMessage`/`smtplib` · Procrastinate · `limits` · pytest +
 pydantic-evals. Vendor-agnosticism comes from pydantic-ai and the embedding wrapper being
 multi-provider, selected by `AGENT_MODEL` / `EMBED_MODEL` — no LiteLLM, no proxy glue.

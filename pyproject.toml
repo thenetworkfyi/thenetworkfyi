@@ -14,6 +14,7 @@ dependencies = [
     "pydantic-ai[openai,anthropic]>=0.0.14",
     "pydantic-settings>=2.5",
     "imap-tools>=1.7",
+    "beautifulsoup4>=4.12",
     "llama-index>=0.11",
     "llama-index-vector-stores-postgres>=0.2",
     "llama-index-embeddings-openai>=0.2",

@@ -8,7 +8,6 @@ or deleting inbound mail.
 """
 from __future__ import annotations
 
-from email.message import EmailMessage
 from unittest.mock import MagicMock
 
 import pytest
@@ -34,15 +33,13 @@ def _fake_message(
     subject: str = "hello",
     body_text: str = "hello there",
 ):
-    body = EmailMessage()
-    body.set_content(body_text)
-
     msg = MagicMock()
     msg.uid = uid
     msg.from_ = from_
     msg.subject = subject
     msg.headers = {}
-    msg.obj = body
+    msg.text = body_text
+    msg.html = ""
     return msg
 
 
