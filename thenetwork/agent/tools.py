@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from limits import parse, storage, strategies
 from pydantic_ai import RunContext
 from sqlmodel import select
 
@@ -26,11 +27,36 @@ MAX_CONSOLIDATION_CANDIDATES = 3
 # occupy several rows; over-fetch before deduping by memory_id so a run of
 # duplicate rows doesn't crowd out a genuinely distinct candidate.
 _CONSOLIDATION_QUERY_LIMIT = MAX_CONSOLIDATION_CANDIDATES * 4
+_dispatch_limiter: strategies.MovingWindowRateLimiter | None = None
+_dispatch_storage: storage.Storage | None = None
 
 
 def _get_session(ctx: RunContext[AgentDeps]):
     sf = ctx.deps.session_factory
     return sf() if sf is not None else get_session()
+
+
+def _get_dispatch_limiter() -> tuple[strategies.MovingWindowRateLimiter, object]:
+    global _dispatch_limiter, _dispatch_storage
+    if _dispatch_limiter is None:
+        _dispatch_storage = storage.MemoryStorage()
+        _dispatch_limiter = strategies.MovingWindowRateLimiter(_dispatch_storage)
+    return _dispatch_limiter, _dispatch_storage
+
+
+def _cap(value: int) -> int:
+    return max(0, value)
+
+
+def _limited(reason: str, limit: int) -> dict[str, Any]:
+    return {"status": "limited", "reason": reason, "limit": limit}
+
+
+def _hit_daily_dispatch_cap(key: str, limit: int) -> bool:
+    if limit <= 0:
+        return False
+    limiter, _ = _get_dispatch_limiter()
+    return limiter.hit(parse(f"{limit}/day"), key)
 
 
 async def _embed_memory_for_write(memory: Memory, session) -> None:
@@ -273,7 +299,7 @@ async def dispatch_email(
     subject: str,
     body_text: str,
     body_html: str | None = None,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     """Send an email to a user by opaque ID.
 
     The LLM supplies only the opaque internal ID; this function resolves the
@@ -288,6 +314,11 @@ async def dispatch_email(
         body_chars=len(body_text),
         html_present=body_html is not None,
     ):
+        s = ctx.deps.settings
+        max_sends_per_run = _cap(s.dispatch_max_sends_per_run)
+        if ctx.deps.dispatch_email_sent_count >= max_sends_per_run:
+            return _limited("max_sends_per_run", max_sends_per_run)
+
         with _get_session(ctx) as session:
             person = session.get(Person, recipient_user_id)
 
@@ -300,10 +331,25 @@ async def dispatch_email(
         if person is None:
             return {"status": "error", "reason": "recipient_not_found"}
 
+        recipient_daily_cap = _cap(s.dispatch_recipient_daily_cap)
+        if not _hit_daily_dispatch_cap(
+            f"dispatch:recipient:{recipient_user_id}",
+            recipient_daily_cap,
+        ):
+            return _limited("recipient_daily_cap", recipient_daily_cap)
+
+        sender_reply_daily_cap = _cap(s.dispatch_sender_reply_daily_cap)
+        if recipient_user_id == ctx.deps.sender_user_id and not _hit_daily_dispatch_cap(
+            f"dispatch:sender-reply:{recipient_user_id}",
+            sender_reply_daily_cap,
+        ):
+            return _limited("sender_reply_daily_cap", sender_reply_daily_cap)
+
         send_reply(
             to_address=person.email,
             subject=subject,
             body_text=body_text,
             body_html=body_html,
         )
+        ctx.deps.dispatch_email_sent_count += 1
         return {"status": "sent"}

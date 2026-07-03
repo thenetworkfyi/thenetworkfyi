@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from thenetwork.agent.deps import AgentDeps
 from thenetwork.agent.tools import dispatch_email, register_person
 from thenetwork.db.models import Person
+from thenetwork.settings import Settings
 from thenetwork.search.match import MemoryMatch
 
 
@@ -29,12 +30,30 @@ class FakeCtx:
         mock_sess.__enter__ = MagicMock(return_value=mock_sess)
         mock_sess.__exit__ = MagicMock(return_value=False)
         self.deps = AgentDeps(
+            settings=Settings(
+                dispatch_max_sends_per_run=3,
+                dispatch_recipient_daily_cap=3,
+                dispatch_sender_reply_daily_cap=1,
+            ),
             sender_email=sender_email,
             sender_user_id=sender_user_id,
             sender_authenticated=sender_authenticated,
             session_factory=lambda: mock_sess,
         )
         self._mock_sess = mock_sess
+
+
+def _reset_dispatch_limiter():
+    from thenetwork.agent import tools
+
+    tools._dispatch_limiter = None
+    tools._dispatch_storage = None
+
+
+def _fake_person(email: str = "bob@example.com"):
+    fake_person = MagicMock(spec=Person)
+    fake_person.email = email
+    return fake_person
 
 
 @pytest.mark.asyncio
@@ -51,8 +70,8 @@ async def test_dispatch_resolves_address_not_from_caller():
 @pytest.mark.asyncio
 async def test_dispatch_sends_to_resolved_address():
     """Address must come from DB lookup, not from any agent-supplied argument."""
-    fake_person = MagicMock(spec=Person)
-    fake_person.email = "bob@example.com"
+    _reset_dispatch_limiter()
+    fake_person = _fake_person()
 
     ctx = FakeCtx()
     ctx._mock_sess.get.return_value = fake_person
@@ -63,6 +82,67 @@ async def test_dispatch_sends_to_resolved_address():
     mock_send.assert_called_once()
     assert mock_send.call_args.kwargs["to_address"] == "bob@example.com"
     assert result["status"] == "sent"
+
+
+def test_dispatch_cap_settings_defaults():
+    assert Settings.model_fields["dispatch_max_sends_per_run"].default == 3
+    assert Settings.model_fields["dispatch_recipient_daily_cap"].default == 3
+    assert Settings.model_fields["dispatch_sender_reply_daily_cap"].default == 1
+
+
+@pytest.mark.asyncio
+async def test_dispatch_blocks_after_max_sends_per_run():
+    _reset_dispatch_limiter()
+    ctx = FakeCtx()
+    ctx.deps.settings.dispatch_recipient_daily_cap = 99
+    ctx.deps.settings.dispatch_sender_reply_daily_cap = 99
+    ctx._mock_sess.get.return_value = _fake_person()
+
+    with patch("thenetwork.agent.tools.send_reply") as mock_send:
+        first = await dispatch_email(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
+        second = await dispatch_email(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
+        third = await dispatch_email(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
+        fourth = await dispatch_email(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
+
+    assert [first["status"], second["status"], third["status"]] == ["sent", "sent", "sent"]
+    assert fourth == {"status": "limited", "reason": "max_sends_per_run", "limit": 3}
+    assert mock_send.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_dispatch_recipient_daily_cap_is_settings_configurable():
+    _reset_dispatch_limiter()
+    ctx = FakeCtx()
+    ctx.deps.settings.dispatch_max_sends_per_run = 99
+    ctx.deps.settings.dispatch_recipient_daily_cap = 1
+    ctx.deps.settings.dispatch_sender_reply_daily_cap = 99
+    ctx._mock_sess.get.return_value = _fake_person()
+
+    with patch("thenetwork.agent.tools.send_reply") as mock_send:
+        first = await dispatch_email(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
+        second = await dispatch_email(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
+
+    assert first["status"] == "sent"
+    assert second == {"status": "limited", "reason": "recipient_daily_cap", "limit": 1}
+    mock_send.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_sender_reply_daily_cap_is_settings_configurable():
+    _reset_dispatch_limiter()
+    ctx = FakeCtx(sender_email="alice@example.com", sender_user_id="user-alice")
+    ctx.deps.settings.dispatch_max_sends_per_run = 99
+    ctx.deps.settings.dispatch_recipient_daily_cap = 99
+    ctx.deps.settings.dispatch_sender_reply_daily_cap = 1
+    ctx._mock_sess.get.return_value = _fake_person("alice@example.com")
+
+    with patch("thenetwork.agent.tools.send_reply") as mock_send:
+        first = await dispatch_email(ctx, recipient_user_id="user-alice", subject="Hi", body_text="Hello")
+        second = await dispatch_email(ctx, recipient_user_id="user-alice", subject="Hi", body_text="Hello")
+
+    assert first["status"] == "sent"
+    assert second == {"status": "limited", "reason": "sender_reply_daily_cap", "limit": 1}
+    mock_send.assert_called_once()
 
 
 @pytest.mark.asyncio
