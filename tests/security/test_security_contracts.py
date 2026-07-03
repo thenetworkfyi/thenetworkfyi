@@ -222,7 +222,7 @@ async def test_remember_zero_ref_does_not_sanitize_or_set_gist():
 @pytest.mark.asyncio
 async def test_remember_returns_empty_consolidation_candidates():
     """remember() always returns a bounded consolidation_candidates list."""
-    from thenetwork.agent.tools import MAX_CONSOLIDATION_CANDIDATES, remember
+    from thenetwork.agent.tools import remember
 
     ctx = FakeCtx()
     added: list[object] = []
@@ -243,7 +243,6 @@ async def test_remember_returns_empty_consolidation_candidates():
         "consolidation_candidates": [],
     }
     mock_match.assert_called_once()
-    assert mock_match.call_args.kwargs["limit"] == MAX_CONSOLIDATION_CANDIDATES
     assert mock_match.call_args.kwargs["exclude_memory_id"] == added[0].id
 
 
@@ -260,7 +259,6 @@ async def test_remember_returns_sealed_duplicate_consolidation_candidates():
     )
 
     def fake_match_memories(_query_vec, _session, *, limit, exclude_memory_id):
-        assert limit == 3
         return [
             MemoryMatch(
                 memory_id=exclude_memory_id,
@@ -324,6 +322,58 @@ async def test_remember_returns_sealed_duplicate_consolidation_candidates():
     assert raw_other_person_text not in serialized
     assert "Bob Stone" not in serialized
     assert "bob.secret@example.com" not in serialized
+
+
+@pytest.mark.asyncio
+async def test_remember_dedupes_consolidation_candidates_by_memory_id():
+    """A multi-ref memory returns one MemoryMatch row per ref; remember()
+    must collapse those into a single candidate rather than surfacing the
+    same memory_id repeatedly and crowding out a distinct candidate.
+    """
+    from thenetwork.agent.tools import MAX_CONSOLIDATION_CANDIDATES, remember
+
+    ctx = FakeCtx()
+    added: list[object] = []
+    ctx._mock_sess.add.side_effect = added.append
+
+    def fake_match_memories(_query_vec, _session, *, limit, exclude_memory_id):
+        return [
+            # a 2-ref memory: match_memories attributes it once per ref,
+            # so it shows up twice with the same memory_id/gist/score.
+            MemoryMatch(
+                memory_id="intro-memory",
+                person_id="person-a",
+                gist="[name] introduced [name] to [name].",
+                similarity=0.95,
+            ),
+            MemoryMatch(
+                memory_id="intro-memory",
+                person_id="person-b",
+                gist="[name] introduced [name] to [name].",
+                similarity=0.95,
+            ),
+            MemoryMatch(
+                memory_id="other-memory",
+                person_id="person-c",
+                gist="[name] is looking for a cofounder.",
+                similarity=0.80,
+            ),
+        ]
+
+    with patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock, return_value=[0.0] * 1536), \
+         patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock, return_value="[name] is a cofounder."), \
+         patch("thenetwork.agent.tools.match_memories", side_effect=fake_match_memories):
+        result = await remember(
+            ctx,
+            text="Alice is a cofounder",
+            refs=["user-alice"],
+        )
+
+    candidates = result["consolidation_candidates"]
+    memory_ids = [c["memory_id"] for c in candidates]
+    assert memory_ids == sorted(set(memory_ids), key=memory_ids.index)
+    assert memory_ids == ["intro-memory", "other-memory"]
+    assert len(candidates) <= MAX_CONSOLIDATION_CANDIDATES
     assert added[0].id not in [c["memory_id"] for c in candidates]
 
 

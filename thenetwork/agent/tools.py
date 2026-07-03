@@ -22,6 +22,10 @@ from thenetwork.memory.sanitize import sanitize_memory_high_fidelity
 from thenetwork.search.match import MemoryMatch, match_memories
 
 MAX_CONSOLIDATION_CANDIDATES = 3
+# match_memories returns one row per ref, so a single multi-ref memory can
+# occupy several rows; over-fetch before deduping by memory_id so a run of
+# duplicate rows doesn't crowd out a genuinely distinct candidate.
+_CONSOLIDATION_QUERY_LIMIT = MAX_CONSOLIDATION_CANDIDATES * 4
 
 
 def _get_session(ctx: RunContext[AgentDeps]):
@@ -69,7 +73,7 @@ async def remember(
                 matches = match_memories(
                     query_embedding,
                     session,
-                    limit=MAX_CONSOLIDATION_CANDIDATES,
+                    limit=_CONSOLIDATION_QUERY_LIMIT,
                     exclude_memory_id=memory_id,
                 )
         audit_event(
@@ -79,15 +83,21 @@ async def remember(
             refs_count=len(refs),
             outcome="success",
         )
-        candidates = [
-            {
-                "memory_id": m.memory_id,
-                "gist": m.gist,
-                "score": round(m.similarity, 3),
-            }
-            for m in matches
-            if m.memory_id != memory_id
-        ][:MAX_CONSOLIDATION_CANDIDATES]
+        candidates = []
+        seen_memory_ids: set[str] = set()
+        for m in matches:
+            if m.memory_id == memory_id or m.memory_id in seen_memory_ids:
+                continue
+            seen_memory_ids.add(m.memory_id)
+            candidates.append(
+                {
+                    "memory_id": m.memory_id,
+                    "gist": m.gist,
+                    "score": round(m.similarity, 3),
+                }
+            )
+            if len(candidates) == MAX_CONSOLIDATION_CANDIDATES:
+                break
         return {"memory_id": memory_id, "consolidation_candidates": candidates}
 
 
