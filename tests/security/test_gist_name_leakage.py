@@ -142,11 +142,20 @@ async def test_high_fidelity_gist_never_contains_name_variant_via_llm(monkeypatc
     """remember()'s production path (LLM-first sanitizer) must also drop every
     surface form of the name, independent of whether Presidio is installed.
     """
+    from types import SimpleNamespace
+
     memory = Memory(text=text, refs=["person-1"])
     session = FakeSession()
     # Presidio unavailable in this deploy — the LLM path is what actually
     # runs and must not depend on the NER layer for correctness.
     monkeypatch.setattr(sanitize_mod, "_get_presidio_analyzer", lambda: None)
+    # The LLM sanitizer is an opt-in tier (settings.sanitize_llm_tier_enabled,
+    # default off); enable it here so this test exercises the LLM path it
+    # asserts on rather than silently falling back to the deterministic one.
+    monkeypatch.setattr(
+        "thenetwork.settings.get_settings",
+        lambda: SimpleNamespace(agent_model="test:model", sanitize_llm_tier_enabled=True),
+    )
 
     async def fake_llm(mem: Memory, sess: FakeSession) -> str:
         redacted = re.sub(r"(?i)alice chen'?s?|alice'?s?", "[name]", mem.text)
