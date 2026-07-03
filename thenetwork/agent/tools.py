@@ -102,7 +102,12 @@ async def remember(
 
 
 async def forget(ctx: RunContext[AgentDeps], memory_id: str) -> dict[str, str]:
-    """Delete a memory by ID (own memories only; no cross-user deletion)."""
+    """Delete a memory by ID.
+
+    To consolidate duplicates or replace a stale/contradictory fact, forget
+    the superseded memory ID and `remember` the corrected fact — never try to
+    mutate a memory in place (edit = forget + remember).
+    """
     with audit_span("agent.tool", tool_name="forget"):
         with _get_session(ctx) as session:
             memory = session.get(Memory, memory_id)
