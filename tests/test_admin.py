@@ -180,8 +180,8 @@ def test_process_email_routes_admin_to_handler():
     mock_agent.assert_not_called()
 
 
-def test_process_email_non_admin_goes_to_agent():
-    """Normal emails are NOT intercepted by the admin channel."""
+def test_process_email_authenticated_non_admin_goes_to_agent():
+    """Normal authenticated emails are not intercepted by the admin channel."""
     import asyncio
 
     from thenetwork.worker.tasks import process_email
@@ -202,6 +202,68 @@ def test_process_email_non_admin_goes_to_agent():
             sender_email="user@example.com",
             subject="Hello",
             body="I'm looking for a cofounder.",
+            sender_authenticated=True,
+        ))
+
+    mock_agent.assert_called_once()
+
+
+def test_process_email_drops_unauthenticated_unknown_sender_before_agent():
+    """Unauthenticated first contact is rejected before model invocation."""
+    import asyncio
+
+    from thenetwork.worker.tasks import process_email
+
+    mock_agent = AsyncMock()
+
+    with patch("thenetwork.worker.tasks.check_rate_limit", return_value=True), \
+         patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)), \
+         patch("thenetwork.worker.tasks.is_admin_request", return_value=False), \
+         patch("thenetwork.worker.tasks.get_session") as mock_gs, \
+         patch("thenetwork.worker.tasks.audit_event") as mock_audit, \
+         patch("thenetwork.worker.tasks.run_agent_for_email", mock_agent):
+        mock_session = MagicMock()
+        mock_session.__enter__ = MagicMock(return_value=mock_session)
+        mock_session.__exit__ = MagicMock(return_value=False)
+        mock_session.exec.return_value.first.return_value = None
+        mock_gs.return_value = mock_session
+        asyncio.run(process_email.func(
+            sender_email="stranger@example.com",
+            subject="Hello",
+            body="Please add me.",
+            sender_authenticated=False,
+        ))
+
+    mock_agent.assert_not_called()
+    mock_audit.assert_any_call(
+        "worker.message_rejected",
+        reason="unauthenticated_unknown_sender",
+    )
+
+
+def test_process_email_dev_auth_bypass_still_goes_to_agent():
+    """When intake marks auth as bypassed, an unknown sender can reach the agent."""
+    import asyncio
+
+    from thenetwork.worker.tasks import process_email
+
+    mock_agent = AsyncMock()
+
+    with patch("thenetwork.worker.tasks.check_rate_limit", return_value=True), \
+         patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)), \
+         patch("thenetwork.worker.tasks.is_admin_request", return_value=False), \
+         patch("thenetwork.worker.tasks.get_session") as mock_gs, \
+         patch("thenetwork.worker.tasks.run_agent_for_email", mock_agent):
+        mock_session = MagicMock()
+        mock_session.__enter__ = MagicMock(return_value=mock_session)
+        mock_session.__exit__ = MagicMock(return_value=False)
+        mock_session.exec.return_value.first.return_value = None
+        mock_gs.return_value = mock_session
+        asyncio.run(process_email.func(
+            sender_email="dev@example.com",
+            subject="Hello",
+            body="Please add me.",
+            sender_authenticated=True,
         ))
 
     mock_agent.assert_called_once()

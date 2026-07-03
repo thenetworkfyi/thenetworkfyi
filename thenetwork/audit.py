@@ -47,7 +47,10 @@ _SAFE_CATEGORIES = {
     "outcome": frozenset({
         "error", "exists", "found", "not_found", "rejected_unauthenticated", "success",
     }),
-    "reason": frozenset({"body_empty", "body_oversize", "content_scan", "rate_limit"}),
+    "reason": frozenset({
+        "body_empty", "body_oversize", "content_scan", "rate_limit",
+        "unauthenticated_unknown_sender",
+    }),
     "record_type": frozenset({"memory", "person"}),
     "tool_name": frozenset({
         "dispatch_email", "escalate", "forget", "register_person", "remember", "search",
