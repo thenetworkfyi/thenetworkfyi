@@ -42,15 +42,12 @@ proxy layer.
 
 - `pip install -e ".[content-scan]"` — optional inbound content scanner (`llm-guard`),
   defense-in-depth per `docs/security.md` layer 10.
-- `pip install -e ".[pii-ner]"` — adds Presidio (`presidio-analyzer` + `spacy`) so
-  `thenetwork/memory/sanitize.py`'s deterministic `sanitize_memory` also redacts person
-  names, organizations, and locations via NER, on top of the existing email/phone
-  regexes. Chosen because it's the mainstream, well-adopted PII-NER library (see
-  `docs/design-decisions.md`'s "use established libraries" principle) rather than a
-  hand-rolled name detector. Optional because the spacy model download needs network
-  access some deploy environments lack; when Presidio or its model isn't available,
-  `sanitize_memory` degrades gracefully to the regex-only strip it always had — it never
-  raises for the missing dependency.
+
+Presidio (`presidio-analyzer` + `spacy`) is a core dependency. It powers
+`thenetwork/memory/sanitize.py`'s deterministic `sanitize_memory`, which redacts person
+names, email addresses, and phone numbers. Organizations and locations stay in the gist
+to preserve company/place search recall. Missing Presidio or a missing NLP model is a
+deployment error, not a silent downgrade.
 
 ## Migrations
 
