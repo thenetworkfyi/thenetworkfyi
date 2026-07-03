@@ -43,6 +43,8 @@ def _fake_message(
     msg.subject = subject
     msg.headers = {}
     msg.obj = body
+    msg.text = body_text
+    msg.html = ""
     return msg
 
 

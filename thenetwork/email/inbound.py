@@ -3,10 +3,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from email.message import Message
-from html.parser import HTMLParser
-from typing import Iterator
 
+from bs4 import BeautifulSoup
 from imap_tools import AND, MailBox, MailMessageFlags
 
 from thenetwork.settings import get_settings
@@ -22,10 +20,7 @@ REJECT_BODY_OVERSIZE = "body_oversize"
 _AUTH_RESULT_RE = re.compile(r"\b(dkim|spf)=(\w+)", re.IGNORECASE)
 _AUTHSERV_ID_RE = re.compile(r"^\s*([^;]+)")
 
-_HTML_HIDDEN_ELEMENTS = frozenset({"head", "script", "style", "template", "title"})
-_HTML_BREAK_ELEMENTS = frozenset(
-    {"br", "div", "hr", "li", "ol", "p", "table", "td", "th", "tr", "ul"}
-)
+_HTML_HIDDEN_ELEMENTS = ("head", "script", "style", "template", "title")
 
 
 @dataclass
@@ -71,102 +66,17 @@ def cap_body(body: str) -> str:
     return body[:MAX_BODY_CHARS]
 
 
-class _VisibleTextParser(HTMLParser):
-    """Extract visible text from an HTML email body."""
-
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self._parts: list[str] = []
-        self._hidden_depth = 0
-
-    def handle_starttag(self, tag: str, attrs) -> None:
-        tag = tag.lower()
-        if tag in _HTML_HIDDEN_ELEMENTS:
-            self._hidden_depth += 1
-        elif not self._hidden_depth and tag in _HTML_BREAK_ELEMENTS:
-            self._parts.append(" ")
-
-    def handle_startendtag(self, tag: str, attrs) -> None:
-        if not self._hidden_depth and tag.lower() in _HTML_BREAK_ELEMENTS:
-            self._parts.append(" ")
-
-    def handle_endtag(self, tag: str) -> None:
-        tag = tag.lower()
-        if tag in _HTML_HIDDEN_ELEMENTS and self._hidden_depth:
-            self._hidden_depth -= 1
-        elif not self._hidden_depth and tag in _HTML_BREAK_ELEMENTS:
-            self._parts.append(" ")
-
-    def handle_data(self, data: str) -> None:
-        if not self._hidden_depth:
-            self._parts.append(data)
-
-    def text(self) -> str:
-        return " ".join("".join(self._parts).split())
-
-
 def _html_to_text(html: str) -> str:
-    parser = _VisibleTextParser()
+    """Reduce an HTML email body to whitespace-normalized visible text."""
+    if not html:
+        return ""
     try:
-        parser.feed(html)
-        parser.close()
+        soup = BeautifulSoup(html, "html.parser")
     except Exception:
         return ""
-    return parser.text()
-
-
-def _is_attachment(part: Message) -> bool:
-    """Identify attachment containers as well as attachment leaf parts."""
-    return (
-        part.get_content_disposition() == "attachment"
-        or part.get_filename() is not None
-        or part.get("Content-ID") is not None
-    )
-
-
-def _iter_body_parts(part: Message) -> Iterator[Message]:
-    """Yield body candidates while pruning complete attachment subtrees."""
-    if _is_attachment(part) or part.get_content_type() == "message/rfc822":
-        return
-
-    if part.is_multipart():
-        payload = part.get_payload()
-        if isinstance(payload, list):
-            for child in payload:
-                yield from _iter_body_parts(child)
-        return
-
-    if part.get_content_type() in {"text/plain", "text/html"}:
-        yield part
-
-
-def _decode_part(part: Message) -> str:
-    payload = part.get_payload(decode=True)
-    if payload is None:
-        undecoded = part.get_payload()
-        return undecoded if isinstance(undecoded, str) else ""
-
-    charset = part.get_content_charset() or "utf-8"
-    try:
-        return payload.decode(charset, errors="replace")
-    except LookupError:
-        return payload.decode("utf-8", errors="replace")
-
-
-def extract_body(message: Message) -> str:
-    """Return plain body text without reading or descending into attachments."""
-    plain_parts: list[str] = []
-    html_parts: list[str] = []
-
-    for part in _iter_body_parts(message):
-        text = _decode_part(part)
-        if part.get_content_type() == "text/plain":
-            plain_parts.append(text)
-        else:
-            html_parts.append(text)
-
-    body = "".join(plain_parts) if plain_parts else _html_to_text("".join(html_parts))
-    return cap_body(body)
+    for tag in soup(_HTML_HIDDEN_ELEMENTS):
+        tag.decompose()
+    return " ".join(soup.get_text(separator=" ").split())
 
 
 def _is_sender_authenticated(msg) -> bool:
@@ -235,7 +145,7 @@ def poll_unseen() -> list[InboundMessage]:
             auto_sub = msg.headers.get("auto-submitted")
             subject = cap_subject(msg.subject)
             try:
-                body = extract_body(msg.obj)
+                body = cap_body(msg.text or _html_to_text(msg.html))
             except BodyTooLargeError as exc:
                 messages.append(
                     InboundMessage(

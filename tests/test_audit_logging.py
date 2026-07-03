@@ -315,13 +315,21 @@ async def test_worker_caps_subject_and_body_before_agent():
 
     with patch("thenetwork.worker.tasks.check_rate_limit", return_value=True), patch(
         "thenetwork.worker.tasks.scan_content", return_value=(True, None)
-    ) as scan_content, patch("thenetwork.worker.tasks.is_admin_request", return_value=False), patch(
+    ) as scan_content, patch(
+        "thenetwork.worker.tasks.is_admin_request", return_value=False
+    ), patch("thenetwork.worker.tasks.get_session") as mock_get_session, patch(
         "thenetwork.worker.tasks.run_agent_for_email", mock_agent
     ):
+        mock_session = MagicMock()
+        mock_session.__enter__ = MagicMock(return_value=mock_session)
+        mock_session.__exit__ = MagicMock(return_value=False)
+        mock_session.exec.return_value.first.return_value = None
+        mock_get_session.return_value = mock_session
         await process_email.func(
             sender_email="alice@example.com",
             subject="s" * (MAX_SUBJECT_CHARS + 20),
             body="b" * (MAX_BODY_CHARS + 20),
+            sender_authenticated=True,
         )
 
     scan_content.assert_called_once_with("b" * MAX_BODY_CHARS)

@@ -1,102 +1,117 @@
-"""Tests for the attachment-free inbound email body boundary."""
+"""Tests for inbound email body extraction (imap-tools + BeautifulSoup)."""
 from __future__ import annotations
 
-from email.message import EmailMessage
+from unittest.mock import MagicMock
 
 import pytest
 
-from thenetwork.email.inbound import (
-    MAX_BODY_CHARS,
-    MAX_RAW_BODY_CHARS,
-    BodyTooLargeError,
-    extract_body,
-)
+from thenetwork.email import inbound
+from thenetwork.email.inbound import MAX_BODY_CHARS, _html_to_text
+from thenetwork.settings import Settings
 
 
-def test_plain_text_body_is_extracted_without_binary_attachment():
-    message = EmailMessage()
-    message.set_content("body only")
-    message.add_attachment(b"secret attachment", maintype="application", subtype="octet-stream")
-
-    assert extract_body(message) == "body only\n"
-
-
-def test_text_attachment_without_filename_is_ignored():
-    message = EmailMessage()
-    message.set_content("body only")
-
-    attachment = EmailMessage()
-    attachment.set_content("attachment payload")
-    attachment["Content-Disposition"] = "attachment"
-    message.make_mixed()
-    message.attach(attachment)
-
-    assert extract_body(message) == "body only\n"
-
-
-def test_attached_email_body_is_not_traversed():
-    message = EmailMessage()
-    message.set_content("outer body")
-
-    forwarded = EmailMessage()
-    forwarded.set_content("forwarded secret")
-    message.add_attachment(forwarded)
-
-    assert extract_body(message) == "outer body\n"
-
-
-def test_filename_marks_text_part_as_attachment_even_when_inline():
-    message = EmailMessage()
-    message.set_content("body only")
-    message.add_attachment("attachment payload", filename="notes.txt")
-
-    assert extract_body(message) == "body only\n"
-
-
-def test_content_id_marks_inline_text_as_an_attachment():
-    message = EmailMessage()
-    message.set_content("body only")
-
-    attachment = EmailMessage()
-    attachment.set_content("inline attachment payload")
-    attachment["Content-ID"] = "<embedded-text>"
-    message.make_mixed()
-    message.attach(attachment)
-
-    assert extract_body(message) == "body only\n"
-
-
-def test_plain_text_is_preferred_over_html_alternative():
-    message = EmailMessage()
-    message.set_content("plain body")
-    message.add_alternative("<p>HTML body</p>", subtype="html")
-
-    assert extract_body(message) == "plain body\n"
-
-
-def test_html_only_body_is_reduced_to_visible_text():
-    message = EmailMessage()
-    message.set_content(
-        "<html><head><title>hidden</title><style>.x { color: red }</style></head>"
-        "<body><p>Hello <b>there</b></p><script>steal()</script></body></html>",
-        subtype="html",
+def _settings() -> Settings:
+    return Settings(
+        email_account="agent@example.com",
+        email_password="secret",
+        imap_host="imap.example.com",
+        imap_port=993,
+        require_sender_auth=False,
     )
 
-    assert extract_body(message) == "Hello there"
+
+def _fake_message(
+    uid: str = "1",
+    from_: str = "alice@example.com",
+    subject: str = "hello",
+    text: str = "",
+    html: str = "",
+):
+    msg = MagicMock()
+    msg.uid = uid
+    msg.from_ = from_
+    msg.subject = subject
+    msg.headers = {}
+    msg.text = text
+    msg.html = html
+    return msg
 
 
-def test_body_is_bounded_before_it_reaches_the_agent():
-    message = EmailMessage()
-    message.set_content("a" * (MAX_BODY_CHARS + 100))
+class _FakeMailBox:
+    """Minimal stand-in for imap_tools.MailBox, enough to drive poll_unseen()."""
 
-    assert extract_body(message) == "a" * MAX_BODY_CHARS
+    def __init__(self, host: str, port: int) -> None:
+        self.fetch = MagicMock(return_value=[])
+
+    def login(self, user: str, password: str) -> "_FakeMailBox":
+        return self
+
+    def __enter__(self) -> "_FakeMailBox":
+        return self
+
+    def __exit__(self, *exc_info) -> bool:
+        return False
 
 
-def test_absurdly_large_body_is_rejected_instead_of_truncated():
-    message = EmailMessage()
-    message.set_content("a" * (MAX_RAW_BODY_CHARS + 1))
+@pytest.fixture
+def fake_mailbox(monkeypatch: pytest.MonkeyPatch) -> _FakeMailBox:
+    box = _FakeMailBox("imap.example.com", 993)
+    monkeypatch.setattr(inbound, "MailBox", lambda host, port: box)
+    monkeypatch.setattr(inbound, "get_settings", _settings)
+    return box
 
-    with pytest.raises(BodyTooLargeError) as exc_info:
-        extract_body(message)
 
-    assert exc_info.value.body_chars > MAX_RAW_BODY_CHARS
+def _poll_body(fake_mailbox: _FakeMailBox, **message_kwargs) -> str:
+    fake_mailbox.fetch.return_value = [_fake_message(**message_kwargs)]
+    messages = inbound.poll_unseen()
+    assert len(messages) == 1
+    return messages[0].body
+
+
+def test_plain_text_is_preferred_over_html(fake_mailbox: _FakeMailBox):
+    body = _poll_body(fake_mailbox, text="plain body", html="<p>HTML body</p>")
+
+    assert body == "plain body"
+
+
+def test_html_only_body_is_reduced_to_visible_text(fake_mailbox: _FakeMailBox):
+    body = _poll_body(
+        fake_mailbox,
+        text="",
+        html=(
+            "<html><head><title>hidden</title><style>.x { color: red }</style></head>"
+            "<body><p>Hello <b>there</b></p><script>steal()</script></body></html>"
+        ),
+    )
+
+    assert body == "Hello there"
+
+
+def test_body_is_bounded_to_max_body_chars(fake_mailbox: _FakeMailBox):
+    body = _poll_body(fake_mailbox, text="a" * (MAX_BODY_CHARS + 100))
+
+    assert body == "a" * MAX_BODY_CHARS
+
+
+def test_html_to_text_strips_head_script_style_template_title():
+    html = (
+        "<html><head><title>hidden title</title></head>"
+        "<body>"
+        "<template>hidden template</template>"
+        "<style>.x { color: red }</style>"
+        "<script>steal()</script>"
+        "<p>Hello <b>there</b></p>"
+        "</body></html>"
+    )
+
+    assert _html_to_text(html) == "Hello there"
+
+
+def test_html_to_text_normalizes_whitespace():
+    html = "<p>Hello   \n\n  there,\t friend</p>"
+
+    assert _html_to_text(html) == "Hello there, friend"
+
+
+def test_html_to_text_empty_input_returns_empty_string():
+    assert _html_to_text("") == ""
