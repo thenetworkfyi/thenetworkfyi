@@ -18,7 +18,7 @@ from thenetwork.audit import audit_event, audit_span
 from thenetwork.db.models import Memory, Person
 from thenetwork.db.session import get_session
 from thenetwork.embed.embeddings import embed_text
-from thenetwork.email.outbound import send_reply
+from thenetwork.email.outbound import notify_admins, send_reply
 from thenetwork.memory.sanitize import sanitize_memory_high_fidelity
 from thenetwork.search.match import MemoryMatch, match_memories
 
@@ -277,20 +277,13 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
             refs_count=len(refs),
             outcome="success",
         )
-        if s.admin_emails:
-            subject = f"[The Network] Manual reply needed: {sender}"
-            body = (
-                f"Email from {sender} was escalated for human review.\n\n"
-                f"Reason: {reason}\n\n"
-                f"Please reply to {sender} manually."
-            )
-            for admin_email in s.admin_emails:
-                send_reply(
-                    to_address=admin_email,
-                    subject=subject,
-                    body_text=body,
-                    include_footer=False,
-                )
+        subject = f"[The Network] Manual reply needed: {sender}"
+        body = (
+            f"Email from {sender} was escalated for human review.\n\n"
+            f"Reason: {reason}\n\n"
+            f"Please reply to {sender} manually."
+        )
+        notify_admins(s, subject, body)
 
         return {"status": "escalated", "memory_id": memory.id}
 
