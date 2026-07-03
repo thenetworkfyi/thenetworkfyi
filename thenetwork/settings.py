@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     unauthenticated_rate_limit_per_hour: int = 3
     global_email_rate_limit_per_hour: int = 100
 
+    # Outbound dispatch caps. Enforced inside dispatch_email, not by prompt.
+    dispatch_max_sends_per_run: int = 3
+    dispatch_recipient_daily_cap: int = 3
+    dispatch_sender_reply_daily_cap: int = 1
+
     # Admin channel: allowlisted senders + HMAC-signed request (see admin/auth.py)
     admin_emails: list[str] = []
     admin_token: str = ""  # HMAC key, never sent over the wire itself

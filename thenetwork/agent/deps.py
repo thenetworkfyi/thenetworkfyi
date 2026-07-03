@@ -23,3 +23,4 @@ class AgentDeps:
     # Session factory: () -> contextmanager[Session]
     # Stored as a callable to avoid serialization issues
     session_factory: Callable | None = None
+    dispatch_email_sent_count: int = 0
