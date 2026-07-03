@@ -16,11 +16,22 @@ EMAIL_ACCOUNT=agent@example.com
 EMAIL_PASSWORD=...
 IMAP_HOST=imap.gmail.com
 SMTP_HOST=smtp.gmail.com
+IMAP_SENT_FOLDER=Sent       # outbound replies are IMAP-appended here after SMTP send
 WORKER_CONCURRENCY=4        # global LLM-spend ceiling
 RATE_LIMIT_PER_HOUR=10      # per sender
 CONTENT_SCAN_ENABLED=false
 SANITIZE_LLM_TIER_ENABLED=false   # opt-in higher-fidelity gist pass, see docs/security.md layer 4
 ```
+
+The producer never deletes or moves inbound mail — it only flips the IMAP `\Seen` flag,
+so INBOX keeps every message the account has ever received. Durability comes from the
+Postgres job row (see `docs/architecture.md`'s message flow), not from the seen-flag; the
+"IMAP seen-flag as unit of durability" entry in `docs/design-decisions.md` is about not
+trusting that flag for job dedup, not about removing mail from the mailbox. Outbound
+replies are appended to `imap_sent_folder` (`IMAP_SENT_FOLDER`, default `Sent`) after the
+SMTP send succeeds, so the account reads like a normal mailbox with both received and
+sent mail visible end-to-end; the append is best-effort and its failure never fails the
+send job.
 
 Provider selection is by model-string prefix, not by code paths — there is no LiteLLM /
 proxy layer.
