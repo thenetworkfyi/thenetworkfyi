@@ -251,6 +251,10 @@ async def test_high_fidelity_sanitizer_skips_llm_when_tier_disabled(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_llm_sanitizer_uses_fixed_no_tools_prompt(monkeypatch):
+    """Also proves sanitize_memory_llm is built with settings.small_agent_model,
+    not settings.agent_model: the fake settings stub sets only the former, and
+    the `kwargs["model"]` assertion below fails if the sanitizer reads the
+    wrong field."""
     memory = Memory(
         text=(
             "Dana Jones wants climate hardware intros. Reach dana@example.com, "
