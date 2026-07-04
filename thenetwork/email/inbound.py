@@ -156,15 +156,17 @@ def poll_unseen() -> list[InboundMessage]:
     """
     s = get_settings()
     messages: list[InboundMessage] = []
-    own_address = s.email_account.lower()
+    # Outbound replies carry From: smtp_account, not the polled imap_account,
+    # so that's the address to match to skip our own replies bouncing back.
+    own_addresses = {s.imap_account.lower(), s.smtp_account.lower()}
 
-    with MailBox(s.imap_host, s.imap_port).login(s.email_account, s.email_password) as mb:
+    with MailBox(s.imap_host, s.imap_port).login(s.imap_account, s.imap_password) as mb:
         mb.email_message_class = _RawCapturingMailMessage
         for msg in mb.fetch(AND(seen=False), mark_seen=False, bulk=True):
             if _is_auto_message(msg):
                 continue
             # Skip our own outbound replies that bounce back via IMAP
-            if msg.from_.lower() == own_address:
+            if msg.from_.lower() in own_addresses:
                 continue
             auto_sub = msg.headers.get("auto-submitted")
             subject = cap_subject(msg.subject)
@@ -211,5 +213,5 @@ def mark_messages_seen(uids: list[str]) -> None:
     if not uids:
         return
     s = get_settings()
-    with MailBox(s.imap_host, s.imap_port).login(s.email_account, s.email_password) as mb:
+    with MailBox(s.imap_host, s.imap_port).login(s.imap_account, s.imap_password) as mb:
         mb.flag(uids, [MailMessageFlags.SEEN], True)

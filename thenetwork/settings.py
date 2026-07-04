@@ -21,11 +21,14 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     anthropic_api_key: str = ""
 
-    # Email
-    email_account: str = ""
-    email_password: str = ""
+    # Email — IMAP (inbound polling) and SMTP (outbound send) are distinct
+    # accounts/credentials, potentially on different providers entirely.
+    imap_account: str = ""
+    imap_password: str = ""
     imap_host: str = "imap.gmail.com"
     imap_port: int = 993
+    smtp_account: str = ""
+    smtp_password: str = ""
     smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587
     # Folder outbound replies are appended to after a successful SMTP send, so

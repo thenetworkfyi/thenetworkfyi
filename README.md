@@ -204,11 +204,14 @@ EMBED_MODEL=text-embedding-3-small
 OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
 
-# Mailbox
-EMAIL_ACCOUNT=agent@example.com
-EMAIL_PASSWORD=...
+# Mailbox — IMAP (inbound polling) and SMTP (outbound send) are separate
+# accounts/credentials, potentially on different providers
+IMAP_ACCOUNT=agent@example.com
+IMAP_PASSWORD=...
 IMAP_HOST=imap.gmail.com
 IMAP_PORT=993
+SMTP_ACCOUNT=agent@example.com
+SMTP_PASSWORD=...
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 

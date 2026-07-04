@@ -111,12 +111,46 @@ def _get_limiter() -> tuple[strategies.FixedWindowRateLimiter, Storage]:
     return _limiter, _storage
 
 
+# RFC 5233 sub-addressing ("+tag") is honored by essentially every major
+# provider (Gmail, Outlook, Fastmail, ProtonMail, iCloud custom domains, ...),
+# so stripping it is safe across the board. Dot-insensitivity and the "-tag"
+# separator are provider-specific quirks, so they're scoped to the domains
+# that actually implement them rather than applied universally.
+_GMAIL_DOMAINS = frozenset({"gmail.com", "googlemail.com"})
+_HYPHEN_SUBADDRESS_DOMAINS = frozenset({
+    "yahoo.com", "yahoo.co.uk", "yahoo.ca", "yahoo.com.au", "yahoo.de", "yahoo.fr",
+    "ymail.com", "rocketmail.com", "aol.com",
+})
+
+
 def normalize_rate_limit_identity(sender_email: str) -> str:
-    """Return the canonical, non-empty email identity used in quota keys."""
+    """Return the canonical, non-empty email identity used in quota keys.
+
+    Collapses common alias conventions (RFC 5233 "+tag" sub-addressing;
+    Gmail's dot-insensitivity and gmail.com/googlemail.com equivalence;
+    Yahoo/AOL's "-tag" sub-addressing) so a single mailbox can't mint
+    unlimited distinct rate-limit identities. This governs quota bucketing
+    only, never the address mail is actually sent to.
+    """
     raw = unicodedata.normalize("NFKC", sender_email).strip()
     _, parsed = parseaddr(raw)
-    normalized = parsed or raw
-    return normalized.strip().casefold() or "unknown"
+    normalized = (parsed or raw).strip().casefold()
+    if not normalized or "@" not in normalized:
+        return normalized or "unknown"
+
+    local, _, domain = normalized.rpartition("@")
+    local = local.split("+", 1)[0]
+
+    if domain in _HYPHEN_SUBADDRESS_DOMAINS:
+        local = local.split("-", 1)[0]
+
+    if domain in _GMAIL_DOMAINS:
+        local = local.replace(".", "")
+        domain = "gmail.com"
+
+    if not local or not domain:
+        return "unknown"
+    return f"{local}@{domain}"
 
 
 def _sender_key(sender_email: str, *, sender_authenticated: bool) -> str:

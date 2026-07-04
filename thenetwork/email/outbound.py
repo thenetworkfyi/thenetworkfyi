@@ -40,7 +40,7 @@ def _append_to_sent(msg: EmailMessage) -> None:
     s = get_settings()
     started = monotonic()
     try:
-        with MailBox(s.imap_host, s.imap_port).login(s.email_account, s.email_password) as mb:
+        with MailBox(s.imap_host, s.imap_port).login(s.imap_account, s.imap_password) as mb:
             mb.append(msg.as_bytes(), s.imap_sent_folder, flag_set=[MailMessageFlags.SEEN])
     except Exception as exc:
         audit_event(
@@ -107,12 +107,14 @@ def send_reply(
         s = get_settings()
 
         if include_footer and s.growth_footer_enabled:
-            body_text = body_text + _growth_footer_text(s.email_account)
+            # The footer points new senders at the polled inbound address,
+            # not the (possibly different) SMTP sending identity.
+            body_text = body_text + _growth_footer_text(s.imap_account)
             if body_html:
-                body_html = body_html + _growth_footer_html(s.email_account)
+                body_html = body_html + _growth_footer_html(s.imap_account)
 
         msg = EmailMessage()
-        msg["From"] = s.email_account
+        msg["From"] = s.smtp_account
         msg["To"] = to_address
         msg["Subject"] = subject
         # RFC 3834 §3.1.7 — auto-replied for automatic responses to inbound mail
@@ -130,7 +132,7 @@ def send_reply(
         with smtplib.SMTP(s.smtp_host, s.smtp_port) as smtp:
             smtp.ehlo()
             smtp.starttls()
-            smtp.login(s.email_account, s.email_password)
+            smtp.login(s.smtp_account, s.smtp_password)
             smtp.send_message(msg)
 
         _append_to_sent(msg)
