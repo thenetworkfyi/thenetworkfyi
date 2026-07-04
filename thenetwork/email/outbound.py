@@ -10,6 +10,26 @@ from imap_tools import MailBox, MailMessageFlags
 from thenetwork.audit import audit_event, audit_span
 from thenetwork.settings import get_settings
 
+# The one deterministic explanation of what this address is and how to use
+# it - injection-proof by construction since it's fixed copy, not model
+# output. Sent both for near-empty first contact (worker/tasks.py) and when
+# escalate() acknowledges an authenticated sender it can't otherwise help
+# (agent/tools.py) - in both cases the sender doesn't yet know how to join.
+FIRST_CONTACT_WELCOME_REPLY = """\
+To join, reply with a few plain sentences: who you are, what you're
+working on, and what kind of person would be worth your time. What you
+write is what gets matched on, so specifics help.
+
+Nothing you write is shown to anyone else. When we weigh an
+introduction, we work only from an anonymized summary.
+
+You may not hear from us for a while. Introductions happen when they're
+warranted, not on a schedule. Silence means the right person hasn't
+shown up yet.
+
+--- The Network
+"""
+
 
 def _growth_footer_text(account: str) -> str:
     # "Reply" only reaches us for the direct recipient - a forward's reply

@@ -190,6 +190,7 @@ async def test_escalate_notification_includes_sender_and_reason():
 @pytest.mark.asyncio
 async def test_escalate_acknowledges_authenticated_unknown_sender_without_footer():
     from thenetwork.agent.tools import escalate
+    from thenetwork.email.outbound import FIRST_CONTACT_WELCOME_REPLY
 
     cm, _ = _mock_session()
     with patch("thenetwork.agent.tools.embed_text", new=AsyncMock(return_value=[0.0] * 1536)), \
@@ -209,7 +210,7 @@ async def test_escalate_acknowledges_authenticated_unknown_sender_without_footer
     mock_send.assert_called_once_with(
         to_address="new@example.com",
         subject="Re: Question",
-        body_text="A person is going to read this and reply.",
+        body_text=FIRST_CONTACT_WELCOME_REPLY,
         include_footer=False,
     )
 

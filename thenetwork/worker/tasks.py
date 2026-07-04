@@ -25,7 +25,11 @@ from thenetwork.email.inbound import (
     cap_subject,
     is_near_empty_body,
 )
-from thenetwork.email.outbound import reply_subject, send_reply
+from thenetwork.email.outbound import (
+    FIRST_CONTACT_WELCOME_REPLY,
+    reply_subject,
+    send_reply,
+)
 from thenetwork.memory.sanitize import assert_presidio_ready
 from thenetwork.security.content_scan import scan_content
 from thenetwork.security.rate_limit import check_rate_limit, normalize_rate_limit_identity
@@ -65,20 +69,6 @@ _INFRASTRUCTURE_REJECTION_REPLIES = {
         "safety scan. Please revise the message and try again."
     ),
 }
-_WELCOME_REPLY = """\
-To join, reply with a few plain sentences: who you are, what you're
-working on, and what kind of person would be worth your time. What you
-write is what gets matched on, so specifics help.
-
-Nothing you write is shown to anyone else. When we weigh an
-introduction, we work only from an anonymized summary.
-
-You may not hear from us for a while. Introductions happen when they're
-warranted, not on a schedule. Silence means the right person hasn't
-shown up yet.
-
---- The Network
-"""
 _WELCOME_LIMIT = parse("1/day")
 _welcome_limiter: strategies.MovingWindowRateLimiter | None = None
 _welcome_storage: storage.Storage | None = None
@@ -158,7 +148,7 @@ def _send_first_contact_welcome_reply(
     send_reply(
         to_address=sender_email,
         subject=reply_subject(subject, fallback="How to join"),
-        body_text=_WELCOME_REPLY,
+        body_text=FIRST_CONTACT_WELCOME_REPLY,
         include_footer=False,
     )
     return True
