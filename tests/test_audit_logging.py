@@ -365,6 +365,7 @@ def test_intake_enqueues_inbound_message_id_when_present(caplog):
         auto_submitted=None,
         sender_authenticated=True,
         message_id="<abc123@example.com>",
+        message_date="Sat, 04 Jul 2026 12:00:00 -0700",
     )
     caplog.set_level(logging.INFO, logger=LOGGER_NAME)
 
@@ -380,6 +381,8 @@ def test_intake_enqueues_inbound_message_id_when_present(caplog):
         sender_authenticated=message.sender_authenticated,
         raw_message_b64=None,
         inbound_message_id=message.message_id,
+        inbound_body_for_quote=message.body,
+        inbound_date=message.message_date,
     )
 
 
@@ -563,6 +566,8 @@ async def test_worker_threads_infrastructure_rejection_reply():
             body="Project Finch closes Friday",
             sender_authenticated=True,
             inbound_message_id="<abc123@example.com>",
+            inbound_body_for_quote="Project Finch closes Friday",
+            inbound_date="Sat, 04 Jul 2026 12:00:00 -0700",
         )
 
     send_reply.assert_called_once_with(
@@ -572,6 +577,8 @@ async def test_worker_threads_infrastructure_rejection_reply():
         include_footer=False,
         in_reply_to="<abc123@example.com>",
         references="<abc123@example.com>",
+        quoted_body_text="Project Finch closes Friday",
+        quoted_date="Sat, 04 Jul 2026 12:00:00 -0700",
     )
 
 

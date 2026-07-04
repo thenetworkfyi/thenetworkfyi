@@ -120,6 +120,17 @@ def test_poll_unseen_captures_message_id(fake_mailbox: _FakeMailBox):
     assert messages[0].message_id == "<abc123@example.com>"
 
 
+def test_poll_unseen_captures_message_date(fake_mailbox: _FakeMailBox):
+    fake_mailbox.fetch.return_value = [
+        _fake_message(headers={"date": ["Sat, 04 Jul 2026 12:00:00 -0700"]})
+    ]
+
+    messages = inbound.poll_unseen()
+
+    assert len(messages) == 1
+    assert messages[0].message_date == "Sat, 04 Jul 2026 12:00:00 -0700"
+
+
 def test_poll_unseen_marks_empty_body_as_rejected(fake_mailbox: _FakeMailBox):
     fake_mailbox.fetch.return_value = [_fake_message(body_text=" \n")]
 

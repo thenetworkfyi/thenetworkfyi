@@ -87,6 +87,8 @@ async def test_dispatch_threads_reply_to_inbound_sender_only():
 
     ctx = FakeCtx(sender_user_id="user-alice")
     ctx.deps.inbound_message_id = "<abc123@example.com>"
+    ctx.deps.inbound_body_for_quote = "Original request"
+    ctx.deps.inbound_date = "Sat, 04 Jul 2026 12:00:00 -0700"
     ctx._mock_sess.get.return_value = fake_person
 
     with patch("thenetwork.agent.tools.send_reply") as mock_send:
@@ -100,6 +102,8 @@ async def test_dispatch_threads_reply_to_inbound_sender_only():
     assert result["status"] == "sent"
     assert mock_send.call_args.kwargs["in_reply_to"] == "<abc123@example.com>"
     assert mock_send.call_args.kwargs["references"] == "<abc123@example.com>"
+    assert mock_send.call_args.kwargs["quoted_body_text"] == "Original request"
+    assert mock_send.call_args.kwargs["quoted_date"] == "Sat, 04 Jul 2026 12:00:00 -0700"
 
 
 @pytest.mark.asyncio
@@ -122,6 +126,7 @@ async def test_dispatch_does_not_thread_agent_outreach():
     assert result["status"] == "sent"
     assert "in_reply_to" not in mock_send.call_args.kwargs
     assert "references" not in mock_send.call_args.kwargs
+    assert "quoted_body_text" not in mock_send.call_args.kwargs
 
 
 def test_dispatch_cap_settings_defaults():

@@ -72,6 +72,7 @@ async def test_first_contact_welcome_threads_reply_when_message_id_present():
             body="Hi",
             sender_authenticated=True,
             inbound_message_id="<abc123@example.com>",
+            inbound_date="Sat, 04 Jul 2026 12:00:00 -0700",
         )
 
     send_reply.assert_called_once_with(
@@ -81,6 +82,8 @@ async def test_first_contact_welcome_threads_reply_when_message_id_present():
         include_footer=False,
         in_reply_to="<abc123@example.com>",
         references="<abc123@example.com>",
+        quoted_body_text="Hi",
+        quoted_date="Sat, 04 Jul 2026 12:00:00 -0700",
     )
 
 

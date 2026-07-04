@@ -94,6 +94,20 @@ def _thread_headers(inbound_message_id: str | None) -> dict[str, str]:
     return {"in_reply_to": inbound_message_id, "references": inbound_message_id}
 
 
+def _direct_reply_kwargs(
+    inbound_message_id: str | None,
+    inbound_body_for_quote: str | None,
+    inbound_date: str | None,
+) -> dict[str, str | None]:
+    if not inbound_message_id:
+        return {}
+    kwargs: dict[str, str | None] = _thread_headers(inbound_message_id)
+    if inbound_body_for_quote:
+        kwargs["quoted_body_text"] = inbound_body_for_quote
+        kwargs["quoted_date"] = inbound_date
+    return kwargs
+
+
 def _is_known_authenticated_sender(sender_email: str, sender_authenticated: bool) -> bool:
     if not sender_authenticated:
         return False
@@ -126,6 +140,8 @@ def _send_infrastructure_rejection_reply(
     sender_authenticated: bool,
     reason: str,
     inbound_message_id: str | None = None,
+    inbound_body_for_quote: str | None = None,
+    inbound_date: str | None = None,
 ) -> None:
     body_text = _INFRASTRUCTURE_REJECTION_REPLIES[reason]
     if not _is_known_authenticated_sender(sender_email, sender_authenticated):
@@ -136,7 +152,7 @@ def _send_infrastructure_rejection_reply(
         subject=f"Re: {subject}",
         body_text=body_text,
         include_footer=False,
-        **_thread_headers(inbound_message_id),
+        **_direct_reply_kwargs(inbound_message_id, inbound_body_for_quote, inbound_date),
     )
 
 
@@ -146,6 +162,8 @@ def _send_first_contact_welcome_reply(
     subject: str,
     sender_authenticated: bool,
     inbound_message_id: str | None = None,
+    inbound_body_for_quote: str | None = None,
+    inbound_date: str | None = None,
 ) -> bool:
     if not sender_authenticated:
         return False
@@ -159,7 +177,7 @@ def _send_first_contact_welcome_reply(
         subject=reply_subject(subject, fallback="How to join"),
         body_text=FIRST_CONTACT_WELCOME_REPLY,
         include_footer=False,
-        **_thread_headers(inbound_message_id),
+        **_direct_reply_kwargs(inbound_message_id, inbound_body_for_quote, inbound_date),
     )
     return True
 
@@ -172,6 +190,8 @@ async def process_email(
     sender_authenticated: bool = False,
     raw_message_b64: str | None = None,
     inbound_message_id: str | None = None,
+    inbound_body_for_quote: str | None = None,
+    inbound_date: str | None = None,
 ) -> None:
     """Procrastinate worker task: run the agent for one inbound email.
 
@@ -205,6 +225,8 @@ async def process_email(
                 sender_authenticated=sender_authenticated,
                 reason=REJECT_BODY_OVERSIZE,
                 inbound_message_id=inbound_message_id,
+                inbound_body_for_quote=inbound_body_for_quote or body,
+                inbound_date=inbound_date,
             )
             return
 
@@ -221,6 +243,8 @@ async def process_email(
                 subject=subject,
                 sender_authenticated=sender_authenticated,
                 inbound_message_id=inbound_message_id,
+                inbound_body_for_quote=inbound_body_for_quote or body,
+                inbound_date=inbound_date,
             )
             if welcomed:
                 audit_event("worker.first_contact_welcome_sent")
@@ -237,6 +261,8 @@ async def process_email(
                 sender_authenticated=sender_authenticated,
                 reason=REJECT_RATE_LIMIT,
                 inbound_message_id=inbound_message_id,
+                inbound_body_for_quote=inbound_body_for_quote or body,
+                inbound_date=inbound_date,
             )
             return
 
@@ -249,6 +275,8 @@ async def process_email(
                 sender_authenticated=sender_authenticated,
                 reason=REJECT_CONTENT_SCAN,
                 inbound_message_id=inbound_message_id,
+                inbound_body_for_quote=inbound_body_for_quote or body,
+                inbound_date=inbound_date,
             )
             return
 
@@ -295,6 +323,8 @@ async def process_email(
         }
         if inbound_message_id:
             agent_kwargs["inbound_message_id"] = inbound_message_id
+            agent_kwargs["inbound_body_for_quote"] = inbound_body_for_quote or body
+            agent_kwargs["inbound_date"] = inbound_date
         await run_agent_for_email(**agent_kwargs)
 
 

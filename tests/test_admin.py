@@ -373,6 +373,8 @@ def test_process_email_routes_admin_to_handler():
     mock_send.assert_called_once()
     assert mock_send.call_args.kwargs["in_reply_to"] == "<admin123@example.com>"
     assert mock_send.call_args.kwargs["references"] == "<admin123@example.com>"
+    assert "quoted_body_text" not in mock_send.call_args.kwargs
+    assert "quoted_date" not in mock_send.call_args.kwargs
     mock_agent.assert_not_called()
 
 
