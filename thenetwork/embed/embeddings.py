@@ -1,6 +1,6 @@
 """Embedding helpers backed by LlamaIndex.
 
-Provider is swappable via settings.embed_model — provider resolved from model name prefix.
+Provider is swappable via settings.embed_model - provider resolved from model name prefix.
 All batching and retry are delegated to LlamaIndex's built-in implementation.
 """
 from __future__ import annotations

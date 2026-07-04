@@ -1,13 +1,14 @@
 """Procrastinate task definitions for the email processing worker.
 
 The worker is Postgres-native (LISTEN/NOTIFY + SKIP LOCKED, no Redis/broker).
-Retries and backoff are Procrastinate's responsibility — no hand-rolled loops.
+Retries and backoff are Procrastinate's responsibility - no hand-rolled loops.
 """
 from __future__ import annotations
 
 import base64
 
 import procrastinate
+from limits import parse, storage, strategies
 from sqlmodel import select
 
 from thenetwork.admin.auth import extract_body_text, extract_command, verify_admin_request
@@ -24,10 +25,10 @@ from thenetwork.email.inbound import (
     cap_subject,
     is_near_empty_body,
 )
-from thenetwork.email.outbound import send_reply
+from thenetwork.email.outbound import reply_subject, send_reply
 from thenetwork.memory.sanitize import assert_presidio_ready
 from thenetwork.security.content_scan import scan_content
-from thenetwork.security.rate_limit import check_rate_limit
+from thenetwork.security.rate_limit import check_rate_limit, normalize_rate_limit_identity
 from thenetwork.settings import get_settings
 
 app = procrastinate.App(
@@ -64,6 +65,37 @@ _INFRASTRUCTURE_REJECTION_REPLIES = {
         "safety scan. Please revise the message and try again."
     ),
 }
+_WELCOME_REPLY = """\
+To join, reply with a few plain sentences: who you are, what you're
+working on, and what kind of person would be worth your time. What you
+write is what gets matched on, so specifics help.
+
+Nothing you write is shown to anyone else. When we weigh an
+introduction, we work only from an anonymized summary.
+
+You may not hear from us for a while. Introductions happen when they're
+warranted, not on a schedule. Silence means the right person hasn't
+shown up yet.
+
+--- The Network
+"""
+_WELCOME_LIMIT = parse("1/day")
+_welcome_limiter: strategies.MovingWindowRateLimiter | None = None
+_welcome_storage: storage.Storage | None = None
+
+
+def _get_welcome_limiter() -> tuple[strategies.MovingWindowRateLimiter, object]:
+    global _welcome_limiter, _welcome_storage
+    if _welcome_limiter is None:
+        _welcome_storage = storage.MemoryStorage()
+        _welcome_limiter = strategies.MovingWindowRateLimiter(_welcome_storage)
+    return _welcome_limiter, _welcome_storage
+
+
+def _hit_welcome_quota(sender_email: str) -> bool:
+    limiter, _ = _get_welcome_limiter()
+    identity = normalize_rate_limit_identity(sender_email)
+    return limiter.hit(_WELCOME_LIMIT, f"welcome:first-contact:{identity}")
 
 
 def _is_known_authenticated_sender(sender_email: str, sender_authenticated: bool) -> bool:
@@ -76,6 +108,19 @@ def _is_known_authenticated_sender(sender_email: str, sender_authenticated: bool
         ).first()
 
     return sender_id is not None
+
+
+def _sender_id_for_authenticated_sender(
+    sender_email: str,
+    sender_authenticated: bool,
+) -> str | None:
+    if not sender_authenticated:
+        return None
+
+    with get_session() as session:
+        return session.exec(
+            select(Person.id).where(Person.email == sender_email)
+        ).first()
 
 
 def _send_infrastructure_rejection_reply(
@@ -97,6 +142,28 @@ def _send_infrastructure_rejection_reply(
     )
 
 
+def _send_first_contact_welcome_reply(
+    *,
+    sender_email: str,
+    subject: str,
+    sender_authenticated: bool,
+) -> bool:
+    if not sender_authenticated:
+        return False
+    if _sender_id_for_authenticated_sender(sender_email, sender_authenticated) is not None:
+        return False
+    if not _hit_welcome_quota(sender_email):
+        return False
+
+    send_reply(
+        to_address=sender_email,
+        subject=reply_subject(subject, fallback="How to join"),
+        body_text=_WELCOME_REPLY,
+        include_footer=False,
+    )
+    return True
+
+
 @app.task(retry=procrastinate.RetryStrategy(max_attempts=3, wait=60))
 async def process_email(
     sender_email: str,
@@ -113,7 +180,7 @@ async def process_email(
 
     ``sender_authenticated`` reflects the receiving server's DKIM/SPF
     verdict on the From: header (see email/inbound.py). An unauthenticated
-    From is never resolved to an existing Person — that header alone is
+    From is never resolved to an existing Person - that header alone is
     spoofable, and treating a spoofed sender as a known identity would let
     anyone impersonate a real user (write memories in their name, dispatch
     email as them, or burn their rate-limit quota).
@@ -140,7 +207,20 @@ async def process_email(
             return
 
         if is_near_empty_body(body):
+            if not check_rate_limit(
+                sender_email,
+                sender_authenticated=sender_authenticated,
+            ):
+                audit_event("worker.message_rejected", reason=REJECT_RATE_LIMIT)
+                return
             audit_event("worker.message_rejected", reason=REJECT_BODY_EMPTY)
+            welcomed = _send_first_contact_welcome_reply(
+                sender_email=sender_email,
+                subject=subject,
+                sender_authenticated=sender_authenticated,
+            )
+            if welcomed:
+                audit_event("worker.first_contact_welcome_sent")
             return
 
         if not check_rate_limit(
@@ -181,22 +261,19 @@ async def process_email(
             )
             return
 
-        sender_user_id: str | None = None
-        with get_session() as session:
-            profile = session.exec(
-                select(Person).where(Person.email == sender_email)
-            ).first()
-            if profile and sender_authenticated:
-                sender_user_id = profile.id
+        sender_user_id = _sender_id_for_authenticated_sender(
+            sender_email,
+            sender_authenticated,
+        )
 
         audit_event(
             "database.action",
             action="lookup",
             record_type="person",
-            outcome="found" if profile is not None else "not_found",
+            outcome="found" if sender_user_id is not None else "not_found",
         )
 
-        if not sender_authenticated and profile is None:
+        if not sender_authenticated and sender_user_id is None:
             audit_event(
                 "worker.message_rejected",
                 reason="unauthenticated_unknown_sender",

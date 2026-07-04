@@ -2,7 +2,7 @@
 # Deploy the latest published image on the VPS.
 #
 # Usage (run from the directory holding .env and docker-compose.yml on the
-# server — no git checkout required):
+# server - no git checkout required):
 #   ./scripts/deploy.sh
 #
 # What it does:

@@ -1,23 +1,23 @@
-"""Admin channel authentication — PGP/MIME (RFC 3156) signature verification.
+"""Admin channel authentication - PGP/MIME (RFC 3156) signature verification.
 
 An admin request requires all of:
   1. Sender email is in the ADMIN_EMAILS allowlist.
-  2. Subject starts with "ADMIN:" (case-insensitive) — a cheap pre-filter so
+  2. Subject starts with "ADMIN:" (case-insensitive) - a cheap pre-filter so
      we don't run gpg on every inbound email. The subject carries no
      authority beyond that filter: RFC 3156 signs only the MIME body, never
      message headers, so a header is not protected by the signature.
   3. The message is `multipart/signed; protocol="application/pgp-signature"`
      and the detached signature verifies against ADMIN_GPG_PUBLIC_KEY, using
      the byte-exact original signed part (re-serializing the parsed
-     email.message.Message does not round-trip byte-exact — CRLF normalizes
-     to LF — so the signed content is sliced directly out of the raw bytes).
+     email.message.Message does not round-trip byte-exact - CRLF normalizes
+     to LF - so the signed content is sliced directly out of the raw bytes).
   4. The verified cleartext body contains a "COMMAND:" line, and the
      signature itself is fresh and unused: the OpenPGP signature packet
      carries its own creation timestamp (must be within
      ADMIN_REPLAY_WINDOW_SECONDS of now) and its signature bytes hash to a
      value not seen before (tracked in the admin_nonces table). Both values
      come from inside the verified signature, not operator-authored text, so
-     neither can be forged without invalidating the signature — no hand-typed
+     neither can be forged without invalidating the signature - no hand-typed
      TS/NONCE lines needed.
 
 The command comes from the signed body's COMMAND: line, never the Subject
@@ -29,7 +29,7 @@ on a captured signed email while the signed body+signature stay valid, so the
 dedup key has to come from inside the signature itself.
 
 Sign with any standard PGP/MIME-capable mail client (Thunderbird, Apple Mail
-+ GPGSuite, etc.) — compose the body as:
++ GPGSuite, etc.) - compose the body as:
 
     COMMAND: <verb> <args>
 
@@ -128,7 +128,7 @@ def _verify_pgp_mime(raw_message: bytes, public_key: str) -> tuple[bytes, str, i
 
     The digest (SHA-256 of the detached signature bytes) and timestamp (the
     OpenPGP signature packet's own creation time) both come from inside the
-    thing gpg just verified — neither can be forged without invalidating the
+    thing gpg just verified - neither can be forged without invalidating the
     signature, so they stand in for an operator-authored nonce/timestamp.
     """
     extracted = _extract_multipart_signed(raw_message)
@@ -163,7 +163,7 @@ def _consume_signature(sig_hash: str, window_seconds: int) -> bool:
             session.add(AdminNonce(nonce=sig_hash))
         return True
     except IntegrityError:
-        # Concurrent request claimed this signature first — treat as replay.
+        # Concurrent request claimed this signature first - treat as replay.
         return False
 
 

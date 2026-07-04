@@ -175,7 +175,7 @@ async def test_rematch_skips_self_match():
     from thenetwork.worker.proactive import scan_for_matches
 
     recent = [_memory("n1", ["Q"], "wants a rust cofounder")]
-    # match resolves to Q — same person as the arrival's subject
+    # match resolves to Q - same person as the arrival's subject
     matches = [MemoryMatch("m0", "Q", "wants a rust cofounder", 0.99)]
     persons = {"Q": _person("Q", "q@test.com")}
 
@@ -206,7 +206,7 @@ async def test_rematch_early_returns_when_no_recent_memories():
 
 @pytest.mark.asyncio
 async def test_rematch_trigger_body_carries_no_raw_pii():
-    """SEAL: the deferred body carries only opaque ids + gists — never a real
+    """SEAL: the deferred body carries only opaque ids + gists - never a real
     address or raw memory text for either party."""
     from thenetwork.search.match import MemoryMatch
     from thenetwork.worker.proactive import scan_for_matches

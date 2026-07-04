@@ -54,7 +54,7 @@ def _fake_person(email: str = "bob@example.com"):
 
 @pytest.mark.asyncio
 async def test_dispatch_resolves_address_not_from_caller():
-    """The tool signature takes only recipient_user_id — caller cannot supply a raw address."""
+    """The tool signature takes only recipient_user_id - caller cannot supply a raw address."""
     import inspect
     sig = inspect.signature(dispatch_email)
     params = list(sig.parameters.keys())
@@ -153,7 +153,7 @@ async def test_dispatch_unknown_id_returns_error():
 
 
 # ---------------------------------------------------------------------------
-# register_person: self-registration only — no confused-deputy re-opening
+# register_person: self-registration only - no confused-deputy re-opening
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -181,7 +181,7 @@ async def test_register_person_rejects_already_registered_sender():
 
 @pytest.mark.asyncio
 async def test_register_person_rejects_email_mismatch():
-    """The tool cannot be used to register a third party — email must match the sender."""
+    """The tool cannot be used to register a third party - email must match the sender."""
     ctx = FakeCtx(
         sender_email="alice@example.com",
         sender_user_id=None,
@@ -530,7 +530,7 @@ async def test_remember_dedupes_consolidation_candidates_by_memory_id():
 
 @pytest.mark.asyncio
 async def test_search_returns_gist_not_raw_text():
-    """search() results must not include raw memory text — only gist (PII-stripped)."""
+    """search() results must not include raw memory text - only gist (PII-stripped)."""
     from thenetwork.agent.tools import search
 
     mock_match = MemoryMatch(
@@ -555,8 +555,8 @@ async def test_search_returns_gist_not_raw_text():
 
 
 @pytest.mark.asyncio
-async def test_search_result_keys_sealed():
-    """search() result dicts may only contain person_id, gist, similarity — nothing else."""
+async def test_search_result_keys_sealed_for_other_people():
+    """Cross-user search results must not expose anything beyond gist + opaque person id."""
     from thenetwork.agent.tools import search
 
     mock_match = MemoryMatch(
@@ -575,6 +575,71 @@ async def test_search_result_keys_sealed():
     for r in results:
         leaked = set(r.keys()) - allowed_keys
         assert not leaked, f"unexpected keys leaked into search result: {leaked}"
+
+
+@pytest.mark.asyncio
+async def test_search_includes_memory_id_only_for_sender_owned_results():
+    """The agent may receive self memory IDs so sender-requested deletion can work."""
+    from thenetwork.agent.tools import search
+
+    matches = [
+        MemoryMatch(
+            memory_id="self-memory",
+            person_id="user-alice",
+            gist="backend engineer",
+            similarity=0.91,
+        ),
+        MemoryMatch(
+            memory_id="other-memory",
+            person_id="user-bob",
+            gist="systems engineer",
+            similarity=0.88,
+        ),
+    ]
+
+    ctx = FakeCtx(sender_user_id="user-alice")
+    with patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock, return_value=[0.0] * 1536), \
+         patch("thenetwork.agent.tools.match_memories", return_value=matches):
+        results = await search(ctx, query="my stored facts")
+
+    assert results[0]["memory_id"] == "self-memory"
+    assert "memory_id" not in results[1]
+
+
+@pytest.mark.asyncio
+async def test_forget_deletes_only_sender_owned_memory():
+    from thenetwork.agent.tools import forget
+    from thenetwork.db.models import Memory
+
+    ctx = FakeCtx(sender_user_id="user-alice")
+    memory = Memory(id="self-memory", text="Alice works on compilers", refs=["user-alice"])
+    ctx._mock_sess.get.return_value = memory
+
+    result = await forget(ctx, "self-memory")
+
+    assert result == {"status": "deleted"}
+    ctx._mock_sess.delete.assert_called_once_with(memory)
+    ctx._mock_sess.commit.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_forget_rejects_memory_not_owned_only_by_sender():
+    from thenetwork.agent.tools import forget
+    from thenetwork.db.models import Memory
+
+    ctx = FakeCtx(sender_user_id="user-alice")
+    memory = Memory(
+        id="other-memory",
+        text="Bob works on compilers",
+        refs=["user-bob"],
+    )
+    ctx._mock_sess.get.return_value = memory
+
+    result = await forget(ctx, "other-memory")
+
+    assert result == {"status": "forbidden", "reason": "not_sender_memory"}
+    ctx._mock_sess.delete.assert_not_called()
+    ctx._mock_sess.commit.assert_not_called()
 
 
 @pytest.mark.asyncio

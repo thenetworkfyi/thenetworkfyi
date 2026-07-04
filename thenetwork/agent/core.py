@@ -54,7 +54,7 @@ async def run_agent_for_email(
 ) -> str:
     """Run the agent for one inbound email.
 
-    The untrusted email body is passed as user-role message content — it is
+    The untrusted email body is passed as user-role message content - it is
     NEVER concatenated into the system prompt (role separation, THE SEAL).
     """
     with audit_run(), audit_span(
@@ -67,6 +67,7 @@ async def run_agent_for_email(
             sender_email=sender_email,
             sender_user_id=sender_user_id,
             sender_authenticated=sender_authenticated,
+            inbound_subject=email_subject,
         )
         settings = get_settings()
         agent = build_agent(model=settings.agent_model)

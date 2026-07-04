@@ -46,7 +46,7 @@ _SAFE_CATEGORIES = {
     "action": frozenset({"delete", "insert", "lookup", "search"}),
     "outcome": frozenset({
         "error", "exists", "found", "not_found", "rate_limited",
-        "rejected_unauthenticated", "success",
+        "rejected_forbidden", "rejected_unauthenticated", "success",
     }),
     "reason": frozenset({
         "body_empty", "body_oversize", "content_scan", "rate_limit",

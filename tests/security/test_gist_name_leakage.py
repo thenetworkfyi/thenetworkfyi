@@ -50,8 +50,8 @@ class _NameAwareFakeAnalyzer:
     existing sanitize tests do, this fake recognizes *every* case-insensitive
     occurrence of the given name(s) as a PERSON span. That lets these tests
     exercise the real right-to-left substitution logic in `_strip_pii_ner`
-    against every surface form the name takes in the raw text — plain,
-    possessive, lowercase — rather than trusting a mock that only ever
+    against every surface form the name takes in the raw text - plain,
+    possessive, lowercase - rather than trusting a mock that only ever
     returns the answer the test wants.
     """
 
@@ -114,7 +114,7 @@ def test_sanitize_memory_gist_never_contains_name_variant_presidio_active(monkey
 
 
 def test_sanitize_memory_gist_never_contains_any_variant_in_single_multivariant_text(monkeypatch):
-    """All surface forms in one memory — plain, possessive, and lowercase together."""
+    """All surface forms in one memory - plain, possessive, and lowercase together."""
     text = (
         "Alice Chen is a Rust developer. Alice Chen's startup raised a seed "
         "round. alice chen is hiring, and alice's calendar is open Thursday."
@@ -172,7 +172,7 @@ async def test_high_fidelity_gist_never_contains_name_variant_via_llm(monkeypatc
 @pytest.mark.asyncio
 async def test_remember_tool_stores_gist_free_of_name_variants_end_to_end():
     """Full remember() call (as invoked by the agent): the persisted memory's
-    gist — the only thing that ever leaves the user boundary — must not carry
+    gist - the only thing that ever leaves the user boundary - must not carry
     any surface form of a referenced person's name, even when the raw text
     packs plain, possessive, and lowercase forms together.
     """

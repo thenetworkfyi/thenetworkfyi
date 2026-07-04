@@ -65,7 +65,7 @@ async def test_search_never_leaks_pii(adversarial_text: str):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("adversarial_text", ADVERSARIAL_QUERIES)
 async def test_search_result_keys_sealed(adversarial_text: str):
-    """search() result dicts may only contain person_id, gist, similarity — nothing else."""
+    """search() result dicts may only contain person_id, gist, similarity - nothing else."""
     from thenetwork.agent.tools import search
 
     mock_match = MemoryMatch(
@@ -155,7 +155,7 @@ async def test_remember_stored_gist_drops_person_names_before_commit(monkeypatch
 @pytest.mark.asyncio
 @pytest.mark.parametrize("adversarial_body", ADVERSARIAL_QUERIES)
 async def test_agent_reply_never_leaks_pii(adversarial_body: str):
-    """Full agent run with adversarial body — reply must not contain other-user PII."""
+    """Full agent run with adversarial body - reply must not contain other-user PII."""
     from pydantic_ai.models.test import TestModel
     from thenetwork.agent.core import build_agent
 

@@ -28,5 +28,5 @@ def scan_content(text: str) -> tuple[bool, str]:
             return False, "prompt_injection_detected"
         return True, "ok"
     except Exception:
-        # Optional dependency absent or model failed to load — allow through
+        # Optional dependency absent or model failed to load - allow through
         return True, "scanner_unavailable"

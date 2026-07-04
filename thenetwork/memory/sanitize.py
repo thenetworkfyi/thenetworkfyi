@@ -80,14 +80,14 @@ def sanitize_memory(memory: Memory, session: Session) -> str:
 async def sanitize_memory_llm(memory: Memory, session: Session) -> str:
     """LLM-based sanitization: broader PII removal than the deterministic strip.
 
-    Fixed system prompt, no tools, no external influence (SEAL layer 4 — see
+    Fixed system prompt, no tools, no external influence (SEAL layer 4 - see
     docs/security.md). Slower and costs an LLM call, so it is not the
     always-on default; see sanitize_memory_high_fidelity and
     settings.sanitize_llm_tier_enabled for how it's gated in. Beyond the
     deterministic Presidio pass (names, emails, phones), this prompt also
     asks the model to catch what pattern
     matching structurally can't: social handles, URLs, and "quasi-identifying
-    combinations" — otherwise-innocuous facts that, combined, single out one
+    combinations" - otherwise-innocuous facts that, combined, single out one
     person (e.g. "the only Rust developer in Fargo").
     """
     from pydantic_ai import Agent
@@ -112,7 +112,7 @@ async def sanitize_memory_llm(memory: Memory, session: Session) -> str:
             "otherwise-innocuous facts that, taken together, would let a reader "
             "single out this one person (e.g. 'the only Rust developer in "
             "Fargo', or 'the CTO's college roommate who now lives in a town of "
-            "2,000 people') — when you see one, generalize the specific detail "
+            "2,000 people') - when you see one, generalize the specific detail "
             "(e.g. drop the town, broaden the role, widen the timeframe) so the "
             "combination no longer narrows to one identifiable individual. "
             "Keep factual content (skills, interests, context) that is not "
@@ -133,7 +133,7 @@ async def sanitize_memory_high_fidelity(memory: Memory, session: Session) -> str
     """Produce and persist a SEAL-safe gist, using the LLM sanitizer when enabled.
 
     The LLM pass is an opt-in tier (settings.sanitize_llm_tier_enabled,
-    default off — it's slower and costs a model call on every write) that
+    default off - it's slower and costs a model call on every write) that
     catches quasi-identifiers and free-text PII the deterministic Presidio pass
     can't pattern-match. When the tier is disabled, or the LLM pass fails for
     any reason, this falls back to the deterministic sanitizer so

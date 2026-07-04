@@ -1,6 +1,6 @@
 # Design decisions & rejected approaches
 
-The *why* behind the architecture — read this before proposing a "cleaner" schema or a
+The *why* behind the architecture - read this before proposing a "cleaner" schema or a
 new abstraction, because most obvious-looking alternatives were considered and rejected
 on purpose.
 
@@ -9,11 +9,11 @@ on purpose.
 **Use mainstream, well-adopted open-source frameworks and prior art. Do not reinvent
 solved problems. Do not depend on flimsy low-star libraries.** Hand-write only the
 genuine domain glue; for everything else (queues, rate limiting, ORM, migrations,
-embeddings, graph math, mail) use the established solution — sometimes that's just the
+embeddings, graph math, mail) use the established solution - sometimes that's just the
 Python stdlib.
 
 The genuine glue here is exactly one thing: **memory + the privacy seal over freeform
-memory** (`thenetwork/memory/`, the SEAL — see @docs/security.md). Everything else is a
+memory** (`thenetwork/memory/`, the SEAL - see @docs/security.md). Everything else is a
 thin wrapper over a well-adopted library, swappable by config.
 
 ## Design judgment calls
@@ -31,11 +31,11 @@ thin wrapper over a well-adopted library, swappable by config.
   multi-ref memories at query time; there is no curated edge table to keep in sync.
 - **Behaviors are emergent, not scripted.** Onboarding, matchmaking, introductions, and
   one-way FYIs come from system-prompt guidance plus `pydantic-evals` cases asserting
-  *reasonable* behavior — no branching control flow, no scenario `if user_record IS NULL`.
+  *reasonable* behavior - no branching control flow, no scenario `if user_record IS NULL`.
 - **Inbound body extraction leans on imap-tools + BeautifulSoup, not hand-rolled MIME
   walking.** Strict attachment-boundary pruning was deliberately relaxed: `MAX_BODY_CHARS`
   truncation is the real size guard regardless of how the body was assembled, and the
-  inbound body is untrusted content either way — the SEAL governs what can leave the
+  inbound body is untrusted content either way - the SEAL governs what can leave the
   system, not what can enter it. Chasing exact attachment-subtree exclusion added
   bespoke parsing code for a property the size cap and the SEAL already cover.
 - **Presidio is mandatory for deterministic gist sanitization.** Names, email addresses,

@@ -560,12 +560,12 @@ async def test_worker_keeps_infrastructure_rejection_silent_for_unauthenticated_
 
 
 @pytest.mark.asyncio
-async def test_worker_skips_empty_body_before_reply_or_agent(caplog):
+async def test_worker_skips_empty_body_after_rate_limit_without_agent(caplog):
     from thenetwork.email.inbound import REJECT_BODY_EMPTY
     from thenetwork.worker.tasks import process_email
 
     caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-    with patch("thenetwork.worker.tasks.check_rate_limit") as check_rate_limit, patch(
+    with patch("thenetwork.worker.tasks.check_rate_limit", return_value=True) as check_rate_limit, patch(
         "thenetwork.worker.tasks.scan_content"
     ) as scan_content, patch("thenetwork.worker.tasks.send_reply") as send_reply, patch(
         "thenetwork.worker.tasks.run_agent_for_email", AsyncMock()
@@ -576,7 +576,10 @@ async def test_worker_skips_empty_body_before_reply_or_agent(caplog):
             body=" \n",
         )
 
-    check_rate_limit.assert_not_called()
+    check_rate_limit.assert_called_once_with(
+        "alice@example.com",
+        sender_authenticated=False,
+    )
     scan_content.assert_not_called()
     send_reply.assert_not_called()
     mock_agent.assert_not_called()

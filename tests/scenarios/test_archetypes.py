@@ -1,6 +1,6 @@
 """pydantic-evals scenario tests for agent archetypes.
 
-These are emergent-behavior assertions — no branching control flow in the agent.
+These are emergent-behavior assertions - no branching control flow in the agent.
 Tests use pydantic-ai FunctionModel / TestModel for deterministic, offline runs.
 """
 from __future__ import annotations
@@ -136,9 +136,12 @@ async def test_dispatch_email_resolves_address_server_side():
 @pytest.mark.asyncio
 async def test_double_intro_emails_both_parties():
     """Agent should call dispatch_email for both sides of an introduction."""
+    from thenetwork.agent import tools
     from thenetwork.agent.tools import dispatch_email
     from unittest.mock import patch, MagicMock, AsyncMock, call
 
+    tools._dispatch_limiter = None
+    tools._dispatch_storage = None
     sent_to: list[str] = []
 
     def fake_send_reply(to_address, subject, body_text, body_html=None, **kwargs):

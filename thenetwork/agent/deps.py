@@ -15,10 +15,11 @@ class AgentDeps:
     # Injected at runtime; defaults let callers omit in tests
     sender_email: str = ""
     sender_user_id: str | None = None
+    inbound_subject: str = ""
     # True only when the receiving mail server's Authentication-Results
     # header vouched for this sender's DKIM/SPF (see email/inbound.py).
     # Tools that can create or mutate identity (e.g. register_person) must
-    # gate on this — the From: header alone is spoofable.
+    # gate on this - the From: header alone is spoofable.
     sender_authenticated: bool = False
     # Session factory: () -> contextmanager[Session]
     # Stored as a callable to avoid serialization issues

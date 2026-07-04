@@ -2,8 +2,8 @@
 
 poll_unseen() and mark_messages_seen() are the only two places that talk to
 the INBOX mailbox. This suite mocks imap-tools' MailBox and asserts both
-functions only ever fetch/flag messages — never move, delete, expunge, or
-copy them out of INBOX — so a future change can't silently start archiving
+functions only ever fetch/flag messages - never move, delete, expunge, or
+copy them out of INBOX - so a future change can't silently start archiving
 or deleting inbound mail.
 """
 from __future__ import annotations
@@ -136,7 +136,7 @@ def test_poll_unseen_never_mutates_the_mailbox(fake_mailbox: _FakeMailBox):
     inbound.poll_unseen()
 
     _assert_never_mutates_inbox(fake_mailbox)
-    # poll_unseen() must not flag messages either — that is mark_messages_seen()'s job,
+    # poll_unseen() must not flag messages either - that is mark_messages_seen()'s job,
     # called only after successful enqueue.
     fake_mailbox.flag.assert_not_called()
 
