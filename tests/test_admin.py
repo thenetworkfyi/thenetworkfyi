@@ -366,10 +366,13 @@ def test_process_email_routes_admin_to_handler():
             sender_email="admin@example.com",
             subject="ADMIN: status",
             body="COMMAND: status",
+            inbound_message_id="<admin123@example.com>",
         ))
 
     mock_reply.assert_called_once_with("status", "")
     mock_send.assert_called_once()
+    assert mock_send.call_args.kwargs["in_reply_to"] == "<admin123@example.com>"
+    assert mock_send.call_args.kwargs["references"] == "<admin123@example.com>"
     mock_agent.assert_not_called()
 
 

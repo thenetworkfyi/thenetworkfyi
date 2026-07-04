@@ -48,13 +48,16 @@ def _poll_and_enqueue() -> int:
                 header_names=["from", "subject", "auto-submitted"],
             )
             raw_message_b64 = base64.b64encode(msg.raw_message).decode() if msg.raw_message else None
-            process_email.defer(
-                sender_email=msg.sender,
-                subject=msg.subject,
-                body=msg.body,
-                sender_authenticated=msg.sender_authenticated,
-                raw_message_b64=raw_message_b64,
-            )
+            job_kwargs = {
+                "sender_email": msg.sender,
+                "subject": msg.subject,
+                "body": msg.body,
+                "sender_authenticated": msg.sender_authenticated,
+                "raw_message_b64": raw_message_b64,
+            }
+            if msg.message_id:
+                job_kwargs["inbound_message_id"] = msg.message_id
+            process_email.defer(**job_kwargs)
             handled_uids.append(msg.uid)
             count += 1
         # Mark seen only after each message has either been enqueued or

@@ -88,6 +88,12 @@ def _hit_welcome_quota(sender_email: str) -> bool:
     return limiter.hit(_WELCOME_LIMIT, f"welcome:first-contact:{identity}")
 
 
+def _thread_headers(inbound_message_id: str | None) -> dict[str, str]:
+    if not inbound_message_id:
+        return {}
+    return {"in_reply_to": inbound_message_id, "references": inbound_message_id}
+
+
 def _is_known_authenticated_sender(sender_email: str, sender_authenticated: bool) -> bool:
     if not sender_authenticated:
         return False
@@ -119,6 +125,7 @@ def _send_infrastructure_rejection_reply(
     subject: str,
     sender_authenticated: bool,
     reason: str,
+    inbound_message_id: str | None = None,
 ) -> None:
     body_text = _INFRASTRUCTURE_REJECTION_REPLIES[reason]
     if not _is_known_authenticated_sender(sender_email, sender_authenticated):
@@ -129,6 +136,7 @@ def _send_infrastructure_rejection_reply(
         subject=f"Re: {subject}",
         body_text=body_text,
         include_footer=False,
+        **_thread_headers(inbound_message_id),
     )
 
 
@@ -137,6 +145,7 @@ def _send_first_contact_welcome_reply(
     sender_email: str,
     subject: str,
     sender_authenticated: bool,
+    inbound_message_id: str | None = None,
 ) -> bool:
     if not sender_authenticated:
         return False
@@ -150,6 +159,7 @@ def _send_first_contact_welcome_reply(
         subject=reply_subject(subject, fallback="How to join"),
         body_text=FIRST_CONTACT_WELCOME_REPLY,
         include_footer=False,
+        **_thread_headers(inbound_message_id),
     )
     return True
 
@@ -161,6 +171,7 @@ async def process_email(
     body: str,
     sender_authenticated: bool = False,
     raw_message_b64: str | None = None,
+    inbound_message_id: str | None = None,
 ) -> None:
     """Procrastinate worker task: run the agent for one inbound email.
 
@@ -193,6 +204,7 @@ async def process_email(
                 subject=subject,
                 sender_authenticated=sender_authenticated,
                 reason=REJECT_BODY_OVERSIZE,
+                inbound_message_id=inbound_message_id,
             )
             return
 
@@ -208,6 +220,7 @@ async def process_email(
                 sender_email=sender_email,
                 subject=subject,
                 sender_authenticated=sender_authenticated,
+                inbound_message_id=inbound_message_id,
             )
             if welcomed:
                 audit_event("worker.first_contact_welcome_sent")
@@ -223,6 +236,7 @@ async def process_email(
                 subject=subject,
                 sender_authenticated=sender_authenticated,
                 reason=REJECT_RATE_LIMIT,
+                inbound_message_id=inbound_message_id,
             )
             return
 
@@ -234,6 +248,7 @@ async def process_email(
                 subject=subject,
                 sender_authenticated=sender_authenticated,
                 reason=REJECT_CONTENT_SCAN,
+                inbound_message_id=inbound_message_id,
             )
             return
 
@@ -248,6 +263,7 @@ async def process_email(
                 subject=f"Re: {subject}",
                 body_text=reply,
                 include_footer=False,
+                **_thread_headers(inbound_message_id),
             )
             return
 
@@ -270,13 +286,16 @@ async def process_email(
             )
             return
 
-        await run_agent_for_email(
-            sender_email=sender_email,
-            sender_user_id=sender_user_id,
-            sender_authenticated=sender_authenticated,
-            email_subject=subject,
-            email_body=body,
-        )
+        agent_kwargs = {
+            "sender_email": sender_email,
+            "sender_user_id": sender_user_id,
+            "sender_authenticated": sender_authenticated,
+            "email_subject": subject,
+            "email_body": body,
+        }
+        if inbound_message_id:
+            agent_kwargs["inbound_message_id"] = inbound_message_id
+        await run_agent_for_email(**agent_kwargs)
 
 
 async def run_worker() -> None:
