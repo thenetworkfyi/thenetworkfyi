@@ -243,6 +243,43 @@ async def test_agent_trace_logs_structure_but_never_content(caplog):
 
 
 @pytest.mark.asyncio
+async def test_agent_no_tool_call_is_flagged_and_logged(caplog):
+    """A run that ends in plain text with no tool call must be surfaced,
+    not silently discarded - the sender gets no reply and no human is
+    notified, so operators need a distinct, greppable signal for it."""
+    from thenetwork.agent.core import run_agent_for_email
+
+    fake_result = SimpleNamespace(
+        output="I don't know where to get a pizza.",
+        all_messages=lambda: [
+            SimpleNamespace(
+                parts=[SimpleNamespace(part_kind="thinking", content="no tool fits")]
+            ),
+            SimpleNamespace(
+                parts=[SimpleNamespace(part_kind="text", content="I don't know where to get a pizza.")]
+            ),
+        ],
+    )
+    fake_agent = SimpleNamespace(run=AsyncMock(return_value=fake_result))
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    with patch("thenetwork.agent.core.build_agent", return_value=fake_agent):
+        await run_agent_for_email(
+            sender_email="mike@mkly.io",
+            sender_user_id=None,
+            email_subject="I'm hungry",
+            email_body="I would really like a pizza.",
+        )
+
+    events = _events(caplog)
+    response_event = next(e for e in events if e["event"] == "agent.response_generated")
+    assert response_event["tool_called"] is False
+    no_action_events = [e for e in events if e["event"] == "agent.no_action_taken"]
+    assert len(no_action_events) == 1
+    assert no_action_events[0]["sender_known"] is False
+
+
+@pytest.mark.asyncio
 async def test_tool_and_database_events_do_not_log_arguments(caplog):
     from thenetwork.agent.deps import AgentDeps
     from thenetwork.agent.tools import search
