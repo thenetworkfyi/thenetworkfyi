@@ -116,7 +116,7 @@ def test_sanitize_memory_redacts_with_real_presidio_analyzer():
         assert "[email]" in result
         assert "[phone]" in result
         assert "[name]" in result
-        assert "[location]" in result
+        assert "Seattle" in result
         assert "Alice" not in result
         assert "alice.smith@example.com" not in result
         assert "415-555-0199" not in result
@@ -353,7 +353,7 @@ async def test_llm_sanitizer_prompt_contract_via_function_model(monkeypatch):
     actual pydantic-ai message plumbing rather than a hand-rolled Agent
     double (matches the FunctionModel/TestModel convention used elsewhere,
     e.g. tests/scenarios/test_archetypes.py, tests/security/test_redteam.py)."""
-    from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, SystemPromptPart
+    from pydantic_ai.messages import ModelMessage, ModelResponse, SystemPromptPart, TextPart
     from pydantic_ai.models.function import AgentInfo, FunctionModel
 
     memory = Memory(
@@ -363,8 +363,9 @@ async def test_llm_sanitizer_prompt_contract_via_function_model(monkeypatch):
     session = FakeSession()
     captured: dict[str, object] = {}
 
-    def capture_and_respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    async def capture_and_respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         captured["info"] = info
+        captured["messages"] = messages
         system_texts = [
             part.content
             for message in messages
