@@ -33,7 +33,7 @@ from thenetwork.worker.tasks import app, process_email
 PROXIMITY_THRESHOLD = 0.3
 
 
-@app.periodic(cron="0 * * * *")
+@app.periodic(cron="0 * * * *", periodic_id="scan_for_opportunities")
 @app.task()
 async def scan_for_opportunities(timestamp: int) -> None:
     """Hourly scan: find person pairs with high graph proximity, enqueue agent jobs."""
@@ -67,7 +67,7 @@ async def scan_for_opportunities(timestamp: int) -> None:
                 )
 
 
-@app.periodic(cron="30 * * * *")
+@app.periodic(cron="30 * * * *", periodic_id="scan_for_matches")
 @app.task()
 async def scan_for_matches(timestamp: int) -> None:
     """Hourly semantic rematch: new memories against older standing notes.
