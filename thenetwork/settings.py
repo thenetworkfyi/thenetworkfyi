@@ -1,12 +1,35 @@
+from pydantic import computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import URL
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    # Database
-    database_url: str = "postgresql+psycopg://network:network@localhost:5432/network_db"
+    # Database — kept as separate parts rather than a single DATABASE_URL.
+    # Postgres itself gets POSTGRES_PASSWORD as a literal string (no
+    # decoding); a hand-built connection URI would need the same value
+    # percent-encoded, and those two representations silently desync for any
+    # password containing a URI-reserved character (@, :, /, %, ...). Letting
+    # SQLAlchemy's URL builder do the encoding removes that failure mode.
+    postgres_host: str = "localhost"
+    postgres_port: int = 5432
+    postgres_db: str = "network_db"
+    postgres_user: str = "network"
+    postgres_password: str = "network"
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def database_url(self) -> str:
+        return URL.create(
+            "postgresql+psycopg",
+            username=self.postgres_user,
+            password=self.postgres_password,
+            host=self.postgres_host,
+            port=self.postgres_port,
+            database=self.postgres_db,
+        ).render_as_string(hide_password=False)
 
     # LLM — provider selected by config string (no vendor lock-in, no LiteLLM)
     agent_model: str = "anthropic:claude-sonnet-5"
