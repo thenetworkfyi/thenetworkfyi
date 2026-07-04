@@ -97,7 +97,7 @@ mapping at write time. Semantic match over memories lives in `search/match.py`.
 | `search(query) -> [{person_id, gist, similarity}]` | semantic recall returning **opaque ids + gist only** for other people |
 | `dispatch_email(recipient_user_id, …)` | opaque id in; the real address is resolved server-side at send time |
 | `register_person(email, name)` | onboard the sender on first contact; self-registration only (must match the authenticated From, must not already exist) - the id it returns is what later `remember`/`dispatch_email` calls key off |
-| `escalate(reason)` | flag this email for human review and notify `admin_emails`; no auto-reply is sent. The fallback when no safe, useful action is clear (e.g. an ambiguous or unauthenticated first contact) |
+| `escalate(reason)` | flag this email for human review and notify `admin_emails`; no auto-reply is sent for true escalations. For authenticated unknown senders, it sends the fixed first-contact welcome instead of escalating. The fallback when no safe, useful action is clear (e.g. an unauthenticated first contact) |
 
 ## Stack
 

@@ -13,21 +13,22 @@ from thenetwork.settings import get_settings
 # The one deterministic explanation of what this address is and how to use
 # it - injection-proof by construction since it's fixed copy, not model
 # output. Sent both for near-empty first contact (worker/tasks.py) and when
-# escalate() acknowledges an authenticated sender it can't otherwise help
-# (agent/tools.py) - in both cases the sender doesn't yet know how to join.
+# escalate() routes an authenticated first contact to a standard welcome
+# instead of human escalation (agent/tools.py) - in both cases the sender
+# doesn't yet know how to join.
 FIRST_CONTACT_WELCOME_REPLY = """\
+Welcome,
+
 To join, reply with a few plain sentences: who you are, what you're
-working on, and what kind of person would be worth your time. What you
-write is what gets matched on, so specifics help.
+working on, and what kind of person or situation might interesting
+to you. What you write is what gets matched on. Specifics help.
 
 Nothing you write is shown to anyone else. When we weigh an
 introduction, we work only from an anonymized summary.
 
 You may not hear from us for a while. Introductions happen when they're
-warranted, not on a schedule. Silence means the right person hasn't
+warranted, not on a schedule. Silence means the right thing hasn't
 shown up yet.
-
---- The Network
 """
 
 
@@ -61,7 +62,8 @@ def _append_to_sent(msg: EmailMessage) -> None:
     started = monotonic()
     try:
         with MailBox(s.imap_host, s.imap_port).login(s.imap_account, s.imap_password) as mb:
-            mb.append(msg.as_bytes(), s.imap_sent_folder, flag_set=[MailMessageFlags.SEEN])
+            mb.append(msg.as_bytes(), s.imap_sent_folder,
+                      flag_set=[MailMessageFlags.SEEN])
     except Exception as exc:
         audit_event(
             "email.imap_append.completed",

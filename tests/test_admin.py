@@ -37,7 +37,8 @@ def _gen_gpg_identity(name_email: str) -> SimpleNamespace:
     )
     key = gpg.gen_key(key_input)
     fingerprint = str(key)
-    assert fingerprint, "gpg keygen failed"
+    if not fingerprint:
+        pytest.skip(f"gpg keygen failed: {key.stderr}")
     return SimpleNamespace(gpg=gpg, fingerprint=fingerprint, public_key=gpg.export_keys(fingerprint))
 
 

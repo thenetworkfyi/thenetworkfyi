@@ -277,12 +277,23 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
     Use when intent is ambiguous, the request is outside your capabilities, or
     you have low confidence. A human will follow up with the sender directly.
     For authenticated first contact, send the fixed welcome/how-to-join reply
-    so the sender learns how to use the address, without giving the model
-    control over the copy.
+    instead of escalating; the sender learns how to use the address without
+    giving the model control over the copy.
     """
     with audit_span("agent.tool", tool_name="escalate"):
         s = ctx.deps.settings
         sender = ctx.deps.sender_email
+
+        if ctx.deps.sender_authenticated and ctx.deps.sender_user_id is None:
+            send_reply(
+                to_address=sender,
+                subject=reply_subject(ctx.deps.inbound_subject, fallback="How to join"),
+                body_text=FIRST_CONTACT_WELCOME_REPLY,
+                include_footer=False,
+            )
+            audit_event("agent.first_contact_welcome_sent")
+            return {"status": "welcomed"}
+
         refs = [ctx.deps.sender_user_id] if ctx.deps.sender_user_id else []
 
         text = f"[ESCALATED] {reason}"
@@ -306,13 +317,6 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
             f"Please reply to {sender} manually."
         )
         notify_admins(s, subject, body)
-        if ctx.deps.sender_authenticated and ctx.deps.sender_user_id is None:
-            send_reply(
-                to_address=sender,
-                subject=reply_subject(ctx.deps.inbound_subject, fallback="How to join"),
-                body_text=FIRST_CONTACT_WELCOME_REPLY,
-                include_footer=False,
-            )
 
         return {"status": "escalated", "memory_id": memory_id}
 
