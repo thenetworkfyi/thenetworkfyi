@@ -16,6 +16,7 @@ class AgentDeps:
     sender_email: str = ""
     sender_user_id: str | None = None
     inbound_subject: str = ""
+    inbound_message_id: str | None = None
     # True only when the receiving mail server's Authentication-Results
     # header vouched for this sender's DKIM/SPF (see email/inbound.py).
     # Tools that can create or mutate identity (e.g. register_person) must

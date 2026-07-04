@@ -353,6 +353,36 @@ def test_intake_logs_header_metadata_without_values(caplog):
     assert received["header_names"] == ["from", "subject", "auto-submitted"]
 
 
+def test_intake_enqueues_inbound_message_id_when_present(caplog):
+    from thenetwork.email.inbound import InboundMessage
+    from thenetwork.worker.producer import _poll_and_enqueue
+
+    message = InboundMessage(
+        uid="123",
+        sender="alice.private@example.com",
+        subject="Confidential acquisition",
+        body="Project Finch closes Friday",
+        auto_submitted=None,
+        sender_authenticated=True,
+        message_id="<abc123@example.com>",
+    )
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    with patch("thenetwork.worker.producer.poll_unseen", return_value=[message]), patch(
+        "thenetwork.worker.producer.process_email"
+    ) as process_email, patch("thenetwork.worker.producer.mark_messages_seen"):
+        assert _poll_and_enqueue() == 1
+
+    process_email.defer.assert_called_once_with(
+        sender_email=message.sender,
+        subject=message.subject,
+        body=message.body,
+        sender_authenticated=message.sender_authenticated,
+        raw_message_b64=None,
+        inbound_message_id=message.message_id,
+    )
+
+
 def test_intake_rejects_bad_shape_without_enqueueing_or_replying(caplog):
     from thenetwork.email.inbound import REJECT_BODY_OVERSIZE, InboundMessage
     from thenetwork.worker.producer import _poll_and_enqueue
@@ -510,6 +540,39 @@ async def test_worker_replies_to_known_authenticated_sender_on_infrastructure_re
     if reason == REJECT_BODY_OVERSIZE:
         check_rate_limit.assert_not_called()
         scan_content.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_worker_threads_infrastructure_rejection_reply():
+    from thenetwork.worker.tasks import (
+        REJECT_RATE_LIMIT,
+        _INFRASTRUCTURE_REJECTION_REPLIES,
+        process_email,
+    )
+
+    mock_session = _mock_sender_lookup("person-id")
+
+    with patch("thenetwork.worker.tasks.get_session", return_value=mock_session), patch(
+        "thenetwork.worker.tasks.check_rate_limit", return_value=False
+    ), patch("thenetwork.worker.tasks.send_reply") as send_reply, patch(
+        "thenetwork.worker.tasks.run_agent_for_email", AsyncMock()
+    ):
+        await process_email.func(
+            sender_email="alice@example.com",
+            subject="Hello",
+            body="Project Finch closes Friday",
+            sender_authenticated=True,
+            inbound_message_id="<abc123@example.com>",
+        )
+
+    send_reply.assert_called_once_with(
+        to_address="alice@example.com",
+        subject="Re: Hello",
+        body_text=_INFRASTRUCTURE_REJECTION_REPLIES[REJECT_RATE_LIMIT],
+        include_footer=False,
+        in_reply_to="<abc123@example.com>",
+        references="<abc123@example.com>",
+    )
 
 
 @pytest.mark.parametrize("reason", ["body_oversize", "rate_limit", "content_scan"])

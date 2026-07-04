@@ -80,6 +80,50 @@ async def test_dispatch_sends_to_resolved_address():
     assert result["status"] == "sent"
 
 
+@pytest.mark.asyncio
+async def test_dispatch_threads_reply_to_inbound_sender_only():
+    _reset_dispatch_limiter()
+    fake_person = _fake_person("alice@example.com")
+
+    ctx = FakeCtx(sender_user_id="user-alice")
+    ctx.deps.inbound_message_id = "<abc123@example.com>"
+    ctx._mock_sess.get.return_value = fake_person
+
+    with patch("thenetwork.agent.tools.send_reply") as mock_send:
+        result = await dispatch_email(
+            ctx,
+            recipient_user_id="user-alice",
+            subject="Re: Hi",
+            body_text="Hello",
+        )
+
+    assert result["status"] == "sent"
+    assert mock_send.call_args.kwargs["in_reply_to"] == "<abc123@example.com>"
+    assert mock_send.call_args.kwargs["references"] == "<abc123@example.com>"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_does_not_thread_agent_outreach():
+    _reset_dispatch_limiter()
+    fake_person = _fake_person("bob@example.com")
+
+    ctx = FakeCtx(sender_user_id="user-alice")
+    ctx.deps.inbound_message_id = "<abc123@example.com>"
+    ctx._mock_sess.get.return_value = fake_person
+
+    with patch("thenetwork.agent.tools.send_reply") as mock_send:
+        result = await dispatch_email(
+            ctx,
+            recipient_user_id="user-bob",
+            subject="Intro",
+            body_text="Hello",
+        )
+
+    assert result["status"] == "sent"
+    assert "in_reply_to" not in mock_send.call_args.kwargs
+    assert "references" not in mock_send.call_args.kwargs
+
+
 def test_dispatch_cap_settings_defaults():
     assert Settings.model_fields["dispatch_max_sends_per_run"].default == 3
     assert Settings.model_fields["dispatch_recipient_daily_cap"].default == 3

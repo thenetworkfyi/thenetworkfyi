@@ -32,12 +32,13 @@ def _fake_message(
     from_: str = "alice@example.com",
     subject: str = "hello",
     body_text: str = "hello there",
+    headers: dict | None = None,
 ):
     msg = MagicMock()
     msg.uid = uid
     msg.from_ = from_
     msg.subject = subject
-    msg.headers = {}
+    msg.headers = headers or {}
     msg.text = body_text
     msg.html = ""
     return msg
@@ -106,6 +107,17 @@ def test_poll_unseen_caps_subject(fake_mailbox: _FakeMailBox):
 
     assert len(messages) == 1
     assert messages[0].subject == "s" * inbound.MAX_SUBJECT_CHARS
+
+
+def test_poll_unseen_captures_message_id(fake_mailbox: _FakeMailBox):
+    fake_mailbox.fetch.return_value = [
+        _fake_message(headers={"message-id": ["<abc123@example.com>"]})
+    ]
+
+    messages = inbound.poll_unseen()
+
+    assert len(messages) == 1
+    assert messages[0].message_id == "<abc123@example.com>"
 
 
 def test_poll_unseen_marks_empty_body_as_rejected(fake_mailbox: _FakeMailBox):

@@ -59,6 +59,12 @@ def _limited(reason: str, limit: int) -> dict[str, Any]:
     return {"status": "limited", "reason": reason, "limit": limit}
 
 
+def _thread_headers(inbound_message_id: str | None) -> dict[str, str]:
+    if not inbound_message_id:
+        return {}
+    return {"in_reply_to": inbound_message_id, "references": inbound_message_id}
+
+
 def _hit_daily_dispatch_cap(key: str, limit: int) -> bool:
     if limit <= 0:
         return False
@@ -290,6 +296,7 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
                 subject=reply_subject(ctx.deps.inbound_subject, fallback="How to join"),
                 body_text=FIRST_CONTACT_WELCOME_REPLY,
                 include_footer=False,
+                **_thread_headers(ctx.deps.inbound_message_id),
             )
             audit_event("agent.first_contact_welcome_sent")
             return {"status": "welcomed"}
@@ -445,11 +452,19 @@ async def dispatch_email(
         ):
             return _limited("sender_reply_daily_cap", sender_reply_daily_cap)
 
+        thread_headers = {}
+        if recipient_user_id == ctx.deps.sender_user_id and ctx.deps.inbound_message_id:
+            thread_headers = {
+                "in_reply_to": ctx.deps.inbound_message_id,
+                "references": ctx.deps.inbound_message_id,
+            }
+
         send_reply(
             to_address=person.email,
             subject=subject,
             body_text=body_text,
             body_html=body_html,
+            **thread_headers,
         )
         ctx.deps.dispatch_email_sent_count += 1
         return {"status": "sent"}

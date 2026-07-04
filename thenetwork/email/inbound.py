@@ -38,6 +38,7 @@ class InboundMessage:
     # callers must not trust `sender` for identity resolution unless this
     # is True.
     sender_authenticated: bool
+    message_id: str | None = None
     rejection_reason: str | None = None
     body_chars: int | None = None
     # Original raw MIME bytes, exactly as received. Only captured for
@@ -146,6 +147,13 @@ def _is_auto_message(msg) -> bool:
     return False
 
 
+def _first_header(msg, name: str) -> str | None:
+    values = msg.headers.get(name)
+    if not values:
+        return None
+    return values[0]
+
+
 def poll_unseen() -> list[InboundMessage]:
     """Fetch unseen messages WITHOUT marking them seen.
 
@@ -169,6 +177,7 @@ def poll_unseen() -> list[InboundMessage]:
             if msg.from_.lower() in own_addresses:
                 continue
             auto_sub = msg.headers.get("auto-submitted")
+            message_id = _first_header(msg, "message-id")
             subject = cap_subject(msg.subject)
             # Only admin-looking subjects need the raw bytes (PGP/MIME
             # verification in admin/auth.py); everything else discards them
@@ -183,6 +192,7 @@ def poll_unseen() -> list[InboundMessage]:
                         sender=msg.from_,
                         subject=subject,
                         body="",
+                        message_id=message_id,
                         auto_submitted=auto_sub[0] if auto_sub else None,
                         sender_authenticated=_is_sender_authenticated(msg),
                         rejection_reason=REJECT_BODY_OVERSIZE,
@@ -198,6 +208,7 @@ def poll_unseen() -> list[InboundMessage]:
                     sender=msg.from_,
                     subject=subject,
                     body=body,
+                    message_id=message_id,
                     auto_submitted=auto_sub[0] if auto_sub else None,
                     sender_authenticated=_is_sender_authenticated(msg),
                     rejection_reason=rejection_reason,

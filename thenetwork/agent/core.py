@@ -51,6 +51,7 @@ async def run_agent_for_email(
     email_subject: str,
     email_body: str,
     sender_authenticated: bool = False,
+    inbound_message_id: str | None = None,
 ) -> str:
     """Run the agent for one inbound email.
 
@@ -68,6 +69,7 @@ async def run_agent_for_email(
             sender_user_id=sender_user_id,
             sender_authenticated=sender_authenticated,
             inbound_subject=email_subject,
+            inbound_message_id=inbound_message_id,
         )
         settings = get_settings()
         agent = build_agent(model=settings.agent_model)
