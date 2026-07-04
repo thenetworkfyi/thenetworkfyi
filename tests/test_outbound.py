@@ -114,7 +114,7 @@ def test_append_receives_exact_composed_message():
 
 
 def test_append_failure_does_not_propagate():
-    """An IMAP append failure must not raise — the SMTP send already succeeded."""
+    """An IMAP append failure must not raise - the SMTP send already succeeded."""
     from thenetwork.email.outbound import send_reply
 
     mock_mailbox = MagicMock()

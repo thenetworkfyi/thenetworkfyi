@@ -1,7 +1,7 @@
 """Proactive outreach triggers: periodic Procrastinate tasks.
 
 Two independent mechanisms surface connection opportunities. Both only
-*identify* candidate pairs and `defer` a synthetic `process_email` job — the
+*identify* candidate pairs and `defer` a synthetic `process_email` job - the
 agent run decides whether and how to introduce, so the SEAL still governs what
 leaves the system.
 
@@ -11,7 +11,7 @@ leaves the system.
 - `scan_for_matches` (semantic): a newly-arrived memory that now closely
   matches an *older* standing note about a different person. This is what lets
   the system re-engage a dormant user weeks later, when someone who finally
-  fits what they told us first shows up — no shared connections required.
+  fits what they told us first shows up - no shared connections required.
 
 Both hand the agent only opaque ids + PII-stripped gists in the trigger body,
 never raw text, names, or addresses (SEAL).
@@ -72,7 +72,7 @@ async def scan_for_opportunities(timestamp: int) -> None:
 async def scan_for_matches(timestamp: int) -> None:
     """Hourly semantic rematch: new memories against older standing notes.
 
-    Driven by *arrivals* — memories created since roughly the last run — rather
+    Driven by *arrivals* - memories created since roughly the last run - rather
     than by re-sweeping the whole store, so a pair only surfaces once, at the
     moment the counterpart shows up. For each recent memory, find older
     person-referencing memories about a *different* person that it now matches
@@ -80,7 +80,7 @@ async def scan_for_matches(timestamp: int) -> None:
     dormant owner of the older note is the one re-engaged.
 
     Guards:
-    - Pairs already connected in the graph are skipped — an introduction the
+    - Pairs already connected in the graph are skipped - an introduction the
       agent already made is itself the durable dedup record.
     - The similarity floor is conservative: unsolicited outreach makes a false
       positive costly, so this path takes a floor where interactive `search`
@@ -151,7 +151,7 @@ async def scan_for_matches(timestamp: int) -> None:
                         f"Person {standing}: {m.gist}\n"
                         f"Person {arrival}: {arrival_mem.gist}\n\n"
                         "If these two share specific, real common ground, "
-                        "introduce them — dispatch_email to each, mentioning "
+                        "introduce them - dispatch_email to each, mentioning "
                         "only what the gists support. If the overlap is thin "
                         "or you are unsure, do nothing."
                     )

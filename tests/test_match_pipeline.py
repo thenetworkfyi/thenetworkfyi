@@ -1,6 +1,6 @@
 """Integration tests for the match pipeline against seeded fixtures.
 
-Marked with pytest.mark.integration — require a live pgvector DB.
+Marked with pytest.mark.integration - require a live pgvector DB.
 Run with: pytest -m integration
 """
 from __future__ import annotations
@@ -287,7 +287,7 @@ def test_build_graph_contains_alice_carol_edge(seeded_db):
 
 @pytest.mark.integration
 def test_build_graph_excludes_solo_person(seeded_db):
-    """dave has no multi-ref memories — he must be absent from the graph."""
+    """dave has no multi-ref memories - he must be absent from the graph."""
     from thenetwork.search.graph import build_graph
 
     G = build_graph()
@@ -306,7 +306,7 @@ def test_score_proximity_absent_node_returns_zero(seeded_db):
 
 @pytest.mark.integration
 def test_score_proximity_direct_edge_no_common_neighbors(seeded_db):
-    """alice-carol share a direct edge but no common neighbors — Jaccard is 0."""
+    """alice-carol share a direct edge but no common neighbors - Jaccard is 0."""
     from thenetwork.search.graph import score_proximity
 
     scores = score_proximity(seeded_db["alice_id"], [seeded_db["carol_id"]])

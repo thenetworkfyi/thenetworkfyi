@@ -244,7 +244,7 @@ async def test_high_fidelity_sanitizer_falls_back_to_deterministic_strip_on_llm_
 @pytest.mark.asyncio
 async def test_high_fidelity_sanitizer_skips_llm_when_tier_disabled(monkeypatch):
     """Default settings (sanitize_llm_tier_enabled=False) must never call the
-    LLM sanitizer — the opt-in tier is off by default because it costs a
+    LLM sanitizer - the opt-in tier is off by default because it costs a
     model call and adds latency on every person-referencing write."""
     raw_text = "Alice Smith lives in Berlin. Email alice@example.com or call 415-555-0199."
     memory = Memory(text=raw_text, refs=["person-1"])

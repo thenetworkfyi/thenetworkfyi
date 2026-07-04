@@ -12,11 +12,11 @@ from thenetwork.settings import get_settings
 
 
 def _growth_footer_text(account: str) -> str:
-    # "Reply" only reaches us for the direct recipient — a forward's reply
+    # "Reply" only reaches us for the direct recipient - a forward's reply
     # goes back to whoever forwarded it, not to us. So the forwarded-to
     # audience needs the address spelled out in plain text, since it has to
     # survive being buried in someone else's quoted thread.
-    return f"\n\n--\nThe Network. Reply anytime. Know someone who should be on this? Forward this along — they can join by emailing {account} directly."
+    return f"\n\n--\nThe Network. Reply anytime. Know someone who should be on this? Forward this along - they can join by emailing {account} directly."
 
 
 def _growth_footer_html(account: str) -> str:
@@ -34,7 +34,7 @@ def _append_to_sent(msg: EmailMessage) -> None:
     Called only after the SMTP send has already succeeded, so this is
     best-effort visibility (mirroring a normal mail client) rather than part
     of the delivery guarantee: a failure here must not fail the job. Only
-    outcome/duration/error-type are audit-logged — never the folder name,
+    outcome/duration/error-type are audit-logged - never the folder name,
     address, or message content.
     """
     s = get_settings()
@@ -61,7 +61,7 @@ def notify_admins(settings, subject: str, body: str) -> None:
     """Send an internal ops notification to every configured admin address.
 
     Shared by `agent/tools.py::escalate` and `agent/core.py`'s
-    usage-limit-exceeded handler — both need to alert a human operator
+    usage-limit-exceeded handler - both need to alert a human operator
     without routing through the user-facing growth surface, so this wraps
     `send_reply` with `include_footer=False` and a no-op when no admin
     addresses are configured.
@@ -75,6 +75,14 @@ def notify_admins(settings, subject: str, body: str) -> None:
             body_text=body,
             include_footer=False,
         )
+
+
+def reply_subject(inbound_subject: str, *, fallback: str) -> str:
+    """Return a reply subject, using fallback when the inbound subject is empty."""
+    subject = inbound_subject.strip()
+    if not subject:
+        return fallback
+    return f"Re: {subject}"
 
 
 def send_reply(
@@ -92,7 +100,7 @@ def send_reply(
     IMAP pollers skip our outbound replies and don't create a loop.
 
     The growth footer is appended here, at the mailer level, rather than by
-    the agent composing it in `body_text` — that way prompt injection in the
+    the agent composing it in `body_text` - that way prompt injection in the
     inbound message can't alter or suppress it. Set include_footer=False for
     internal/ops mail (admin replies, escalation notices) that isn't a
     user-facing growth surface.
@@ -117,7 +125,7 @@ def send_reply(
         msg["From"] = s.email_from
         msg["To"] = to_address
         msg["Subject"] = subject
-        # RFC 3834 §3.1.7 — auto-replied for automatic responses to inbound mail
+        # RFC 3834 §3.1.7 - auto-replied for automatic responses to inbound mail
         msg["Auto-Submitted"] = "auto-replied"
 
         if in_reply_to:

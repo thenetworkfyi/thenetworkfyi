@@ -41,7 +41,7 @@ class InboundMessage:
     rejection_reason: str | None = None
     body_chars: int | None = None
     # Original raw MIME bytes, exactly as received. Only captured for
-    # messages whose subject looks like an admin request — PGP/MIME
+    # messages whose subject looks like an admin request - PGP/MIME
     # signature verification (admin/auth.py) needs the byte-exact original
     # bytes of the signed part, which re-serializing the parsed
     # email.message.Message does not round-trip (CRLF normalizes to LF).
@@ -106,7 +106,7 @@ def _is_sender_authenticated(msg) -> bool:
     """True if the receiving server vouches for this message's DKIM/SPF.
 
     Trusts only the Authentication-Results header nearest the top of the
-    message — the one added last, by our own receiving MTA — since every
+    message - the one added last, by our own receiving MTA - since every
     intermediate hop pushes prior (potentially attacker-forged) copies of
     this header further down. If ``trusted_authserv_id`` is configured, that
     header's authserv-id must also match, guarding against an untrusted
@@ -139,7 +139,7 @@ def _is_auto_message(msg) -> bool:
     precedence = msg.headers.get("precedence")
     if precedence and precedence[0].lower() in ("bulk", "list", "junk"):
         return True
-    # RFC 2369 mailing list headers — any of these indicates a list message
+    # RFC 2369 mailing list headers - any of these indicates a list message
     for list_header in ("list-id", "list-unsubscribe", "list-post", "list-subscribe"):
         if msg.headers.get(list_header):
             return True
@@ -150,7 +150,7 @@ def poll_unseen() -> list[InboundMessage]:
     """Fetch unseen messages WITHOUT marking them seen.
 
     Caller is responsible for calling mark_messages_seen() after successfully
-    enqueuing each message — this ensures no email is lost if the process
+    enqueuing each message - this ensures no email is lost if the process
     crashes between fetch and enqueue (RFC 3834 durable intake).
     Skips auto-generated messages and self-sends to prevent mail loops.
     """

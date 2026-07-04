@@ -55,7 +55,7 @@ def seeded_db(pg_engine, monkeypatch):
       carol-mem:  refs=[carol_id], 0.9*e0+0.1*e1 gist="llm builder"
       intro-mem:  refs=[alice_id, carol_id], e0  gist="connected two ml people"
 
-    query_ml = e0 — nearest memories: alice-mem ≈ intro-mem > carol-mem > bob-mem.
+    query_ml = e0 - nearest memories: alice-mem ≈ intro-mem > carol-mem > bob-mem.
     """
     from sqlalchemy import text
     from sqlalchemy.orm import sessionmaker

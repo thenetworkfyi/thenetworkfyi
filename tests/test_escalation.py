@@ -14,11 +14,19 @@ def _make_settings(admin_emails=None):
     return s
 
 
-def _ctx(sender_email="user@test.com", sender_user_id=None, admin_emails=None):
+def _ctx(
+    sender_email="user@test.com",
+    sender_user_id=None,
+    admin_emails=None,
+    sender_authenticated=False,
+    inbound_subject="",
+):
     deps = AgentDeps(
         settings=_make_settings(admin_emails=admin_emails),
         sender_email=sender_email,
         sender_user_id=sender_user_id,
+        sender_authenticated=sender_authenticated,
+        inbound_subject=inbound_subject,
         session_factory=None,
     )
     ctx = MagicMock()
@@ -177,3 +185,51 @@ async def test_escalate_notification_includes_sender_and_reason():
     body = mock_send.call_args.kwargs["body_text"]
     assert "user@example.com" in body
     assert "Sensitive topic, needs human judgment" in body
+
+
+@pytest.mark.asyncio
+async def test_escalate_acknowledges_authenticated_unknown_sender_without_footer():
+    from thenetwork.agent.tools import escalate
+
+    cm, _ = _mock_session()
+    with patch("thenetwork.agent.tools.embed_text", new=AsyncMock(return_value=[0.0] * 1536)), \
+         patch("thenetwork.agent.tools.get_session", return_value=cm), \
+         patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock), \
+         patch("thenetwork.agent.tools.notify_admins"), \
+         patch("thenetwork.agent.tools.send_reply") as mock_send:
+        await escalate(
+            _ctx(
+                sender_email="new@example.com",
+                sender_authenticated=True,
+                inbound_subject="Question",
+            ),
+            reason="Ambiguous first contact",
+        )
+
+    mock_send.assert_called_once_with(
+        to_address="new@example.com",
+        subject="Re: Question",
+        body_text="A person is going to read this and reply.",
+        include_footer=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_escalate_does_not_acknowledge_unauthenticated_sender():
+    from thenetwork.agent.tools import escalate
+
+    cm, _ = _mock_session()
+    with patch("thenetwork.agent.tools.embed_text", new=AsyncMock(return_value=[0.0] * 1536)), \
+         patch("thenetwork.agent.tools.get_session", return_value=cm), \
+         patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock), \
+         patch("thenetwork.agent.tools.notify_admins"), \
+         patch("thenetwork.agent.tools.send_reply") as mock_send:
+        await escalate(
+            _ctx(
+                sender_email="spoof@example.com",
+                sender_authenticated=False,
+            ),
+            reason="Ambiguous first contact",
+        )
+
+    mock_send.assert_not_called()

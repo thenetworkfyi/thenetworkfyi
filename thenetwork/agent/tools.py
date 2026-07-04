@@ -18,7 +18,7 @@ from thenetwork.audit import audit_event, audit_span
 from thenetwork.db.models import Memory, Person
 from thenetwork.db.session import get_session
 from thenetwork.embed.embeddings import embed_text
-from thenetwork.email.outbound import notify_admins, send_reply
+from thenetwork.email.outbound import notify_admins, reply_subject, send_reply
 from thenetwork.memory.sanitize import sanitize_memory_high_fidelity
 from thenetwork.search.match import MemoryMatch, match_memories
 
@@ -188,7 +188,7 @@ async def forget(ctx: RunContext[AgentDeps], memory_id: str) -> dict[str, str]:
     """Delete a memory by ID.
 
     To consolidate duplicates or replace a stale/contradictory fact, forget
-    the superseded memory ID and `remember` the corrected fact — never try to
+    the superseded memory ID and `remember` the corrected fact - never try to
     mutate a memory in place (edit = forget + remember).
     """
     with audit_span("agent.tool", tool_name="forget"):
@@ -202,6 +202,16 @@ async def forget(ctx: RunContext[AgentDeps], memory_id: str) -> dict[str, str]:
                     outcome="not_found",
                 )
                 return {"status": "not_found"}
+            sender_user_id = ctx.deps.sender_user_id
+            refs = memory.refs or []
+            if not sender_user_id or refs != [sender_user_id]:
+                audit_event(
+                    "database.action",
+                    action="delete",
+                    record_type="memory",
+                    outcome="rejected_forbidden",
+                )
+                return {"status": "forbidden", "reason": "not_sender_memory"}
             session.delete(memory)
             session.commit()
         audit_event(
@@ -243,21 +253,26 @@ async def search(
             result_count=len(matches),
             outcome="success",
         )
-        return [
-            {
+        results = []
+        for m in matches:
+            result = {
                 "person_id": m.person_id,
                 "gist": m.gist,
                 "similarity": round(m.similarity, 3),
             }
-            for m in matches
-        ]
+            if m.person_id == ctx.deps.sender_user_id:
+                result["memory_id"] = m.memory_id
+            results.append(result)
+        return results
 
 
 async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
-    """Flag this email for human review and notify admin. No auto-reply will be sent.
+    """Flag this email for human review and notify admin.
 
     Use when intent is ambiguous, the request is outside your capabilities, or
     you have low confidence. A human will follow up with the sender directly.
+    For authenticated first contact, send a fixed acknowledgement so the sender
+    knows the address is alive without giving the model control over the copy.
     """
     with audit_span("agent.tool", tool_name="escalate"):
         s = ctx.deps.settings
@@ -285,6 +300,13 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
             f"Please reply to {sender} manually."
         )
         notify_admins(s, subject, body)
+        if ctx.deps.sender_authenticated and ctx.deps.sender_user_id is None:
+            send_reply(
+                to_address=sender,
+                subject=reply_subject(ctx.deps.inbound_subject, fallback="Re: your email"),
+                body_text="A person is going to read this and reply.",
+                include_footer=False,
+            )
 
         return {"status": "escalated", "memory_id": memory_id}
 
@@ -298,12 +320,12 @@ async def register_person(
 
     Self-registration only: `email` must match the sender's own authenticated
     From: address, and the sender must not already be a known Person. This
-    cannot be used to register anyone else — accepting an arbitrary raw
+    cannot be used to register anyone else - accepting an arbitrary raw
     address out of message content (e.g. to onboard a stranger mentioned in
     an introduction) would reopen the confused-deputy risk dispatch_email's
     opaque-id design exists to prevent, so that stays out of scope here.
 
-    Returns the new person_id — use it for `refs` on subsequent `remember`
+    Returns the new person_id - use it for `refs` on subsequent `remember`
     calls and as the target of `dispatch_email` to reply to this sender.
     """
     with audit_span("agent.tool", tool_name="register_person"):

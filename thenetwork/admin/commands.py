@@ -1,16 +1,16 @@
 """Admin command execution.
 
 Commands are extracted from the email subject after 'ADMIN:' and executed
-server-side with full DB access. The SEAL does not restrict admin reads —
+server-side with full DB access. The SEAL does not restrict admin reads -
 admins can see raw memory text. Commands that write (remember/forget) apply
 the same DB path as agent tools.
 
 Command grammar (all positional, space-separated in subject):
-  status                    — system stats
-  search <query words…>     — semantic search, returns raw text
-  show <email_or_person_id> — all memories referencing a person
-  forget <memory_id>        — delete one memory
-  remember [refs:e1,e2]     — store body text as a new memory
+  status                    - system stats
+  search <query words…>     - semantic search, returns raw text
+  show <email_or_person_id> - all memories referencing a person
+  forget <memory_id>        - delete one memory
+  remember [refs:e1,e2]     - store body text as a new memory
 """
 from __future__ import annotations
 from sqlalchemy import text

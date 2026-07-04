@@ -33,7 +33,7 @@ CONTENT_SCAN_ENABLED=false
 SANITIZE_LLM_TIER_ENABLED=false   # opt-in higher-fidelity gist pass, see docs/security.md layer 4
 ```
 
-The producer never deletes or moves inbound mail — it only flips the IMAP `\Seen` flag,
+The producer never deletes or moves inbound mail - it only flips the IMAP `\Seen` flag,
 so INBOX keeps every message the account has ever received. Durability comes from the
 Postgres job row (see `docs/architecture.md`'s message flow), not from the seen-flag; the
 "IMAP seen-flag as unit of durability" entry in `docs/design-decisions.md` is about not
@@ -43,12 +43,12 @@ SMTP send succeeds, so the account reads like a normal mailbox with both receive
 sent mail visible end-to-end; the append is best-effort and its failure never fails the
 send job.
 
-Provider selection is by model-string prefix, not by code paths — there is no LiteLLM /
+Provider selection is by model-string prefix, not by code paths - there is no LiteLLM /
 proxy layer.
 
 ## Optional dependencies
 
-- `pip install -e ".[content-scan]"` — optional inbound content scanner (`llm-guard`),
+- `pip install -e ".[content-scan]"` - optional inbound content scanner (`llm-guard`),
   defense-in-depth per `docs/security.md` layer 10.
 
 Presidio (`presidio-analyzer` + `spacy`) is a core dependency. It powers
@@ -68,20 +68,20 @@ under `alembic/versions/`.
 
 ## Tests
 
-- `pytest -m "not integration"` is what CI runs — no DB available, so any DB-backed test
+- `pytest -m "not integration"` is what CI runs - no DB available, so any DB-backed test
   must be marked `integration` (marker declared in `pyproject.toml`).
 - `tests/conftest.py` fixtures:
-  - `seeded_people` — in-memory `Person` objects, no DB.
-  - `pg_engine` (session-scoped) — connects to `TEST_DATABASE_URL` (default
+  - `seeded_people` - in-memory `Person` objects, no DB.
+  - `pg_engine` (session-scoped) - connects to `TEST_DATABASE_URL` (default
     `…/test_thenetwork`); **skips the whole session** if pgvector is unreachable.
-  - `seeded_db` — persists alice/bob/carol/dave + four memories with hand-built
+  - `seeded_db` - persists alice/bob/carol/dave + four memories with hand-built
     embeddings; `monkeypatch`es `db.session._engine`/`_SessionLocal` so app code hits the
-    test DB. Read its docstring before asserting on similarity ordering — the embedding
+    test DB. Read its docstring before asserting on similarity ordering - the embedding
     geometry (`e0`/`e1` axes) is deliberate.
 - Suites: `tests/security/` (the SEAL), `tests/scenarios/` (emergent-behavior evals via
   pydantic-evals), `tests/test_match_pipeline.py` (semantic match), `tests/test_proactive.py`.
-- `asyncio_mode = "auto"` — async tests need no decorator.
-- `tests/scenarios/test_live_archetypes.py` — a pydantic-evals `Dataset` of five archetype
+- `asyncio_mode = "auto"` - async tests need no decorator.
+- `tests/scenarios/test_live_archetypes.py` - a pydantic-evals `Dataset` of five archetype
   emails (onboarding, weak match, strong match, prompt-injection attempt, ambiguous intent)
   run against the *real* configured `AGENT_MODEL`, not `TestModel`/`FunctionModel` like the
   rest of `tests/scenarios/`. Each case is scored by structural assertions (was the expected
@@ -113,18 +113,18 @@ docker compose pull && docker compose up -d   # redeploy only changed services
 
 `.github/workflows/publish.yml` builds + pushes images to GHCR on pushes to `main` and
 `v*` tags; set `IMAGE` in `.env` on the server to that path. The VPS is a **GHCR
-consumer, not a git checkout** — it needs only `.env`, `docker-compose.yml`, and
+consumer, not a git checkout** - it needs only `.env`, `docker-compose.yml`, and
 `scripts/deploy.sh`/`scripts/backup.sh` present in one directory (place them with `scp`
 or a small separate ops repo; there is no `git pull` step on the server and the worker
 image is never built there). `scripts/deploy.sh` wraps the redeploy line above
 (`docker compose pull` then `docker compose up -d`, no `--build`) and prints the
 resulting `worker` status. `scripts/backup.sh` dumps the DB (the only source of truth)
-via the `db` container — wire it as a host cron job.
+via the `db` container - wire it as a host cron job.
 
 ## Proactive outreach
 
 `thenetwork/worker/proactive.py` holds two hourly periodic tasks (registered via
-`import_paths` in `worker/tasks.py`). Both only surface candidates — the agent run
+`import_paths` in `worker/tasks.py`). Both only surface candidates - the agent run
 decides whether and how to introduce, so the SEAL still governs what leaves the system.
 Unit-tested in `tests/test_proactive.py`.
 
@@ -142,7 +142,7 @@ person-referencing memory about a *different* person scoring at least
 `proactive_match_threshold` (0.5), `defer`s a job that re-engages the dormant owner of the
 older note. Guards: pairs already connected in the projected graph are skipped (the
 introduction memory is the durable dedup record); the similarity floor is conservative
-*here specifically* because unsolicited outreach makes a false positive costly — the
+*here specifically* because unsolicited outreach makes a false positive costly - the
 interactive `search` tool deliberately takes no such floor. The trigger body carries only
 opaque ids + PII-stripped gists; real addresses and raw memory text never enter it.
 
@@ -151,4 +151,4 @@ opaque ids + PII-stripped gists; real addresses and raw memory text never enter 
 - Editing a memory is always `forget` + `remember`; never mutate `text`/`refs` in place,
   or the embedding and gist go stale.
 - Keep the `postgresql+psycopg://` (SQLModel) vs plain `postgresql://` (Procrastinate) DSN
-  distinction straight — `worker/tasks.run_worker` strips `+psycopg` for Procrastinate.
+  distinction straight - `worker/tasks.run_worker` strips `+psycopg` for Procrastinate.

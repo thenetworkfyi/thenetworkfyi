@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    # Database — kept as separate parts rather than a single DATABASE_URL.
+    # Database - kept as separate parts rather than a single DATABASE_URL.
     # Postgres itself gets POSTGRES_PASSWORD as a literal string (no
     # decoding); a hand-built connection URI would need the same value
     # percent-encoded, and those two representations silently desync for any
@@ -31,7 +31,7 @@ class Settings(BaseSettings):
             database=self.postgres_db,
         ).render_as_string(hide_password=False)
 
-    # LLM — provider selected by config string (no vendor lock-in, no LiteLLM)
+    # LLM - provider selected by config string (no vendor lock-in, no LiteLLM)
     agent_model: str = "anthropic:claude-sonnet-5"
     # Cheaper/smaller-model tier for subtasks that don't need the main agent
     # model (currently: the sanitize_memory_llm gist pass, see memory/sanitize.py).
@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     anthropic_api_key: str = ""
 
-    # Email — IMAP (inbound polling) and SMTP (outbound send) are distinct
+    # Email - IMAP (inbound polling) and SMTP (outbound send) are distinct
     # accounts/credentials, potentially on different providers entirely.
     imap_account: str = ""
     imap_password: str = ""
@@ -66,7 +66,7 @@ class Settings(BaseSettings):
     content_scan_enabled: bool = False
 
     # Optional higher-fidelity gist tier: run the LLM sanitizer (fixed prompt,
-    # no tools — see docs/security.md THE SEAL layer 4) in addition to the
+    # no tools - see docs/security.md THE SEAL layer 4) in addition to the
     # deterministic Presidio pass before a person-referencing
     # memory becomes eligible for cross-user search. Off by default (costs an
     # LLM call and adds latency on every such write); when off,
@@ -119,7 +119,7 @@ class Settings(BaseSettings):
     # newly-arrived memory closely matches an OLDER standing note about a
     # *different* person, surface the pair to the agent, which decides whether
     # to introduce. This is unsolicited outreach, so the similarity floor is
-    # deliberately conservative — a false positive costs a real email (unlike
+    # deliberately conservative - a false positive costs a real email (unlike
     # interactive search, where the agent can just ignore a weak hit). Lookback
     # bounds the scan to memories created since roughly the last hourly run, so
     # a match only fires once, when the counterpart first arrives.

@@ -2,7 +2,7 @@
 
 An **email-driven agentic connection engine**. People email a single address; an
 LLM agent reads each message, decides what (if anything) it's worth doing, and
-acts — it might capture a fact about someone, surface an event to people who'd
+acts - it might capture a fact about someone, surface an event to people who'd
 care, introduce two people who should know each other, or simply do nothing.
 
 There is no networking schema and no scenario script. The agent's entire
@@ -15,7 +15,7 @@ The whole thing runs on a single VPS against Postgres.
 > **Status:** active development. See [`docs/design-decisions.md`](./docs/design-decisions.md)
 > for the design rationale and the list of deliberately rejected approaches. Proactive outreach
 > (`thenetwork/worker/proactive.py`) is ported to the Person/Memory model and wired
-> as the hourly periodic scan; it is intentionally conservative — it only enqueues
+> as the hourly periodic scan; it is intentionally conservative - it only enqueues
 > candidate pairs and lets the agent decide whether to introduce.
 
 ---
@@ -40,7 +40,7 @@ The whole thing runs on a single VPS against Postgres.
 1. **Producer** (`thenetwork/worker/producer.py`) polls the IMAP inbox for unseen
    messages, enqueues exactly one durable Procrastinate job per message, and only
    *then* marks the message seen. Durability lives in the Postgres job row, not
-   the IMAP seen-flag — a crash mid-run means the job retries and nothing is lost.
+   the IMAP seen-flag - a crash mid-run means the job retries and nothing is lost.
 2. **Worker** (`thenetwork/worker/tasks.py`) is a Postgres-native Procrastinate
    task (LISTEN/NOTIFY + `SKIP LOCKED`, no Redis/broker). It enforces a per-sender
    rate limit and an optional content scan, looks up whether the sender is a known
@@ -54,7 +54,7 @@ The whole thing runs on a single VPS against Postgres.
 
 ## Data model
 
-Two tables — that is the entire durable model.
+Two tables - that is the entire durable model.
 
 ### `people`
 Pure identity, addressing, and the security boundary. Nothing about *why* a person
@@ -62,7 +62,7 @@ is here lives on this row.
 
 | column | meaning |
 |---|---|
-| `id` (uuid str, pk) | opaque internal id — the only thing the LLM ever sees |
+| `id` (uuid str, pk) | opaque internal id - the only thing the LLM ever sees |
 | `email` (unique, indexed) | resolved server-side by the mailer, never by the LLM |
 | `name` | display name |
 
@@ -72,7 +72,7 @@ A growing pile of freeform chunks the agent owns.
 | column | meaning |
 |---|---|
 | `id` (uuid str, pk) | |
-| `text` | freeform content — the source of truth |
+| `text` | freeform content - the source of truth |
 | `embedding` `Vector(1536)` | pgvector, HNSW cosine, for semantic recall |
 | `refs` `text[]` | the `people.id`s this memory concerns (0..N) |
 | `gist` | PII-stripped summary; the *only* thing cross-user search may return |
@@ -111,7 +111,7 @@ Memory is CRUD exposed as tools; everything else is emergent behavior
 
 ---
 
-## Security model — THE SEAL
+## Security model - THE SEAL
 
 The critical concern: **prompt injection must not be able to exfiltrate user
 identities or data, yet the agent must still email people on a user's behalf.**
@@ -127,11 +127,11 @@ column." Instead:
    (PII-stripped) that is the only thing cross-user search may return.
 2. **Cross-user retrieval and the LLM only ever touch the gist + opaque ids.** A
    hijacked model has no identifying text to leak. Real addresses never enter LLM
-   context — the mailer resolves them server-side.
+   context - the mailer resolves them server-side.
 3. **Self/other gate** (`thenetwork/memory/seal.py`): sole-ref-is-sender → raw
    text; otherwise → gist only.
 4. **The sanitizer is a separate, narrowly-scoped step**
-   (`thenetwork/memory/sanitize.py`) — mandatory Presidio redaction of names, email
+   (`thenetwork/memory/sanitize.py`) - mandatory Presidio redaction of names, email
    addresses, and phone numbers while keeping organizations and locations for search
    recall, plus an optional higher-fidelity LLM pass that has a fixed prompt and no
    tools. Missing Presidio is a deployment error, not a silent downgrade. The component
@@ -148,13 +148,13 @@ column." Instead:
 8. **Rate limiting / anti-DoS.** Per-sender quota via
    [`limits`](https://limits.readthedocs.io/) (Postgres-backed), plus bounded
    Procrastinate worker concurrency as the global LLM-spend ceiling.
-9. **Credentials.** Never hardcoded — loaded from env / `.env` via
+9. **Credentials.** Never hardcoded - loaded from env / `.env` via
    pydantic-settings.
 10. **Optional content scanner.** Provider moderation / LLM Guard as opt-in
     defense-in-depth, never the primary defense.
 
 The red-team suite (`tests/security/`) proves it: adversarial emails must produce
-**zero** raw other-person memory text — no names, emails, or bios — in the reply
+**zero** raw other-person memory text - no names, emails, or bios - in the reply
 *or* in any tool argument, even under a fully-hijacked model.
 
 ---
@@ -165,7 +165,7 @@ The red-team suite (`tests/security/`) proves it: adversarial emails must produc
 |---|---|
 | ORM / models | SQLModel over psycopg 3 (`postgresql+psycopg://`) |
 | Migrations | Alembic (`CREATE EXTENSION vector` runs idempotently in a migration) |
-| Vector store | pgvector — `Vector(1536)`, HNSW cosine |
+| Vector store | pgvector - `Vector(1536)`, HNSW cosine |
 | Agent | pydantic-ai (native multi-provider; provider chosen by config string) |
 | Embeddings | provider-agnostic `embed_text` wrapper |
 | Graph proximity | NetworkX |
@@ -177,7 +177,7 @@ The red-team suite (`tests/security/`) proves it: adversarial emails must produc
 | Tests | pytest + pydantic-evals |
 
 Vendor-agnosticism comes from pydantic-ai and the embedding wrapper both being
-multi-provider, selected by the `AGENT_MODEL` / `EMBED_MODEL` config strings — no
+multi-provider, selected by the `AGENT_MODEL` / `EMBED_MODEL` config strings - no
 LiteLLM, no proxy glue.
 
 ---
@@ -202,13 +202,13 @@ POSTGRES_DB=network_db
 POSTGRES_USER=network
 POSTGRES_PASSWORD=network   # literal password; Settings.database_url percent-encodes it
 
-# LLM — provider is chosen by the model string prefix
+# LLM - provider is chosen by the model string prefix
 AGENT_MODEL=anthropic:claude-sonnet-5
 EMBED_MODEL=text-embedding-3-small
 OPENAI_API_KEY=
 ANTHROPIC_API_KEY=
 
-# Mailbox — IMAP (inbound polling) and SMTP (outbound send) are separate
+# Mailbox - IMAP (inbound polling) and SMTP (outbound send) are separate
 # accounts/credentials, potentially on different providers
 IMAP_ACCOUNT=agent@example.com
 IMAP_PASSWORD=...
@@ -247,7 +247,7 @@ alembic upgrade head           # creates the vector extension + tables
 
 The worker is a single long-running process. It drains the Procrastinate queue
 and, via periodic tasks, polls the IMAP inbox every minute (`poll_inbox`) and
-runs the hourly proactive scan (`scan_for_opportunities`) — no separate producer
+runs the hourly proactive scan (`scan_for_opportunities`) - no separate producer
 process is needed.
 
 ```bash
@@ -259,7 +259,7 @@ thenetwork-producer          # optional: one manual IMAP poll cycle
 
 ## Deployment
 
-This service needs **no inbound network access** — it polls IMAP (outbound),
+This service needs **no inbound network access** - it polls IMAP (outbound),
 pulls jobs from local Postgres, and calls LLM/SMTP APIs (outbound). So there's
 no web server, reverse proxy, or public port to expose. A single small VPS with
 SSH access is enough.
@@ -281,7 +281,7 @@ migrations apply automatically on every deploy.
 
 ### Safe redeploys (no lost or half-processed jobs)
 
-Procrastinate makes this safe by design — durable job rows in Postgres,
+Procrastinate makes this safe by design - durable job rows in Postgres,
 `SKIP LOCKED` dequeue, and graceful shutdown on SIGTERM (the worker stops
 fetching new jobs and finishes in-flight ones before exiting). `process_email`
 also retries (`max_attempts=3`) and the intake is idempotent (IMAP messages are
@@ -316,9 +316,9 @@ pytest                       # full suite
 pytest -m "not integration"  # skip tests that need a live pgvector DB
 ```
 
-- `tests/security/` — the SEAL red-team and security contracts
-- `tests/scenarios/` — emergent-behavior evals (pydantic-evals)
-- `tests/test_match_pipeline.py` — semantic match / search pipeline
+- `tests/security/` - the SEAL red-team and security contracts
+- `tests/scenarios/` - emergent-behavior evals (pydantic-evals)
+- `tests/test_match_pipeline.py` - semantic match / search pipeline
 
 ---
 
