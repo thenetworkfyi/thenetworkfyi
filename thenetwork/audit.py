@@ -39,7 +39,7 @@ _SAFE_FIELDS = frozenset({
     "header_names", "html_present", "message_count", "outcome", "part_kinds",
     "query_chars", "reason", "recipient_id_present", "record_type", "refs_count",
     "result_count", "sender_authenticated", "sender_known", "sender_present",
-    "subject_chars", "tool_name", "top_k", "user_message_chars",
+    "subject_chars", "tool_called", "tool_name", "top_k", "user_message_chars",
 })
 _SAFE_TOKEN = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
 _SAFE_CATEGORIES = {

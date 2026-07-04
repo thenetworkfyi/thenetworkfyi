@@ -104,5 +104,21 @@ async def run_agent_for_email(
             notify_admins(settings, subject, body)
             return ""
         audit_model_trace(result)
-        audit_event("agent.response_generated", body_chars=len(result.output))
+        tool_called = any(
+            getattr(part, "part_kind", None) == "tool-call"
+            for message in result.all_messages()
+            for part in getattr(message, "parts", ())
+        )
+        audit_event(
+            "agent.response_generated",
+            body_chars=len(result.output),
+            tool_called=tool_called,
+        )
+        if not tool_called:
+            audit_event(
+                "agent.no_action_taken",
+                sender_known=sender_user_id is not None,
+                subject_chars=len(email_subject),
+                body_chars=len(email_body),
+            )
         return result.output
