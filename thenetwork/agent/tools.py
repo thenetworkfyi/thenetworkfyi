@@ -270,6 +270,7 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
             session.add(memory)
             await _embed_memory_for_write(memory, session)
             session.commit()
+            memory_id = memory.id
         audit_event(
             "database.action",
             action="insert",
@@ -285,7 +286,7 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
         )
         notify_admins(s, subject, body)
 
-        return {"status": "escalated", "memory_id": memory.id}
+        return {"status": "escalated", "memory_id": memory_id}
 
 
 async def register_person(
