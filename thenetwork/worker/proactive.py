@@ -35,7 +35,7 @@ PROXIMITY_THRESHOLD = 0.3
 
 @app.periodic(cron="0 * * * *")
 @app.task()
-async def scan_for_opportunities(_timestamp: int) -> None:
+async def scan_for_opportunities(timestamp: int) -> None:
     """Hourly scan: find person pairs with high graph proximity, enqueue agent jobs."""
     G = build_graph()
     person_ids = list(G.nodes())
@@ -69,7 +69,7 @@ async def scan_for_opportunities(_timestamp: int) -> None:
 
 @app.periodic(cron="30 * * * *")
 @app.task()
-async def scan_for_matches(_timestamp: int) -> None:
+async def scan_for_matches(timestamp: int) -> None:
     """Hourly semantic rematch: new memories against older standing notes.
 
     Driven by *arrivals* — memories created since roughly the last run — rather
