@@ -113,6 +113,38 @@ def test_append_receives_exact_composed_message():
     assert appended_bytes == captured[0].as_bytes()
 
 
+def test_send_reply_appends_plain_text_quoted_trail():
+    from thenetwork.email.outbound import send_reply
+
+    captured = []
+    smtp_instance = _mock_smtp()
+    smtp_instance.send_message.side_effect = lambda msg: captured.append(msg)
+
+    mock_mailbox, _mb_instance = _mock_mailbox_success()
+
+    with patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()), \
+         patch("smtplib.SMTP", return_value=smtp_instance), \
+         patch("thenetwork.email.outbound.MailBox", mock_mailbox):
+        send_reply(
+            to_address="bob@example.com",
+            subject="Hi",
+            body_text="Hello",
+            body_html="<p>Hello</p>",
+            quoted_body_text="Original line\n> old quote\nSecond line",
+            quoted_date="Sat, 04 Jul 2026 12:00:00 -0700",
+            include_footer=False,
+        )
+
+    msg = captured[0]
+    plain = msg.get_body(preferencelist=("plain",)).get_content()
+    html = msg.get_body(preferencelist=("html",)).get_content()
+    assert "On Sat, 04 Jul 2026 12:00:00 -0700, you wrote:" in plain
+    assert "> Original line" in plain
+    assert "> Second line" in plain
+    assert "> old quote" not in plain
+    assert "you wrote" not in html
+
+
 def test_append_failure_does_not_propagate():
     """An IMAP append failure must not raise - the SMTP send already succeeded."""
     from thenetwork.email.outbound import send_reply

@@ -31,6 +31,8 @@ warranted, not on a schedule. Silence means the right thing hasn't
 shown up yet.
 """
 
+MAX_QUOTED_TRAIL_CHARS = 2_000
+
 
 def _growth_footer_text(account: str) -> str:
     # "Reply" only reaches us for the direct recipient - a forward's reply
@@ -47,6 +49,22 @@ def _growth_footer_html(account: str) -> str:
         f"&mdash; they can join by emailing {account} directly."
         "</p>"
     )
+
+
+def _quoted_trail_text(body_text: str, quoted_date: str | None = None) -> str:
+    """Return a one-level plain-text quote of the original inbound body."""
+    body = body_text.replace("\r\n", "\n").replace("\r", "\n")
+    body = "\n".join(line for line in body.splitlines() if not line.lstrip().startswith(">"))
+    truncated = len(body) > MAX_QUOTED_TRAIL_CHARS
+    if truncated:
+        body = body[:MAX_QUOTED_TRAIL_CHARS].rstrip()
+
+    date = quoted_date or "an earlier message"
+    quote_lines = [f"On {date}, you wrote:"]
+    quote_lines.extend(f"> {line}" if line else ">" for line in body.splitlines())
+    if truncated:
+        quote_lines.append("> [quoted text truncated]")
+    return "\n\n" + "\n".join(quote_lines)
 
 
 def _append_to_sent(msg: EmailMessage) -> None:
@@ -114,6 +132,8 @@ def send_reply(
     body_html: str | None = None,
     in_reply_to: str | None = None,
     references: str | None = None,
+    quoted_body_text: str | None = None,
+    quoted_date: str | None = None,
     include_footer: bool = True,
 ) -> None:
     """Send an email from the configured account.
@@ -142,6 +162,9 @@ def send_reply(
             body_text = body_text + _growth_footer_text(s.imap_account)
             if body_html:
                 body_html = body_html + _growth_footer_html(s.imap_account)
+
+        if quoted_body_text:
+            body_text = body_text + _quoted_trail_text(quoted_body_text, quoted_date)
 
         msg = EmailMessage()
         msg["From"] = s.email_from

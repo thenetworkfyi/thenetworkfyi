@@ -65,6 +65,16 @@ def _thread_headers(inbound_message_id: str | None) -> dict[str, str]:
     return {"in_reply_to": inbound_message_id, "references": inbound_message_id}
 
 
+def _direct_reply_kwargs(deps: AgentDeps) -> dict[str, str | None]:
+    if not deps.inbound_message_id:
+        return {}
+    kwargs: dict[str, str | None] = _thread_headers(deps.inbound_message_id)
+    if deps.inbound_body_for_quote:
+        kwargs["quoted_body_text"] = deps.inbound_body_for_quote
+        kwargs["quoted_date"] = deps.inbound_date
+    return kwargs
+
+
 def _hit_daily_dispatch_cap(key: str, limit: int) -> bool:
     if limit <= 0:
         return False
@@ -296,7 +306,7 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
                 subject=reply_subject(ctx.deps.inbound_subject, fallback="How to join"),
                 body_text=FIRST_CONTACT_WELCOME_REPLY,
                 include_footer=False,
-                **_thread_headers(ctx.deps.inbound_message_id),
+                **_direct_reply_kwargs(ctx.deps),
             )
             audit_event("agent.first_contact_welcome_sent")
             return {"status": "welcomed"}
@@ -454,10 +464,7 @@ async def dispatch_email(
 
         thread_headers = {}
         if recipient_user_id == ctx.deps.sender_user_id and ctx.deps.inbound_message_id:
-            thread_headers = {
-                "in_reply_to": ctx.deps.inbound_message_id,
-                "references": ctx.deps.inbound_message_id,
-            }
+            thread_headers = _direct_reply_kwargs(ctx.deps)
 
         send_reply(
             to_address=person.email,
