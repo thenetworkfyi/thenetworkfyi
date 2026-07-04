@@ -72,7 +72,7 @@ def run_producer_cycle() -> int:
 
 @app.periodic(cron="* * * * *")
 @app.task(queueing_lock="poll_inbox")
-async def poll_inbox(_timestamp: int) -> int:
+async def poll_inbox(timestamp: int) -> int:
     """Periodic IMAP poll, runs inside the worker every minute.
 
     The blocking IMAP I/O is offloaded to a thread so it never stalls the
