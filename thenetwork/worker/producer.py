@@ -70,7 +70,7 @@ def run_producer_cycle() -> int:
         return _poll_and_enqueue()
 
 
-@app.periodic(cron="* * * * *")
+@app.periodic(cron="* * * * *", periodic_id="poll_inbox")
 @app.task(queueing_lock="poll_inbox")
 async def poll_inbox(timestamp: int) -> int:
     """Periodic IMAP poll, runs inside the worker every minute.
