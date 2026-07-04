@@ -18,7 +18,12 @@ from thenetwork.audit import audit_event, audit_span
 from thenetwork.db.models import Memory, Person
 from thenetwork.db.session import get_session
 from thenetwork.embed.embeddings import embed_text
-from thenetwork.email.outbound import notify_admins, reply_subject, send_reply
+from thenetwork.email.outbound import (
+    FIRST_CONTACT_WELCOME_REPLY,
+    notify_admins,
+    reply_subject,
+    send_reply,
+)
 from thenetwork.memory.sanitize import sanitize_memory_high_fidelity
 from thenetwork.search.match import MemoryMatch, match_memories
 
@@ -271,8 +276,9 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
 
     Use when intent is ambiguous, the request is outside your capabilities, or
     you have low confidence. A human will follow up with the sender directly.
-    For authenticated first contact, send a fixed acknowledgement so the sender
-    knows the address is alive without giving the model control over the copy.
+    For authenticated first contact, send the fixed welcome/how-to-join reply
+    so the sender learns how to use the address, without giving the model
+    control over the copy.
     """
     with audit_span("agent.tool", tool_name="escalate"):
         s = ctx.deps.settings
@@ -303,8 +309,8 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
         if ctx.deps.sender_authenticated and ctx.deps.sender_user_id is None:
             send_reply(
                 to_address=sender,
-                subject=reply_subject(ctx.deps.inbound_subject, fallback="Re: your email"),
-                body_text="A person is going to read this and reply.",
+                subject=reply_subject(ctx.deps.inbound_subject, fallback="How to join"),
+                body_text=FIRST_CONTACT_WELCOME_REPLY,
                 include_footer=False,
             )
 

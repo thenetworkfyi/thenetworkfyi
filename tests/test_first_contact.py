@@ -22,7 +22,8 @@ def _reset_welcome_limiter() -> None:
 
 @pytest.mark.asyncio
 async def test_near_empty_authenticated_unknown_sender_gets_welcome_after_rate_limit():
-    from thenetwork.worker.tasks import _WELCOME_REPLY, process_email
+    from thenetwork.email.outbound import FIRST_CONTACT_WELCOME_REPLY
+    from thenetwork.worker.tasks import process_email
 
     _reset_welcome_limiter()
     mock_session = _mock_sender_lookup(None)
@@ -47,7 +48,7 @@ async def test_near_empty_authenticated_unknown_sender_gets_welcome_after_rate_l
     send_reply.assert_called_once_with(
         to_address="new@example.com",
         subject="How to join",
-        body_text=_WELCOME_REPLY,
+        body_text=FIRST_CONTACT_WELCOME_REPLY,
         include_footer=False,
     )
     mock_agent.assert_not_called()
