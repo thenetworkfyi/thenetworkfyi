@@ -145,6 +145,36 @@ def test_send_reply_appends_plain_text_quoted_trail():
     assert "you wrote" not in html
 
 
+def test_send_reply_places_quoted_trail_before_growth_footer():
+    from thenetwork.email.outbound import send_reply
+
+    captured = []
+    smtp_instance = _mock_smtp()
+    smtp_instance.send_message.side_effect = lambda msg: captured.append(msg)
+
+    mock_mailbox, _mb_instance = _mock_mailbox_success()
+
+    with patch(
+        "thenetwork.email.outbound.get_settings",
+        return_value=_mock_settings(growth_footer_enabled=True),
+    ), \
+         patch("smtplib.SMTP", return_value=smtp_instance), \
+         patch("thenetwork.email.outbound.MailBox", mock_mailbox):
+        send_reply(
+            to_address="bob@example.com",
+            subject="Hi",
+            body_text="Hello",
+            quoted_body_text="Original line",
+            quoted_date="Sat, 04 Jul 2026 12:00:00 -0700",
+        )
+
+    plain = captured[0].get_content()
+    reply_index = plain.index("Hello")
+    quote_index = plain.index("On Sat, 04 Jul 2026 12:00:00 -0700, you wrote:")
+    footer_index = plain.index("--\nThe Network.")
+    assert reply_index < quote_index < footer_index
+
+
 def test_append_failure_does_not_propagate():
     """An IMAP append failure must not raise - the SMTP send already succeeded."""
     from thenetwork.email.outbound import send_reply
