@@ -22,6 +22,7 @@ def _mock_settings(**overrides):
     s.imap_password = "secret"
     s.smtp_account = "agent@example.com"
     s.smtp_password = "secret"
+    s.email_from = "agent@example.com"
     s.imap_host = "imap.example.com"
     s.imap_port = 993
     s.imap_sent_folder = "Sent"

@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587
+    # Address used in the outbound From: header (distinct from smtp_account,
+    # which is only the SMTP login credential).
+    email_from: str = ""
     # Folder outbound replies are appended to after a successful SMTP send, so
     # sent mail shows up in the account like it would from a normal mail
     # client rather than relying on provider-side auto-save.

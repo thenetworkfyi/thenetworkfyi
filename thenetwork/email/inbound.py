@@ -156,9 +156,9 @@ def poll_unseen() -> list[InboundMessage]:
     """
     s = get_settings()
     messages: list[InboundMessage] = []
-    # Outbound replies carry From: smtp_account, not the polled imap_account,
+    # Outbound replies carry From: email_from, not the polled imap_account,
     # so that's the address to match to skip our own replies bouncing back.
-    own_addresses = {s.imap_account.lower(), s.smtp_account.lower()}
+    own_addresses = {s.imap_account.lower(), s.email_from.lower()}
 
     with MailBox(s.imap_host, s.imap_port).login(s.imap_account, s.imap_password) as mb:
         mb.email_message_class = _RawCapturingMailMessage

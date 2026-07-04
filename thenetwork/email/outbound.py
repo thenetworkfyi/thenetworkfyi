@@ -114,7 +114,7 @@ def send_reply(
                 body_html = body_html + _growth_footer_html(s.imap_account)
 
         msg = EmailMessage()
-        msg["From"] = s.smtp_account
+        msg["From"] = s.email_from
         msg["To"] = to_address
         msg["Subject"] = subject
         # RFC 3834 §3.1.7 — auto-replied for automatic responses to inbound mail
