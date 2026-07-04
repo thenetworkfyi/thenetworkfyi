@@ -12,8 +12,8 @@ from thenetwork.settings import Settings
 
 def _settings() -> Settings:
     return Settings(
-        email_account="agent@example.com",
-        email_password="secret",
+        imap_account="agent@example.com",
+        imap_password="secret",
         imap_host="imap.example.com",
         imap_port=993,
         require_sender_auth=False,

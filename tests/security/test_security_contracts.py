@@ -628,8 +628,10 @@ def test_outbound_has_auto_submitted_header():
         s = MagicMock()
         s.smtp_host = "smtp.example.com"
         s.smtp_port = 587
-        s.email_account = "agent@example.com"
-        s.email_password = "secret"
+        s.imap_account = "agent@example.com"
+        s.imap_password = "secret"
+        s.smtp_account = "agent@example.com"
+        s.smtp_password = "secret"
         s.imap_host = "imap.example.com"
         s.imap_port = 993
         s.imap_sent_folder = "Sent"

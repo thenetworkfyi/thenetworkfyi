@@ -51,6 +51,46 @@ def test_rate_limit_normalizes_sender_keys():
     assert "authenticated-sender:alice@example.com" in limiter.hit_keys
 
 
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("alice+test@example.com", "alice@example.com"),
+        ("alice+test1@gmail.com", "alice@gmail.com"),
+        ("a.l.ice+tag@gmail.com", "alice@gmail.com"),
+        ("alice@googlemail.com", "alice@gmail.com"),
+        ("Alice.Test@GMAIL.com", "alicetest@gmail.com"),
+        ("alice-tag@yahoo.com", "alice@yahoo.com"),
+        ("alice-tag@aol.com", "alice@aol.com"),
+        # dots and hyphens are literal outside the domains that special-case them
+        ("alice.test@example.com", "alice.test@example.com"),
+        ("alice-test@example.com", "alice-test@example.com"),
+    ],
+)
+def test_normalize_rate_limit_identity_collapses_known_alias_conventions(raw, expected):
+    from thenetwork.security.rate_limit import normalize_rate_limit_identity
+
+    assert normalize_rate_limit_identity(raw) == expected
+
+
+def test_plus_addressed_senders_share_a_rate_limit_bucket():
+    from thenetwork.security.rate_limit import check_rate_limit
+
+    limiter = FakeLimiter()
+
+    with patch("thenetwork.security.rate_limit.get_settings", return_value=_settings()), patch(
+        "thenetwork.security.rate_limit._get_limiter",
+        return_value=(limiter, HealthyStorage()),
+    ):
+        assert check_rate_limit("alice+one@gmail.com", sender_authenticated=False)
+        assert check_rate_limit("alice+two@gmail.com", sender_authenticated=False)
+
+    sender_hits = [key for key in limiter.hit_keys if key.startswith("unauthenticated-sender:")]
+    assert sender_hits == [
+        "unauthenticated-sender:alice@gmail.com",
+        "unauthenticated-sender:alice@gmail.com",
+    ]
+
+
 def test_unauthenticated_sender_uses_smaller_separate_bucket():
     from thenetwork.security.rate_limit import check_rate_limit
 
