@@ -27,6 +27,8 @@ from thenetwork.email.inbound import (
 )
 from thenetwork.email.outbound import (
     FIRST_CONTACT_WELCOME_REPLY,
+    _direct_reply_kwargs,
+    _thread_headers,
     reply_subject,
     send_reply,
 )
@@ -86,26 +88,6 @@ def _hit_welcome_quota(sender_email: str) -> bool:
     limiter, _ = _get_welcome_limiter()
     identity = normalize_rate_limit_identity(sender_email)
     return limiter.hit(_WELCOME_LIMIT, f"welcome:first-contact:{identity}")
-
-
-def _thread_headers(inbound_message_id: str | None) -> dict[str, str]:
-    if not inbound_message_id:
-        return {}
-    return {"in_reply_to": inbound_message_id, "references": inbound_message_id}
-
-
-def _direct_reply_kwargs(
-    inbound_message_id: str | None,
-    inbound_body_for_quote: str | None,
-    inbound_date: str | None,
-) -> dict[str, str | None]:
-    if not inbound_message_id:
-        return {}
-    kwargs: dict[str, str | None] = _thread_headers(inbound_message_id)
-    if inbound_body_for_quote:
-        kwargs["quoted_body_text"] = inbound_body_for_quote
-        kwargs["quoted_date"] = inbound_date
-    return kwargs
 
 
 def _is_known_authenticated_sender(sender_email: str, sender_authenticated: bool) -> bool:
