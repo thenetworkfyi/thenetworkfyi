@@ -129,6 +129,87 @@ async def test_dispatch_does_not_thread_agent_outreach():
     assert "quoted_body_text" not in mock_send.call_args.kwargs
 
 
+@pytest.mark.asyncio
+async def test_dispatch_never_quotes_inbound_text_to_third_party():
+    _reset_dispatch_limiter()
+    fake_person = _fake_person("bob@example.com")
+
+    secret_inbound = "Alice private health note and alice.private@example.com"
+    ctx = FakeCtx(sender_user_id="user-alice")
+    ctx.deps.inbound_message_id = "<abc123@example.com>"
+    ctx.deps.inbound_body_for_quote = secret_inbound
+    ctx.deps.inbound_date = "Sat, 04 Jul 2026 12:00:00 -0700"
+    ctx._mock_sess.get.return_value = fake_person
+
+    with patch("thenetwork.agent.tools.send_reply") as mock_send:
+        result = await dispatch_email(
+            ctx,
+            recipient_user_id="user-bob",
+            subject="Intro",
+            body_text="Hello",
+        )
+
+    assert result["status"] == "sent"
+    assert "quoted_body_text" not in mock_send.call_args.kwargs
+    assert secret_inbound not in repr(mock_send.call_args)
+
+
+@pytest.mark.asyncio
+async def test_proactive_graph_trigger_never_sets_quote_inputs():
+    import networkx as nx
+
+    from thenetwork.worker.proactive import scan_for_opportunities
+
+    graph = nx.Graph()
+    graph.add_edge("alice", "shared")
+    graph.add_edge("bob", "shared")
+    people = [MagicMock(id="alice", email="alice@example.com"), MagicMock(id="bob", email="bob@example.com")]
+    session = MagicMock()
+    session.__enter__ = MagicMock(return_value=session)
+    session.__exit__ = MagicMock(return_value=False)
+    session.exec.return_value.all.return_value = people
+
+    with patch("thenetwork.worker.proactive.build_graph", return_value=graph), \
+         patch("thenetwork.worker.proactive.get_session", return_value=session), \
+         patch("thenetwork.worker.proactive.process_email") as process_email:
+        await scan_for_opportunities.func(0)
+
+    assert process_email.defer.called
+    for call in process_email.defer.call_args_list:
+        assert "inbound_message_id" not in call.kwargs
+        assert "inbound_body_for_quote" not in call.kwargs
+        assert "inbound_date" not in call.kwargs
+
+
+@pytest.mark.asyncio
+async def test_proactive_semantic_trigger_never_sets_quote_inputs():
+    import networkx as nx
+
+    from thenetwork.search.match import MemoryMatch
+    from thenetwork.worker.proactive import scan_for_matches
+
+    recent = MagicMock(id="recent", refs=["arrival"], gist="arrival gist", embedding=[0.0])
+    standing_person = MagicMock(id="standing", email="standing@example.com")
+    session = MagicMock()
+    session.__enter__ = MagicMock(return_value=session)
+    session.__exit__ = MagicMock(return_value=False)
+    session.exec.return_value.all.return_value = [recent]
+    session.get.return_value = standing_person
+    matches = [MemoryMatch("older", "standing", "standing gist", 0.9)]
+
+    with patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()), \
+         patch("thenetwork.worker.proactive.get_session", return_value=session), \
+         patch("thenetwork.worker.proactive.match_memories", return_value=matches), \
+         patch("thenetwork.worker.proactive.process_email") as process_email:
+        await scan_for_matches.func(0)
+
+    process_email.defer.assert_called_once()
+    kwargs = process_email.defer.call_args.kwargs
+    assert "inbound_message_id" not in kwargs
+    assert "inbound_body_for_quote" not in kwargs
+    assert "inbound_date" not in kwargs
+
+
 def test_dispatch_cap_settings_defaults():
     assert Settings.model_fields["dispatch_max_sends_per_run"].default == 3
     assert Settings.model_fields["dispatch_recipient_daily_cap"].default == 3
