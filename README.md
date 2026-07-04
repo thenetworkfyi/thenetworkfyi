@@ -196,7 +196,11 @@ Create a `.env` in the project root. Defaults live in `thenetwork/settings.py`;
 the common overrides:
 
 ```dotenv
-DATABASE_URL=postgresql+psycopg://network:network@localhost:5432/network_db
+POSTGRES_HOST=localhost   # docker compose overrides this to `db` for the worker
+POSTGRES_PORT=5432
+POSTGRES_DB=network_db
+POSTGRES_USER=network
+POSTGRES_PASSWORD=network   # literal password; Settings.database_url percent-encodes it
 
 # LLM — provider is chosen by the model string prefix
 AGENT_MODEL=anthropic:claude-sonnet-5
@@ -221,9 +225,6 @@ RATE_LIMIT_PER_HOUR=10
 UNAUTHENTICATED_RATE_LIMIT_PER_HOUR=3
 GLOBAL_EMAIL_RATE_LIMIT_PER_HOUR=100
 CONTENT_SCAN_ENABLED=false
-
-# Used by docker-compose for the local DB
-POSTGRES_PASSWORD=network
 ```
 
 ### 2. Install

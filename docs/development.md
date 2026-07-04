@@ -7,7 +7,11 @@ defaults in that file. `get_settings()` caches a singleton. Common overrides
 (see `.env.example`):
 
 ```dotenv
-DATABASE_URL=postgresql+psycopg://network:network@localhost:5432/network_db
+POSTGRES_HOST=localhost   # docker compose overrides this to `db` for the worker
+POSTGRES_PORT=5432
+POSTGRES_DB=network_db
+POSTGRES_USER=network
+POSTGRES_PASSWORD=network   # literal password; Settings.database_url percent-encodes it
 AGENT_MODEL=anthropic:claude-sonnet-5   # provider chosen by the string prefix
 SMALL_AGENT_MODEL=anthropic:claude-haiku-4-5   # cheaper tier for fixed-prompt subtasks (e.g. the sanitizer LLM pass)
 EMBED_MODEL=text-embedding-3-small
