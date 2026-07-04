@@ -31,7 +31,13 @@ from thenetwork.security.rate_limit import check_rate_limit
 from thenetwork.settings import get_settings
 
 app = procrastinate.App(
-    connector=procrastinate.PsycopgConnector(),
+    # Procrastinate's own DSN (plain postgresql://); Procrastinate 3.x takes
+    # conninfo on the connector, not on App.open_async.
+    connector=procrastinate.PsycopgConnector(
+        conninfo=get_settings().database_url.replace(
+            "postgresql+psycopg://", "postgresql://"
+        )
+    ),
     # All modules that register tasks/periodics must be imported so the worker
     # discovers them: email processing (here), IMAP polling, proactive scans.
     import_paths=[
@@ -214,8 +220,7 @@ async def run_worker() -> None:
     process a generous stop grace period (see compose ``stop_grace_period``).
     """
     s = get_settings()
-    dsn = s.database_url.replace("postgresql+psycopg://", "postgresql://")
-    async with app.open_async(conninfo=dsn):
+    async with app.open_async():
         await app.run_worker_async(concurrency=s.worker_concurrency)
 
 
