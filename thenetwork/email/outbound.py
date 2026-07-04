@@ -176,15 +176,15 @@ def send_reply(
     ):
         s = get_settings()
 
+        if quoted_body_text:
+            body_text = body_text + _quoted_trail_text(quoted_body_text, quoted_date)
+
         if include_footer and s.growth_footer_enabled:
             # The footer points new senders at the polled inbound address,
             # not the (possibly different) SMTP sending identity.
             body_text = body_text + _growth_footer_text(s.imap_account)
             if body_html:
                 body_html = body_html + _growth_footer_html(s.imap_account)
-
-        if quoted_body_text:
-            body_text = body_text + _quoted_trail_text(quoted_body_text, quoted_date)
 
         msg = EmailMessage()
         msg["From"] = s.email_from
