@@ -17,8 +17,16 @@ from thenetwork.agent.tools import (
     remember,
     search,
 )
-from thenetwork.audit import audit_event, audit_model_trace, audit_run, audit_span, audit_trace
+from thenetwork.audit import (
+    audit_event,
+    audit_model_trace,
+    audit_run,
+    audit_sender,
+    audit_span,
+    audit_trace,
+)
 from thenetwork.email.outbound import notify_admins
+from thenetwork.security.sender_identifier import optional_sender_identifier
 from thenetwork.settings import get_settings
 
 
@@ -62,7 +70,9 @@ async def run_agent_for_email(
     The untrusted email body is passed as user-role message content - it is
     NEVER concatenated into the system prompt (role separation, THE SEAL).
     """
-    with audit_run(), audit_trace(trace_id), audit_span(
+    with audit_run(), audit_trace(trace_id), audit_sender(
+        optional_sender_identifier(sender_email)
+    ), audit_span(
         "agent.run",
         sender_known=sender_user_id is not None,
         subject_chars=len(email_subject),

@@ -14,6 +14,10 @@ import structlog
 LOGGER_NAME = "thenetwork.audit"
 _run_id: ContextVar[str | None] = ContextVar("thenetwork_audit_run_id", default=None)
 _trace_id: ContextVar[str | None] = ContextVar("thenetwork_audit_trace_id", default=None)
+_sender_id_hash: ContextVar[str | None] = ContextVar(
+    "thenetwork_audit_sender_id_hash",
+    default=None,
+)
 
 
 def _iso_timestamp(logger: object, method_name: str, event_dict: dict) -> dict:
@@ -39,8 +43,8 @@ _SAFE_FIELDS = frozenset({
     "action", "auto_submitted_present", "body_chars", "duration_ms", "error_type",
     "header_names", "html_present", "message_count", "outcome", "part_kinds",
     "query_chars", "reason", "recipient_id_present", "record_type", "refs_count",
-    "result_count", "sender_authenticated", "sender_known", "sender_present",
-    "subject_chars", "tool_called", "tool_name", "top_k", "trace_id",
+    "result_count", "sender_authenticated", "sender_id_hash", "sender_known",
+    "sender_present", "subject_chars", "tool_called", "tool_name", "top_k", "trace_id",
     "user_message_chars",
 })
 _SAFE_TOKEN = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
@@ -122,6 +126,9 @@ def audit_event(event: str, **fields: object) -> None:
     trace_id = _trace_id.get()
     if trace_id is not None and "trace_id" not in fields:
         payload["trace_id"] = _validate_value("trace_id", trace_id)
+    sender_id_hash = _sender_id_hash.get()
+    if sender_id_hash is not None and "sender_id_hash" not in fields:
+        payload["sender_id_hash"] = _validate_value("sender_id_hash", sender_id_hash)
     payload.update({name: _validate_value(name, value) for name, value in fields.items()})
     _logger.info(_safe_token(event), **payload)
 
@@ -150,6 +157,18 @@ def audit_trace(trace_id: str | None) -> Iterator[None]:
         yield
     finally:
         _trace_id.reset(token)
+
+
+@contextmanager
+def audit_sender(sender_id_hash: str | None) -> Iterator[None]:
+    if sender_id_hash is None:
+        yield
+        return
+    token = _sender_id_hash.set(sender_id_hash)
+    try:
+        yield
+    finally:
+        _sender_id_hash.reset(token)
 
 
 @contextmanager

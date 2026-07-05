@@ -17,6 +17,7 @@ from thenetwork.agent.core import run_agent_for_email
 from thenetwork.audit import (
     audit_event,
     audit_run,
+    audit_sender,
     audit_span,
     audit_trace,
     configure_audit_logging,
@@ -41,6 +42,7 @@ from thenetwork.email.outbound import (
 from thenetwork.memory.sanitize import assert_presidio_ready
 from thenetwork.security.content_scan import scan_content
 from thenetwork.security.rate_limit import check_rate_limit, normalize_rate_limit_identity
+from thenetwork.security.sender_identifier import optional_sender_identifier
 from thenetwork.settings import get_settings
 
 app = procrastinate.App(
@@ -218,7 +220,9 @@ async def process_email(
     """
     subject = cap_subject(subject)
     original_body_chars = len(body)
-    with audit_run(), audit_trace(trace_id), audit_span(
+    with audit_run(), audit_trace(trace_id), audit_sender(
+        optional_sender_identifier(sender_email)
+    ), audit_span(
         "worker.process_email",
         sender_present=bool(sender_email),
         subject_chars=len(subject),
