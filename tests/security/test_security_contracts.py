@@ -87,6 +87,7 @@ async def test_dispatch_threads_reply_to_inbound_sender_only():
 
     ctx = FakeCtx(sender_user_id="user-alice")
     ctx.deps.inbound_message_id = "<abc123@example.com>"
+    ctx.deps.inbound_references = "<root@example.com> <parent@example.com>"
     ctx.deps.inbound_body_for_quote = "Original request"
     ctx.deps.inbound_date = "Sat, 04 Jul 2026 12:00:00 -0700"
     ctx._mock_sess.get.return_value = fake_person
@@ -101,7 +102,10 @@ async def test_dispatch_threads_reply_to_inbound_sender_only():
 
     assert result["status"] == "sent"
     assert mock_send.call_args.kwargs["in_reply_to"] == "<abc123@example.com>"
-    assert mock_send.call_args.kwargs["references"] == "<abc123@example.com>"
+    assert (
+        mock_send.call_args.kwargs["references"]
+        == "<root@example.com> <parent@example.com> <abc123@example.com>"
+    )
     assert mock_send.call_args.kwargs["quoted_body_text"] == "Original request"
     assert mock_send.call_args.kwargs["quoted_date"] == "Sat, 04 Jul 2026 12:00:00 -0700"
 
@@ -177,6 +181,7 @@ async def test_proactive_graph_trigger_never_sets_quote_inputs():
     assert process_email.defer.called
     for call in process_email.defer.call_args_list:
         assert "inbound_message_id" not in call.kwargs
+        assert "inbound_references" not in call.kwargs
         assert "inbound_body_for_quote" not in call.kwargs
         assert "inbound_date" not in call.kwargs
 
@@ -206,6 +211,7 @@ async def test_proactive_semantic_trigger_never_sets_quote_inputs():
     process_email.defer.assert_called_once()
     kwargs = process_email.defer.call_args.kwargs
     assert "inbound_message_id" not in kwargs
+    assert "inbound_references" not in kwargs
     assert "inbound_body_for_quote" not in kwargs
     assert "inbound_date" not in kwargs
 

@@ -292,9 +292,10 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
                 body_text=FIRST_CONTACT_WELCOME_REPLY,
                 include_footer=False,
                 **_direct_reply_kwargs(
-                    ctx.deps.inbound_message_id,
-                    ctx.deps.inbound_body_for_quote,
-                    ctx.deps.inbound_date,
+                    inbound_message_id=ctx.deps.inbound_message_id,
+                    inbound_body_for_quote=ctx.deps.inbound_body_for_quote,
+                    inbound_date=ctx.deps.inbound_date,
+                    inbound_references=ctx.deps.inbound_references,
                 ),
             )
             audit_event("agent.first_contact_welcome_sent")
@@ -454,9 +455,10 @@ async def dispatch_email(
         thread_headers = {}
         if recipient_user_id == ctx.deps.sender_user_id and ctx.deps.inbound_message_id:
             thread_headers = _direct_reply_kwargs(
-                ctx.deps.inbound_message_id,
-                ctx.deps.inbound_body_for_quote,
-                ctx.deps.inbound_date,
+                inbound_message_id=ctx.deps.inbound_message_id,
+                inbound_body_for_quote=ctx.deps.inbound_body_for_quote,
+                inbound_date=ctx.deps.inbound_date,
+                inbound_references=ctx.deps.inbound_references,
             )
 
         send_reply(

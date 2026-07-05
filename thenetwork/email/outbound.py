@@ -125,20 +125,32 @@ def reply_subject(inbound_subject: str, *, fallback: str) -> str:
     return f"Re: {subject}"
 
 
-def _thread_headers(inbound_message_id: str | None) -> dict[str, str]:
+def _thread_headers(
+    inbound_message_id: str | None,
+    inbound_references: str | None = None,
+) -> dict[str, str]:
     if not inbound_message_id:
         return {}
-    return {"in_reply_to": inbound_message_id, "references": inbound_message_id}
+    references = (
+        f"{inbound_references} {inbound_message_id}"
+        if inbound_references
+        else inbound_message_id
+    )
+    return {"in_reply_to": inbound_message_id, "references": references}
 
 
 def _direct_reply_kwargs(
     inbound_message_id: str | None,
     inbound_body_for_quote: str | None = None,
     inbound_date: str | None = None,
+    inbound_references: str | None = None,
 ) -> dict[str, str | None]:
     if not inbound_message_id:
         return {}
-    kwargs: dict[str, str | None] = _thread_headers(inbound_message_id)
+    kwargs: dict[str, str | None] = _thread_headers(
+        inbound_message_id,
+        inbound_references,
+    )
     if inbound_body_for_quote:
         kwargs["quoted_body_text"] = inbound_body_for_quote
         kwargs["quoted_date"] = inbound_date

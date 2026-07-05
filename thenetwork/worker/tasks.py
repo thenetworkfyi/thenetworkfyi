@@ -122,6 +122,7 @@ def _send_infrastructure_rejection_reply(
     sender_authenticated: bool,
     reason: str,
     inbound_message_id: str | None = None,
+    inbound_references: str | None = None,
     inbound_body_for_quote: str | None = None,
     inbound_date: str | None = None,
 ) -> None:
@@ -134,7 +135,12 @@ def _send_infrastructure_rejection_reply(
         subject=f"Re: {subject}",
         body_text=body_text,
         include_footer=False,
-        **_direct_reply_kwargs(inbound_message_id, inbound_body_for_quote, inbound_date),
+        **_direct_reply_kwargs(
+            inbound_message_id=inbound_message_id,
+            inbound_body_for_quote=inbound_body_for_quote,
+            inbound_date=inbound_date,
+            inbound_references=inbound_references,
+        ),
     )
 
 
@@ -144,6 +150,7 @@ def _send_first_contact_welcome_reply(
     subject: str,
     sender_authenticated: bool,
     inbound_message_id: str | None = None,
+    inbound_references: str | None = None,
     inbound_body_for_quote: str | None = None,
     inbound_date: str | None = None,
 ) -> bool:
@@ -159,7 +166,12 @@ def _send_first_contact_welcome_reply(
         subject=reply_subject(subject, fallback="How to join"),
         body_text=FIRST_CONTACT_WELCOME_REPLY,
         include_footer=False,
-        **_direct_reply_kwargs(inbound_message_id, inbound_body_for_quote, inbound_date),
+        **_direct_reply_kwargs(
+            inbound_message_id=inbound_message_id,
+            inbound_body_for_quote=inbound_body_for_quote,
+            inbound_date=inbound_date,
+            inbound_references=inbound_references,
+        ),
     )
     return True
 
@@ -172,6 +184,7 @@ async def process_email(
     sender_authenticated: bool = False,
     raw_message_b64: str | None = None,
     inbound_message_id: str | None = None,
+    inbound_references: str | None = None,
     inbound_body_for_quote: str | None = None,
     inbound_date: str | None = None,
 ) -> None:
@@ -207,6 +220,7 @@ async def process_email(
                 sender_authenticated=sender_authenticated,
                 reason=REJECT_BODY_OVERSIZE,
                 inbound_message_id=inbound_message_id,
+                inbound_references=inbound_references,
                 inbound_body_for_quote=inbound_body_for_quote or body,
                 inbound_date=inbound_date,
             )
@@ -225,6 +239,7 @@ async def process_email(
                 subject=subject,
                 sender_authenticated=sender_authenticated,
                 inbound_message_id=inbound_message_id,
+                inbound_references=inbound_references,
                 inbound_body_for_quote=inbound_body_for_quote or body,
                 inbound_date=inbound_date,
             )
@@ -243,6 +258,7 @@ async def process_email(
                 sender_authenticated=sender_authenticated,
                 reason=REJECT_RATE_LIMIT,
                 inbound_message_id=inbound_message_id,
+                inbound_references=inbound_references,
                 inbound_body_for_quote=inbound_body_for_quote or body,
                 inbound_date=inbound_date,
             )
@@ -257,6 +273,7 @@ async def process_email(
                 sender_authenticated=sender_authenticated,
                 reason=REJECT_CONTENT_SCAN,
                 inbound_message_id=inbound_message_id,
+                inbound_references=inbound_references,
                 inbound_body_for_quote=inbound_body_for_quote or body,
                 inbound_date=inbound_date,
             )
@@ -273,7 +290,7 @@ async def process_email(
                 subject=f"Re: {subject}",
                 body_text=reply,
                 include_footer=False,
-                **_thread_headers(inbound_message_id),
+                **_thread_headers(inbound_message_id, inbound_references),
             )
             return
 
@@ -305,6 +322,7 @@ async def process_email(
         }
         if inbound_message_id:
             agent_kwargs["inbound_message_id"] = inbound_message_id
+            agent_kwargs["inbound_references"] = inbound_references
             agent_kwargs["inbound_body_for_quote"] = inbound_body_for_quote or body
             agent_kwargs["inbound_date"] = inbound_date
         await run_agent_for_email(**agent_kwargs)

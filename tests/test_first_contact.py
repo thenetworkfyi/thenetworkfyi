@@ -88,6 +88,40 @@ async def test_first_contact_welcome_threads_reply_when_message_id_present():
 
 
 @pytest.mark.asyncio
+async def test_first_contact_welcome_appends_to_references_chain():
+    from thenetwork.email.outbound import FIRST_CONTACT_WELCOME_REPLY
+    from thenetwork.worker.tasks import process_email
+
+    _reset_welcome_limiter()
+    mock_session = _mock_sender_lookup(None)
+
+    with patch("thenetwork.worker.tasks.get_session", return_value=mock_session), \
+         patch("thenetwork.worker.tasks.check_rate_limit", return_value=True), \
+         patch("thenetwork.worker.tasks.send_reply") as send_reply, \
+         patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()):
+        await process_email.func(
+            sender_email="new@example.com",
+            subject="",
+            body="Hi",
+            sender_authenticated=True,
+            inbound_message_id="<abc123@example.com>",
+            inbound_references="<root@example.com> <parent@example.com>",
+            inbound_date="Sat, 04 Jul 2026 12:00:00 -0700",
+        )
+
+    send_reply.assert_called_once_with(
+        to_address="new@example.com",
+        subject="How to join",
+        body_text=FIRST_CONTACT_WELCOME_REPLY,
+        include_footer=False,
+        in_reply_to="<abc123@example.com>",
+        references="<root@example.com> <parent@example.com> <abc123@example.com>",
+        quoted_body_text="Hi",
+        quoted_date="Sat, 04 Jul 2026 12:00:00 -0700",
+    )
+
+
+@pytest.mark.asyncio
 async def test_near_empty_known_authenticated_sender_stays_silent():
     from thenetwork.worker.tasks import process_email
 
