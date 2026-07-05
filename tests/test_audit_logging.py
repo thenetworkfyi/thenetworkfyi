@@ -50,6 +50,20 @@ def test_audit_categories_replace_arbitrary_values(caplog):
     assert "private_secret" not in caplog.records[0].message
 
 
+def test_audit_trace_correlates_events_without_content(caplog):
+    from thenetwork.audit import audit_trace
+
+    trace_id = "2d24f8a9-c332-4e3f-85af-b1785e9ce4ab"
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    with audit_trace(trace_id):
+        audit_event("test.event", message_count=1)
+        audit_event("test.next", sender_known=True)
+
+    events = _events(caplog)
+    assert [event["trace_id"] for event in events] == [trace_id, trace_id]
+
+
 @pytest.mark.asyncio
 async def test_agent_run_applies_configured_usage_limits():
     from thenetwork.agent.core import run_agent_for_email
@@ -243,6 +257,33 @@ async def test_agent_trace_logs_structure_but_never_content(caplog):
 
 
 @pytest.mark.asyncio
+async def test_agent_run_audits_trace_id_on_lifecycle_events(caplog):
+    from thenetwork.agent.core import run_agent_for_email
+
+    trace_id = "8b8c9907-2d7b-4347-967a-412c6fe63c27"
+    fake_result = SimpleNamespace(output="ok", all_messages=lambda: [])
+    fake_agent = SimpleNamespace(run=AsyncMock(return_value=fake_result))
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    with patch("thenetwork.agent.core.build_agent", return_value=fake_agent):
+        result = await run_agent_for_email(
+            sender_email="alice.private@example.com",
+            sender_user_id="opaque-person-id",
+            email_subject="Hello",
+            email_body="Please remember this",
+            trace_id=trace_id,
+        )
+
+    assert result == "ok"
+    lifecycle = [
+        event for event in _events(caplog)
+        if event["event"].startswith("agent.")
+    ]
+    assert lifecycle
+    assert {event["trace_id"] for event in lifecycle} == {trace_id}
+
+
+@pytest.mark.asyncio
 async def test_agent_no_tool_call_is_flagged_and_logged(caplog):
     """A run that ends in plain text with no tool call must be surfaced,
     not silently discarded - the sender gets no reply and no human is
@@ -343,6 +384,7 @@ def test_intake_logs_header_metadata_without_values(caplog):
         body=message.body,
         sender_authenticated=message.sender_authenticated,
         raw_message_b64=None,
+        trace_id=message.trace_id,
     )
     mark_seen.assert_called_once_with(["123"])
     serialized = "\n".join(record.message for record in caplog.records)
@@ -351,6 +393,7 @@ def test_intake_logs_header_metadata_without_values(caplog):
     assert message.body not in serialized
     received = next(event for event in _events(caplog) if event["event"] == "intake.message_received")
     assert received["header_names"] == ["from", "subject", "auto-submitted"]
+    assert received["trace_id"] == message.trace_id
 
 
 def test_intake_enqueues_inbound_message_id_when_present(caplog):
@@ -383,12 +426,39 @@ def test_intake_enqueues_inbound_message_id_when_present(caplog):
         body=message.body,
         sender_authenticated=message.sender_authenticated,
         raw_message_b64=None,
+        trace_id=message.trace_id,
         inbound_message_id=message.message_id,
         inbound_references=message.message_references,
         inbound_body_for_quote=message.body,
         inbound_date=message.message_date,
     )
     mark_processed.assert_called_once_with(message.message_id)
+
+
+def test_intake_enqueue_audits_and_defers_same_trace_id(caplog):
+    from thenetwork.email.inbound import InboundMessage
+    from thenetwork.worker.producer import _poll_and_enqueue
+
+    message = InboundMessage(
+        uid="123",
+        sender="alice.private@example.com",
+        subject="Confidential acquisition",
+        body="Project Finch closes Friday",
+        auto_submitted=None,
+        sender_authenticated=True,
+        trace_id="399005c4-1494-4c94-bc5c-cc1036666679",
+    )
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    with patch("thenetwork.worker.producer.poll_unseen", return_value=[message]), patch(
+        "thenetwork.worker.producer.process_email"
+    ) as process_email, patch("thenetwork.worker.producer.mark_messages_seen"):
+        assert _poll_and_enqueue() == 1
+
+    process_email.defer.assert_called_once()
+    assert process_email.defer.call_args.kwargs["trace_id"] == message.trace_id
+    received = next(event for event in _events(caplog) if event["event"] == "intake.message_received")
+    assert received["trace_id"] == message.trace_id
 
 
 def test_intake_skips_duplicate_message_id_without_reenqueueing(caplog):
@@ -512,6 +582,37 @@ async def test_worker_caps_subject_and_body_before_agent():
     _, kwargs = mock_agent.await_args
     assert kwargs["email_subject"] == "s" * MAX_SUBJECT_CHARS
     assert kwargs["email_body"] == "b" * MAX_BODY_CHARS
+
+
+@pytest.mark.asyncio
+async def test_worker_threads_trace_id_to_agent_and_audit(caplog):
+    from thenetwork.worker.tasks import process_email
+
+    trace_id = "9f97d361-4ccb-4638-a0bf-98bdbfd254b1"
+    mock_agent = AsyncMock()
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    with patch("thenetwork.worker.tasks.check_rate_limit", return_value=True), patch(
+        "thenetwork.worker.tasks.scan_content", return_value=(True, None)
+    ), patch("thenetwork.worker.tasks.verify_admin_request", return_value=None), patch(
+        "thenetwork.worker.tasks.get_session", return_value=_mock_sender_lookup("person-id")
+    ), patch("thenetwork.worker.tasks.run_agent_for_email", mock_agent):
+        await process_email.func(
+            sender_email="alice@example.com",
+            subject="Hello",
+            body="Project Finch closes Friday",
+            sender_authenticated=True,
+            trace_id=trace_id,
+        )
+
+    mock_agent.assert_awaited_once()
+    assert mock_agent.await_args.kwargs["trace_id"] == trace_id
+    worker_events = [
+        event for event in _events(caplog)
+        if event["event"].startswith("worker.") or event["event"] == "database.action"
+    ]
+    assert worker_events
+    assert {event["trace_id"] for event in worker_events} == {trace_id}
 
 
 @pytest.mark.asyncio

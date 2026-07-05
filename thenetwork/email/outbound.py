@@ -8,7 +8,7 @@ from time import monotonic
 
 from imap_tools import MailBox, MailMessageFlags
 
-from thenetwork.audit import audit_event, audit_span
+from thenetwork.audit import audit_event, audit_span, audit_trace
 from thenetwork.email.threading import clean_message_id, clean_references
 from thenetwork.settings import get_settings
 
@@ -83,7 +83,7 @@ def _quoted_trail_html(body_text: str, quoted_date: str | None = None) -> str:
     return f"\n\n<p>On {date}, you wrote:</p><blockquote>{quote}</blockquote>"
 
 
-def _append_to_sent(msg: EmailMessage) -> None:
+def _append_to_sent(msg: EmailMessage, trace_id: str | None = None) -> None:
     """Append the just-sent message to the IMAP Sent folder, flagged \\Seen.
 
     Called only after the SMTP send has already succeeded, so this is
@@ -92,28 +92,34 @@ def _append_to_sent(msg: EmailMessage) -> None:
     outcome/duration/error-type are audit-logged - never the folder name,
     address, or message content.
     """
-    s = get_settings()
-    started = monotonic()
-    try:
-        with MailBox(s.imap_host, s.imap_port).login(s.imap_account, s.imap_password) as mb:
-            mb.append(msg.as_bytes(), s.imap_sent_folder,
-                      flag_set=[MailMessageFlags.SEEN])
-    except Exception as exc:
+    with audit_trace(trace_id):
+        s = get_settings()
+        started = monotonic()
+        try:
+            with MailBox(s.imap_host, s.imap_port).login(s.imap_account, s.imap_password) as mb:
+                mb.append(msg.as_bytes(), s.imap_sent_folder,
+                          flag_set=[MailMessageFlags.SEEN])
+        except Exception as exc:
+            audit_event(
+                "email.imap_append.completed",
+                outcome="error",
+                error_type=type(exc).__name__,
+                duration_ms=round((monotonic() - started) * 1000, 3),
+            )
+            return
         audit_event(
             "email.imap_append.completed",
-            outcome="error",
-            error_type=type(exc).__name__,
+            outcome="success",
             duration_ms=round((monotonic() - started) * 1000, 3),
         )
-        return
-    audit_event(
-        "email.imap_append.completed",
-        outcome="success",
-        duration_ms=round((monotonic() - started) * 1000, 3),
-    )
 
 
-def notify_admins(settings, subject: str, body: str) -> None:
+def notify_admins(
+    settings,
+    subject: str,
+    body: str,
+    trace_id: str | None = None,
+) -> None:
     """Send an internal ops notification to every configured admin address.
 
     Shared by `agent/tools.py::escalate` and `agent/core.py`'s
@@ -130,6 +136,7 @@ def notify_admins(settings, subject: str, body: str) -> None:
             subject=subject,
             body_text=body,
             include_footer=False,
+            trace_id=trace_id,
         )
 
 
@@ -187,6 +194,7 @@ def send_reply(
     quoted_body_text: str | None = None,
     quoted_date: str | None = None,
     include_footer: bool = True,
+    trace_id: str | None = None,
 ) -> None:
     """Send an email from the configured account.
 
@@ -199,7 +207,7 @@ def send_reply(
     internal/ops mail (admin replies, escalation notices) that isn't a
     user-facing growth surface.
     """
-    with audit_span(
+    with audit_trace(trace_id), audit_span(
         "email.smtp_send",
         recipient_id_present=bool(to_address),
         subject_chars=len(subject),
@@ -244,4 +252,4 @@ def send_reply(
             smtp.login(s.smtp_account, s.smtp_password)
             smtp.send_message(msg)
 
-        _append_to_sent(msg)
+        _append_to_sent(msg, trace_id=trace_id)

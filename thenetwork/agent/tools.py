@@ -60,6 +60,10 @@ def _limited(reason: str, limit: int) -> dict[str, Any]:
     return {"status": "limited", "reason": reason, "limit": limit}
 
 
+def _trace_kwargs(trace_id: str | None) -> dict[str, str]:
+    return {"trace_id": trace_id} if trace_id else {}
+
+
 def _hit_daily_dispatch_cap(key: str, limit: int) -> bool:
     if limit <= 0:
         return False
@@ -291,6 +295,7 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
                 subject=reply_subject(ctx.deps.inbound_subject, fallback="How to join"),
                 body_text=FIRST_CONTACT_WELCOME_REPLY,
                 include_footer=False,
+                **_trace_kwargs(ctx.deps.trace_id),
                 **_direct_reply_kwargs(
                     inbound_message_id=ctx.deps.inbound_message_id,
                     inbound_body_for_quote=ctx.deps.inbound_body_for_quote,
@@ -323,7 +328,7 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
             f"Reason: {reason}\n\n"
             f"Please reply to {sender} manually."
         )
-        notify_admins(s, subject, body)
+        notify_admins(s, subject, body, trace_id=ctx.deps.trace_id)
 
         return {"status": "escalated", "memory_id": memory_id}
 
@@ -466,6 +471,7 @@ async def dispatch_email(
             subject=subject,
             body_text=body_text,
             body_html=body_html,
+            **_trace_kwargs(ctx.deps.trace_id),
             **thread_headers,
         )
         ctx.deps.dispatch_email_sent_count += 1

@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from uuid import uuid4
 
 from bs4 import BeautifulSoup
 from imap_tools import AND, MailBox, MailMessageFlags
@@ -44,6 +45,7 @@ class InboundMessage:
     message_date: str | None = None
     rejection_reason: str | None = None
     body_chars: int | None = None
+    trace_id: str = field(default_factory=lambda: str(uuid4()))
     # Original raw MIME bytes, exactly as received. Only captured for
     # messages whose subject looks like an admin request - PGP/MIME
     # signature verification (admin/auth.py) needs the byte-exact original

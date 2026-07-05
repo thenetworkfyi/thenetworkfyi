@@ -13,6 +13,7 @@ import structlog
 
 LOGGER_NAME = "thenetwork.audit"
 _run_id: ContextVar[str | None] = ContextVar("thenetwork_audit_run_id", default=None)
+_trace_id: ContextVar[str | None] = ContextVar("thenetwork_audit_trace_id", default=None)
 
 
 def _iso_timestamp(logger: object, method_name: str, event_dict: dict) -> dict:
@@ -39,7 +40,8 @@ _SAFE_FIELDS = frozenset({
     "header_names", "html_present", "message_count", "outcome", "part_kinds",
     "query_chars", "reason", "recipient_id_present", "record_type", "refs_count",
     "result_count", "sender_authenticated", "sender_known", "sender_present",
-    "subject_chars", "tool_called", "tool_name", "top_k", "user_message_chars",
+    "subject_chars", "tool_called", "tool_name", "top_k", "trace_id",
+    "user_message_chars",
 })
 _SAFE_TOKEN = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
 _SAFE_CATEGORIES = {
@@ -117,6 +119,9 @@ def audit_event(event: str, **fields: object) -> None:
     run_id = _run_id.get()
     if run_id is not None:
         payload["run_id"] = run_id
+    trace_id = _trace_id.get()
+    if trace_id is not None and "trace_id" not in fields:
+        payload["trace_id"] = _validate_value("trace_id", trace_id)
     payload.update({name: _validate_value(name, value) for name, value in fields.items()})
     _logger.info(_safe_token(event), **payload)
 
@@ -133,6 +138,18 @@ def audit_run() -> Iterator[str]:
         yield run_id
     finally:
         _run_id.reset(token)
+
+
+@contextmanager
+def audit_trace(trace_id: str | None) -> Iterator[None]:
+    if trace_id is None:
+        yield
+        return
+    token = _trace_id.set(trace_id)
+    try:
+        yield
+    finally:
+        _trace_id.reset(token)
 
 
 @contextmanager

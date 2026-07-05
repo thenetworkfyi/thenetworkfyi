@@ -17,7 +17,7 @@ from thenetwork.agent.tools import (
     remember,
     search,
 )
-from thenetwork.audit import audit_event, audit_model_trace, audit_run, audit_span
+from thenetwork.audit import audit_event, audit_model_trace, audit_run, audit_span, audit_trace
 from thenetwork.email.outbound import notify_admins
 from thenetwork.settings import get_settings
 
@@ -55,13 +55,14 @@ async def run_agent_for_email(
     inbound_references: str | None = None,
     inbound_body_for_quote: str | None = None,
     inbound_date: str | None = None,
+    trace_id: str | None = None,
 ) -> str:
     """Run the agent for one inbound email.
 
     The untrusted email body is passed as user-role message content - it is
     NEVER concatenated into the system prompt (role separation, THE SEAL).
     """
-    with audit_run(), audit_span(
+    with audit_run(), audit_trace(trace_id), audit_span(
         "agent.run",
         sender_known=sender_user_id is not None,
         subject_chars=len(email_subject),
@@ -76,6 +77,7 @@ async def run_agent_for_email(
             inbound_references=inbound_references,
             inbound_body_for_quote=inbound_body_for_quote,
             inbound_date=inbound_date,
+            trace_id=trace_id,
         )
         settings = get_settings()
         agent = build_agent(model=settings.agent_model)
@@ -110,7 +112,7 @@ async def run_agent_for_email(
                 "half of a two-person introduction) before being cut off. "
                 "Please review and follow up manually."
             )
-            notify_admins(settings, subject, body)
+            notify_admins(settings, subject, body, trace_id=trace_id)
             return ""
         audit_model_trace(result)
         tool_called = any(

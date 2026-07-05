@@ -291,3 +291,35 @@ def test_append_success_is_audit_logged(caplog):
     serialized = "\n".join(record.message for record in caplog.records)
     assert "bob@example.com" not in serialized
     assert "Hello" not in serialized
+
+
+def test_send_reply_audits_trace_id_through_smtp_and_imap_append(caplog):
+    from thenetwork.email.outbound import send_reply
+
+    trace_id = "d731f003-b5f6-42cf-a490-e3ec29e89c0b"
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    mock_mailbox, _mb_instance = _mock_mailbox_success()
+
+    with patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()), \
+         patch("smtplib.SMTP", return_value=_mock_smtp()), \
+         patch("thenetwork.email.outbound.MailBox", mock_mailbox):
+        send_reply(
+            to_address="bob@example.com",
+            subject="Hi",
+            body_text="Hello",
+            include_footer=False,
+            trace_id=trace_id,
+        )
+
+    events = _events(caplog)
+    correlated = [
+        event for event in events
+        if event["event"] in {
+            "email.smtp_send.started",
+            "email.smtp_send.completed",
+            "email.imap_append.completed",
+        }
+    ]
+    assert len(correlated) == 3
+    assert {event["trace_id"] for event in correlated} == {trace_id}
