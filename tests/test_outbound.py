@@ -142,7 +142,61 @@ def test_send_reply_appends_plain_text_quoted_trail():
     assert "> Original line" in plain
     assert "> Second line" in plain
     assert "> old quote" not in plain
-    assert "you wrote" not in html
+    assert "On Sat, 04 Jul 2026 12:00:00 -0700, you wrote:" in html
+    assert "<blockquote>Original line" in html
+    assert "Second line</blockquote>" in html
+    assert "old quote" not in html
+
+
+def test_send_reply_escapes_html_quoted_trail():
+    from thenetwork.email.outbound import send_reply
+
+    captured = []
+    smtp_instance = _mock_smtp()
+    smtp_instance.send_message.side_effect = lambda msg: captured.append(msg)
+
+    mock_mailbox, _mb_instance = _mock_mailbox_success()
+
+    with patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()), \
+         patch("smtplib.SMTP", return_value=smtp_instance), \
+         patch("thenetwork.email.outbound.MailBox", mock_mailbox):
+        send_reply(
+            to_address="bob@example.com",
+            subject="Hi",
+            body_text="Hello",
+            body_html="<p>Hello</p>",
+            quoted_body_text="<script>steal()</script>",
+            include_footer=False,
+        )
+
+    html = captured[0].get_body(preferencelist=("html",)).get_content()
+    assert "<script>steal()</script>" not in html
+    assert "&lt;script&gt;steal()&lt;/script&gt;" in html
+
+
+def test_send_reply_plain_text_only_quote_stays_singlepart():
+    from thenetwork.email.outbound import send_reply
+
+    captured = []
+    smtp_instance = _mock_smtp()
+    smtp_instance.send_message.side_effect = lambda msg: captured.append(msg)
+
+    mock_mailbox, _mb_instance = _mock_mailbox_success()
+
+    with patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()), \
+         patch("smtplib.SMTP", return_value=smtp_instance), \
+         patch("thenetwork.email.outbound.MailBox", mock_mailbox):
+        send_reply(
+            to_address="bob@example.com",
+            subject="Hi",
+            body_text="Hello",
+            quoted_body_text="Original line",
+            include_footer=False,
+        )
+
+    msg = captured[0]
+    assert not msg.is_multipart()
+    assert "On an earlier message, you wrote:" in msg.get_content()
 
 
 def test_send_reply_places_quoted_trail_before_growth_footer():
