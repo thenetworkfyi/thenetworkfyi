@@ -8,6 +8,7 @@ from bs4 import BeautifulSoup
 from imap_tools import AND, MailBox, MailMessageFlags
 from imap_tools.message import MailMessage
 
+from thenetwork.email.threading import clean_message_id, clean_references
 from thenetwork.settings import get_settings
 
 
@@ -179,8 +180,8 @@ def poll_unseen() -> list[InboundMessage]:
             if msg.from_.lower() in own_addresses:
                 continue
             auto_sub = msg.headers.get("auto-submitted")
-            message_id = _first_header(msg, "message-id")
-            message_references = _first_header(msg, "references")
+            message_id = clean_message_id(_first_header(msg, "message-id"))
+            message_references = clean_references(_first_header(msg, "references"))
             message_date = _first_header(msg, "date")
             subject = cap_subject(msg.subject)
             # Only admin-looking subjects need the raw bytes (PGP/MIME
