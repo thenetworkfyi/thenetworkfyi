@@ -1,6 +1,7 @@
 """SMTP outbound using stdlib email.message.EmailMessage + smtplib over STARTTLS."""
 from __future__ import annotations
 
+from html import escape
 import smtplib
 from email.message import EmailMessage
 from time import monotonic
@@ -52,20 +53,34 @@ def _growth_footer_html(account: str) -> str:
     )
 
 
-def _quoted_trail_text(body_text: str, quoted_date: str | None = None) -> str:
-    """Return a one-level plain-text quote of the original inbound body."""
+def _quoted_body_lines(body_text: str) -> tuple[list[str], bool]:
     body = body_text.replace("\r\n", "\n").replace("\r", "\n")
     body = "\n".join(line for line in body.splitlines() if not line.lstrip().startswith(">"))
     truncated = len(body) > MAX_QUOTED_TRAIL_CHARS
     if truncated:
         body = body[:MAX_QUOTED_TRAIL_CHARS].rstrip()
+    return body.splitlines(), truncated
 
+
+def _quoted_trail_text(body_text: str, quoted_date: str | None = None) -> str:
+    """Return a one-level plain-text quote of the original inbound body."""
+    body_lines, truncated = _quoted_body_lines(body_text)
     date = quoted_date or "an earlier message"
     quote_lines = [f"On {date}, you wrote:"]
-    quote_lines.extend(f"> {line}" if line else ">" for line in body.splitlines())
+    quote_lines.extend(f"> {line}" if line else ">" for line in body_lines)
     if truncated:
         quote_lines.append("> [quoted text truncated]")
     return "\n\n" + "\n".join(quote_lines)
+
+
+def _quoted_trail_html(body_text: str, quoted_date: str | None = None) -> str:
+    """Return an escaped one-level HTML quote of the original inbound body."""
+    body_lines, truncated = _quoted_body_lines(body_text)
+    if truncated:
+        body_lines.append("[quoted text truncated]")
+    date = escape(quoted_date or "an earlier message")
+    quote = "<br>\n".join(escape(line) if line else "<br>" for line in body_lines)
+    return f"\n\n<p>On {date}, you wrote:</p><blockquote>{quote}</blockquote>"
 
 
 def _append_to_sent(msg: EmailMessage) -> None:
@@ -195,6 +210,8 @@ def send_reply(
 
         if quoted_body_text:
             body_text = body_text + _quoted_trail_text(quoted_body_text, quoted_date)
+            if body_html:
+                body_html = body_html + _quoted_trail_html(quoted_body_text, quoted_date)
 
         if include_footer and s.growth_footer_enabled:
             # The footer points new senders at the polled inbound address,
