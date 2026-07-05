@@ -9,6 +9,7 @@ or deleting inbound mail.
 from __future__ import annotations
 
 from unittest.mock import MagicMock
+from uuid import UUID
 
 import pytest
 from imap_tools import MailMessageFlags
@@ -170,6 +171,21 @@ def test_poll_unseen_captures_message_date(fake_mailbox: _FakeMailBox):
 
     assert len(messages) == 1
     assert messages[0].message_date == "Sat, 04 Jul 2026 12:00:00 -0700"
+
+
+def test_poll_unseen_mints_opaque_trace_ids(fake_mailbox: _FakeMailBox):
+    fake_mailbox.fetch.return_value = [
+        _fake_message(uid="1"),
+        _fake_message(uid="2", from_="bob@example.com"),
+    ]
+
+    messages = inbound.poll_unseen()
+
+    assert len(messages) == 2
+    assert messages[0].trace_id != messages[1].trace_id
+    for message in messages:
+        parsed = UUID(message.trace_id, version=4)
+        assert str(parsed) == message.trace_id
 
 
 def test_poll_unseen_does_not_reject_near_empty_body(fake_mailbox: _FakeMailBox):

@@ -14,7 +14,13 @@ from sqlmodel import select
 from thenetwork.admin.auth import extract_body_text, extract_command, verify_admin_request
 from thenetwork.admin.commands import handle_admin_command
 from thenetwork.agent.core import run_agent_for_email
-from thenetwork.audit import audit_event, audit_run, audit_span, configure_audit_logging
+from thenetwork.audit import (
+    audit_event,
+    audit_run,
+    audit_span,
+    audit_trace,
+    configure_audit_logging,
+)
 from thenetwork.db.models import Person
 from thenetwork.db.session import get_session
 from thenetwork.email.inbound import (
@@ -90,6 +96,10 @@ def _hit_welcome_quota(sender_email: str) -> bool:
     return limiter.hit(_WELCOME_LIMIT, f"welcome:first-contact:{identity}")
 
 
+def _trace_kwargs(trace_id: str | None) -> dict[str, str]:
+    return {"trace_id": trace_id} if trace_id else {}
+
+
 def _is_known_authenticated_sender(sender_email: str, sender_authenticated: bool) -> bool:
     if not sender_authenticated:
         return False
@@ -125,6 +135,7 @@ def _send_infrastructure_rejection_reply(
     inbound_references: str | None = None,
     inbound_body_for_quote: str | None = None,
     inbound_date: str | None = None,
+    trace_id: str | None = None,
 ) -> None:
     body_text = _INFRASTRUCTURE_REJECTION_REPLIES[reason]
     if not _is_known_authenticated_sender(sender_email, sender_authenticated):
@@ -135,6 +146,7 @@ def _send_infrastructure_rejection_reply(
         subject=f"Re: {subject}",
         body_text=body_text,
         include_footer=False,
+        **_trace_kwargs(trace_id),
         **_direct_reply_kwargs(
             inbound_message_id=inbound_message_id,
             inbound_body_for_quote=inbound_body_for_quote,
@@ -153,6 +165,7 @@ def _send_first_contact_welcome_reply(
     inbound_references: str | None = None,
     inbound_body_for_quote: str | None = None,
     inbound_date: str | None = None,
+    trace_id: str | None = None,
 ) -> bool:
     if not sender_authenticated:
         return False
@@ -166,6 +179,7 @@ def _send_first_contact_welcome_reply(
         subject=reply_subject(subject, fallback="How to join"),
         body_text=FIRST_CONTACT_WELCOME_REPLY,
         include_footer=False,
+        **_trace_kwargs(trace_id),
         **_direct_reply_kwargs(
             inbound_message_id=inbound_message_id,
             inbound_body_for_quote=inbound_body_for_quote,
@@ -187,6 +201,7 @@ async def process_email(
     inbound_references: str | None = None,
     inbound_body_for_quote: str | None = None,
     inbound_date: str | None = None,
+    trace_id: str | None = None,
 ) -> None:
     """Procrastinate worker task: run the agent for one inbound email.
 
@@ -203,7 +218,7 @@ async def process_email(
     """
     subject = cap_subject(subject)
     original_body_chars = len(body)
-    with audit_run(), audit_span(
+    with audit_run(), audit_trace(trace_id), audit_span(
         "worker.process_email",
         sender_present=bool(sender_email),
         subject_chars=len(subject),
@@ -223,6 +238,7 @@ async def process_email(
                 inbound_references=inbound_references,
                 inbound_body_for_quote=inbound_body_for_quote or body,
                 inbound_date=inbound_date,
+                trace_id=trace_id,
             )
             return
 
@@ -242,6 +258,7 @@ async def process_email(
                 inbound_references=inbound_references,
                 inbound_body_for_quote=inbound_body_for_quote or body,
                 inbound_date=inbound_date,
+                trace_id=trace_id,
             )
             if welcomed:
                 audit_event("worker.first_contact_welcome_sent")
@@ -261,6 +278,7 @@ async def process_email(
                 inbound_references=inbound_references,
                 inbound_body_for_quote=inbound_body_for_quote or body,
                 inbound_date=inbound_date,
+                trace_id=trace_id,
             )
             return
 
@@ -276,6 +294,7 @@ async def process_email(
                 inbound_references=inbound_references,
                 inbound_body_for_quote=inbound_body_for_quote or body,
                 inbound_date=inbound_date,
+                trace_id=trace_id,
             )
             return
 
@@ -290,6 +309,7 @@ async def process_email(
                 subject=f"Re: {subject}",
                 body_text=reply,
                 include_footer=False,
+                **_trace_kwargs(trace_id),
                 **_thread_headers(inbound_message_id, inbound_references),
             )
             return
@@ -320,6 +340,8 @@ async def process_email(
             "email_subject": subject,
             "email_body": body,
         }
+        if trace_id:
+            agent_kwargs["trace_id"] = trace_id
         if inbound_message_id:
             agent_kwargs["inbound_message_id"] = inbound_message_id
             agent_kwargs["inbound_references"] = inbound_references

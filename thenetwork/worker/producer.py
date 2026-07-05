@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import base64
 
-from thenetwork.audit import audit_event, audit_run, audit_span
+from thenetwork.audit import audit_event, audit_run, audit_span, audit_trace
 from thenetwork.email.dedup import is_message_processed, mark_message_processed
 from thenetwork.email.inbound import mark_messages_seen, poll_unseen
 from thenetwork.worker.tasks import app, process_email
@@ -26,60 +26,62 @@ def _poll_and_enqueue() -> int:
         count = 0
         handled_uids: list[str] = []
         for msg in messages:
-            auto_submitted = msg.auto_submitted
-            body_chars = msg.body_chars if msg.body_chars is not None else len(msg.body)
-            if msg.rejection_reason:
+            with audit_trace(msg.trace_id):
+                auto_submitted = msg.auto_submitted
+                body_chars = msg.body_chars if msg.body_chars is not None else len(msg.body)
+                if msg.rejection_reason:
+                    audit_event(
+                        "intake.message_rejected",
+                        sender_present=bool(msg.sender),
+                        subject_chars=len(msg.subject),
+                        body_chars=body_chars,
+                        auto_submitted_present=bool(auto_submitted),
+                        header_names=["from", "subject", "auto-submitted"],
+                        reason=msg.rejection_reason,
+                    )
+                    handled_uids.append(msg.uid)
+                    continue
+                if msg.message_id and is_message_processed(msg.message_id):
+                    # A job already ran for this Message-ID - the \Seen flag was
+                    # reset after the fact (mail client, sync bug, manual
+                    # recovery). Re-enqueuing would re-run the agent against an
+                    # already-handled email, risking duplicate replies, memories,
+                    # or dispatch_email sends. Just re-mark seen and move on.
+                    audit_event(
+                        "intake.message_duplicate_skipped",
+                        sender_present=bool(msg.sender),
+                        subject_chars=len(msg.subject),
+                        body_chars=body_chars,
+                    )
+                    handled_uids.append(msg.uid)
+                    continue
                 audit_event(
-                    "intake.message_rejected",
+                    "intake.message_received",
                     sender_present=bool(msg.sender),
                     subject_chars=len(msg.subject),
                     body_chars=body_chars,
                     auto_submitted_present=bool(auto_submitted),
                     header_names=["from", "subject", "auto-submitted"],
-                    reason=msg.rejection_reason,
                 )
+                raw_message_b64 = base64.b64encode(msg.raw_message).decode() if msg.raw_message else None
+                job_kwargs = {
+                    "sender_email": msg.sender,
+                    "subject": msg.subject,
+                    "body": msg.body,
+                    "sender_authenticated": msg.sender_authenticated,
+                    "raw_message_b64": raw_message_b64,
+                    "trace_id": msg.trace_id,
+                }
+                if msg.message_id:
+                    job_kwargs["inbound_message_id"] = msg.message_id
+                    job_kwargs["inbound_references"] = msg.message_references
+                    job_kwargs["inbound_body_for_quote"] = msg.body
+                    job_kwargs["inbound_date"] = msg.message_date
+                process_email.defer(**job_kwargs)
+                if msg.message_id:
+                    mark_message_processed(msg.message_id)
                 handled_uids.append(msg.uid)
-                continue
-            if msg.message_id and is_message_processed(msg.message_id):
-                # A job already ran for this Message-ID - the \Seen flag was
-                # reset after the fact (mail client, sync bug, manual
-                # recovery). Re-enqueuing would re-run the agent against an
-                # already-handled email, risking duplicate replies, memories,
-                # or dispatch_email sends. Just re-mark seen and move on.
-                audit_event(
-                    "intake.message_duplicate_skipped",
-                    sender_present=bool(msg.sender),
-                    subject_chars=len(msg.subject),
-                    body_chars=body_chars,
-                )
-                handled_uids.append(msg.uid)
-                continue
-            audit_event(
-                "intake.message_received",
-                sender_present=bool(msg.sender),
-                subject_chars=len(msg.subject),
-                body_chars=body_chars,
-                auto_submitted_present=bool(auto_submitted),
-                header_names=["from", "subject", "auto-submitted"],
-            )
-            raw_message_b64 = base64.b64encode(msg.raw_message).decode() if msg.raw_message else None
-            job_kwargs = {
-                "sender_email": msg.sender,
-                "subject": msg.subject,
-                "body": msg.body,
-                "sender_authenticated": msg.sender_authenticated,
-                "raw_message_b64": raw_message_b64,
-            }
-            if msg.message_id:
-                job_kwargs["inbound_message_id"] = msg.message_id
-                job_kwargs["inbound_references"] = msg.message_references
-                job_kwargs["inbound_body_for_quote"] = msg.body
-                job_kwargs["inbound_date"] = msg.message_date
-            process_email.defer(**job_kwargs)
-            if msg.message_id:
-                mark_message_processed(msg.message_id)
-            handled_uids.append(msg.uid)
-            count += 1
+                count += 1
         # Mark seen only after each message has either been enqueued or
         # intentionally rejected. Crash before here means the email is retried.
         mark_messages_seen(handled_uids)
