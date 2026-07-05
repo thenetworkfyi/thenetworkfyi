@@ -17,6 +17,7 @@ class AgentDeps:
     sender_user_id: str | None = None
     inbound_subject: str = ""
     inbound_message_id: str | None = None
+    inbound_references: str | None = None
     inbound_body_for_quote: str | None = None
     inbound_date: str | None = None
     # True only when the receiving mail server's Authentication-Results

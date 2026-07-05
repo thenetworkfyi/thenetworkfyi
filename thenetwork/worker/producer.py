@@ -57,6 +57,7 @@ def _poll_and_enqueue() -> int:
             }
             if msg.message_id:
                 job_kwargs["inbound_message_id"] = msg.message_id
+                job_kwargs["inbound_references"] = msg.message_references
                 job_kwargs["inbound_body_for_quote"] = msg.body
                 job_kwargs["inbound_date"] = msg.message_date
             process_email.defer(**job_kwargs)
