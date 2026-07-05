@@ -21,16 +21,14 @@ from thenetwork.settings import get_settings
 FIRST_CONTACT_WELCOME_REPLY = """\
 Welcome,
 
-To join, reply with a few plain sentences: who you are, what you're
-working on, and what kind of person or situation might interesting
-to you. What you write is what gets matched on. Specifics help.
+To join, let us know something about yourself, what might be interesting
+to you and/or what you're working on. What you send is what gets matched
+on. Specifics help, but don't feel like you need to write a long essay.
+A few sentences are more than enough to get started.
 
-Nothing you write is shown to anyone else. When we weigh an
-introduction, we work only from an anonymized summary.
-
-You may not hear from us for a while. Introductions happen when they're
-warranted, not on a schedule. Silence means the right thing hasn't
-shown up yet.
+You may not hear from us for a while. Introductions happen when they
+make sense, not on a schedule. Silence means the right thing has yet
+to present itself.
 """
 
 MAX_QUOTED_TRAIL_CHARS = 2_000
@@ -55,7 +53,8 @@ def _growth_footer_html(account: str) -> str:
 
 def _quoted_body_lines(body_text: str) -> tuple[list[str], bool]:
     body = body_text.replace("\r\n", "\n").replace("\r", "\n")
-    body = "\n".join(line for line in body.splitlines() if not line.lstrip().startswith(">"))
+    body = "\n".join(line for line in body.splitlines()
+                     if not line.lstrip().startswith(">"))
     truncated = len(body) > MAX_QUOTED_TRAIL_CHARS
     if truncated:
         body = body[:MAX_QUOTED_TRAIL_CHARS].rstrip()
@@ -79,7 +78,8 @@ def _quoted_trail_html(body_text: str, quoted_date: str | None = None) -> str:
     if truncated:
         body_lines.append("[quoted text truncated]")
     date = escape(quoted_date or "an earlier message")
-    quote = "<br>\n".join(escape(line) if line else "<br>" for line in body_lines)
+    quote = "<br>\n".join(
+        escape(line) if line else "<br>" for line in body_lines)
     return f"\n\n<p>On {date}, you wrote:</p><blockquote>{quote}</blockquote>"
 
 
@@ -209,9 +209,11 @@ def send_reply(
         s = get_settings()
 
         if quoted_body_text:
-            body_text = body_text + _quoted_trail_text(quoted_body_text, quoted_date)
+            body_text = body_text + \
+                _quoted_trail_text(quoted_body_text, quoted_date)
             if body_html:
-                body_html = body_html + _quoted_trail_html(quoted_body_text, quoted_date)
+                body_html = body_html + \
+                    _quoted_trail_html(quoted_body_text, quoted_date)
 
         if include_footer and s.growth_footer_enabled:
             # The footer points new senders at the polled inbound address,
