@@ -8,6 +8,7 @@ from time import monotonic
 from imap_tools import MailBox, MailMessageFlags
 
 from thenetwork.audit import audit_event, audit_span
+from thenetwork.email.threading import clean_message_id, clean_references
 from thenetwork.settings import get_settings
 
 # The one deterministic explanation of what this address is and how to use
@@ -129,8 +130,10 @@ def _thread_headers(
     inbound_message_id: str | None,
     inbound_references: str | None = None,
 ) -> dict[str, str]:
+    inbound_message_id = clean_message_id(inbound_message_id)
     if not inbound_message_id:
         return {}
+    inbound_references = clean_references(inbound_references)
     references = (
         f"{inbound_references} {inbound_message_id}"
         if inbound_references
@@ -151,6 +154,8 @@ def _direct_reply_kwargs(
         inbound_message_id,
         inbound_references,
     )
+    if not kwargs:
+        return {}
     if inbound_body_for_quote:
         kwargs["quoted_body_text"] = inbound_body_for_quote
         kwargs["quoted_date"] = inbound_date

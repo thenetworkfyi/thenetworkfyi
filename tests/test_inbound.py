@@ -120,6 +120,17 @@ def test_poll_unseen_captures_message_id(fake_mailbox: _FakeMailBox):
     assert messages[0].message_id == "<abc123@example.com>"
 
 
+def test_poll_unseen_strips_message_id(fake_mailbox: _FakeMailBox):
+    fake_mailbox.fetch.return_value = [
+        _fake_message(headers={"message-id": ["  <abc123@example.com>  "]})
+    ]
+
+    messages = inbound.poll_unseen()
+
+    assert len(messages) == 1
+    assert messages[0].message_id == "<abc123@example.com>"
+
+
 def test_poll_unseen_captures_references(fake_mailbox: _FakeMailBox):
     fake_mailbox.fetch.return_value = [
         _fake_message(
@@ -131,6 +142,23 @@ def test_poll_unseen_captures_references(fake_mailbox: _FakeMailBox):
 
     assert len(messages) == 1
     assert messages[0].message_references == "<root@example.com> <parent@example.com>"
+
+
+def test_poll_unseen_rejects_unsafe_threading_headers(fake_mailbox: _FakeMailBox):
+    fake_mailbox.fetch.return_value = [
+        _fake_message(
+            headers={
+                "message-id": ["<abc 123@example.com>"],
+                "references": ["<root@example.com>\r\n <parent@example.com>"],
+            }
+        )
+    ]
+
+    messages = inbound.poll_unseen()
+
+    assert len(messages) == 1
+    assert messages[0].message_id is None
+    assert messages[0].message_references is None
 
 
 def test_poll_unseen_captures_message_date(fake_mailbox: _FakeMailBox):
