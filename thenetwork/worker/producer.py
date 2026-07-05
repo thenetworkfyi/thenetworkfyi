@@ -14,6 +14,7 @@ import asyncio
 import base64
 
 from thenetwork.audit import audit_event, audit_run, audit_span
+from thenetwork.email.dedup import is_message_processed, mark_message_processed
 from thenetwork.email.inbound import mark_messages_seen, poll_unseen
 from thenetwork.worker.tasks import app, process_email
 
@@ -39,6 +40,20 @@ def _poll_and_enqueue() -> int:
                 )
                 handled_uids.append(msg.uid)
                 continue
+            if msg.message_id and is_message_processed(msg.message_id):
+                # A job already ran for this Message-ID - the \Seen flag was
+                # reset after the fact (mail client, sync bug, manual
+                # recovery). Re-enqueuing would re-run the agent against an
+                # already-handled email, risking duplicate replies, memories,
+                # or dispatch_email sends. Just re-mark seen and move on.
+                audit_event(
+                    "intake.message_duplicate_skipped",
+                    sender_present=bool(msg.sender),
+                    subject_chars=len(msg.subject),
+                    body_chars=body_chars,
+                )
+                handled_uids.append(msg.uid)
+                continue
             audit_event(
                 "intake.message_received",
                 sender_present=bool(msg.sender),
@@ -61,6 +76,8 @@ def _poll_and_enqueue() -> int:
                 job_kwargs["inbound_body_for_quote"] = msg.body
                 job_kwargs["inbound_date"] = msg.message_date
             process_email.defer(**job_kwargs)
+            if msg.message_id:
+                mark_message_processed(msg.message_id)
             handled_uids.append(msg.uid)
             count += 1
         # Mark seen only after each message has either been enqueued or

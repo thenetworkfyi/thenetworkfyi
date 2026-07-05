@@ -372,7 +372,9 @@ def test_intake_enqueues_inbound_message_id_when_present(caplog):
 
     with patch("thenetwork.worker.producer.poll_unseen", return_value=[message]), patch(
         "thenetwork.worker.producer.process_email"
-    ) as process_email, patch("thenetwork.worker.producer.mark_messages_seen"):
+    ) as process_email, patch("thenetwork.worker.producer.mark_messages_seen"), patch(
+        "thenetwork.worker.producer.is_message_processed", return_value=False
+    ), patch("thenetwork.worker.producer.mark_message_processed") as mark_processed:
         assert _poll_and_enqueue() == 1
 
     process_email.defer.assert_called_once_with(
@@ -386,6 +388,44 @@ def test_intake_enqueues_inbound_message_id_when_present(caplog):
         inbound_body_for_quote=message.body,
         inbound_date=message.message_date,
     )
+    mark_processed.assert_called_once_with(message.message_id)
+
+
+def test_intake_skips_duplicate_message_id_without_reenqueueing(caplog):
+    """If a Message-ID was already processed (e.g. \\Seen got reset after the
+    fact), the producer must not re-enqueue it - that would re-run the agent
+    against an already-handled email, risking duplicate replies/memories/sends."""
+    from thenetwork.email.inbound import InboundMessage
+    from thenetwork.worker.producer import _poll_and_enqueue
+
+    message = InboundMessage(
+        uid="123",
+        sender="alice.private@example.com",
+        subject="Confidential acquisition",
+        body="Project Finch closes Friday",
+        auto_submitted=None,
+        sender_authenticated=True,
+        message_id="<abc123@example.com>",
+    )
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    with patch("thenetwork.worker.producer.poll_unseen", return_value=[message]), patch(
+        "thenetwork.worker.producer.process_email"
+    ) as process_email, patch("thenetwork.worker.producer.mark_messages_seen") as mark_seen, patch(
+        "thenetwork.worker.producer.is_message_processed", return_value=True
+    ), patch("thenetwork.worker.producer.mark_message_processed") as mark_processed:
+        assert _poll_and_enqueue() == 0
+
+    process_email.defer.assert_not_called()
+    mark_processed.assert_not_called()
+    mark_seen.assert_called_once_with(["123"])
+    serialized = "\n".join(record.message for record in caplog.records)
+    assert message.sender not in serialized
+    assert message.subject not in serialized
+    duplicate = next(
+        event for event in _events(caplog) if event["event"] == "intake.message_duplicate_skipped"
+    )
+    assert duplicate["subject_chars"] == len(message.subject)
 
 
 def test_intake_rejects_bad_shape_without_enqueueing_or_replying(caplog):
