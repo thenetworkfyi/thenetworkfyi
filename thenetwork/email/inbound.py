@@ -208,7 +208,11 @@ def poll_unseen() -> list[InboundMessage]:
                     )
                 )
                 continue
-            rejection_reason = REJECT_BODY_EMPTY if is_near_empty_body(body) else None
+            # Near-empty bodies (e.g. a first "Hi" with everything said in the
+            # subject) are deliberately NOT rejected here. They still need to
+            # reach process_email so its rate-limit + first-contact-welcome
+            # handling (worker/tasks.py) can run - rejecting at intake would
+            # silently drop a legitimate first contact with no reply at all.
             messages.append(
                 InboundMessage(
                     uid=msg.uid,
@@ -220,7 +224,6 @@ def poll_unseen() -> list[InboundMessage]:
                     message_date=message_date,
                     auto_submitted=auto_sub[0] if auto_sub else None,
                     sender_authenticated=_is_sender_authenticated(msg),
-                    rejection_reason=rejection_reason,
                     body_chars=len(body),
                     raw_message=raw_message,
                 )

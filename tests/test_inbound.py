@@ -172,13 +172,19 @@ def test_poll_unseen_captures_message_date(fake_mailbox: _FakeMailBox):
     assert messages[0].message_date == "Sat, 04 Jul 2026 12:00:00 -0700"
 
 
-def test_poll_unseen_marks_empty_body_as_rejected(fake_mailbox: _FakeMailBox):
+def test_poll_unseen_does_not_reject_near_empty_body(fake_mailbox: _FakeMailBox):
+    """Near-empty bodies must reach process_email, not be dropped at intake -
+
+    worker/tasks.py handles them (rate limit + first-contact welcome reply),
+    and a legitimate short first email (e.g. just "Hi") must not be silently
+    discarded with no reply at all.
+    """
     fake_mailbox.fetch.return_value = [_fake_message(body_text=" \n")]
 
     messages = inbound.poll_unseen()
 
     assert len(messages) == 1
-    assert messages[0].rejection_reason == inbound.REJECT_BODY_EMPTY
+    assert messages[0].rejection_reason is None
 
 
 def test_poll_unseen_marks_oversized_body_as_rejected(fake_mailbox: _FakeMailBox):
