@@ -51,17 +51,37 @@ def test_audit_categories_replace_arbitrary_values(caplog):
 
 
 def test_audit_trace_correlates_events_without_content(caplog):
-    from thenetwork.audit import audit_trace
+    from thenetwork.audit import audit_sender, audit_trace
 
     trace_id = "2d24f8a9-c332-4e3f-85af-b1785e9ce4ab"
+    sender_id_hash = "snd_v1_YWJjZGVmZ2hpamtsbW5vcA"
     caplog.set_level(logging.INFO, logger=LOGGER_NAME)
 
-    with audit_trace(trace_id):
+    with audit_trace(trace_id), audit_sender(sender_id_hash):
         audit_event("test.event", message_count=1)
         audit_event("test.next", sender_known=True)
 
     events = _events(caplog)
     assert [event["trace_id"] for event in events] == [trace_id, trace_id]
+    assert [event["sender_id_hash"] for event in events] == [
+        sender_id_hash,
+        sender_id_hash,
+    ]
+
+
+def test_audit_correlation_fields_sanitize_raw_sender_values(caplog):
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    audit_event(
+        "test.event",
+        trace_id="not a safe trace id with spaces",
+        sender_id_hash="alice.private@example.com",
+    )
+
+    event = _events(caplog)[0]
+    assert event["trace_id"] == "unknown"
+    assert event["sender_id_hash"] == "unknown"
+    assert "alice.private@example.com" not in caplog.records[0].message
 
 
 @pytest.mark.asyncio
@@ -259,15 +279,21 @@ async def test_agent_trace_logs_structure_but_never_content(caplog):
 @pytest.mark.asyncio
 async def test_agent_run_audits_trace_id_on_lifecycle_events(caplog):
     from thenetwork.agent.core import run_agent_for_email
+    from thenetwork.security.sender_identifier import sender_identifier
 
     trace_id = "8b8c9907-2d7b-4347-967a-412c6fe63c27"
+    sender_email = "alice.private@example.com"
+    expected_sender_id_hash = sender_identifier(sender_email, secret="audit-secret")
     fake_result = SimpleNamespace(output="ok", all_messages=lambda: [])
     fake_agent = SimpleNamespace(run=AsyncMock(return_value=fake_result))
     caplog.set_level(logging.INFO, logger=LOGGER_NAME)
 
-    with patch("thenetwork.agent.core.build_agent", return_value=fake_agent):
+    with patch("thenetwork.agent.core.build_agent", return_value=fake_agent), patch(
+        "thenetwork.security.sender_identifier.get_settings",
+        return_value=SimpleNamespace(sender_identifier_secret="audit-secret"),
+    ):
         result = await run_agent_for_email(
-            sender_email="alice.private@example.com",
+            sender_email=sender_email,
             sender_user_id="opaque-person-id",
             email_subject="Hello",
             email_body="Please remember this",
@@ -281,6 +307,10 @@ async def test_agent_run_audits_trace_id_on_lifecycle_events(caplog):
     ]
     assert lifecycle
     assert {event["trace_id"] for event in lifecycle} == {trace_id}
+    assert {event["sender_id_hash"] for event in lifecycle} == {
+        expected_sender_id_hash,
+    }
+    assert sender_email not in "\n".join(record.message for record in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -437,6 +467,7 @@ def test_intake_enqueues_inbound_message_id_when_present(caplog):
 
 def test_intake_enqueue_audits_and_defers_same_trace_id(caplog):
     from thenetwork.email.inbound import InboundMessage
+    from thenetwork.security.sender_identifier import sender_identifier
     from thenetwork.worker.producer import _poll_and_enqueue
 
     message = InboundMessage(
@@ -448,17 +479,23 @@ def test_intake_enqueue_audits_and_defers_same_trace_id(caplog):
         sender_authenticated=True,
         trace_id="399005c4-1494-4c94-bc5c-cc1036666679",
     )
+    expected_sender_id_hash = sender_identifier(message.sender, secret="audit-secret")
     caplog.set_level(logging.INFO, logger=LOGGER_NAME)
 
     with patch("thenetwork.worker.producer.poll_unseen", return_value=[message]), patch(
         "thenetwork.worker.producer.process_email"
-    ) as process_email, patch("thenetwork.worker.producer.mark_messages_seen"):
+    ) as process_email, patch("thenetwork.worker.producer.mark_messages_seen"), patch(
+        "thenetwork.security.sender_identifier.get_settings",
+        return_value=SimpleNamespace(sender_identifier_secret="audit-secret"),
+    ):
         assert _poll_and_enqueue() == 1
 
     process_email.defer.assert_called_once()
     assert process_email.defer.call_args.kwargs["trace_id"] == message.trace_id
     received = next(event for event in _events(caplog) if event["event"] == "intake.message_received")
     assert received["trace_id"] == message.trace_id
+    assert received["sender_id_hash"] == expected_sender_id_hash
+    assert message.sender not in "\n".join(record.message for record in caplog.records)
 
 
 def test_intake_skips_duplicate_message_id_without_reenqueueing(caplog):
@@ -586,9 +623,12 @@ async def test_worker_caps_subject_and_body_before_agent():
 
 @pytest.mark.asyncio
 async def test_worker_threads_trace_id_to_agent_and_audit(caplog):
+    from thenetwork.security.sender_identifier import sender_identifier
     from thenetwork.worker.tasks import process_email
 
     trace_id = "9f97d361-4ccb-4638-a0bf-98bdbfd254b1"
+    sender_email = "alice@example.com"
+    expected_sender_id_hash = sender_identifier(sender_email, secret="audit-secret")
     mock_agent = AsyncMock()
     caplog.set_level(logging.INFO, logger=LOGGER_NAME)
 
@@ -596,9 +636,12 @@ async def test_worker_threads_trace_id_to_agent_and_audit(caplog):
         "thenetwork.worker.tasks.scan_content", return_value=(True, None)
     ), patch("thenetwork.worker.tasks.verify_admin_request", return_value=None), patch(
         "thenetwork.worker.tasks.get_session", return_value=_mock_sender_lookup("person-id")
-    ), patch("thenetwork.worker.tasks.run_agent_for_email", mock_agent):
+    ), patch("thenetwork.worker.tasks.run_agent_for_email", mock_agent), patch(
+        "thenetwork.security.sender_identifier.get_settings",
+        return_value=SimpleNamespace(sender_identifier_secret="audit-secret"),
+    ):
         await process_email.func(
-            sender_email="alice@example.com",
+            sender_email=sender_email,
             subject="Hello",
             body="Project Finch closes Friday",
             sender_authenticated=True,
@@ -613,6 +656,9 @@ async def test_worker_threads_trace_id_to_agent_and_audit(caplog):
     ]
     assert worker_events
     assert {event["trace_id"] for event in worker_events} == {trace_id}
+    assert {event["sender_id_hash"] for event in worker_events} == {
+        expected_sender_id_hash,
+    }
 
 
 @pytest.mark.asyncio

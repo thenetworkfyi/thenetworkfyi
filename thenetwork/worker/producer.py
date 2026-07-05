@@ -13,9 +13,10 @@ from __future__ import annotations
 import asyncio
 import base64
 
-from thenetwork.audit import audit_event, audit_run, audit_span, audit_trace
+from thenetwork.audit import audit_event, audit_run, audit_sender, audit_span, audit_trace
 from thenetwork.email.dedup import is_message_processed, mark_message_processed
 from thenetwork.email.inbound import mark_messages_seen, poll_unseen
+from thenetwork.security.sender_identifier import optional_sender_identifier
 from thenetwork.worker.tasks import app, process_email
 
 
@@ -26,7 +27,7 @@ def _poll_and_enqueue() -> int:
         count = 0
         handled_uids: list[str] = []
         for msg in messages:
-            with audit_trace(msg.trace_id):
+            with audit_trace(msg.trace_id), audit_sender(optional_sender_identifier(msg.sender)):
                 auto_submitted = msg.auto_submitted
                 body_chars = msg.body_chars if msg.body_chars is not None else len(msg.body)
                 if msg.rejection_reason:

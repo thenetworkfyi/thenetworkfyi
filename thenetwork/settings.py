@@ -81,6 +81,11 @@ class Settings(BaseSettings):
     unauthenticated_rate_limit_per_hour: int = 3
     global_email_rate_limit_per_hour: int = 100
 
+    # PII-safe audit correlation. Used to derive stable sender pseudonyms with
+    # HMAC-SHA256; an unkeyed email hash is not safe because candidate-address
+    # dictionary lookup can reverse it.
+    sender_identifier_secret: str = ""
+
     # Outbound dispatch caps. Enforced inside dispatch_email, not by prompt.
     dispatch_max_sends_per_run: int = 3
     dispatch_recipient_daily_cap: int = 3

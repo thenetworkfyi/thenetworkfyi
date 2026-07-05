@@ -45,8 +45,18 @@ prompt-injection exfiltrate it, so the privacy boundary cannot be "withhold a co
    consume the matching real user's quota. A separate global emails-processed-per-hour
    bucket caps total LLM spend and fails closed if the rate-limit store is unavailable;
    bounded Procrastinate worker concurrency remains an additional ceiling.
-9. **Credentials.** Loaded from env / `.env` via pydantic-settings; never hardcoded.
-10. **Optional content scanner.** Provider moderation / LLM Guard as opt-in
+9. **Audit correlation without PII.** Per-message `trace_id` values are minted as
+   opaque UUIDv4-style tokens at IMAP intake and threaded through the Procrastinate
+   job, worker, agent run, outbound SMTP send, and IMAP Sent append. Sender-level
+   audit correlation must use `security/sender_identifier.py`, which derives
+   `snd_v1_...` tokens by HMAC-SHA256 over a normalized sender address with the
+   server-side `SENDER_IDENTIFIER_SECRET`. The digest is truncated before logging
+   so audit entries can be correlated without storing raw email addresses or full
+   keyed digests. If the secret is unset, no sender pseudonym is logged. Never log
+   raw sender addresses, and never replace this with a bare `sha256(email)`:
+   candidate-address dictionary lookup would make that reversible.
+10. **Credentials.** Loaded from env / `.env` via pydantic-settings; never hardcoded.
+11. **Optional content scanner.** Provider moderation / LLM Guard as opt-in
     defense-in-depth, never the primary defense (`security/content_scan.py`).
 
 ## The admin channel

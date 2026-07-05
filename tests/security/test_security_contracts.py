@@ -5,11 +5,15 @@ what the LLM outputs. They do not require a live DB or LLM.
 """
 from __future__ import annotations
 
+import json
+import logging
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from thenetwork.agent.deps import AgentDeps
 from thenetwork.agent.tools import dispatch_email, register_person
+from thenetwork.audit import LOGGER_NAME, audit_event
 from thenetwork.db.models import Person
 from thenetwork.search.match import MemoryMatch
 from thenetwork.settings import Settings
@@ -18,6 +22,20 @@ from thenetwork.settings import Settings
 # ---------------------------------------------------------------------------
 # Capability email tool: opaque IDs only, address never exposed to caller
 # ---------------------------------------------------------------------------
+
+
+def test_audit_correlation_fields_do_not_log_raw_email(caplog):
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    audit_event(
+        "security.audit_correlation",
+        trace_id="3dbb1f2e-5131-4cb4-8e5a-2e6e080ff9bb",
+        sender_id_hash="alice@example.com",
+    )
+
+    payload = json.loads(caplog.records[0].message)
+    assert payload["sender_id_hash"] == "unknown"
+    assert "alice@example.com" not in caplog.records[0].message
 
 class FakeCtx:
     def __init__(
