@@ -20,6 +20,7 @@ from thenetwork.db.models import BannedEmail, Memory, Person
 from thenetwork.db.session import get_session
 from thenetwork.embed.embeddings import embed_text
 from thenetwork.memory.sanitize import sanitize_memory_high_fidelity
+from thenetwork.security.rate_limit import normalize_rate_limit_identity
 
 
 async def handle_admin_command(command: str, body_text: str) -> str:
@@ -167,11 +168,12 @@ async def _cmd_ban(email: str) -> str:
     email = email.strip().lower()
     if not email:
         return "Usage: ADMIN: ban <email>"
+    identity = normalize_rate_limit_identity(email)
     with get_session() as session:
-        existing = session.get(BannedEmail, email)
+        existing = session.get(BannedEmail, identity)
         if existing:
             return f"Email {email} is already banned."
-        banned = BannedEmail(email=email)
+        banned = BannedEmail(email=identity)
         session.add(banned)
         session.commit()
     audit_event("database.action", action="ban", record_type="person", outcome="success")
@@ -182,8 +184,9 @@ async def _cmd_unban(email: str) -> str:
     email = email.strip().lower()
     if not email:
         return "Usage: ADMIN: unban <email>"
+    identity = normalize_rate_limit_identity(email)
     with get_session() as session:
-        existing = session.get(BannedEmail, email)
+        existing = session.get(BannedEmail, identity)
         if not existing:
             return f"Email {email} is not banned."
         session.delete(existing)

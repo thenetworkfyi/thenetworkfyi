@@ -647,6 +647,31 @@ def test_handle_admin_command_ban_unban():
     session.delete.assert_not_called()
 
 
+def test_handle_admin_command_ban_canonicalizes_gmail_alias():
+    # Banning an alias form must store the canonical identity, so a later
+    # lookup for a *different* alias of the same mailbox still matches.
+    import asyncio
+    from thenetwork.admin.commands import handle_admin_command
+    from thenetwork.db.models import BannedEmail
+
+    session = MagicMock()
+    session.get.return_value = None
+    cm = MagicMock()
+    cm.__enter__ = MagicMock(return_value=session)
+    cm.__exit__ = MagicMock(return_value=False)
+
+    with patch("thenetwork.admin.commands.get_session", return_value=cm):
+        result = asyncio.run(
+            handle_admin_command("ban ba.nned+spam@googlemail.com", "")
+        )
+
+    assert "Banned email: ba.nned+spam@googlemail.com" in result
+    added_obj = session.add.call_args[0][0]
+    assert isinstance(added_obj, BannedEmail)
+    assert added_obj.email == "banned@gmail.com"
+    session.get.assert_called_once_with(BannedEmail, "banned@gmail.com")
+
+
 @pytest.mark.asyncio
 async def test_process_email_drops_banned_email_without_reply():
     import asyncio
@@ -677,6 +702,46 @@ async def test_process_email_drops_banned_email_without_reply():
             sender_authenticated=True,
         )
 
+    mock_agent.assert_not_called()
+    mock_send_reply.assert_not_called()
+    mock_audit.assert_any_call(
+        "worker.message_rejected",
+        reason="banned",
+    )
+
+
+@pytest.mark.asyncio
+async def test_process_email_drops_banned_email_alias():
+    # A sender using a gmail dot/plus alias of a banned mailbox must still be
+    # rejected: the lookup key has to match what _cmd_ban stored.
+    from thenetwork.worker.tasks import process_email
+    from thenetwork.db.models import BannedEmail
+
+    mock_agent = AsyncMock()
+    mock_send_reply = MagicMock()
+
+    banned_obj = BannedEmail(email="banned@gmail.com")
+    session = MagicMock()
+    session.get.return_value = banned_obj
+    cm = MagicMock()
+    cm.__enter__ = MagicMock(return_value=session)
+    cm.__exit__ = MagicMock(return_value=False)
+
+    with patch("thenetwork.worker.tasks.check_rate_limit", return_value=True), \
+         patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)), \
+         patch("thenetwork.worker.tasks.verify_admin_request", return_value=None), \
+         patch("thenetwork.worker.tasks.get_session", return_value=cm), \
+         patch("thenetwork.worker.tasks.send_reply", mock_send_reply), \
+         patch("thenetwork.worker.tasks.audit_event") as mock_audit, \
+         patch("thenetwork.worker.tasks.run_agent_for_email", mock_agent):
+        await process_email.func(
+            sender_email="ba.nned+spam@gmail.com",
+            subject="Hello",
+            body="Hey",
+            sender_authenticated=True,
+        )
+
+    session.get.assert_called_once_with(BannedEmail, "banned@gmail.com")
     mock_agent.assert_not_called()
     mock_send_reply.assert_not_called()
     mock_audit.assert_any_call(
