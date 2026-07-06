@@ -22,7 +22,7 @@ from thenetwork.audit import (
     audit_trace,
     configure_audit_logging,
 )
-from thenetwork.db.models import Person
+from thenetwork.db.models import BannedEmail, Person
 from thenetwork.db.session import get_session
 from thenetwork.email.inbound import (
     REJECT_BODY_EMPTY,
@@ -336,6 +336,12 @@ async def process_email(
                 reason="unauthenticated_unknown_sender",
             )
             return
+
+        with get_session() as session:
+            banned = session.get(BannedEmail, sender_email.strip().lower())
+            if banned and isinstance(banned, BannedEmail):
+                audit_event("worker.message_rejected", reason="banned")
+                return
 
         agent_kwargs = {
             "sender_email": sender_email,

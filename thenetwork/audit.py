@@ -53,7 +53,7 @@ _SAFE_FIELDS = frozenset({
 })
 _SAFE_TOKEN = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
 _SAFE_CATEGORIES = {
-    "action": frozenset({"delete", "insert", "lookup", "search"}),
+    "action": frozenset({"delete", "insert", "lookup", "search", "ban", "unban"}),
     "outcome": frozenset({
         "error", "exists", "found", "not_found", "rate_limited",
         "rejected_already_registered", "rejected_forbidden",
@@ -72,7 +72,7 @@ _SAFE_CATEGORIES = {
     }),
     "reason": frozenset({
         "body_empty", "body_oversize", "content_scan", "rate_limit",
-        "unauthenticated_unknown_sender",
+        "unauthenticated_unknown_sender", "banned",
     }),
     "record_type": frozenset({"memory", "person"}),
     "tool_name": frozenset({

@@ -575,3 +575,112 @@ def test_handle_admin_command_remember_without_refs_does_not_sanitize():
     mock_embed.assert_awaited_once_with(raw)
     assert added[0].refs == []
     assert added[0].gist is None
+
+
+def test_handle_admin_command_ban_unban():
+    import asyncio
+    from thenetwork.admin.commands import handle_admin_command
+    from thenetwork.db.models import BannedEmail
+
+    # Test ban
+    session = MagicMock()
+    session.get.return_value = None  # not already banned
+    cm = MagicMock()
+    cm.__enter__ = MagicMock(return_value=session)
+    cm.__exit__ = MagicMock(return_value=False)
+
+    with patch("thenetwork.admin.commands.get_session", return_value=cm), \
+         patch("thenetwork.admin.commands.audit_event") as mock_audit:
+        result = asyncio.run(handle_admin_command("ban baduser@example.com", ""))
+
+    assert "Banned email: baduser@example.com" in result
+    session.add.assert_called_once()
+    added_obj = session.add.call_args[0][0]
+    assert isinstance(added_obj, BannedEmail)
+    assert added_obj.email == "baduser@example.com"
+    session.commit.assert_called_once()
+    mock_audit.assert_called_once_with(
+        "database.action", action="ban", record_type="person", outcome="success"
+    )
+
+    # Test ban already banned
+    session = MagicMock()
+    session.get.return_value = BannedEmail(email="baduser@example.com")
+    cm = MagicMock()
+    cm.__enter__ = MagicMock(return_value=session)
+    cm.__exit__ = MagicMock(return_value=False)
+
+    with patch("thenetwork.admin.commands.get_session", return_value=cm):
+        result = asyncio.run(handle_admin_command("ban baduser@example.com", ""))
+    assert "already banned" in result
+    session.add.assert_not_called()
+
+    # Test unban
+    session = MagicMock()
+    banned_obj = BannedEmail(email="baduser@example.com")
+    session.get.return_value = banned_obj
+    cm = MagicMock()
+    cm.__enter__ = MagicMock(return_value=session)
+    cm.__exit__ = MagicMock(return_value=False)
+
+    with patch("thenetwork.admin.commands.get_session", return_value=cm), \
+         patch("thenetwork.admin.commands.audit_event") as mock_audit:
+        result = asyncio.run(handle_admin_command("unban baduser@example.com", ""))
+
+    assert "Unbanned email: baduser@example.com" in result
+    session.delete.assert_called_once_with(banned_obj)
+    session.commit.assert_called_once()
+    mock_audit.assert_called_once_with(
+        "database.action", action="unban", record_type="person", outcome="success"
+    )
+
+    # Test unban not banned
+    session = MagicMock()
+    session.get.return_value = None
+    cm = MagicMock()
+    cm.__enter__ = MagicMock(return_value=session)
+    cm.__exit__ = MagicMock(return_value=False)
+
+    with patch("thenetwork.admin.commands.get_session", return_value=cm):
+        result = asyncio.run(handle_admin_command("unban baduser@example.com", ""))
+    assert "not banned" in result
+    session.delete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_process_email_drops_banned_email_without_reply():
+    import asyncio
+    from thenetwork.worker.tasks import process_email
+    from thenetwork.db.models import BannedEmail
+
+    mock_agent = AsyncMock()
+    mock_send_reply = MagicMock()
+
+    banned_obj = BannedEmail(email="banned@example.com")
+    session = MagicMock()
+    session.get.return_value = banned_obj
+    cm = MagicMock()
+    cm.__enter__ = MagicMock(return_value=session)
+    cm.__exit__ = MagicMock(return_value=False)
+
+    with patch("thenetwork.worker.tasks.check_rate_limit", return_value=True), \
+         patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)), \
+         patch("thenetwork.worker.tasks.verify_admin_request", return_value=None), \
+         patch("thenetwork.worker.tasks.get_session", return_value=cm), \
+         patch("thenetwork.worker.tasks.send_reply", mock_send_reply), \
+         patch("thenetwork.worker.tasks.audit_event") as mock_audit, \
+         patch("thenetwork.worker.tasks.run_agent_for_email", mock_agent):
+        await process_email.func(
+            sender_email="banned@example.com",
+            subject="Hello",
+            body="Hey",
+            sender_authenticated=True,
+        )
+
+    mock_agent.assert_not_called()
+    mock_send_reply.assert_not_called()
+    mock_audit.assert_any_call(
+        "worker.message_rejected",
+        reason="banned",
+    )
+
