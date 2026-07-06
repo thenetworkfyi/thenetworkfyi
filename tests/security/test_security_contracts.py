@@ -82,6 +82,18 @@ async def test_dispatch_resolves_address_not_from_caller():
 
 
 @pytest.mark.asyncio
+async def test_register_person_resolves_address_not_from_caller():
+    """The tool signature takes only name - caller cannot supply a raw address."""
+    import inspect
+    sig = inspect.signature(register_person)
+    params = list(sig.parameters.keys())
+    assert "name" in params
+    assert "to_address" not in params
+    assert "address" not in params
+    assert "email" not in params
+
+
+@pytest.mark.asyncio
 async def test_dispatch_sends_to_resolved_address():
     """Address must come from DB lookup, not from any agent-supplied argument."""
     _reset_dispatch_limiter()
@@ -315,7 +327,7 @@ async def test_register_person_rejects_unauthenticated_sender():
     """An unauthenticated From: header must never mint a new identity."""
     ctx = FakeCtx(sender_user_id=None, sender_authenticated=False)
 
-    result = await register_person(ctx, email="alice@example.com", name="Alice")
+    result = await register_person(ctx, name="Alice")
 
     assert result["status"] == "error"
     assert result["reason"] == "sender_not_authenticated"
@@ -326,26 +338,11 @@ async def test_register_person_rejects_already_registered_sender():
     """A sender who already has a person_id cannot re-register (or hijack another id)."""
     ctx = FakeCtx(sender_user_id="user-alice", sender_authenticated=True)
 
-    result = await register_person(ctx, email="alice@example.com", name="Alice")
+    result = await register_person(ctx, name="Alice")
 
     assert result["status"] == "error"
     assert result["reason"] == "already_registered"
     assert result["person_id"] == "user-alice"
-
-
-@pytest.mark.asyncio
-async def test_register_person_rejects_email_mismatch():
-    """The tool cannot be used to register a third party - email must match the sender."""
-    ctx = FakeCtx(
-        sender_email="alice@example.com",
-        sender_user_id=None,
-        sender_authenticated=True,
-    )
-
-    result = await register_person(ctx, email="bob@example.com", name="Bob")
-
-    assert result["status"] == "error"
-    assert result["reason"] == "email_mismatch"
 
 
 @pytest.mark.asyncio
@@ -359,7 +356,7 @@ async def test_register_person_idempotent_when_already_exists():
     existing = MagicMock(spec=Person, id="existing-id")
     ctx._mock_sess.exec.return_value.first.return_value = existing
 
-    result = await register_person(ctx, email="alice@example.com", name="Alice")
+    result = await register_person(ctx, name="Alice")
 
     assert result["status"] == "exists"
     assert result["person_id"] == "existing-id"
@@ -381,7 +378,7 @@ async def test_register_person_creates_for_authenticated_new_sender():
 
     ctx._mock_sess.refresh.side_effect = fake_refresh
 
-    result = await register_person(ctx, email="alice@example.com", name="Alice")
+    result = await register_person(ctx, name="Alice")
 
     assert result["status"] == "created"
     assert result["person_id"] == "new-person-id"
@@ -393,8 +390,8 @@ async def test_register_person_creates_for_authenticated_new_sender():
 
 
 @pytest.mark.asyncio
-async def test_register_person_case_insensitive_email_match():
-    """Sender's own address should match regardless of case."""
+async def test_register_person_uses_authenticated_sender_email_server_side():
+    """The model supplies only the name; the server owns the address."""
     ctx = FakeCtx(
         sender_email="Alice@Example.com",
         sender_user_id=None,
@@ -403,9 +400,11 @@ async def test_register_person_case_insensitive_email_match():
     ctx._mock_sess.exec.return_value.first.return_value = None
     ctx._mock_sess.refresh.side_effect = lambda person: setattr(person, "id", "new-id")
 
-    result = await register_person(ctx, email="alice@example.com", name="Alice")
+    result = await register_person(ctx, name="Alice")
 
     assert result["status"] == "created"
+    added_person = ctx._mock_sess.add.call_args.args[0]
+    assert added_person.email == "Alice@Example.com"
 
 
 @pytest.mark.asyncio
@@ -423,7 +422,7 @@ async def test_register_person_enforces_global_daily_quota():
     limiter.hit.return_value = False
 
     with patch("thenetwork.agent.tools._get_registration_limiter", return_value=(limiter, None)):
-        result = await register_person(ctx, email="alice@example.com", name="Alice")
+        result = await register_person(ctx, name="Alice")
 
     assert result == {
         "status": "error",

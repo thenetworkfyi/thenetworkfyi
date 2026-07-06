@@ -335,17 +335,15 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
 
 async def register_person(
     ctx: RunContext[AgentDeps],
-    email: str,
     name: str,
 ) -> dict[str, str]:
     """Create a Person record for a brand-new sender's first contact.
 
-    Self-registration only: `email` must match the sender's own authenticated
-    From: address, and the sender must not already be a known Person. This
-    cannot be used to register anyone else - accepting an arbitrary raw
-    address out of message content (e.g. to onboard a stranger mentioned in
-    an introduction) would reopen the confused-deputy risk dispatch_email's
-    opaque-id design exists to prevent, so that stays out of scope here.
+    Self-registration only: the server uses the sender's own authenticated
+    From: address, and the sender must not already be a known Person. The model
+    never supplies a raw address here - accepting one from message content
+    would reopen the confused-deputy risk dispatch_email's opaque-id design
+    exists to prevent.
 
     Returns the new person_id - use it for `refs` on subsequent `remember`
     calls and as the target of `dispatch_email` to reply to this sender.
@@ -366,9 +364,6 @@ async def register_person(
                 "reason": "already_registered",
                 "person_id": ctx.deps.sender_user_id,
             }
-
-        if email.strip().lower() != ctx.deps.sender_email.strip().lower():
-            return {"status": "error", "reason": "email_mismatch"}
 
         with _get_session(ctx) as session:
             existing = session.exec(
