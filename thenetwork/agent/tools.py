@@ -14,7 +14,7 @@ from pydantic_ai import RunContext
 from sqlmodel import select
 
 from thenetwork.agent.deps import AgentDeps
-from thenetwork.audit import audit_event, audit_span
+from thenetwork.audit import audit_event, audit_span, audit_span_completion
 from thenetwork.db.models import Memory, Person
 from thenetwork.db.session import get_session
 from thenetwork.embed.embeddings import embed_text
@@ -58,6 +58,16 @@ def _cap(value: int) -> int:
 
 def _limited(reason: str, limit: int) -> dict[str, Any]:
     return {"status": "limited", "reason": reason, "limit": limit}
+
+
+def _tool_result(result: dict[str, Any]) -> dict[str, Any]:
+    audit_fields: dict[str, object] = {
+        "tool_outcome": result.get("status", "success"),
+    }
+    if "reason" in result:
+        audit_fields["tool_reason"] = result["reason"]
+    audit_span_completion(**audit_fields)
+    return result
 
 
 def _trace_kwargs(trace_id: str | None) -> dict[str, str]:
@@ -144,17 +154,17 @@ async def remember(
     with audit_span("agent.tool", tool_name="remember", refs_count=len(refs)):
         max_chars = ctx.deps.settings.remember_text_max_chars
         if max_chars > 0 and len(text) > max_chars:
-            return {
+            return _tool_result({
                 "status": "error",
                 "reason": "memory_text_too_long",
                 "limit": max_chars,
-            }
+            })
 
         memory = Memory(text=text, refs=refs)
         with _get_session(ctx) as session:
             ceiling_error = _memory_ceiling_error(ctx, session, refs)
             if ceiling_error is not None:
-                return ceiling_error
+                return _tool_result(ceiling_error)
 
             session.add(memory)
             await _embed_memory_for_write(memory, session)
@@ -191,7 +201,10 @@ async def remember(
             )
             if len(candidates) == MAX_CONSOLIDATION_CANDIDATES:
                 break
-        return {"memory_id": memory_id, "consolidation_candidates": candidates}
+        return _tool_result({
+            "memory_id": memory_id,
+            "consolidation_candidates": candidates,
+        })
 
 
 async def forget(ctx: RunContext[AgentDeps], memory_id: str) -> dict[str, str]:
@@ -211,7 +224,7 @@ async def forget(ctx: RunContext[AgentDeps], memory_id: str) -> dict[str, str]:
                     record_type="memory",
                     outcome="not_found",
                 )
-                return {"status": "not_found"}
+                return _tool_result({"status": "not_found"})
             sender_user_id = ctx.deps.sender_user_id
             refs = memory.refs or []
             if not sender_user_id or refs != [sender_user_id]:
@@ -221,7 +234,10 @@ async def forget(ctx: RunContext[AgentDeps], memory_id: str) -> dict[str, str]:
                     record_type="memory",
                     outcome="rejected_forbidden",
                 )
-                return {"status": "forbidden", "reason": "not_sender_memory"}
+                return _tool_result({
+                    "status": "forbidden",
+                    "reason": "not_sender_memory",
+                })
             session.delete(memory)
             session.commit()
         audit_event(
@@ -230,7 +246,7 @@ async def forget(ctx: RunContext[AgentDeps], memory_id: str) -> dict[str, str]:
             record_type="memory",
             outcome="success",
         )
-        return {"status": "deleted"}
+        return _tool_result({"status": "deleted"})
 
 
 async def search(
@@ -273,6 +289,7 @@ async def search(
             if m.person_id == ctx.deps.sender_user_id:
                 result["memory_id"] = m.memory_id
             results.append(result)
+        audit_span_completion(tool_outcome="success")
         return results
 
 
@@ -306,7 +323,7 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
                 ),
             )
             audit_event("agent.first_contact_welcome_sent")
-            return {"status": "welcomed"}
+            return _tool_result({"status": "welcomed"})
 
         refs = [ctx.deps.sender_user_id] if ctx.deps.sender_user_id else []
 
@@ -332,7 +349,7 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
         )
         notify_admins(s, subject, body, trace_id=ctx.deps.trace_id)
 
-        return {"status": "escalated", "memory_id": memory_id}
+        return _tool_result({"status": "escalated", "memory_id": memory_id})
 
 
 async def register_person(
@@ -358,14 +375,23 @@ async def register_person(
                 record_type="person",
                 outcome="rejected_unauthenticated",
             )
-            return {"status": "error", "reason": "sender_not_authenticated"}
+            return _tool_result({
+                "status": "error",
+                "reason": "sender_not_authenticated",
+            })
 
         if ctx.deps.sender_user_id is not None:
-            return {
+            audit_event(
+                "database.action",
+                action="insert",
+                record_type="person",
+                outcome="rejected_already_registered",
+            )
+            return _tool_result({
                 "status": "error",
                 "reason": "already_registered",
                 "person_id": ctx.deps.sender_user_id,
-            }
+            })
 
         with _get_session(ctx) as session:
             existing = session.exec(
@@ -373,7 +399,13 @@ async def register_person(
             ).first()
             if existing:
                 ctx.deps.sender_user_id = existing.id
-                return {"status": "exists", "person_id": existing.id}
+                audit_event(
+                    "database.action",
+                    action="lookup",
+                    record_type="person",
+                    outcome="exists",
+                )
+                return _tool_result({"status": "exists", "person_id": existing.id})
 
             if not _hit_registration_quota(ctx):
                 audit_event(
@@ -382,11 +414,11 @@ async def register_person(
                     record_type="person",
                     outcome="rate_limited",
                 )
-                return {
+                return _tool_result({
                     "status": "error",
                     "reason": "registration_quota_exceeded",
                     "limit": ctx.deps.settings.registration_limit_per_day,
-                }
+                })
 
             person = Person(email=ctx.deps.sender_email, name=name)
             session.add(person)
@@ -401,7 +433,7 @@ async def register_person(
             record_type="person",
             outcome="success",
         )
-        return {"status": "created", "person_id": person_id}
+        return _tool_result({"status": "created", "person_id": person_id})
 
 
 async def dispatch_email(
@@ -428,7 +460,7 @@ async def dispatch_email(
         s = ctx.deps.settings
         max_sends_per_run = _cap(s.dispatch_max_sends_per_run)
         if ctx.deps.dispatch_email_sent_count >= max_sends_per_run:
-            return _limited("max_sends_per_run", max_sends_per_run)
+            return _tool_result(_limited("max_sends_per_run", max_sends_per_run))
 
         with _get_session(ctx) as session:
             person = session.get(Person, recipient_user_id)
@@ -440,21 +472,26 @@ async def dispatch_email(
             outcome="found" if person is not None else "not_found",
         )
         if person is None:
-            return {"status": "error", "reason": "recipient_not_found"}
+            return _tool_result({
+                "status": "error",
+                "reason": "recipient_not_found",
+            })
 
         recipient_daily_cap = _cap(s.dispatch_recipient_daily_cap)
         if not _hit_daily_dispatch_cap(
             f"dispatch:recipient:{recipient_user_id}",
             recipient_daily_cap,
         ):
-            return _limited("recipient_daily_cap", recipient_daily_cap)
+            return _tool_result(_limited("recipient_daily_cap", recipient_daily_cap))
 
         sender_reply_daily_cap = _cap(s.dispatch_sender_reply_daily_cap)
         if recipient_user_id == ctx.deps.sender_user_id and not _hit_daily_dispatch_cap(
             f"dispatch:sender-reply:{recipient_user_id}",
             sender_reply_daily_cap,
         ):
-            return _limited("sender_reply_daily_cap", sender_reply_daily_cap)
+            return _tool_result(
+                _limited("sender_reply_daily_cap", sender_reply_daily_cap)
+            )
 
         thread_headers = {}
         if recipient_user_id == ctx.deps.sender_user_id and ctx.deps.inbound_message_id:
@@ -474,4 +511,4 @@ async def dispatch_email(
             **thread_headers,
         )
         ctx.deps.dispatch_email_sent_count += 1
-        return {"status": "sent"}
+        return _tool_result({"status": "sent"})
