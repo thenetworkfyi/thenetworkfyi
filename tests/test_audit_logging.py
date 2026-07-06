@@ -23,6 +23,46 @@ def _mock_sender_lookup(sender_id: str | None) -> MagicMock:
     return mock_session
 
 
+def _tool_ctx(
+    *,
+    sender_email: str = "alice@example.com",
+    sender_user_id: str | None = None,
+    sender_authenticated: bool = True,
+):
+    from thenetwork.agent.deps import AgentDeps
+    from thenetwork.settings import Settings
+
+    mock_session = MagicMock()
+    mock_session.__enter__ = MagicMock(return_value=mock_session)
+    mock_session.__exit__ = MagicMock(return_value=False)
+    ctx = SimpleNamespace(
+        deps=AgentDeps(
+            settings=Settings(),
+            sender_email=sender_email,
+            sender_user_id=sender_user_id,
+            sender_authenticated=sender_authenticated,
+            session_factory=lambda: mock_session,
+        )
+    )
+    return ctx, mock_session
+
+
+def _tool_completed_event(events: list[dict], tool_name: str) -> dict:
+    return next(
+        event for event in events
+        if event["event"] == "agent.tool.completed"
+        and event["tool_name"] == tool_name
+    )
+
+
+def _database_action_event(events: list[dict], *, record_type: str) -> dict:
+    return next(
+        event for event in events
+        if event["event"] == "database.action"
+        and event["record_type"] == record_type
+    )
+
+
 def test_audit_events_are_json_and_correlated(caplog):
     caplog.set_level(logging.INFO, logger=LOGGER_NAME)
 
@@ -82,6 +122,115 @@ def test_audit_correlation_fields_sanitize_raw_sender_values(caplog):
     assert event["trace_id"] == "unknown"
     assert event["sender_id_hash"] == "unknown"
     assert "alice.private@example.com" not in caplog.records[0].message
+
+
+@pytest.mark.asyncio
+async def test_register_person_audits_unauthenticated_return_path(caplog):
+    from thenetwork.agent.tools import register_person
+
+    ctx, _ = _tool_ctx(sender_authenticated=False)
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    result = await register_person(ctx, name="Alice")
+
+    assert result == {"status": "error", "reason": "sender_not_authenticated"}
+    events = _events(caplog)
+    database_event = _database_action_event(events, record_type="person")
+    assert database_event["action"] == "insert"
+    assert database_event["outcome"] == "rejected_unauthenticated"
+    completed = _tool_completed_event(events, "register_person")
+    assert completed["outcome"] == "success"
+    assert completed["tool_outcome"] == "error"
+    assert completed["tool_reason"] == "sender_not_authenticated"
+
+
+@pytest.mark.asyncio
+async def test_register_person_audits_already_registered_return_path(caplog):
+    from thenetwork.agent.tools import register_person
+
+    ctx, _ = _tool_ctx(sender_user_id="person-id")
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    result = await register_person(ctx, name="Alice")
+
+    assert result == {
+        "status": "error",
+        "reason": "already_registered",
+        "person_id": "person-id",
+    }
+    events = _events(caplog)
+    database_event = _database_action_event(events, record_type="person")
+    assert database_event["action"] == "insert"
+    assert database_event["outcome"] == "rejected_already_registered"
+    completed = _tool_completed_event(events, "register_person")
+    assert completed["tool_outcome"] == "error"
+    assert completed["tool_reason"] == "already_registered"
+
+
+@pytest.mark.asyncio
+async def test_register_person_audits_existing_person_return_path(caplog):
+    from thenetwork.agent.tools import register_person
+
+    ctx, session = _tool_ctx()
+    session.exec.return_value.first.return_value = SimpleNamespace(id="existing-id")
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    result = await register_person(ctx, name="Alice")
+
+    assert result == {"status": "exists", "person_id": "existing-id"}
+    events = _events(caplog)
+    database_event = _database_action_event(events, record_type="person")
+    assert database_event["action"] == "lookup"
+    assert database_event["outcome"] == "exists"
+    completed = _tool_completed_event(events, "register_person")
+    assert completed["tool_outcome"] == "exists"
+
+
+@pytest.mark.asyncio
+async def test_register_person_audits_rate_limited_return_path(caplog):
+    from thenetwork.agent.tools import register_person
+
+    ctx, session = _tool_ctx()
+    ctx.deps.settings.registration_limit_per_day = 1
+    session.exec.return_value.first.return_value = None
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    with patch("thenetwork.agent.tools._hit_registration_quota", return_value=False):
+        result = await register_person(ctx, name="Alice")
+
+    assert result == {
+        "status": "error",
+        "reason": "registration_quota_exceeded",
+        "limit": 1,
+    }
+    events = _events(caplog)
+    database_event = _database_action_event(events, record_type="person")
+    assert database_event["action"] == "insert"
+    assert database_event["outcome"] == "rate_limited"
+    completed = _tool_completed_event(events, "register_person")
+    assert completed["tool_outcome"] == "error"
+    assert completed["tool_reason"] == "registration_quota_exceeded"
+
+
+@pytest.mark.asyncio
+async def test_register_person_audits_created_return_path(caplog):
+    from thenetwork.agent.tools import register_person
+
+    ctx, session = _tool_ctx()
+    session.exec.return_value.first.return_value = None
+    session.refresh.side_effect = lambda person: setattr(person, "id", "new-person-id")
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    with patch("thenetwork.agent.tools._hit_registration_quota", return_value=True):
+        result = await register_person(ctx, name="Alice")
+
+    assert result == {"status": "created", "person_id": "new-person-id"}
+    events = _events(caplog)
+    database_event = _database_action_event(events, record_type="person")
+    assert database_event["action"] == "insert"
+    assert database_event["outcome"] == "success"
+    completed = _tool_completed_event(events, "register_person")
+    assert completed["tool_outcome"] == "created"
 
 
 @pytest.mark.asyncio

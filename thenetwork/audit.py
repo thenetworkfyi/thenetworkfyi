@@ -18,6 +18,10 @@ _sender_id_hash: ContextVar[str | None] = ContextVar(
     "thenetwork_audit_sender_id_hash",
     default=None,
 )
+_span_completion_fields: ContextVar[tuple[dict[str, object], ...]] = ContextVar(
+    "thenetwork_audit_span_completion_fields",
+    default=(),
+)
 
 
 def _iso_timestamp(logger: object, method_name: str, event_dict: dict) -> dict:
@@ -44,15 +48,27 @@ _SAFE_FIELDS = frozenset({
     "header_names", "html_present", "message_count", "outcome", "part_kinds",
     "query_chars", "reason", "recipient_id_present", "record_type", "refs_count",
     "result_count", "sender_authenticated", "sender_id_hash", "sender_known",
-    "sender_present", "subject_chars", "tool_called", "tool_name", "top_k", "trace_id",
-    "user_message_chars",
+    "sender_present", "subject_chars", "tool_called", "tool_name", "tool_outcome",
+    "tool_reason", "top_k", "trace_id", "user_message_chars",
 })
 _SAFE_TOKEN = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
 _SAFE_CATEGORIES = {
     "action": frozenset({"delete", "insert", "lookup", "search"}),
     "outcome": frozenset({
         "error", "exists", "found", "not_found", "rate_limited",
-        "rejected_forbidden", "rejected_unauthenticated", "success",
+        "rejected_already_registered", "rejected_forbidden",
+        "rejected_unauthenticated", "success",
+    }),
+    "tool_outcome": frozenset({
+        "created", "deleted", "error", "escalated", "exists", "forbidden",
+        "limited", "not_found", "sent", "success", "welcomed",
+    }),
+    "tool_reason": frozenset({
+        "already_registered", "max_sends_per_run", "memory_text_too_long",
+        "not_sender_memory", "person_memory_limit_exceeded",
+        "recipient_daily_cap", "recipient_not_found",
+        "registration_quota_exceeded", "sender_not_authenticated",
+        "sender_reply_daily_cap",
     }),
     "reason": frozenset({
         "body_empty", "body_oversize", "content_scan", "rate_limit",
@@ -133,6 +149,17 @@ def audit_event(event: str, **fields: object) -> None:
     _logger.info(_safe_token(event), **payload)
 
 
+def audit_span_completion(**fields: object) -> None:
+    """Attach safe fields to the innermost active audit_span completion event."""
+    stack = _span_completion_fields.get()
+    if not stack:
+        return
+    unknown = fields.keys() - _SAFE_FIELDS
+    if unknown:
+        raise ValueError(f"unsafe audit fields: {', '.join(sorted(unknown))}")
+    stack[-1].update(fields)
+
+
 @contextmanager
 def audit_run() -> Iterator[str]:
     current = _run_id.get()
@@ -174,17 +201,33 @@ def audit_sender(sender_id_hash: str | None) -> Iterator[None]:
 @contextmanager
 def audit_span(event: str, **fields: object) -> Iterator[None]:
     started = monotonic()
+    completion_fields: dict[str, object] = {}
+    token = _span_completion_fields.set(
+        (*_span_completion_fields.get(), completion_fields)
+    )
     audit_event(f"{event}.started", **fields)
     try:
         yield
     except Exception as exc:
-        audit_event(f"{event}.completed", **fields, outcome="error",
-                    error_type=type(exc).__name__,
-                    duration_ms=round((monotonic() - started) * 1000, 3))
+        audit_event(
+            f"{event}.completed",
+            **fields,
+            **completion_fields,
+            outcome="error",
+            error_type=type(exc).__name__,
+            duration_ms=round((monotonic() - started) * 1000, 3),
+        )
         raise
     else:
-        audit_event(f"{event}.completed", **fields, outcome="success",
-                    duration_ms=round((monotonic() - started) * 1000, 3))
+        audit_event(
+            f"{event}.completed",
+            **fields,
+            **completion_fields,
+            outcome="success",
+            duration_ms=round((monotonic() - started) * 1000, 3),
+        )
+    finally:
+        _span_completion_fields.reset(token)
 
 
 def audit_model_trace(result: object) -> None:
