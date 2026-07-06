@@ -281,9 +281,11 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
 
     Use when intent is ambiguous, the request is outside your capabilities, or
     you have low confidence. A human will follow up with the sender directly.
-    For authenticated first contact, send the fixed welcome/how-to-join reply
-    instead of escalating; the sender learns how to use the address without
-    giving the model control over the copy.
+    Do not use this for an ordinary first contact that can be registered and
+    answered with dispatch_email. The fixed welcome/how-to-join reply is only
+    a fallback for authenticated senders who are still unknown when escalation
+    is requested, so they learn how to use the address without giving the model
+    control over that copy.
     """
     with audit_span("agent.tool", tool_name="escalate"):
         s = ctx.deps.settings
@@ -345,8 +347,8 @@ async def register_person(
     would reopen the confused-deputy risk dispatch_email's opaque-id design
     exists to prevent.
 
-    Returns the new person_id - use it for `refs` on subsequent `remember`
-    calls and as the target of `dispatch_email` to reply to this sender.
+    Returns the new person_id. For a normal first contact, use that id in
+    `remember` refs for what the sender shared, then reply with `dispatch_email`.
     """
     with audit_span("agent.tool", tool_name="register_person"):
         if not ctx.deps.sender_authenticated:
