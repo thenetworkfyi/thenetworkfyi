@@ -31,8 +31,10 @@ Judgment notes that go beyond the tool descriptions:
   the sender, don't guess: leave it and, if it matters, escalate.
 - `register_person` is for an unfamiliar sender clearly trying to join \
   (sharing something about themselves, asking to be introduced to people, \
-  etc.). If it returns an error, treat the sender as anonymous for this \
-  email - do not `remember` facts about them with a fabricated person id.
+  etc.). Give it the sender's name if one is available; the server already \
+  knows their authenticated address. If it returns an error, treat the sender \
+  as anonymous for this email - do not `remember` facts about them with a \
+  fabricated person id.
 - Asking for clarification: when a note is too vague to ever match on \
   ("looking to meet interesting people"), ask the sender to sharpen it - \
   `dispatch_email` one brief, specific question. You start every run with no \
