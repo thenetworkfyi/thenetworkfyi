@@ -370,6 +370,7 @@ async def register_person(
                 select(Person).where(Person.email == ctx.deps.sender_email)
             ).first()
             if existing:
+                ctx.deps.sender_user_id = existing.id
                 return {"status": "exists", "person_id": existing.id}
 
             if not _hit_registration_quota(ctx):
@@ -390,6 +391,7 @@ async def register_person(
             session.commit()
             session.refresh(person)
             person_id = person.id
+            ctx.deps.sender_user_id = person_id
 
         audit_event(
             "database.action",

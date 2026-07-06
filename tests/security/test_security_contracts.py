@@ -360,6 +360,7 @@ async def test_register_person_idempotent_when_already_exists():
 
     assert result["status"] == "exists"
     assert result["person_id"] == "existing-id"
+    assert ctx.deps.sender_user_id == "existing-id"
     ctx._mock_sess.add.assert_not_called()
 
 
@@ -382,6 +383,7 @@ async def test_register_person_creates_for_authenticated_new_sender():
 
     assert result["status"] == "created"
     assert result["person_id"] == "new-person-id"
+    assert ctx.deps.sender_user_id == "new-person-id"
     ctx._mock_sess.add.assert_called_once()
     added_person = ctx._mock_sess.add.call_args.args[0]
     assert isinstance(added_person, Person)
@@ -430,6 +432,83 @@ async def test_register_person_enforces_global_daily_quota():
         "limit": 1,
     }
     ctx._mock_sess.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_register_person_updates_sender_id_before_same_run_escalation():
+    from thenetwork.agent.tools import escalate
+
+    ctx = FakeCtx(
+        sender_email="alice@example.com",
+        sender_user_id=None,
+        sender_authenticated=True,
+    )
+    ctx._mock_sess.exec.return_value.first.return_value = None
+    ctx._mock_sess.refresh.side_effect = lambda person: setattr(person, "id", "new-person-id")
+
+    async def fake_sanitize(memory, session):
+        memory.gist = "[name] needs human review."
+        return memory.gist
+
+    with patch("thenetwork.agent.tools.embed_text", new=AsyncMock(return_value=[0.0] * 1536)), \
+         patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new=AsyncMock(side_effect=fake_sanitize)), \
+         patch("thenetwork.agent.tools.notify_admins") as mock_notify, \
+         patch("thenetwork.agent.tools.send_reply") as mock_send, \
+         patch("thenetwork.agent.tools.audit_event") as mock_audit:
+        registered = await register_person(ctx, name="Alice")
+        escalated = await escalate(ctx, reason="Needs human review")
+
+    assert registered == {"status": "created", "person_id": "new-person-id"}
+    assert ctx.deps.sender_user_id == "new-person-id"
+    assert escalated["status"] == "escalated"
+    mock_send.assert_not_called()
+    mock_notify.assert_called_once()
+    assert all(
+        call.args != ("agent.first_contact_welcome_sent",)
+        for call in mock_audit.call_args_list
+    )
+
+
+@pytest.mark.asyncio
+async def test_dispatch_to_just_registered_sender_threads_and_counts_sender_reply_cap():
+    _reset_dispatch_limiter()
+    ctx = FakeCtx(
+        sender_email="alice@example.com",
+        sender_user_id=None,
+        sender_authenticated=True,
+    )
+    ctx.deps.settings.dispatch_max_sends_per_run = 99
+    ctx.deps.settings.dispatch_recipient_daily_cap = 99
+    ctx.deps.settings.dispatch_sender_reply_daily_cap = 1
+    ctx.deps.inbound_message_id = "<abc123@example.com>"
+    ctx.deps.inbound_references = "<root@example.com>"
+    ctx.deps.inbound_body_for_quote = "Original request"
+    ctx.deps.inbound_date = "Sat, 04 Jul 2026 12:00:00 -0700"
+    ctx._mock_sess.exec.return_value.first.return_value = None
+    ctx._mock_sess.refresh.side_effect = lambda person: setattr(person, "id", "new-person-id")
+    ctx._mock_sess.get.return_value = _fake_person("alice@example.com")
+
+    with patch("thenetwork.agent.tools.send_reply") as mock_send:
+        registered = await register_person(ctx, name="Alice")
+        first = await dispatch_email(
+            ctx,
+            recipient_user_id="new-person-id",
+            subject="Re: Hi",
+            body_text="Hello",
+        )
+        second = await dispatch_email(
+            ctx,
+            recipient_user_id="new-person-id",
+            subject="Re: Hi",
+            body_text="Hello again",
+        )
+
+    assert registered == {"status": "created", "person_id": "new-person-id"}
+    assert first["status"] == "sent"
+    assert second == {"status": "limited", "reason": "sender_reply_daily_cap", "limit": 1}
+    mock_send.assert_called_once()
+    assert mock_send.call_args.kwargs["in_reply_to"] == "<abc123@example.com>"
+    assert mock_send.call_args.kwargs["references"] == "<root@example.com> <abc123@example.com>"
 
 
 # ---------------------------------------------------------------------------
