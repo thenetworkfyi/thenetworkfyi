@@ -16,7 +16,7 @@ from __future__ import annotations
 from sqlalchemy import text
 from sqlmodel import Session, select
 from thenetwork.audit import audit_event, audit_span
-from thenetwork.db.models import Memory, Person
+from thenetwork.db.models import BannedEmail, Memory, Person
 from thenetwork.db.session import get_session
 from thenetwork.embed.embeddings import embed_text
 from thenetwork.memory.sanitize import sanitize_memory_high_fidelity
@@ -37,7 +37,11 @@ async def handle_admin_command(command: str, body_text: str) -> str:
             return await _cmd_forget(args.strip())
         if verb == "remember":
             return await _cmd_remember(args.strip(), body_text)
-        return f"Unknown command: {verb!r}. Valid: status, search, show, forget, remember"
+        if verb == "ban":
+            return await _cmd_ban(args.strip())
+        if verb == "unban":
+            return await _cmd_unban(args.strip())
+        return f"Unknown command: {verb!r}. Valid: status, search, show, forget, remember, ban, unban"
 
 
 async def _cmd_status() -> str:
@@ -157,3 +161,32 @@ def _resolve_person(session: Session, ident: str) -> Person | None:
     if "@" in ident:
         return session.exec(select(Person).where(Person.email == ident)).first()
     return session.get(Person, ident)
+
+
+async def _cmd_ban(email: str) -> str:
+    email = email.strip().lower()
+    if not email:
+        return "Usage: ADMIN: ban <email>"
+    with get_session() as session:
+        existing = session.get(BannedEmail, email)
+        if existing:
+            return f"Email {email} is already banned."
+        banned = BannedEmail(email=email)
+        session.add(banned)
+        session.commit()
+    audit_event("database.action", action="ban", record_type="person", outcome="success")
+    return f"Banned email: {email}"
+
+
+async def _cmd_unban(email: str) -> str:
+    email = email.strip().lower()
+    if not email:
+        return "Usage: ADMIN: unban <email>"
+    with get_session() as session:
+        existing = session.get(BannedEmail, email)
+        if not existing:
+            return f"Email {email} is not banned."
+        session.delete(existing)
+        session.commit()
+    audit_event("database.action", action="unban", record_type="person", outcome="success")
+    return f"Unbanned email: {email}"

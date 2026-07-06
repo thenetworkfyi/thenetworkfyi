@@ -75,10 +75,10 @@ class RateLimit(SQLModel, table=True):
 class ProcessedMessage(SQLModel, table=True):
     """Idempotency guard for inbound intake.
 
-    The IMAP \\Seen flag is cheap dedup only (see worker/producer.py) - it can
+    The IMAP \Seen flag is cheap dedup only (see worker/producer.py) - it can
     be cleared by a mail client, sync bug, or manual recovery step well after
     a message was already fully handled. This is the durable record that a
-    given Message-ID already got a `process_email` job, so a later \\Seen
+    given Message-ID already got a `process_email` job, so a later \Seen
     reset can't cause the agent to re-run, re-reply, or re-dispatch an
     introduction for the same physical email. See email/dedup.py.
     """
@@ -87,6 +87,18 @@ class ProcessedMessage(SQLModel, table=True):
 
     message_id: str = Field(primary_key=True)
     processed_at: datetime = Field(
+        default_factory=_utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class BannedEmail(SQLModel, table=True):
+    """Emails that are banned/blocked from using the system."""
+
+    __tablename__ = "banned_emails"
+
+    email: str = Field(primary_key=True)
+    created_at: datetime = Field(
         default_factory=_utcnow,
         sa_column=Column(DateTime(timezone=True), nullable=False),
     )
