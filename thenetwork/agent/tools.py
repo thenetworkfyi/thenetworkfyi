@@ -74,11 +74,21 @@ def _trace_kwargs(trace_id: str | None) -> dict[str, str]:
     return {"trace_id": trace_id} if trace_id else {}
 
 
-def _hit_daily_dispatch_cap(key: str, limit: int) -> bool:
+def _check_daily_dispatch_cap(key: str, limit: int) -> bool:
+    """Return whether `key` still has quota, without consuming any."""
     if limit <= 0:
         return False
     limiter, _ = _get_dispatch_limiter()
-    return limiter.hit(parse(f"{limit}/day"), key)
+    return limiter.test(parse(f"{limit}/day"), key)
+
+
+def _consume_daily_dispatch_cap(key: str, limit: int) -> None:
+    """Consume one unit of `key`'s quota. Call only after the send succeeds -
+    a crashed/retried job must not have already burned the cap."""
+    if limit <= 0:
+        return
+    limiter, _ = _get_dispatch_limiter()
+    limiter.hit(parse(f"{limit}/day"), key)
 
 
 def _get_registration_limiter() -> tuple[strategies.MovingWindowRateLimiter, object]:
@@ -464,6 +474,7 @@ async def dispatch_email(
 
         with _get_session(ctx) as session:
             person = session.get(Person, recipient_user_id)
+            to_address = person.email if person is not None else None
 
         audit_event(
             "database.action",
@@ -471,30 +482,29 @@ async def dispatch_email(
             record_type="person",
             outcome="found" if person is not None else "not_found",
         )
-        if person is None:
+        if person is None or to_address is None:
             return _tool_result({
                 "status": "error",
                 "reason": "recipient_not_found",
             })
 
+        is_sender_reply = recipient_user_id == ctx.deps.sender_user_id
         recipient_daily_cap = _cap(s.dispatch_recipient_daily_cap)
-        if not _hit_daily_dispatch_cap(
-            f"dispatch:recipient:{recipient_user_id}",
-            recipient_daily_cap,
-        ):
+        recipient_cap_key = f"dispatch:recipient:{recipient_user_id}"
+        if not _check_daily_dispatch_cap(recipient_cap_key, recipient_daily_cap):
             return _tool_result(_limited("recipient_daily_cap", recipient_daily_cap))
 
         sender_reply_daily_cap = _cap(s.dispatch_sender_reply_daily_cap)
-        if recipient_user_id == ctx.deps.sender_user_id and not _hit_daily_dispatch_cap(
-            f"dispatch:sender-reply:{recipient_user_id}",
-            sender_reply_daily_cap,
+        sender_reply_cap_key = f"dispatch:sender-reply:{recipient_user_id}"
+        if is_sender_reply and not _check_daily_dispatch_cap(
+            sender_reply_cap_key, sender_reply_daily_cap
         ):
             return _tool_result(
                 _limited("sender_reply_daily_cap", sender_reply_daily_cap)
             )
 
         thread_headers = {}
-        if recipient_user_id == ctx.deps.sender_user_id and ctx.deps.inbound_message_id:
+        if is_sender_reply and ctx.deps.inbound_message_id:
             thread_headers = _direct_reply_kwargs(
                 inbound_message_id=ctx.deps.inbound_message_id,
                 inbound_body_for_quote=ctx.deps.inbound_body_for_quote,
@@ -503,12 +513,20 @@ async def dispatch_email(
             )
 
         send_reply(
-            to_address=person.email,
+            to_address=to_address,
             subject=subject,
             body_text=body_text,
             body_html=body_html,
             **_trace_kwargs(ctx.deps.trace_id),
             **thread_headers,
         )
+
+        # Only burn cap quota once the send has actually succeeded, so a
+        # failed attempt (and its Procrastinate retry) isn't rate-limited
+        # out of ever replying.
+        _consume_daily_dispatch_cap(recipient_cap_key, recipient_daily_cap)
+        if is_sender_reply:
+            _consume_daily_dispatch_cap(sender_reply_cap_key, sender_reply_daily_cap)
+
         ctx.deps.dispatch_email_sent_count += 1
         return _tool_result({"status": "sent"})
