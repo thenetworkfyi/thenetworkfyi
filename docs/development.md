@@ -62,7 +62,7 @@ build time; for local worker runs outside Docker, install the same model with
 ## Migrations
 
 Alembic. The `vector` extension is created idempotently inside a migration, so
-`alembic upgrade head` is the only setup step needed against a fresh DB. The Docker
+`uv run alembic upgrade head` is the only setup step needed against a fresh DB. The Docker
 entrypoint runs it on every deploy, so migrations apply automatically. Add migrations
 under `alembic/versions/`.
 
@@ -92,7 +92,7 @@ under `alembic/versions/`.
   and `live_model` (both declared in `pyproject.toml`) and the module skips itself if no
   `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` is set, so `pytest -m "not integration"` (CI) never
   reaches a live model. Run deliberately with
-  `pytest -m live_model tests/scenarios/test_live_archetypes.py`.
+  `uv run pytest -m live_model tests/scenarios/test_live_archetypes.py`.
 
 ## Deployment
 

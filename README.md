@@ -251,8 +251,8 @@ runs the hourly proactive scan (`scan_for_opportunities`) - no separate producer
 process is needed.
 
 ```bash
-thenetwork-worker            # long-running: intake + processing + scans
-thenetwork-producer          # optional: one manual IMAP poll cycle
+uv run thenetwork-worker            # long-running: intake + processing + scans
+uv run thenetwork-producer          # optional: one manual IMAP poll cycle
 ```
 
 ---
@@ -312,8 +312,8 @@ container; install it as a host cron job (example invocation is in the script).
 ## Tests
 
 ```bash
-pytest                       # full suite
-pytest -m "not integration"  # skip tests that need a live pgvector DB
+uv run pytest                       # full suite
+uv run pytest -m "not integration"  # skip tests that need a live pgvector DB
 ```
 
 - `tests/security/` - the SEAL red-team and security contracts
