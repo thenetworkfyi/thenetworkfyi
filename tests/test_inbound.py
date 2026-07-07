@@ -19,13 +19,18 @@ from thenetwork.email import inbound
 from thenetwork.settings import Settings
 
 
-def _settings() -> Settings:
+def _settings(
+    *,
+    require_sender_auth: bool = False,
+    trusted_authserv_id: str = "",
+) -> Settings:
     return Settings(
         imap_account="agent@example.com",
         imap_password="secret",
         imap_host="imap.example.com",
         imap_port=993,
-        require_sender_auth=False,
+        require_sender_auth=require_sender_auth,
+        trusted_authserv_id=trusted_authserv_id,
     )
 
 
@@ -225,6 +230,67 @@ def test_poll_unseen_mints_opaque_trace_ids(fake_mailbox: _FakeMailBox):
     for message in messages:
         parsed = UUID(message.trace_id, version=4)
         assert str(parsed) == message.trace_id
+
+
+def test_poll_unseen_accepts_purelymail_auth_pass(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_mailbox: _FakeMailBox,
+):
+    monkeypatch.setattr(
+        inbound,
+        "get_settings",
+        lambda: _settings(
+            require_sender_auth=True, trusted_authserv_id="purelymail.com"
+        ),
+    )
+    fake_mailbox.fetch.return_value = [
+        _fake_message(
+            headers={"authentication-results": ["purelymail.com; auth=pass"]}
+        )
+    ]
+
+    messages = inbound.poll_unseen()
+
+    assert len(messages) == 1
+    assert messages[0].sender_authenticated is True
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        "mx.example.com; dkim=pass header.d=example.com",
+        "mx.example.com; spf=pass smtp.mailfrom=example.com",
+        "mx.example.com; auth=pass",
+    ],
+)
+def test_is_sender_authenticated_accepts_passing_verdicts(
+    monkeypatch: pytest.MonkeyPatch,
+    header: str,
+):
+    monkeypatch.setattr(
+        inbound, "get_settings", lambda: _settings(require_sender_auth=True)
+    )
+    msg = SimpleNamespace(headers={"authentication-results": [header]})
+
+    assert inbound._is_sender_authenticated(msg) is True
+
+
+def test_is_sender_authenticated_uses_nearest_authentication_results(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        inbound, "get_settings", lambda: _settings(require_sender_auth=True)
+    )
+    msg = SimpleNamespace(
+        headers={
+            "authentication-results": [
+                "mx.example.com; auth=fail",
+                "mx.example.com; auth=pass",
+            ]
+        }
+    )
+
+    assert inbound._is_sender_authenticated(msg) is False
 
 
 def test_poll_unseen_does_not_reject_near_empty_body(fake_mailbox: _FakeMailBox):

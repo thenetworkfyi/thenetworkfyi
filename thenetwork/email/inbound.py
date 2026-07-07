@@ -21,7 +21,7 @@ MIN_BODY_TEXT_CHARS = 3
 REJECT_BODY_EMPTY = "body_empty"
 REJECT_BODY_OVERSIZE = "body_oversize"
 
-_AUTH_RESULT_RE = re.compile(r"\b(dkim|spf)=(\w+)", re.IGNORECASE)
+_AUTH_RESULT_RE = re.compile(r"\b(dkim|spf|auth)=(\w+)", re.IGNORECASE)
 _AUTHSERV_ID_RE = re.compile(r"^\s*([^;]+)")
 
 _HTML_HIDDEN_ELEMENTS = ("head", "script", "style", "template", "title")
@@ -36,10 +36,10 @@ class InboundMessage:
     # RFC 3834 loop prevention headers, if present
     auto_submitted: str | None
     # True if the receiving mail server's own Authentication-Results header
-    # reports dkim=pass or spf=pass for this message. The From: header alone
-    # is spoofable (imap-tools has no access to the SMTP envelope), so
-    # callers must not trust `sender` for identity resolution unless this
-    # is True.
+    # reports dkim=pass, spf=pass, or auth=pass for this message. The From:
+    # header alone is spoofable (imap-tools has no access to the SMTP
+    # envelope), so callers must not trust `sender` for identity resolution
+    # unless this is True.
     sender_authenticated: bool
     # From: header display name (e.g. "First Last" in "First Last
     # <first.last@gmail.com>"), if any. Untrusted like the body/subject - the
@@ -126,7 +126,7 @@ def _html_to_text(html: str) -> str:
 
 
 def _is_sender_authenticated(msg) -> bool:
-    """True if the receiving server vouches for this message's DKIM/SPF.
+    """True if the receiving server vouches for this message's sender auth.
 
     Trusts only the Authentication-Results header nearest the top of the
     message - the one added last, by our own receiving MTA - since every
@@ -150,8 +150,11 @@ def _is_sender_authenticated(msg) -> bool:
         if authserv_id.lower() != s.trusted_authserv_id.lower():
             return False
 
-    verdicts = {mech.lower(): result.lower() for mech, result in _AUTH_RESULT_RE.findall(header_value)}
-    return verdicts.get("dkim") == "pass" or verdicts.get("spf") == "pass"
+    verdicts = {
+        mech.lower(): result.lower()
+        for mech, result in _AUTH_RESULT_RE.findall(header_value)
+    }
+    return any(verdicts.get(mech) == "pass" for mech in ("dkim", "spf", "auth"))
 
 
 def _is_auto_message(msg) -> bool:

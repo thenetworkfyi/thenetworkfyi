@@ -106,13 +106,13 @@ class Settings(BaseSettings):
     # Sender authentication: the From: header alone is spoofable (no envelope
     # check happens over IMAP), so trust it for Person resolution / self-
     # registration only when the receiving mail server's own
-    # Authentication-Results header reports dkim=pass or spf=pass. Disable
-    # only for dev/test environments where inbound mail carries no such
+    # Authentication-Results header reports dkim=pass, spf=pass, or auth=pass.
+    # Disable only for dev/test environments where inbound mail carries no such
     # header. If trusted_authserv_id is set, only an Authentication-Results
     # header whose authserv-id matches is considered (defense against an
-    # untrusted intermediate relay forging the header); left blank, the
-    # header closest to the top of the message (added last, i.e. by your own
-    # receiving server) is trusted.
+    # untrusted intermediate relay forging the header); left blank, the header
+    # closest to the top of the message (added last, i.e. by your own receiving
+    # server) is trusted.
     require_sender_auth: bool = True
     trusted_authserv_id: str = ""
 
