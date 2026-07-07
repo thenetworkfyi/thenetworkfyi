@@ -19,6 +19,7 @@ round trip - the substrate under test here is model reasoning, not the store.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -204,6 +205,34 @@ class ForgotExactly(Evaluator[EmailScenario, RunOutcome, object]):
         return sorted(ctx.output.forget_attempts) == sorted(self.memory_ids)
 
 
+# Matches a trailing valediction ("Best,\nAlex") or a bare dashed signature
+# ("- Sam") at the end of a dispatched body: identity is supposed to come only
+# from the growth footer attached at send time (thenetwork/email/outbound.py),
+# never from a name the model invents for itself in the reply text.
+_SIGNOFF_RE = re.compile(
+    r"(?im)"
+    r"(^[ \t]*(best|regards|sincerely|cheers|warmly|thanks|thank you|"
+    r"best regards|kind regards|talk soon|take care)[,!]?[ \t]*\n+"
+    r"[ \t]*[A-Z][a-zA-Z.'-]*[ \t]*$"
+    r"|"
+    r"^[ \t]*[-—]{1,2}[ \t]*[A-Z][a-zA-Z.'-]*[ \t]*$)"
+)
+
+
+@dataclass(repr=False)
+class NoPersonalSignoff(Evaluator[EmailScenario, RunOutcome, object]):
+    """The reply must never end with an invented personal sign-off/name.
+
+    The growth footer (mailer-level, appended after the model's text) is the
+    only place The Network's identity is attached to outbound mail - the
+    model's own reply text should not add "Best, <name>" or similar.
+    """
+
+    def evaluate(self, ctx: EvaluatorContext[EmailScenario, RunOutcome, object]) -> bool:
+        bodies = [ctx.output.reply] + [d["body"] for d in ctx.output.dispatched]
+        return not any(_SIGNOFF_RE.search(body) for body in bodies if body)
+
+
 # ---------------------------------------------------------------------------
 # The archetypes
 # ---------------------------------------------------------------------------
@@ -223,6 +252,7 @@ onboarding_case = Case(
     ),
     evaluators=(
         ToolWasCalled("register_person"),
+        NoPersonalSignoff(),
         LLMJudge(
             rubric=(
                 "The agent is meeting a brand-new, authenticated sender for "
@@ -239,7 +269,10 @@ onboarding_case = Case(
                 "expectation-setting boilerplate that reads like a line "
                 "lifted verbatim from internal instructions (e.g. 'that's "
                 "normal, not a bad sign') rather than something a person "
-                "would actually say."
+                "would actually say. The reply must not close with a personal "
+                "sign-off or invented name (e.g. \"Best, Alex\") - The "
+                "Network has no personal name, and identity is attached only "
+                "by a footer added at send time."
             ),
             include_input=True,
         ),
@@ -298,6 +331,7 @@ strong_match_case = Case(
     ),
     evaluators=(
         ToolWasCalled("dispatch_email"),
+        NoPersonalSignoff(),
         LLMJudge(
             rubric=(
                 "There is a clear, specific overlap between the sender and "
@@ -415,6 +449,7 @@ removal_case = Case(
         ToolWasCalled("forget"),
         ToolWasCalled("dispatch_email"),
         ForgotExactly(("mem-maya-1", "mem-maya-2")),
+        NoPersonalSignoff(),
         LLMJudge(
             rubric=(
                 "The sender is a known authenticated member asking to remove "
