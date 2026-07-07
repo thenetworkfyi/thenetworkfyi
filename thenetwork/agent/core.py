@@ -59,6 +59,7 @@ async def run_agent_for_email(
     email_subject: str,
     email_body: str,
     sender_authenticated: bool = False,
+    sender_display_name: str | None = None,
     inbound_message_id: str | None = None,
     inbound_references: str | None = None,
     inbound_body_for_quote: str | None = None,
@@ -95,7 +96,10 @@ async def run_agent_for_email(
             request_limit=settings.agent_request_limit,
             total_tokens_limit=settings.agent_total_tokens_limit,
         )
-        user_message = f"Subject: {email_subject}\n\n{email_body}"
+        sender_name_line = (
+            f"From display name: {sender_display_name}\n" if sender_display_name else ""
+        )
+        user_message = f"{sender_name_line}Subject: {email_subject}\n\n{email_body}"
         audit_event(
             "agent.prompt_constructed",
             sender_known=sender_user_id is not None,

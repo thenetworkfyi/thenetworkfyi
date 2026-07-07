@@ -198,6 +198,7 @@ async def process_email(
     subject: str,
     body: str,
     sender_authenticated: bool = False,
+    sender_display_name: str | None = None,
     raw_message_b64: str | None = None,
     inbound_message_id: str | None = None,
     inbound_references: str | None = None,
@@ -351,6 +352,7 @@ async def process_email(
             "sender_authenticated": sender_authenticated,
             "email_subject": subject,
             "email_body": body,
+            "sender_display_name": sender_display_name,
         }
         if trace_id:
             agent_kwargs["trace_id"] = trace_id

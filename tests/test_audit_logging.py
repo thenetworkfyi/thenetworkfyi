@@ -592,6 +592,7 @@ def test_intake_logs_header_metadata_without_values(caplog):
         subject=message.subject,
         body=message.body,
         sender_authenticated=message.sender_authenticated,
+        sender_display_name=message.sender_display_name,
         raw_message_b64=None,
         trace_id=message.trace_id,
     )
@@ -634,6 +635,7 @@ def test_intake_enqueues_inbound_message_id_when_present(caplog):
         subject=message.subject,
         body=message.body,
         sender_authenticated=message.sender_authenticated,
+        sender_display_name=message.sender_display_name,
         raw_message_b64=None,
         trace_id=message.trace_id,
         inbound_message_id=message.message_id,

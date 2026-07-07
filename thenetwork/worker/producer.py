@@ -70,6 +70,7 @@ def _poll_and_enqueue() -> int:
                     "subject": msg.subject,
                     "body": msg.body,
                     "sender_authenticated": msg.sender_authenticated,
+                    "sender_display_name": msg.sender_display_name,
                     "raw_message_b64": raw_message_b64,
                     "trace_id": msg.trace_id,
                 }
