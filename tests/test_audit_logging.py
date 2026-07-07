@@ -90,6 +90,26 @@ def test_audit_categories_replace_arbitrary_values(caplog):
     assert "private_secret" not in caplog.records[0].message
 
 
+def test_audit_event_level_split_error_vs_expected_negative_outcomes(caplog):
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    audit_event("test.error_outcome", outcome="error")
+    audit_event("test.error_type_only", error_type="ValueError")
+    audit_event("test.rate_limited", outcome="rate_limited")
+    audit_event("test.rejected", outcome="rejected_forbidden")
+    audit_event("test.not_found", outcome="not_found")
+    audit_event("test.tool_limited", tool_outcome="limited")
+
+    levels_by_event = {record.message and json.loads(record.message)["event"]: record.levelname
+                        for record in caplog.records}
+    assert levels_by_event["test.error_outcome"] == "ERROR"
+    assert levels_by_event["test.error_type_only"] == "ERROR"
+    assert levels_by_event["test.rate_limited"] == "INFO"
+    assert levels_by_event["test.rejected"] == "INFO"
+    assert levels_by_event["test.not_found"] == "INFO"
+    assert levels_by_event["test.tool_limited"] == "INFO"
+
+
 def test_audit_trace_correlates_events_without_content(caplog):
     from thenetwork.audit import audit_sender, audit_trace
 
@@ -318,6 +338,11 @@ async def test_agent_usage_limit_breach_is_audited_without_raising(caplog):
         and event["error_type"] == "FakeUsageLimitExceeded"
         for event in _events(caplog)
     )
+    error_record = next(
+        record for record in caplog.records
+        if json.loads(record.message)["event"] == "agent.usage_limit_exceeded"
+    )
+    assert error_record.levelname == "ERROR"
 
 
 @pytest.mark.asyncio
