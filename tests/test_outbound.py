@@ -235,7 +235,7 @@ def test_send_reply_plain_text_only_quote_stays_singlepart():
     assert "On an earlier message, you wrote:" in msg.get_content()
 
 
-def test_send_reply_places_quoted_trail_before_growth_footer():
+def test_send_reply_places_growth_footer_before_quoted_trail():
     from thenetwork.email.outbound import send_reply
 
     captured = []
@@ -260,9 +260,9 @@ def test_send_reply_places_quoted_trail_before_growth_footer():
 
     plain = captured[0].get_content()
     reply_index = plain.index("Hello")
-    quote_index = plain.index("On Sat, 04 Jul 2026 12:00:00 -0700, you wrote:")
     footer_index = plain.index("--\nThe Network.")
-    assert reply_index < quote_index < footer_index
+    quote_index = plain.index("On Sat, 04 Jul 2026 12:00:00 -0700, you wrote:")
+    assert reply_index < footer_index < quote_index
 
 
 def test_append_failure_does_not_propagate():
