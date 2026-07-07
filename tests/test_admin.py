@@ -354,6 +354,11 @@ def test_process_email_routes_admin_to_handler():
     mock_send = MagicMock()
     verified_cleartext = "COMMAND: status\n"
 
+    mock_session = MagicMock()
+    mock_session.__enter__ = MagicMock(return_value=mock_session)
+    mock_session.__exit__ = MagicMock(return_value=False)
+    mock_session.exec.return_value.first.return_value = None
+
     with patch("thenetwork.worker.tasks.check_rate_limit", return_value=True), \
          patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)), \
          patch("thenetwork.worker.tasks.verify_admin_request", return_value=verified_cleartext), \
@@ -361,6 +366,7 @@ def test_process_email_routes_admin_to_handler():
          patch("thenetwork.worker.tasks.extract_body_text", return_value=""), \
          patch("thenetwork.worker.tasks.handle_admin_command", mock_reply), \
          patch("thenetwork.worker.tasks.send_reply", mock_send), \
+         patch("thenetwork.worker.tasks.get_session", return_value=mock_session), \
          patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()) as mock_agent:
         asyncio.run(process_email.func(
             sender_email="admin@example.com",
@@ -688,9 +694,9 @@ async def test_process_email_drops_banned_email_without_reply():
     cm.__enter__ = MagicMock(return_value=session)
     cm.__exit__ = MagicMock(return_value=False)
 
-    with patch("thenetwork.worker.tasks.check_rate_limit", return_value=True), \
-         patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)), \
-         patch("thenetwork.worker.tasks.verify_admin_request", return_value=None), \
+    with patch("thenetwork.worker.tasks.check_rate_limit", return_value=True) as mock_rate_limit, \
+         patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)) as mock_scan, \
+         patch("thenetwork.worker.tasks.verify_admin_request", return_value=None) as mock_admin, \
          patch("thenetwork.worker.tasks.get_session", return_value=cm), \
          patch("thenetwork.worker.tasks.send_reply", mock_send_reply), \
          patch("thenetwork.worker.tasks.audit_event") as mock_audit, \
@@ -708,6 +714,12 @@ async def test_process_email_drops_banned_email_without_reply():
         "worker.message_rejected",
         reason="banned",
     )
+    # The banned check must be the first gate: a banned sender never
+    # consumes rate-limit quota, is never content-scanned, and a banned
+    # admin's signed command is never even inspected.
+    mock_rate_limit.assert_not_called()
+    mock_scan.assert_not_called()
+    mock_admin.assert_not_called()
 
 
 @pytest.mark.asyncio

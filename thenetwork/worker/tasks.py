@@ -229,6 +229,14 @@ async def process_email(
         body_chars=original_body_chars,
         sender_authenticated=sender_authenticated,
     ):
+        with get_session() as session:
+            banned = session.get(
+                BannedEmail, normalize_rate_limit_identity(sender_email)
+            )
+            if banned and isinstance(banned, BannedEmail):
+                audit_event("worker.message_rejected", reason="banned")
+                return
+
         try:
             body = cap_body(body)
         except BodyTooLargeError:
@@ -336,12 +344,6 @@ async def process_email(
                 reason="unauthenticated_unknown_sender",
             )
             return
-
-        with get_session() as session:
-            banned = session.get(BannedEmail, normalize_rate_limit_identity(sender_email))
-            if banned and isinstance(banned, BannedEmail):
-                audit_event("worker.message_rejected", reason="banned")
-                return
 
         agent_kwargs = {
             "sender_email": sender_email,
