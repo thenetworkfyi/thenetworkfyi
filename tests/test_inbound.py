@@ -8,6 +8,8 @@ or deleting inbound mail.
 """
 from __future__ import annotations
 
+import json
+import logging
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 from uuid import UUID
@@ -15,6 +17,7 @@ from uuid import UUID
 import pytest
 from imap_tools import MailMessageFlags
 
+from thenetwork.audit import LOGGER_NAME
 from thenetwork.email import inbound
 from thenetwork.settings import Settings
 
@@ -97,6 +100,14 @@ def _assert_never_mutates_inbox(box: _FakeMailBox) -> None:
     box.delete.assert_not_called()
     box.expunge.assert_not_called()
     box.copy.assert_not_called()
+
+
+def _audit_events(caplog) -> list[dict]:
+    return [
+        json.loads(record.message)
+        for record in caplog.records
+        if record.name == LOGGER_NAME
+    ]
 
 
 def test_poll_unseen_fetches_with_mark_seen_false(fake_mailbox: _FakeMailBox):
@@ -291,6 +302,65 @@ def test_is_sender_authenticated_uses_nearest_authentication_results(
     )
 
     assert inbound._is_sender_authenticated(msg) is False
+
+
+def test_is_sender_authenticated_warns_once_for_unrecognized_auth_header(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog,
+):
+    inbound._WARNED_UNRECOGNIZED_AUTH_RESULTS.clear()
+    monkeypatch.setattr(
+        inbound, "get_settings", lambda: _settings(require_sender_auth=True)
+    )
+    caplog.set_level(logging.WARNING, logger=LOGGER_NAME)
+    msg = SimpleNamespace(
+        headers={
+            "authentication-results": [
+                "mx.example.com; arc=pass x-provider=pass user=alice@example.com"
+            ]
+        }
+    )
+
+    assert inbound._is_sender_authenticated(msg) is False
+    assert inbound._is_sender_authenticated(msg) is False
+
+    events = _audit_events(caplog)
+    assert len(events) == 1
+    assert events[0]["event"] == "email.auth_header_unrecognized"
+    assert events[0]["authserv_id"] == "mx.example.com"
+    assert events[0]["auth_result_mechanisms"] == [
+        "arc",
+        "user",
+        "x-provider",
+    ]
+    assert caplog.records[0].levelname == "WARNING"
+    assert "alice@example.com" not in caplog.records[0].message
+    assert "arc=pass" not in caplog.records[0].message
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        "mx.example.com; dkim=fail header.d=example.com",
+        "mx.example.com; spf=none smtp.mailfrom=example.com",
+        "mx.example.com; auth=fail",
+    ],
+)
+def test_is_sender_authenticated_does_not_warn_for_known_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog,
+    header: str,
+):
+    inbound._WARNED_UNRECOGNIZED_AUTH_RESULTS.clear()
+    monkeypatch.setattr(
+        inbound, "get_settings", lambda: _settings(require_sender_auth=True)
+    )
+    caplog.set_level(logging.WARNING, logger=LOGGER_NAME)
+    msg = SimpleNamespace(headers={"authentication-results": [header]})
+
+    assert inbound._is_sender_authenticated(msg) is False
+
+    assert _audit_events(caplog) == []
 
 
 def test_poll_unseen_does_not_reject_near_empty_body(fake_mailbox: _FakeMailBox):

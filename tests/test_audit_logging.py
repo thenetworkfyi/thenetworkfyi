@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from thenetwork.audit import LOGGER_NAME, audit_event, audit_run
+from thenetwork.audit import LOGGER_NAME, audit_event, audit_run, audit_warning_event
 
 
 def _events(caplog) -> list[dict]:
@@ -108,6 +108,22 @@ def test_audit_event_level_split_error_vs_expected_negative_outcomes(caplog):
     assert levels_by_event["test.rejected"] == "INFO"
     assert levels_by_event["test.not_found"] == "INFO"
     assert levels_by_event["test.tool_limited"] == "INFO"
+
+
+def test_audit_warning_event_uses_warning_level(caplog):
+    caplog.set_level(logging.WARNING, logger=LOGGER_NAME)
+
+    audit_warning_event(
+        "test.warning",
+        authserv_id="mx.example.com",
+        auth_result_mechanisms=["arc", "x-provider"],
+    )
+
+    event = _events(caplog)[0]
+    assert event["event"] == "test.warning"
+    assert event["authserv_id"] == "mx.example.com"
+    assert event["auth_result_mechanisms"] == ["arc", "x-provider"]
+    assert caplog.records[0].levelname == "WARNING"
 
 
 def test_audit_trace_correlates_events_without_content(caplog):
