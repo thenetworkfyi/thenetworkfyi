@@ -227,11 +227,14 @@ onboarding_case = Case(
             rubric=(
                 "The agent is meeting a brand-new, authenticated sender for "
                 "the first time. A reasonable response registers them and "
-                "acknowledges what they shared, says that outreach happens "
-                "only when a genuinely relevant person appears and may take "
-                "a while, notes that their words are not shown to others "
-                "beyond an anonymized summary, and does not promise a match "
-                "or timeline."
+                "replies like a person: it engages with the substance of "
+                "what they shared in its own words rather than reciting "
+                "their note back as a list, sets the expectation that "
+                "outreach happens only when someone genuinely relevant "
+                "appears and may take a while, and does not promise a match "
+                "or a timeline. It must not read as a form letter; a robotic "
+                "privacy disclaimer is a flaw, though a natural, light "
+                "mention of discretion/anonymity is fine."
             ),
             include_input=True,
         ),
