@@ -416,7 +416,11 @@ async def test_agent_trace_logs_structure_but_never_content(caplog):
             SimpleNamespace(
                 parts=[
                     SimpleNamespace(part_kind="thinking", content=secrets["thought"]),
-                    SimpleNamespace(part_kind="tool-call", args=secrets["tool_args"]),
+                    SimpleNamespace(
+                        part_kind="tool-call",
+                        tool_name="search",
+                        args=secrets["tool_args"],
+                    ),
                 ]
             )
         ],
@@ -448,6 +452,7 @@ async def test_agent_trace_logs_structure_but_never_content(caplog):
     } <= event_names
     trace = next(event for event in events if event["event"] == "agent.model_trace")
     assert trace["part_kinds"] == ["thinking", "tool-call"]
+    assert trace["tool_names"] == ["search"]
 
 
 @pytest.mark.asyncio
