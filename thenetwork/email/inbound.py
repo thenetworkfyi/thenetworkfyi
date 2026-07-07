@@ -14,6 +14,7 @@ from thenetwork.settings import get_settings
 
 
 MAX_SUBJECT_CHARS = 300
+MAX_SENDER_NAME_CHARS = 300
 MAX_BODY_CHARS = 10_000
 MAX_RAW_BODY_CHARS = 100_000
 MIN_BODY_TEXT_CHARS = 3
@@ -40,6 +41,11 @@ class InboundMessage:
     # callers must not trust `sender` for identity resolution unless this
     # is True.
     sender_authenticated: bool
+    # From: header display name (e.g. "First Last" in "First Last
+    # <first.last@gmail.com>"), if any. Untrusted like the body/subject - the
+    # From: header alone is spoofable and imap-tools does no verification of
+    # it.
+    sender_display_name: str | None = None
     message_id: str | None = None
     message_references: str | None = None
     message_date: str | None = None
@@ -81,6 +87,17 @@ class BodyTooLargeError(ValueError):
 def cap_subject(subject: str | None) -> str:
     """Return a subject bounded for audit, queues, and model context."""
     return (subject or "")[:MAX_SUBJECT_CHARS]
+
+
+def cap_sender_name(name: str | None) -> str | None:
+    """Return a stripped, length-bounded From: display name, or None.
+
+    imap-tools' EmailAddress.name falls back to '' (not None) when the
+    header carries no display name, so this normalizes that case to None
+    for callers.
+    """
+    name = (name or "").strip()
+    return name[:MAX_SENDER_NAME_CHARS] or None
 
 
 def is_near_empty_body(body: str) -> bool:
@@ -186,6 +203,7 @@ def poll_unseen() -> list[InboundMessage]:
             message_references = clean_references(_first_header(msg, "references"))
             message_date = _first_header(msg, "date")
             subject = cap_subject(msg.subject)
+            sender_display_name = cap_sender_name(msg.from_values.name if msg.from_values else None)
             # Only admin-looking subjects need the raw bytes (PGP/MIME
             # verification in admin/auth.py); everything else discards them
             # to avoid holding the full raw message in memory.
@@ -199,6 +217,7 @@ def poll_unseen() -> list[InboundMessage]:
                         sender=msg.from_,
                         subject=subject,
                         body="",
+                        sender_display_name=sender_display_name,
                         message_id=message_id,
                         message_references=message_references,
                         message_date=message_date,
@@ -221,6 +240,7 @@ def poll_unseen() -> list[InboundMessage]:
                     sender=msg.from_,
                     subject=subject,
                     body=body,
+                    sender_display_name=sender_display_name,
                     message_id=message_id,
                     message_references=message_references,
                     message_date=message_date,
