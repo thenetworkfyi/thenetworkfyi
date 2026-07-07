@@ -231,16 +231,16 @@ CONTENT_SCAN_ENABLED=false
 ### 2. Install
 
 ```bash
-pip install -e .
+uv pip install -e .
 # optional content scanner:
-# pip install -e ".[content-scan]"
+# uv pip install -e ".[content-scan]"
 ```
 
 ### 3. Start Postgres and apply migrations
 
 ```bash
 docker compose up -d db        # local pgvector/pgvector:pg17
-alembic upgrade head           # creates the vector extension + tables
+uv run alembic upgrade head     # creates the vector extension + tables
 ```
 
 ### 4. Run the worker
