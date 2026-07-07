@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+from email.utils import parsedate_to_datetime
 from unittest.mock import MagicMock, patch
 
 from imap_tools import MailMessageFlags
@@ -111,6 +112,41 @@ def test_append_receives_exact_composed_message():
     args, _ = mb_instance.append.call_args
     appended_bytes = args[0]
     assert appended_bytes == captured[0].as_bytes()
+
+
+def test_send_reply_sets_date_and_message_id_headers():
+    """The built message must carry parseable Date/Message-ID headers so the
+    SMTP-sent copy and the IMAP Sent append (verbatim bytes of the same
+    message) both show a date and can thread, instead of relying on the
+    submission MTA to stamp Date."""
+    from thenetwork.email.outbound import send_reply
+
+    captured = []
+    smtp_instance = _mock_smtp()
+    smtp_instance.send_message.side_effect = lambda msg: captured.append(msg)
+
+    mock_mailbox, mb_instance = _mock_mailbox_success()
+
+    with patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()), \
+         patch("smtplib.SMTP", return_value=smtp_instance), \
+         patch("thenetwork.email.outbound.MailBox", mock_mailbox):
+        send_reply(to_address="bob@example.com", subject="Hi", body_text="Hello", include_footer=False)
+
+    sent_msg = captured[0]
+    assert sent_msg["Date"] is not None
+    # Must be parseable per RFC 2822/5322, not just a non-empty string.
+    parsedate_to_datetime(sent_msg["Date"])
+
+    assert sent_msg["Message-ID"] is not None
+    message_id = sent_msg["Message-ID"]
+    assert message_id.startswith("<") and message_id.endswith(">")
+
+    # The IMAP Sent append must carry the identical headers, since it is the
+    # verbatim bytes of the same message object.
+    args, _ = mb_instance.append.call_args
+    appended_bytes = args[0]
+    assert f"Date: {sent_msg['Date']}".encode() in appended_bytes
+    assert f"Message-ID: {message_id}".encode() in appended_bytes
 
 
 def test_send_reply_appends_plain_text_quoted_trail():

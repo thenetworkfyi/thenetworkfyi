@@ -4,6 +4,7 @@ from __future__ import annotations
 from html import escape
 import smtplib
 from email.message import EmailMessage
+from email.utils import formatdate, make_msgid
 from time import monotonic
 
 from imap_tools import MailBox, MailMessageFlags
@@ -234,6 +235,8 @@ def send_reply(
         msg["From"] = s.email_from
         msg["To"] = to_address
         msg["Subject"] = subject
+        msg["Date"] = formatdate(localtime=True)
+        msg["Message-ID"] = make_msgid()
         # RFC 3834 §3.1.7 - auto-replied for automatic responses to inbound mail
         msg["Auto-Submitted"] = "auto-replied"
 
