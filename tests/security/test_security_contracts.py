@@ -318,6 +318,95 @@ async def test_dispatch_unknown_id_returns_error():
     assert result["status"] == "error"
 
 
+class _ExpiringPerson:
+    """Mimics a real SQLModel/SQLAlchemy instance with expire_on_commit=True:
+    attribute access raises once the owning session has committed and closed,
+    exactly like `get_session`'s `with` block does on exit."""
+
+    def __init__(self, email: str):
+        self._email = email
+        self.detached = False
+
+    @property
+    def email(self) -> str:
+        if self.detached:
+            from sqlalchemy.orm.exc import DetachedInstanceError
+
+            raise DetachedInstanceError(
+                "Instance is not bound to a Session; attribute access operation "
+                "cannot proceed"
+            )
+        return self._email
+
+
+@pytest.mark.asyncio
+async def test_dispatch_reads_address_before_session_closes():
+    """Regression: the recipient address must be captured inside the session
+    block. Reading person.email after the `with` block exits hits
+    expire_on_commit and raises DetachedInstanceError before send_reply."""
+    _reset_dispatch_limiter()
+    person = _ExpiringPerson("bob@example.com")
+    ctx = FakeCtx()
+    ctx._mock_sess.get.return_value = person
+
+    real_exit = ctx._mock_sess.__exit__
+
+    def _exit_and_detach(*args):
+        person.detached = True
+        return real_exit(*args)
+
+    ctx._mock_sess.__exit__ = MagicMock(side_effect=_exit_and_detach)
+
+    with patch("thenetwork.agent.tools.send_reply") as mock_send:
+        result = await dispatch_email(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
+
+    assert result["status"] == "sent"
+    assert mock_send.call_args.kwargs["to_address"] == "bob@example.com"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_failed_send_does_not_consume_recipient_daily_cap():
+    """A crashed send must not burn the recipient's daily cap - otherwise a
+    Procrastinate retry of the same job gets rate-limited into no reply."""
+    _reset_dispatch_limiter()
+    ctx = FakeCtx()
+    ctx.deps.settings.dispatch_recipient_daily_cap = 1
+    ctx.deps.settings.dispatch_sender_reply_daily_cap = 99
+    ctx._mock_sess.get.return_value = _fake_person()
+
+    with patch("thenetwork.agent.tools.send_reply", side_effect=RuntimeError("smtp down")):
+        with pytest.raises(RuntimeError):
+            await dispatch_email(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
+
+    with patch("thenetwork.agent.tools.send_reply") as mock_send:
+        result = await dispatch_email(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
+
+    assert result["status"] == "sent"
+    mock_send.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_failed_send_does_not_consume_sender_reply_daily_cap():
+    """Same as above for the sender-reply cap (limit 1 by default) - this is
+    the exact production failure: a crashed reply attempt must not leave the
+    retry with no way to answer the sender."""
+    _reset_dispatch_limiter()
+    ctx = FakeCtx(sender_email="alice@example.com", sender_user_id="user-alice")
+    ctx.deps.settings.dispatch_recipient_daily_cap = 99
+    ctx.deps.settings.dispatch_sender_reply_daily_cap = 1
+    ctx._mock_sess.get.return_value = _fake_person("alice@example.com")
+
+    with patch("thenetwork.agent.tools.send_reply", side_effect=RuntimeError("smtp down")):
+        with pytest.raises(RuntimeError):
+            await dispatch_email(ctx, recipient_user_id="user-alice", subject="Hi", body_text="Hello")
+
+    with patch("thenetwork.agent.tools.send_reply") as mock_send:
+        result = await dispatch_email(ctx, recipient_user_id="user-alice", subject="Hi", body_text="Hello")
+
+    assert result["status"] == "sent"
+    mock_send.assert_called_once()
+
+
 # ---------------------------------------------------------------------------
 # register_person: self-registration only - no confused-deputy re-opening
 # ---------------------------------------------------------------------------
