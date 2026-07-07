@@ -48,7 +48,7 @@ proxy layer.
 
 ## Optional dependencies
 
-- `pip install -e ".[content-scan]"` - optional inbound content scanner (`llm-guard`),
+- `uv pip install -e ".[content-scan]"` - optional inbound content scanner (`llm-guard`),
   defense-in-depth per `docs/security.md` layer 10.
 
 Presidio (`presidio-analyzer` + `spacy`) is a core dependency. It powers
@@ -57,12 +57,12 @@ names, email addresses, and phone numbers. Organizations and locations stay in t
 to preserve company/place search recall. Missing Presidio or a missing NLP model is a
 deployment error, not a silent downgrade. The Docker image downloads `en_core_web_lg` at
 build time; for local worker runs outside Docker, install the same model with
-`python -m spacy download en_core_web_lg`.
+`uv run python -m spacy download en_core_web_lg`.
 
 ## Migrations
 
 Alembic. The `vector` extension is created idempotently inside a migration, so
-`alembic upgrade head` is the only setup step needed against a fresh DB. The Docker
+`uv run alembic upgrade head` is the only setup step needed against a fresh DB. The Docker
 entrypoint runs it on every deploy, so migrations apply automatically. Add migrations
 under `alembic/versions/`.
 
@@ -92,7 +92,7 @@ under `alembic/versions/`.
   and `live_model` (both declared in `pyproject.toml`) and the module skips itself if no
   `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` is set, so `pytest -m "not integration"` (CI) never
   reaches a live model. Run deliberately with
-  `pytest -m live_model tests/scenarios/test_live_archetypes.py`.
+  `uv run pytest -m live_model tests/scenarios/test_live_archetypes.py`.
 
 ## Deployment
 
