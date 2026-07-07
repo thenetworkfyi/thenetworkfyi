@@ -44,7 +44,8 @@ _logger = structlog.wrap_logger(
 )
 
 _SAFE_FIELDS = frozenset({
-    "action", "auto_submitted_present", "body_chars", "duration_ms", "error_type",
+    "action", "auth_result_mechanisms", "authserv_id",
+    "auto_submitted_present", "body_chars", "duration_ms", "error_type",
     "header_names", "html_present", "message_count", "outcome", "part_kinds",
     "query_chars", "reason", "recipient_id_present", "record_type", "refs_count",
     "result_count", "sender_authenticated", "sender_id_hash", "sender_known",
@@ -134,7 +135,7 @@ def _validate_value(name: str, value: object) -> object:
     raise TypeError(f"unsupported audit field type for {name!r}: {type(value).__name__}")
 
 
-def audit_event(event: str, **fields: object) -> None:
+def _audit_payload(fields: dict[str, object]) -> dict[str, object]:
     unknown = fields.keys() - _SAFE_FIELDS
     if unknown:
         raise ValueError(f"unsafe audit fields: {', '.join(sorted(unknown))}")
@@ -149,9 +150,18 @@ def audit_event(event: str, **fields: object) -> None:
     if sender_id_hash is not None and "sender_id_hash" not in fields:
         payload["sender_id_hash"] = _validate_value("sender_id_hash", sender_id_hash)
     payload.update({name: _validate_value(name, value) for name, value in fields.items()})
+    return payload
+
+
+def audit_event(event: str, **fields: object) -> None:
+    payload = _audit_payload(fields)
     is_error = payload.get("outcome") == "error" or bool(payload.get("error_type"))
     log_method = _logger.error if is_error else _logger.info
     log_method(_safe_token(event), **payload)
+
+
+def audit_warning_event(event: str, **fields: object) -> None:
+    _logger.warning(_safe_token(event), **_audit_payload(fields))
 
 
 def audit_span_completion(**fields: object) -> None:

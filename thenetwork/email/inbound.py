@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup
 from imap_tools import AND, MailBox, MailMessageFlags
 from imap_tools.message import MailMessage
 
+from thenetwork.audit import audit_warning_event
 from thenetwork.email.threading import clean_message_id, clean_references
 from thenetwork.settings import get_settings
 
@@ -22,7 +23,10 @@ REJECT_BODY_EMPTY = "body_empty"
 REJECT_BODY_OVERSIZE = "body_oversize"
 
 _AUTH_RESULT_RE = re.compile(r"\b(dkim|spf|auth)=(\w+)", re.IGNORECASE)
+_AUTH_MECHANISM_RE = re.compile(r"\b([A-Za-z][A-Za-z0-9_.:-]{0,79})=", re.IGNORECASE)
 _AUTHSERV_ID_RE = re.compile(r"^\s*([^;]+)")
+_SAFE_AUTHSERV_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
+_WARNED_UNRECOGNIZED_AUTH_RESULTS: set[tuple[str, tuple[str, ...]]] = set()
 
 _HTML_HIDDEN_ELEMENTS = ("head", "script", "style", "template", "title")
 
@@ -154,7 +158,29 @@ def _is_sender_authenticated(msg) -> bool:
         mech.lower(): result.lower()
         for mech, result in _AUTH_RESULT_RE.findall(header_value)
     }
+    if not verdicts:
+        _warn_unrecognized_auth_results(header_value)
+        return False
     return any(verdicts.get(mech) == "pass" for mech in ("dkim", "spf", "auth"))
+
+
+def _warn_unrecognized_auth_results(header_value: str) -> None:
+    m = _AUTHSERV_ID_RE.match(header_value)
+    authserv_id = (m.group(1).strip().lower() if m else "") or "unknown"
+    if not _SAFE_AUTHSERV_ID_RE.fullmatch(authserv_id):
+        authserv_id = "unknown"
+    mechanisms = tuple(
+        sorted({name.lower() for name in _AUTH_MECHANISM_RE.findall(header_value)})
+    )
+    key = (authserv_id, mechanisms)
+    if key in _WARNED_UNRECOGNIZED_AUTH_RESULTS:
+        return
+    _WARNED_UNRECOGNIZED_AUTH_RESULTS.add(key)
+    audit_warning_event(
+        "email.auth_header_unrecognized",
+        authserv_id=authserv_id,
+        auth_result_mechanisms=mechanisms,
+    )
 
 
 def _is_auto_message(msg) -> bool:
