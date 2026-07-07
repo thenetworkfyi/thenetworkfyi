@@ -146,7 +146,9 @@ def audit_event(event: str, **fields: object) -> None:
     if sender_id_hash is not None and "sender_id_hash" not in fields:
         payload["sender_id_hash"] = _validate_value("sender_id_hash", sender_id_hash)
     payload.update({name: _validate_value(name, value) for name, value in fields.items()})
-    _logger.info(_safe_token(event), **payload)
+    is_error = payload.get("outcome") == "error" or bool(payload.get("error_type"))
+    log_method = _logger.error if is_error else _logger.info
+    log_method(_safe_token(event), **payload)
 
 
 def audit_span_completion(**fields: object) -> None:
