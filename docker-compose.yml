@@ -8,6 +8,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     # Bind to loopback only: nothing outside the host (or the compose network)
     # should reach Postgres. The worker talks to it over the internal network.
+    logging:
+      driver: journald
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
@@ -36,6 +38,8 @@ services:
       POSTGRES_DB: network_db
       POSTGRES_USER: ${POSTGRES_USER:-network}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    logging:
+      driver: journald
     depends_on:
       db:
         condition: service_healthy
