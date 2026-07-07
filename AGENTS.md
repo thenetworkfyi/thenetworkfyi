@@ -28,20 +28,20 @@ must keep the `tests/security/` red-team suite green.
 ## Commands
 
 ```bash
-pip install -e ".[dev]"            # install with test deps
-pip install -e ".[content-scan]"   # optional content scanner (llm-guard)
-python -m spacy download en_core_web_lg  # required Presidio model for local worker runs; Docker bakes it in
+uv pip install -e ".[dev]"          # install with test deps
+uv pip install -e ".[content-scan]" # optional content scanner (llm-guard)
+uv run python -m spacy download en_core_web_lg  # required Presidio model for local worker runs; Docker bakes it in
 
 docker compose up -d db            # local pgvector Postgres
-alembic upgrade head               # create vector extension + tables
+uv run alembic upgrade head         # create vector extension + tables
 
-thenetwork-worker                  # long-lived process: intake + processing + scans
-thenetwork-producer                # one manual IMAP poll cycle
+uv run thenetwork-worker            # long-lived process: intake + processing + scans
+uv run thenetwork-producer          # one manual IMAP poll cycle
 
-pytest                             # full suite
-pytest -m "not integration"        # skip tests needing a live pgvector DB (what CI runs)
-pytest tests/security/             # the SEAL red-team + contracts
-pytest tests/test_match_pipeline.py::test_name   # a single test
+uv run pytest                       # full suite
+uv run pytest -m "not integration"  # skip tests needing a live pgvector DB (what CI runs)
+uv run pytest tests/security/       # the SEAL red-team + contracts
+uv run pytest tests/test_match_pipeline.py::test_name   # a single test
 ```
 
 CI (`.github/workflows/ci.yml`) runs only `pytest -m "not integration"` on Python 3.12 -

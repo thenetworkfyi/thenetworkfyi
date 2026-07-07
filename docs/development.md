@@ -48,7 +48,7 @@ proxy layer.
 
 ## Optional dependencies
 
-- `pip install -e ".[content-scan]"` - optional inbound content scanner (`llm-guard`),
+- `uv pip install -e ".[content-scan]"` - optional inbound content scanner (`llm-guard`),
   defense-in-depth per `docs/security.md` layer 10.
 
 Presidio (`presidio-analyzer` + `spacy`) is a core dependency. It powers
@@ -57,7 +57,7 @@ names, email addresses, and phone numbers. Organizations and locations stay in t
 to preserve company/place search recall. Missing Presidio or a missing NLP model is a
 deployment error, not a silent downgrade. The Docker image downloads `en_core_web_lg` at
 build time; for local worker runs outside Docker, install the same model with
-`python -m spacy download en_core_web_lg`.
+`uv run python -m spacy download en_core_web_lg`.
 
 ## Migrations
 
