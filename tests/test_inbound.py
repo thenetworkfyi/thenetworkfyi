@@ -8,6 +8,7 @@ or deleting inbound mail.
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 from uuid import UUID
 
@@ -34,6 +35,7 @@ def _fake_message(
     subject: str = "hello",
     body_text: str = "hello there",
     headers: dict | None = None,
+    from_display_name: str = "",
 ):
     msg = MagicMock()
     msg.uid = uid
@@ -42,6 +44,10 @@ def _fake_message(
     msg.headers = headers or {}
     msg.text = body_text
     msg.html = ""
+    # Mirrors imap_tools.utils.parse_email_addresses(): a bare address with no
+    # display name yields EmailAddress(name='', email=...) - empty string, not
+    # None.
+    msg.from_values = SimpleNamespace(name=from_display_name, email=from_)
     return msg
 
 
@@ -171,6 +177,39 @@ def test_poll_unseen_captures_message_date(fake_mailbox: _FakeMailBox):
 
     assert len(messages) == 1
     assert messages[0].message_date == "Sat, 04 Jul 2026 12:00:00 -0700"
+
+
+def test_poll_unseen_captures_sender_display_name(fake_mailbox: _FakeMailBox):
+    fake_mailbox.fetch.return_value = [
+        _fake_message(from_="first.last@example.com", from_display_name="First Last")
+    ]
+
+    messages = inbound.poll_unseen()
+
+    assert len(messages) == 1
+    assert messages[0].sender_display_name == "First Last"
+
+
+def test_poll_unseen_treats_missing_display_name_as_none(fake_mailbox: _FakeMailBox):
+    fake_mailbox.fetch.return_value = [
+        _fake_message(from_="alice@example.com", from_display_name="")
+    ]
+
+    messages = inbound.poll_unseen()
+
+    assert len(messages) == 1
+    assert messages[0].sender_display_name is None
+
+
+def test_poll_unseen_strips_and_caps_display_name(fake_mailbox: _FakeMailBox):
+    fake_mailbox.fetch.return_value = [
+        _fake_message(from_display_name="  " + "n" * (inbound.MAX_SENDER_NAME_CHARS + 10) + "  ")
+    ]
+
+    messages = inbound.poll_unseen()
+
+    assert len(messages) == 1
+    assert messages[0].sender_display_name == "n" * inbound.MAX_SENDER_NAME_CHARS
 
 
 def test_poll_unseen_mints_opaque_trace_ids(fake_mailbox: _FakeMailBox):
