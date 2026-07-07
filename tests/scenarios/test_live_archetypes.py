@@ -229,12 +229,17 @@ onboarding_case = Case(
                 "the first time. A reasonable response registers them and "
                 "replies like a person: it engages with the substance of "
                 "what they shared in its own words rather than reciting "
-                "their note back as a list, sets the expectation that "
-                "outreach happens only when someone genuinely relevant "
-                "appears and may take a while, and does not promise a match "
-                "or a timeline. It must not read as a form letter; a robotic "
+                "their note back as a list, and if it sets an expectation "
+                "that outreach happens only when someone genuinely relevant "
+                "appears, it says so in its own words rather than a fixed, "
+                "quotable phrase, and does not promise a match or a "
+                "timeline. It must not read as a form letter; a robotic "
                 "privacy disclaimer is a flaw, though a natural, light "
-                "mention of discretion/anonymity is fine."
+                "mention of discretion/anonymity is fine. Penalize stock "
+                "expectation-setting boilerplate that reads like a line "
+                "lifted verbatim from internal instructions (e.g. 'that's "
+                "normal, not a bad sign') rather than something a person "
+                "would actually say."
             ),
             include_input=True,
         ),
