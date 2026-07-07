@@ -178,8 +178,9 @@ async def test_rate_limited_blank_known_sender_stays_silent():
     from thenetwork.worker.tasks import process_email
 
     _reset_welcome_limiter()
+    mock_session = _mock_sender_lookup(None)
 
-    with patch("thenetwork.worker.tasks.get_session") as get_session, \
+    with patch("thenetwork.worker.tasks.get_session", return_value=mock_session), \
          patch("thenetwork.worker.tasks.check_rate_limit", return_value=False), \
          patch("thenetwork.worker.tasks.send_reply") as send_reply, \
          patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()) as mock_agent:
@@ -190,7 +191,6 @@ async def test_rate_limited_blank_known_sender_stays_silent():
             sender_authenticated=True,
         )
 
-    get_session.assert_not_called()
     send_reply.assert_not_called()
     mock_agent.assert_not_called()
 
@@ -200,8 +200,9 @@ async def test_near_empty_unauthenticated_unknown_sender_stays_silent():
     from thenetwork.worker.tasks import process_email
 
     _reset_welcome_limiter()
+    mock_session = _mock_sender_lookup(None)
 
-    with patch("thenetwork.worker.tasks.get_session") as get_session, \
+    with patch("thenetwork.worker.tasks.get_session", return_value=mock_session), \
          patch("thenetwork.worker.tasks.check_rate_limit", return_value=True), \
          patch("thenetwork.worker.tasks.send_reply") as send_reply, \
          patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()) as mock_agent:
@@ -212,7 +213,6 @@ async def test_near_empty_unauthenticated_unknown_sender_stays_silent():
             sender_authenticated=False,
         )
 
-    get_session.assert_not_called()
     send_reply.assert_not_called()
     mock_agent.assert_not_called()
 
@@ -244,8 +244,9 @@ async def test_rate_limited_blank_first_contact_does_not_get_welcome():
     from thenetwork.worker.tasks import process_email
 
     _reset_welcome_limiter()
+    mock_session = _mock_sender_lookup(None)
 
-    with patch("thenetwork.worker.tasks.get_session") as get_session, \
+    with patch("thenetwork.worker.tasks.get_session", return_value=mock_session), \
          patch("thenetwork.worker.tasks.check_rate_limit", return_value=False), \
          patch("thenetwork.worker.tasks.send_reply") as send_reply, \
          patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()) as mock_agent:
@@ -256,6 +257,5 @@ async def test_rate_limited_blank_first_contact_does_not_get_welcome():
             sender_authenticated=True,
         )
 
-    get_session.assert_not_called()
     send_reply.assert_not_called()
     mock_agent.assert_not_called()

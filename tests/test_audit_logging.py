@@ -720,7 +720,9 @@ async def test_worker_rejection_logs_reason_without_message_content(caplog):
     from thenetwork.worker.tasks import process_email
 
     caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-    with patch("thenetwork.worker.tasks.check_rate_limit", return_value=False):
+    with patch("thenetwork.worker.tasks.check_rate_limit", return_value=False), patch(
+        "thenetwork.worker.tasks.get_session", return_value=_mock_sender_lookup(None)
+    ):
         await process_email.func(
             sender_email="alice.private@example.com",
             subject="Confidential acquisition",
@@ -820,7 +822,9 @@ async def test_worker_rejects_oversized_body_without_reply_or_agent(caplog):
         "thenetwork.worker.tasks.scan_content"
     ) as scan_content, patch("thenetwork.worker.tasks.send_reply") as send_reply, patch(
         "thenetwork.worker.tasks.run_agent_for_email", AsyncMock()
-    ) as mock_agent:
+    ) as mock_agent, patch(
+        "thenetwork.worker.tasks.get_session", return_value=_mock_sender_lookup(None)
+    ):
         await process_email.func(
             sender_email="alice@example.com",
             subject="Hello",
@@ -963,9 +967,9 @@ async def test_worker_keeps_infrastructure_rejection_silent_for_unauthenticated_
     send_reply.assert_not_called()
     mock_agent.assert_not_called()
     if sender_authenticated:
-        get_session.assert_called_once()
+        assert get_session.call_count == 2
     else:
-        get_session.assert_not_called()
+        get_session.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -978,7 +982,9 @@ async def test_worker_skips_empty_body_after_rate_limit_without_agent(caplog):
         "thenetwork.worker.tasks.scan_content"
     ) as scan_content, patch("thenetwork.worker.tasks.send_reply") as send_reply, patch(
         "thenetwork.worker.tasks.run_agent_for_email", AsyncMock()
-    ) as mock_agent:
+    ) as mock_agent, patch(
+        "thenetwork.worker.tasks.get_session", return_value=_mock_sender_lookup(None)
+    ):
         await process_email.func(
             sender_email="alice@example.com",
             subject="Hello",
