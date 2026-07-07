@@ -48,8 +48,8 @@ _SAFE_FIELDS = frozenset({
     "header_names", "html_present", "message_count", "outcome", "part_kinds",
     "query_chars", "reason", "recipient_id_present", "record_type", "refs_count",
     "result_count", "sender_authenticated", "sender_id_hash", "sender_known",
-    "sender_present", "subject_chars", "tool_called", "tool_name", "tool_outcome",
-    "tool_reason", "top_k", "trace_id", "user_message_chars",
+    "sender_present", "subject_chars", "tool_called", "tool_name", "tool_names",
+    "tool_outcome", "tool_reason", "top_k", "trace_id", "user_message_chars",
 })
 _SAFE_TOKEN = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
 _SAFE_CATEGORIES = {
@@ -127,6 +127,9 @@ def _validate_value(name: str, value: object) -> object:
     if isinstance(value, (list, tuple)):
         if name == "header_names":
             return [item for item in value if item in _SAFE_HEADERS]
+        if name == "tool_names":
+            allowed = _SAFE_CATEGORIES["tool_name"]
+            return [item if item in allowed else "unknown" for item in value]
         return [_safe_token(item) for item in value]
     raise TypeError(f"unsupported audit field type for {name!r}: {type(value).__name__}")
 
@@ -236,7 +239,16 @@ def audit_model_trace(result: object) -> None:
     all_messages = getattr(result, "all_messages", None)
     messages = all_messages() if callable(all_messages) else []
     part_kinds: list[str] = []
+    tool_names: list[str] = []
     for message in messages:
         for part in getattr(message, "parts", ()):
-            part_kinds.append(getattr(part, "part_kind", type(part).__name__))
-    audit_event("agent.model_trace", message_count=len(messages), part_kinds=part_kinds)
+            part_kind = getattr(part, "part_kind", type(part).__name__)
+            part_kinds.append(part_kind)
+            if part_kind == "tool-call":
+                tool_names.append(getattr(part, "tool_name", "unknown"))
+    audit_event(
+        "agent.model_trace",
+        message_count=len(messages),
+        part_kinds=part_kinds,
+        tool_names=tool_names,
+    )
