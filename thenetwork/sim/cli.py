@@ -7,8 +7,8 @@ from pathlib import Path
 
 from thenetwork.sim.compare import compare_runs, render_compare
 from thenetwork.sim.persona import TinyPersonEmailAdapter
+from thenetwork.sim.population import SimSchedule, default_population
 from thenetwork.sim.recorder import SimRunConfig, SimRunRecorder
-from thenetwork.sim.scenarios import default_strong_match_configs
 
 
 class ScriptedTinyPerson:
@@ -58,20 +58,24 @@ async def run_sim(
     ticks: int,
     proactive_every: int | None,
 ):
-    configs = default_strong_match_configs()
-    bodies = (
-        "I need ML infrastructure help for factory operations.",
-        "I deploy ML infrastructure in factory environments.",
-    )
+    population = default_population()
+    configs = tuple(persona.config for persona in population)
     adapters = tuple(
-        TinyPersonEmailAdapter(ScriptedTinyPerson(config.name, body), config)
-        for config, body in zip(configs, bodies, strict=True)
+        TinyPersonEmailAdapter(
+            ScriptedTinyPerson(persona.config.name, persona.opening_body),
+            persona.config,
+        )
+        for persona in population
     )
     config = SimRunConfig(
-        scenario="strong-match",
+        scenario="default-population",
         ticks=ticks,
         proactive_every=proactive_every,
         personas=configs,
         mock_process=True,
     )
-    return await SimRunRecorder(runs_dir=runs_dir).run(adapters, config)
+    return await SimRunRecorder(runs_dir=runs_dir).run(
+        adapters,
+        config,
+        schedule=SimSchedule.from_population(population),
+    )

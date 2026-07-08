@@ -11,6 +11,7 @@ from unittest.mock import patch
 from thenetwork.settings import get_settings
 from thenetwork.sim.mail import ProcessEmailCallable, SimPostOffice, deliver_inbound
 from thenetwork.sim.persona import TinyPersonEmailAdapter
+from thenetwork.sim.population import SimSchedule
 from thenetwork.worker import proactive
 
 
@@ -49,6 +50,7 @@ class SimTickLoop:
         process: ProcessEmailCallable | None = None,
         proactive_every: int | None = 1,
         rate_limit_per_hour: int = 10_000,
+        schedule: SimSchedule | None = None,
     ) -> None:
         if proactive_every is not None and proactive_every < 1:
             raise ValueError("proactive_every must be at least 1")
@@ -57,6 +59,7 @@ class SimTickLoop:
         self.process = process
         self.proactive_every = proactive_every
         self.rate_limit_per_hour = rate_limit_per_hour
+        self.schedule = schedule or SimSchedule()
         self.post_office = SimPostOffice(mbox_path=run_dir / "all-mail.mbox")
 
     async def run(self, *, ticks: int) -> SimLoopResult:
@@ -87,8 +90,11 @@ class SimTickLoop:
     async def _run_persona_turns(self, tick: int) -> int:
         sent = 0
         for adapter in self.adapters:
+            if self.schedule.is_interrupted(adapter.config, tick):
+                continue
+            events = self.schedule.events_for(adapter.config, tick)
             msg = adapter.next_email(
-                _tick_prompt(adapter.config.goal, tick),
+                _tick_prompt(adapter.config.goal, tick, events),
                 tick=tick,
                 subject=f"Simulation tick {tick}",
             )
@@ -154,8 +160,9 @@ async def _call_scan(scan: Any, timestamp: int) -> None:
     await target(timestamp)
 
 
-def _tick_prompt(goal: str, tick: int) -> str:
+def _tick_prompt(goal: str, tick: int, events=()) -> str:
+    event_text = " ".join(f"Event: {event.text}" for event in events)
     return (
         f"Tick {tick}. Write at most one concise email to The Network if your "
-        f"goal still needs action: {goal}"
-    )
+        f"goal still needs action: {goal} {event_text}"
+    ).strip()

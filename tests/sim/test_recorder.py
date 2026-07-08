@@ -69,4 +69,4 @@ async def test_sim_run_cli_function_creates_run_directory(tmp_path):
     assert artifacts.mbox_path.name == "all-mail.mbox"
     assert artifacts.transcript_path.name == "transcript.md"
     assert artifacts.events_path.name == "events.jsonl"
-
+    assert len(json.loads(artifacts.config_path.read_text())["personas"]) == 10
