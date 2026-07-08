@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import mailbox
 from collections import defaultdict
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
@@ -9,9 +10,10 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from email.message import EmailMessage
 from email.utils import getaddresses, parseaddr
+from pathlib import Path
 from typing import Any
-from uuid import uuid4
 from unittest.mock import patch
+from uuid import uuid4
 
 from bs4 import BeautifulSoup
 
@@ -23,15 +25,30 @@ from thenetwork.worker.tasks import process_email
 ProcessEmailCallable = Callable[..., Awaitable[None]]
 
 
+@dataclass(frozen=True)
+class SimMessageMeta:
+    """Metadata stamped onto every sim-delivered message."""
+
+    tick: int
+    direction: str
+    persona: str
+    trace_id: str
+
+
 @dataclass
 class SimPostOffice:
     """In-memory mailbox keyed by normalized recipient address."""
 
+    mbox_path: Path | None = None
     _messages: dict[str, list[EmailMessage]] = field(
         default_factory=lambda: defaultdict(list)
     )
 
-    def deliver(self, message: EmailMessage) -> None:
+    def deliver(self, message: EmailMessage, meta: SimMessageMeta | None = None) -> None:
+        message = deepcopy(message)
+        if meta is not None:
+            _stamp_sim_headers(message, meta)
+        self._append_to_mbox(message)
         recipients = _recipient_addresses(message)
         if not recipients:
             return
@@ -51,10 +68,28 @@ class SimPostOffice:
             messages.extend(bucket)
         return tuple(messages)
 
+    def _append_to_mbox(self, message: EmailMessage) -> None:
+        if self.mbox_path is None:
+            return
+        self.mbox_path.parent.mkdir(parents=True, exist_ok=True)
+        box = mailbox.mbox(self.mbox_path)
+        try:
+            box.lock()
+            box.add(message)
+            box.flush()
+        finally:
+            box.unlock()
+            box.close()
+
 
 class _PostOfficeSMTP:
-    def __init__(self, post_office: SimPostOffice) -> None:
+    def __init__(
+        self,
+        post_office: SimPostOffice,
+        default_meta: SimMessageMeta | None = None,
+    ) -> None:
         self.post_office = post_office
+        self.default_meta = default_meta
 
     def __call__(self, *_args: Any, **_kwargs: Any) -> "_PostOfficeSMTP":
         return self
@@ -75,11 +110,14 @@ class _PostOfficeSMTP:
         return None
 
     def send_message(self, message: EmailMessage) -> None:
-        self.post_office.deliver(message)
+        self.post_office.deliver(message, self.default_meta)
 
 
 @contextmanager
-def capture_outbound(post_office: SimPostOffice) -> Iterator[SimPostOffice]:
+def capture_outbound(
+    post_office: SimPostOffice,
+    meta: SimMessageMeta | None = None,
+) -> Iterator[SimPostOffice]:
     """Capture outbound mail produced by `thenetwork.email.outbound.send_reply`.
 
     The seam is deliberately the `smtplib.SMTP` object used inside
@@ -87,7 +125,7 @@ def capture_outbound(post_office: SimPostOffice) -> Iterator[SimPostOffice]:
     Message-ID, Date, and Auto-Submitted are still composed by production code.
     IMAP Sent append is disabled because the post office is the run's mail log.
     """
-    smtp = _PostOfficeSMTP(post_office)
+    smtp = _PostOfficeSMTP(post_office, meta)
     with patch("thenetwork.email.outbound.smtplib.SMTP", smtp), patch(
         "thenetwork.email.outbound._append_to_sent", return_value=None
     ):
@@ -109,6 +147,9 @@ async def deliver_inbound(
     sender_authenticated: bool = True,
     process: ProcessEmailCallable | None = None,
     trace_id: str | None = None,
+    post_office: SimPostOffice | None = None,
+    tick: int | None = None,
+    persona: str | None = None,
 ) -> InboundDelivery:
     """Call the worker's `process_email` task directly for one EmailMessage."""
     sender_display_name, sender_email = parseaddr(message.get("From", ""))
@@ -128,6 +169,16 @@ async def deliver_inbound(
     )
     resolved_trace_id = trace_id or str(uuid4())
     process_func = process or process_email.func
+    if post_office is not None:
+        post_office.deliver(
+            message,
+            SimMessageMeta(
+                tick=tick or 0,
+                direction="persona->agent",
+                persona=persona or sender_display_name or sender_email,
+                trace_id=resolved_trace_id,
+            ),
+        )
 
     await process_func(
         sender_email=sender_email,
@@ -152,6 +203,57 @@ async def deliver_inbound(
     )
 
 
+def render_transcript(
+    mbox_path: Path,
+    transcript_path: Path | None = None,
+) -> str:
+    """Render a compact Markdown transcript from a sim mbox."""
+    box = mailbox.mbox(mbox_path)
+    try:
+        messages = list(box)
+    finally:
+        box.close()
+
+    lines = ["# Simulation Transcript", ""]
+    for index, message in enumerate(messages, start=1):
+        lines.extend(
+            [
+                f"## Message {index}",
+                "",
+                f"- Tick: {message.get('X-Sim-Tick', '')}",
+                f"- Direction: {message.get('X-Sim-Direction', '')}",
+                f"- Persona: {message.get('X-Sim-Persona', '')}",
+                f"- Trace-Id: {message.get('X-Sim-Trace-Id', '')}",
+                f"- From: {message.get('From', '')}",
+                f"- To: {message.get('To', '')}",
+                f"- Subject: {message.get('Subject', '')}",
+                "",
+                "```text",
+                _extract_body(message).strip(),
+                "```",
+                "",
+            ]
+        )
+    transcript = "\n".join(lines).rstrip() + "\n"
+    if transcript_path is not None:
+        transcript_path.parent.mkdir(parents=True, exist_ok=True)
+        transcript_path.write_text(transcript, encoding="utf-8")
+    return transcript
+
+
+def _stamp_sim_headers(message: EmailMessage, meta: SimMessageMeta) -> None:
+    for name, value in (
+        ("X-Sim-Tick", str(meta.tick)),
+        ("X-Sim-Direction", meta.direction),
+        ("X-Sim-Persona", meta.persona),
+        ("X-Sim-Trace-Id", meta.trace_id),
+    ):
+        if name in message:
+            message.replace_header(name, value)
+        else:
+            message[name] = value
+
+
 def _recipient_addresses(message: EmailMessage) -> tuple[str, ...]:
     header_values = [
         value
@@ -171,14 +273,37 @@ def _normalize_address(address: str) -> str:
 
 
 def _extract_body(message: EmailMessage) -> str:
-    plain = message.get_body(preferencelist=("plain",))
-    if plain is not None:
-        return plain.get_content()
-    html = message.get_body(preferencelist=("html",))
-    if html is not None:
-        return _html_to_text(html.get_content())
+    if hasattr(message, "get_body"):
+        plain = message.get_body(preferencelist=("plain",))
+        if plain is not None:
+            return plain.get_content()
+        html = message.get_body(preferencelist=("html",))
+        if html is not None:
+            return _html_to_text(html.get_content())
+    else:
+        for part in message.walk() if message.is_multipart() else (message,):
+            if part.get_content_type() == "text/plain":
+                return _compat_payload_text(part)
+        for part in message.walk() if message.is_multipart() else (message,):
+            if part.get_content_type() == "text/html":
+                return _html_to_text(_compat_payload_text(part))
+
     if message.get_content_maintype() == "text":
-        return message.get_content()
+        return (
+            message.get_content()
+            if hasattr(message, "get_content")
+            else _compat_payload_text(message)
+        )
+    return ""
+
+
+def _compat_payload_text(message) -> str:
+    payload = message.get_payload(decode=True)
+    charset = message.get_content_charset() or "utf-8"
+    if isinstance(payload, bytes):
+        return payload.decode(charset, errors="replace")
+    if isinstance(payload, str):
+        return payload
     return ""
 
 
