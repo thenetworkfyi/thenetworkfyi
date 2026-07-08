@@ -34,6 +34,11 @@ def main(argv: list[str] | None = None) -> None:
         default=0,
         help="Run proactive scans every N ticks; 0 disables them for offline smoke runs.",
     )
+    run_parser.add_argument(
+        "--real-process",
+        action="store_true",
+        help="Route each turn through the real process_email task instead of the mock stub.",
+    )
     compare_parser = subcommands.add_parser("compare")
     compare_parser.add_argument("before", type=Path)
     compare_parser.add_argument("after", type=Path)
@@ -45,6 +50,7 @@ def main(argv: list[str] | None = None) -> None:
                 runs_dir=args.runs_dir,
                 ticks=args.ticks,
                 proactive_every=args.proactive_every or None,
+                mock_process=not args.real_process,
             )
         )
         print(artifacts.run_dir)
@@ -57,6 +63,7 @@ async def run_sim(
     runs_dir: Path,
     ticks: int,
     proactive_every: int | None,
+    mock_process: bool = True,
 ):
     population = default_population()
     configs = tuple(persona.config for persona in population)
@@ -72,7 +79,7 @@ async def run_sim(
         ticks=ticks,
         proactive_every=proactive_every,
         personas=configs,
-        mock_process=True,
+        mock_process=mock_process,
     )
     return await SimRunRecorder(runs_dir=runs_dir).run(
         adapters,
