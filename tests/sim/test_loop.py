@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from email.message import EmailMessage
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -16,6 +17,19 @@ class ScriptedTinyPerson:
         self.replies = replies
 
     def listen_and_act(self, _stimulus: str):
+        return {"content": self.replies.pop(0)}
+
+
+class RecordingTinyPerson:
+    """Records every stimulus it is shown, so tests can assert on prompt content."""
+
+    def __init__(self, replies: list[str]) -> None:
+        self.name = "Recording"
+        self.replies = replies
+        self.stimuli: list[str] = []
+
+    def listen_and_act(self, stimulus: str):
+        self.stimuli.append(stimulus)
         return {"content": self.replies.pop(0)}
 
 
@@ -128,6 +142,44 @@ async def test_tick_loop_captures_replies_without_touching_real_smtp(tmp_path):
     (captured,) = result.post_office.messages_for("priya@example.test")
     assert captured["From"] == "agent@example.com"
     assert captured.get_content().strip() == "Reply from the agent."
+
+
+@pytest.mark.asyncio
+async def test_persona_turn_drains_post_office_reply_into_next_stimulus(tmp_path):
+    person = RecordingTinyPerson(["initial ask", "thanks for the intro"])
+    adapter = TinyPersonEmailAdapter(
+        person,
+        PersonaConfig(
+            name="Priya",
+            email="priya@example.test",
+            goal="Find a strong match.",
+            stop_condition="Stop when registered.",
+            message_budget=2,
+            agent_address="join@example.test",
+        ),
+    )
+
+    async def scripted_process(**kwargs):
+        reply = EmailMessage()
+        reply["From"] = "join@example.test"
+        reply["To"] = kwargs["sender_email"]
+        reply["Subject"] = f"Re: {kwargs['subject']}"
+        reply.set_content("Meet Sam, they share your interest in ML infrastructure.")
+        loop.post_office.deliver(reply)
+
+    loop = SimTickLoop(
+        [adapter],
+        run_dir=tmp_path,
+        process=scripted_process,
+        proactive_every=None,
+    )
+
+    result = await loop.run(ticks=2)
+
+    assert result.persona_messages == 2
+    assert len(person.stimuli) == 2
+    assert "Meet Sam" not in person.stimuli[0]
+    assert "Meet Sam, they share your interest in ML infrastructure." in person.stimuli[1]
 
 
 @pytest.mark.asyncio

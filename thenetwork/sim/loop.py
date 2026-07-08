@@ -12,6 +12,7 @@ from thenetwork.settings import get_settings
 from thenetwork.sim.mail import (
     ProcessEmailCallable,
     SimPostOffice,
+    _extract_body,
     capture_outbound,
     deliver_inbound,
 )
@@ -97,9 +98,13 @@ class SimTickLoop:
         for adapter in self.adapters:
             if self.schedule.is_interrupted(adapter.config, tick):
                 continue
+            replies = self.post_office.pop_all(adapter.config.email)
+            reply_texts = tuple(
+                text for text in (_extract_body(reply).strip() for reply in replies) if text
+            )
             events = self.schedule.events_for(adapter.config, tick)
             msg = adapter.next_email(
-                _tick_prompt(adapter.config.goal, tick, events),
+                _tick_prompt(adapter.config.goal, tick, events, reply_texts),
                 tick=tick,
                 subject=f"Simulation tick {tick}",
             )
@@ -165,9 +170,10 @@ async def _call_scan(scan: Any, timestamp: int) -> None:
     await target(timestamp)
 
 
-def _tick_prompt(goal: str, tick: int, events=()) -> str:
+def _tick_prompt(goal: str, tick: int, events=(), replies: tuple[str, ...] = ()) -> str:
     event_text = " ".join(f"Event: {event.text}" for event in events)
+    reply_text = " ".join(f"You received a reply: {reply}" for reply in replies)
     return (
         f"Tick {tick}. Write at most one concise email to The Network if your "
-        f"goal still needs action: {goal} {event_text}"
+        f"goal still needs action: {goal} {event_text} {reply_text}"
     ).strip()
