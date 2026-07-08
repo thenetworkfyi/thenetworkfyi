@@ -91,3 +91,17 @@ def test_override_rate_limits_restores_settings():
         settings.global_email_rate_limit_per_hour,
     ) == old
 
+
+@pytest.mark.asyncio
+async def test_tick_loop_can_disable_proactive_scans(tmp_path):
+    process = AsyncMock()
+    loop = SimTickLoop(
+        [_adapter("Priya", "priya@example.test", ["one"], budget=1)],
+        run_dir=tmp_path,
+        process=process,
+        proactive_every=None,
+    )
+
+    result = await loop.run(ticks=1)
+
+    assert result.proactive_jobs == 0
