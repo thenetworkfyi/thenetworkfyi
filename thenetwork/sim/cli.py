@@ -5,6 +5,7 @@ import argparse
 import asyncio
 from pathlib import Path
 
+from thenetwork.sim.compare import compare_runs, render_compare
 from thenetwork.sim.persona import TinyPersonEmailAdapter
 from thenetwork.sim.recorder import SimRunConfig, SimRunRecorder
 from thenetwork.sim.scenarios import default_strong_match_configs
@@ -33,6 +34,9 @@ def main(argv: list[str] | None = None) -> None:
         default=0,
         help="Run proactive scans every N ticks; 0 disables them for offline smoke runs.",
     )
+    compare_parser = subcommands.add_parser("compare")
+    compare_parser.add_argument("before", type=Path)
+    compare_parser.add_argument("after", type=Path)
     args = parser.parse_args(argv)
 
     if args.command == "run":
@@ -44,6 +48,8 @@ def main(argv: list[str] | None = None) -> None:
             )
         )
         print(artifacts.run_dir)
+    elif args.command == "compare":
+        print(render_compare(compare_runs(args.before, args.after)), end="")
 
 
 async def run_sim(
