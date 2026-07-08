@@ -5,11 +5,12 @@ import argparse
 import asyncio
 import sys
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 
 from thenetwork.sim.compare import compare_runs, render_compare
 from thenetwork.sim.persona import TinyPersonEmailAdapter
-from thenetwork.sim.population import SimSchedule, default_population
+from thenetwork.sim.population import PopulationPersona, SimSchedule, default_population
 from thenetwork.sim.recorder import SimRunConfig, SimRunRecorder
 
 
@@ -22,6 +23,18 @@ class ScriptedTinyPerson:
 
     def listen_and_act(self, stimulus: str, *args, **kwargs):
         return {"content": self.body}
+
+
+def _build_person(persona: PopulationPersona, llm_personas: bool):
+    if not llm_personas:
+        return ScriptedTinyPerson(persona.config.name, persona.opening_body)
+    from thenetwork.model_config import model_with_api_key
+    from thenetwork.settings import get_settings
+    from thenetwork.sim.llm_persona import LLMTinyPerson
+
+    settings = get_settings()
+    model = model_with_api_key(settings.small_agent_model, settings.small_agent_api_key)
+    return LLMTinyPerson(persona.config, model)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -47,6 +60,18 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Route each turn through the real process_email task instead of the mock stub.",
     )
+    run_parser.add_argument(
+        "--llm-personas",
+        action="store_true",
+        help="Drive personas with SMALL_AGENT_MODEL so they hold a real conversation "
+        "instead of repeating their scripted opening line.",
+    )
+    run_parser.add_argument(
+        "--message-budget",
+        type=int,
+        default=None,
+        help="Override each persona's max messages for the run.",
+    )
     compare_parser = subcommands.add_parser("compare")
     compare_parser.add_argument("before", type=Path)
     compare_parser.add_argument("after", type=Path)
@@ -60,6 +85,8 @@ def main(argv: list[str] | None = None) -> None:
                 proactive_every=args.proactive_every or None,
                 mock_process=not args.real_process,
                 personas=args.personas,
+                llm_personas=args.llm_personas,
+                message_budget=args.message_budget,
                 progress=lambda message: print(message, file=sys.stderr, flush=True),
             )
         )
@@ -75,6 +102,8 @@ async def run_sim(
     proactive_every: int | None,
     mock_process: bool = True,
     personas: int | None = None,
+    llm_personas: bool = False,
+    message_budget: int | None = None,
     progress: Callable[[str], None] | None = None,
 ):
     population = default_population()
@@ -82,12 +111,16 @@ async def run_sim(
         if personas < 1:
             raise ValueError("personas must be at least 1")
         population = population[:personas]
+    if message_budget is not None:
+        if message_budget < 1:
+            raise ValueError("message_budget must be at least 1")
+        population = tuple(
+            replace(persona, config=replace(persona.config, message_budget=message_budget))
+            for persona in population
+        )
     configs = tuple(persona.config for persona in population)
     adapters = tuple(
-        TinyPersonEmailAdapter(
-            ScriptedTinyPerson(persona.config.name, persona.opening_body),
-            persona.config,
-        )
+        TinyPersonEmailAdapter(_build_person(persona, llm_personas), persona.config)
         for persona in population
     )
     config = SimRunConfig(

@@ -59,7 +59,30 @@ class TinyPersonEmailAdapter:
                 f"I am {self.config.name}. {self.config.goal} "
                 f"My stop condition is: {self.config.stop_condition}"
             )
+        return self._build_message(body, tick=tick, subject=subject)
 
+    async def anext_email(
+        self,
+        stimulus: str,
+        *,
+        tick: int,
+        subject: str = "The Network",
+        fallback_body: Callable[[PersonaConfig], str] | None = None,
+    ) -> EmailMessage | None:
+        """Async variant; personas exposing `alisten_and_act` may decline to write."""
+        listener = getattr(self.person, "alisten_and_act", None)
+        if listener is None:
+            return self.next_email(
+                stimulus, tick=tick, subject=subject, fallback_body=fallback_body
+            )
+        if self.exhausted:
+            return None
+        body = extract_action_text(await listener(stimulus))
+        if not body:
+            return None
+        return self._build_message(body, tick=tick, subject=subject)
+
+    def _build_message(self, body: str, *, tick: int, subject: str) -> EmailMessage:
         msg = EmailMessage()
         msg["From"] = f"{self.config.name} <{self.config.email}>"
         msg["To"] = self.config.agent_address
