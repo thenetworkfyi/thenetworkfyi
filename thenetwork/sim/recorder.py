@@ -2,16 +2,23 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from thenetwork.db.models import Memory
 from thenetwork.sim.loop import SimTickLoop
 from thenetwork.sim.mail import render_transcript
 from thenetwork.sim.persona import PersonaConfig, TinyPersonEmailAdapter
 from thenetwork.sim.population import SimSchedule
+from thenetwork.sim.scoring import (
+    MemoryExpectation,
+    PersonaPII,
+    score_memory_expectations,
+    score_seal_mbox,
+)
 from thenetwork.worker.tasks import process_email
 
 
@@ -25,6 +32,7 @@ class SimRunConfig:
     proactive_every: int | None
     personas: tuple[PersonaConfig, ...]
     mock_process: bool = True
+    expectations: tuple[MemoryExpectation, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -66,6 +74,7 @@ class SimRunRecorder:
         *,
         process=None,
         schedule: SimSchedule | None = None,
+        memories: Iterable[Memory] = (),
     ) -> SimRunArtifacts:
         run_dir = self._new_run_dir()
         artifacts = SimRunArtifacts(
@@ -113,6 +122,22 @@ class SimRunRecorder:
                 proactive_jobs=tick.proactive_jobs,
             )
         render_transcript(artifacts.mbox_path, artifacts.transcript_path)
+
+        personas_pii = tuple(PersonaPII.from_config(persona) for persona in config.personas)
+        tier1 = score_seal_mbox(artifacts.mbox_path, personas_pii)
+        events.write(
+            "sim.score.tier1",
+            passed=tier1.passed,
+            findings=[asdict(finding) for finding in tier1.findings],
+        )
+        if config.expectations:
+            tier2 = score_memory_expectations(memories, config.expectations)
+            events.write(
+                "sim.score.tier2",
+                passed=tier2.passed,
+                findings=[asdict(finding) for finding in tier2.findings],
+            )
+
         events.write(
             "sim.run_completed",
             persona_messages=result.persona_messages,
@@ -151,17 +176,48 @@ def _mock_process(events: EventsLog):
 
 def _recording_process(process, events: EventsLog):
     async def wrapped(**kwargs: Any) -> None:
+        trace_id = kwargs.get("trace_id")
         events.write(
             "sim.process_email_started",
             sender_email=kwargs.get("sender_email"),
             subject=kwargs.get("subject"),
-            trace_id=kwargs.get("trace_id"),
+            trace_id=trace_id,
         )
-        await process(**kwargs)
+        outcome = await process(**kwargs)
         events.write(
             "sim.process_email_completed",
             sender_email=kwargs.get("sender_email"),
-            trace_id=kwargs.get("trace_id"),
+            trace_id=trace_id,
         )
+        _record_outcome(events, outcome, trace_id=trace_id)
 
     return wrapped
+
+
+def _record_outcome(events: EventsLog, outcome: Any, *, trace_id: str | None) -> None:
+    """Translate an optional structured process outcome into scorable events.
+
+    A scripted `process` may return a dict with `tool_calls`, `total_tokens`,
+    `cost_usd`, and `judge_score` so scenario tests can produce comparable
+    metrics without a live agent/model run. Matches the real audit trail's
+    `agent.tool.completed` naming (see thenetwork/audit.py) for consistency.
+    total_tokens/cost_usd describe the outcome as a whole, so they are written
+    exactly once per outcome (a separate event from the per-tool-call ones),
+    regardless of how many tool_calls the outcome lists.
+    """
+    if not isinstance(outcome, dict):
+        return
+    for tool_name in outcome.get("tool_calls", ()):
+        events.write("agent.tool.completed", tool_name=tool_name, trace_id=trace_id)
+    total_tokens = outcome.get("total_tokens")
+    cost_usd = outcome.get("cost_usd")
+    if total_tokens is not None or cost_usd is not None:
+        events.write(
+            "sim.process_outcome_metrics",
+            total_tokens=total_tokens or 0,
+            cost_usd=cost_usd or 0.0,
+            trace_id=trace_id,
+        )
+    judge_score = outcome.get("judge_score")
+    if judge_score is not None:
+        events.write("sim.judge.transcript", score=judge_score, trace_id=trace_id)
