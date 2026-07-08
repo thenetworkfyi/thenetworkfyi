@@ -59,6 +59,7 @@ def seeded_db(pg_engine, monkeypatch):
     """
     from sqlalchemy import text
     from sqlalchemy.orm import sessionmaker
+    from sqlmodel import Session
     import thenetwork.db.session as sess_mod
 
     def _vec_str(dim0: float = 0.0, dim1: float = 0.0) -> str:
@@ -82,7 +83,12 @@ def seeded_db(pg_engine, monkeypatch):
     mem_carol_id = str(uuid.uuid4())
     mem_intro_id = str(uuid.uuid4())
 
-    test_factory = sessionmaker(bind=pg_engine, autocommit=False, autoflush=False)
+    test_factory = sessionmaker(
+        bind=pg_engine,
+        class_=Session,
+        autocommit=False,
+        autoflush=False,
+    )
     monkeypatch.setattr(sess_mod, "_engine",       pg_engine)
     monkeypatch.setattr(sess_mod, "_SessionLocal", test_factory)
 

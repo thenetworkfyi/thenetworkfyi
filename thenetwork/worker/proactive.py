@@ -47,8 +47,7 @@ async def scan_for_opportunities(timestamp: int) -> None:
         people = session.exec(
             select(Person).where(col(Person.id).in_(person_ids))
         ).all()
-
-    email_by_id = {p.id: p.email for p in people}
+        email_by_id = {p.id: p.email for p in people}
 
     for i, pid_a in enumerate(person_ids):
         if pid_a not in email_by_id:

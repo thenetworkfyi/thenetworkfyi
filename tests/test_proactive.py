@@ -98,6 +98,25 @@ async def test_scan_early_returns_on_empty_graph():
     assert not mock_pe.defer.called
 
 
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_scan_reads_person_emails_before_real_session_closes(seeded_db):
+    """The scan snapshots ORM fields before get_session commits and expires them."""
+    from thenetwork.worker.proactive import scan_for_opportunities
+
+    graph = nx.Graph()
+    graph.add_edge(seeded_db["alice_id"], seeded_db["dave_id"])
+    graph.add_edge(seeded_db["bob_id"], seeded_db["dave_id"])
+
+    with patch("thenetwork.worker.proactive.build_graph", return_value=graph), patch(
+        "thenetwork.worker.proactive.process_email"
+    ) as mock_process:
+        await scan_for_opportunities.func(0)
+
+    mock_process.defer.assert_called_once()
+    assert mock_process.defer.call_args.kwargs["sender_email"] == "alice@test.com"
+
+
 # --- scan_for_matches (semantic rematch) -----------------------------------
 
 def _memory(mid, refs, gist):
