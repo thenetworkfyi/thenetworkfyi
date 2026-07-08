@@ -498,6 +498,18 @@ def test_handle_admin_command_show_no_arg():
     assert "Usage" in result
 
 
+@pytest.mark.integration
+def test_handle_admin_command_show_reads_memories_before_session_closes(seeded_db):
+    import asyncio
+
+    from thenetwork.admin.commands import handle_admin_command
+
+    result = asyncio.run(handle_admin_command("show alice@test.com", ""))
+
+    assert "Memories for Alice <alice@test.com>" in result
+    assert "Alice is an ML engineer" in result
+
+
 def test_handle_admin_command_forget_no_arg():
     import asyncio
     from thenetwork.admin.commands import handle_admin_command
@@ -760,4 +772,3 @@ async def test_process_email_drops_banned_email_alias():
         "worker.message_rejected",
         reason="banned",
     )
-

@@ -92,6 +92,10 @@ async def _cmd_show(ident: str) -> str:
             select(Memory).where(Memory.refs.contains([person.id]))
         ).all()
         name, email, pid = person.name, person.email, person.id
+        memory_lines = [
+            f"[{memory.id}] {memory.created_at.date()}\n{memory.text}\n"
+            for memory in mems
+        ]
     audit_event(
         "database.action", action="lookup", record_type="person",
         outcome="found", result_count=len(mems),
@@ -99,8 +103,7 @@ async def _cmd_show(ident: str) -> str:
     if not mems:
         return f"No memories for {email} ({pid})"
     lines = [f"Memories for {name} <{email}> ({pid}):\n"]
-    for m in mems:
-        lines.append(f"[{m.id}] {m.created_at.date()}\n{m.text}\n")
+    lines.extend(memory_lines)
     return "\n".join(lines)
 
 
