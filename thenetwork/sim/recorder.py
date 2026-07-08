@@ -12,6 +12,7 @@ from thenetwork.sim.loop import SimTickLoop
 from thenetwork.sim.mail import render_transcript
 from thenetwork.sim.persona import PersonaConfig, TinyPersonEmailAdapter
 from thenetwork.sim.population import SimSchedule
+from thenetwork.worker.tasks import process_email
 
 
 Clock = Callable[[], datetime]
@@ -75,14 +76,27 @@ class SimRunRecorder:
             events_path=run_dir / "events.jsonl",
         )
         run_dir.mkdir(parents=True, exist_ok=False)
+        events = EventsLog(artifacts.events_path)
+
+        if process is not None:
+            process_mode = "override"
+            process_func = process
+        elif config.mock_process is False:
+            process_mode = "real"
+            process_func = process_email.func
+        else:
+            process_mode = "mock"
+            process_func = _mock_process(events)
+
         artifacts.config_path.write_text(
-            json.dumps(_config_payload(config), indent=2, sort_keys=True) + "\n",
+            json.dumps(
+                _config_payload(config, process_mode), indent=2, sort_keys=True
+            )
+            + "\n",
             encoding="utf-8",
         )
-        events = EventsLog(artifacts.events_path)
         events.write("sim.run_started", scenario=config.scenario, ticks=config.ticks)
 
-        process_func = process or _mock_process(events)
         loop = SimTickLoop(
             adapters,
             run_dir=run_dir,
@@ -116,9 +130,10 @@ class SimRunRecorder:
         return candidate
 
 
-def _config_payload(config: SimRunConfig) -> dict[str, Any]:
+def _config_payload(config: SimRunConfig, process_mode: str) -> dict[str, Any]:
     payload = asdict(config)
     payload["personas"] = [asdict(persona) for persona in config.personas]
+    payload["process_mode"] = process_mode
     return payload
 
 
