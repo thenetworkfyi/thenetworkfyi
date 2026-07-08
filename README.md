@@ -187,7 +187,7 @@ LiteLLM, no proxy glue.
 ### Prerequisites
 - Python 3.12+
 - Docker (for local Postgres) or a managed Postgres with the `vector` extension
-- An LLM provider key (`OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY`)
+- API keys for the configured agent, small-agent, and embedding models
 - An IMAP/SMTP mailbox for the agent
 
 ### 1. Configure
@@ -204,9 +204,11 @@ POSTGRES_PASSWORD=network   # literal password; Settings.database_url percent-en
 
 # LLM - provider is chosen by the model string prefix
 AGENT_MODEL=anthropic:claude-sonnet-5
+SMALL_AGENT_MODEL=anthropic:claude-haiku-4-5
 EMBED_MODEL=text-embedding-3-small
-OPENAI_API_KEY=
-ANTHROPIC_API_KEY=
+AGENT_API_KEY=
+SMALL_AGENT_API_KEY=
+EMBED_API_KEY=
 
 # Mailbox - IMAP (inbound polling) and SMTP (outbound send) are separate
 # accounts/credentials, potentially on different providers

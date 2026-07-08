@@ -26,15 +26,20 @@ from thenetwork.audit import (
     audit_trace,
 )
 from thenetwork.email.outbound import notify_admins
+from thenetwork.model_config import model_with_api_key
 from thenetwork.security.sender_identifier import optional_sender_identifier
 from thenetwork.settings import get_settings
 
 
 def build_agent(model: Any = None) -> Agent[AgentDeps, str]:
     """Construct the pydantic-ai agent with all tools registered."""
+    settings = None
     if model is None:
         settings = get_settings()
         model = settings.agent_model
+    if isinstance(model, str):
+        settings = settings or get_settings()
+        model = model_with_api_key(model, settings.agent_api_key)
 
     agent: Agent[AgentDeps, str] = Agent(
         model=model,

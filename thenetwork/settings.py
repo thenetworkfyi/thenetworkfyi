@@ -40,9 +40,11 @@ class Settings(BaseSettings):
     agent_total_tokens_limit: int = 100_000
     embed_model: str = "text-embedding-3-small"
 
-    # API keys (only the ones in use need to be set)
-    openai_api_key: str = ""
-    anthropic_api_key: str = ""
+    # Workload-specific API keys. Each model receives only its own credential,
+    # regardless of which provider its model string selects.
+    agent_api_key: str = ""
+    small_agent_api_key: str = ""
+    embed_api_key: str = ""
 
     # Email - IMAP (inbound polling) and SMTP (outbound send) are distinct
     # accounts/credentials, potentially on different providers entirely.

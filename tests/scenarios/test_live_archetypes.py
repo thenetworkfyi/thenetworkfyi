@@ -11,7 +11,7 @@ skipped when no provider credentials are configured, so:
   - `pytest -m "not integration"` (CI default) never collects/executes a call
     to a live model.
   - a deliberate run needs `pytest -m live_model tests/scenarios/test_live_archetypes.py`
-    with `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` (matching `AGENT_MODEL`) set.
+    with `AGENT_API_KEY` set.
 
 DB access and outbound mail are still mocked (same style as `test_archetypes.py`)
 so a live run costs one model call per case, not a live Postgres + SMTP
@@ -39,9 +39,9 @@ pytestmark = [pytest.mark.integration, pytest.mark.live_model]
 
 def _skip_without_credentials() -> None:
     settings = get_settings()
-    if not (settings.anthropic_api_key or settings.openai_api_key):
+    if not settings.agent_api_key:
         pytest.skip(
-            "live-model suite requires ANTHROPIC_API_KEY/OPENAI_API_KEY for "
+            "live-model suite requires AGENT_API_KEY for "
             f"AGENT_MODEL={settings.agent_model!r}"
         )
 

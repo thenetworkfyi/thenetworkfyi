@@ -25,7 +25,7 @@ def _get_client() -> BaseEmbedding:
     global _client
     if _client is None:
         s = get_settings()
-        _client = _make_embed_client(s.embed_model, s.openai_api_key)
+        _client = _make_embed_client(s.embed_model, s.embed_api_key)
     return _client
 
 

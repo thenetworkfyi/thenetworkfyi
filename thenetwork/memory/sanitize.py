@@ -91,6 +91,7 @@ async def sanitize_memory_llm(memory: Memory, session: Session) -> str:
     person (e.g. "the only Rust developer in Fargo").
     """
     from pydantic_ai import Agent
+    from thenetwork.model_config import model_with_api_key
     from thenetwork.settings import get_settings
 
     if not memory.refs:
@@ -100,7 +101,7 @@ async def sanitize_memory_llm(memory: Memory, session: Session) -> str:
 
     s = get_settings()
     _sanitizer: Agent[None, str] = Agent(
-        model=s.small_agent_model,
+        model=model_with_api_key(s.small_agent_model, s.small_agent_api_key),
         system_prompt=(
             "You are a PII sanitizer. You will receive a memory about a person. "
             "Return a version with all personally-identifying information removed: "
