@@ -9,7 +9,12 @@ from typing import Any
 from unittest.mock import patch
 
 from thenetwork.settings import get_settings
-from thenetwork.sim.mail import ProcessEmailCallable, SimPostOffice, deliver_inbound
+from thenetwork.sim.mail import (
+    ProcessEmailCallable,
+    SimPostOffice,
+    capture_outbound,
+    deliver_inbound,
+)
 from thenetwork.sim.persona import TinyPersonEmailAdapter
 from thenetwork.sim.population import SimSchedule
 from thenetwork.worker import proactive
@@ -68,7 +73,7 @@ class SimTickLoop:
         self.run_dir.mkdir(parents=True, exist_ok=True)
 
         results: list[TickResult] = []
-        with override_rate_limits(self.rate_limit_per_hour):
+        with override_rate_limits(self.rate_limit_per_hour), capture_outbound(self.post_office):
             for tick in range(1, ticks + 1):
                 persona_messages = await self._run_persona_turns(tick)
                 proactive_jobs = 0
