@@ -22,6 +22,7 @@ from thenetwork.worker import proactive
 
 
 ScanCallable = Callable[[int], Awaitable[None]]
+ProgressCallable = Callable[[str], None]
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,7 @@ class SimTickLoop:
         proactive_every: int | None = 1,
         rate_limit_per_hour: int = 10_000,
         schedule: SimSchedule | None = None,
+        progress: ProgressCallable | None = None,
     ) -> None:
         if proactive_every is not None and proactive_every < 1:
             raise ValueError("proactive_every must be at least 1")
@@ -66,6 +68,7 @@ class SimTickLoop:
         self.proactive_every = proactive_every
         self.rate_limit_per_hour = rate_limit_per_hour
         self.schedule = schedule or SimSchedule()
+        self.progress = progress
         self.post_office = SimPostOffice(mbox_path=run_dir / "all-mail.mbox")
 
     async def run(self, *, ticks: int) -> SimLoopResult:
@@ -76,7 +79,8 @@ class SimTickLoop:
         results: list[TickResult] = []
         with override_rate_limits(self.rate_limit_per_hour), capture_outbound(self.post_office):
             for tick in range(1, ticks + 1):
-                persona_messages = await self._run_persona_turns(tick)
+                self._report(f"tick {tick}/{ticks}: started")
+                persona_messages = await self._run_persona_turns(tick, total_ticks=ticks)
                 proactive_jobs = 0
                 if self.proactive_every is not None and tick % self.proactive_every == 0:
                     proactive_jobs = await run_proactive_scans(
@@ -90,10 +94,14 @@ class SimTickLoop:
                         proactive_jobs=proactive_jobs,
                     )
                 )
+                self._report(
+                    f"tick {tick}/{ticks}: completed "
+                    f"({persona_messages} persona messages, {proactive_jobs} proactive jobs)"
+                )
 
         return SimLoopResult(ticks=tuple(results), post_office=self.post_office)
 
-    async def _run_persona_turns(self, tick: int) -> int:
+    async def _run_persona_turns(self, tick: int, *, total_ticks: int) -> int:
         sent = 0
         for adapter in self.adapters:
             if self.schedule.is_interrupted(adapter.config, tick):
@@ -110,6 +118,8 @@ class SimTickLoop:
             )
             if msg is None:
                 continue
+            prefix = f"tick {tick}/{total_ticks}: {adapter.config.name}: process_email"
+            self._report(f"{prefix} started")
             await deliver_inbound(
                 msg,
                 process=self.process,
@@ -117,8 +127,13 @@ class SimTickLoop:
                 tick=tick,
                 persona=adapter.config.name,
             )
+            self._report(f"{prefix} completed")
             sent += 1
         return sent
+
+    def _report(self, message: str) -> None:
+        if self.progress is not None:
+            self.progress(message)
 
 
 async def run_proactive_scans(

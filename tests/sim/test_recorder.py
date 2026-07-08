@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from thenetwork.sim.cli import run_sim
+from thenetwork.sim.cli import main, run_sim
 from thenetwork.sim.compare import compare_runs, load_run_metrics
 from thenetwork.sim.persona import PersonaConfig, TinyPersonEmailAdapter
 from thenetwork.sim.recorder import SimRunConfig, SimRunRecorder
@@ -72,6 +73,37 @@ async def test_sim_run_cli_function_creates_run_directory(tmp_path):
     assert artifacts.transcript_path.name == "transcript.md"
     assert artifacts.events_path.name == "events.jsonl"
     assert len(json.loads(artifacts.config_path.read_text())["personas"]) == 10
+
+
+def test_sim_run_cli_streams_progress_to_stderr_and_only_path_to_stdout(
+    tmp_path, capsys
+):
+    main(
+        [
+            "run",
+            "--runs-dir",
+            str(tmp_path),
+            "--ticks",
+            "2",
+            "--personas",
+            "1",
+        ]
+    )
+
+    captured = capsys.readouterr()
+    stdout_lines = captured.out.splitlines()
+    assert len(stdout_lines) == 1
+    assert Path(stdout_lines[0]).parent == tmp_path
+    assert captured.err.splitlines() == [
+        "tick 1/2: started",
+        "tick 1/2: Priya Shah: process_email started",
+        "tick 1/2: Priya Shah: process_email completed",
+        "tick 1/2: completed (1 persona messages, 0 proactive jobs)",
+        "tick 2/2: started",
+        "tick 2/2: Priya Shah: process_email started",
+        "tick 2/2: Priya Shah: process_email completed",
+        "tick 2/2: completed (1 persona messages, 0 proactive jobs)",
+    ]
 
 
 @pytest.mark.integration
