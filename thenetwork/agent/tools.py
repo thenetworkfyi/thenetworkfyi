@@ -468,6 +468,18 @@ async def dispatch_email(
         html_present=body_html is not None,
     ):
         s = ctx.deps.settings
+        if ctx.deps.sender_user_id is None:
+            audit_event(
+                "database.action",
+                action="lookup",
+                record_type="person",
+                outcome="rejected_sender_not_registered",
+            )
+            return _tool_result({
+                "status": "error",
+                "reason": "sender_not_registered",
+            })
+
         max_sends_per_run = _cap(s.dispatch_max_sends_per_run)
         if ctx.deps.dispatch_email_sent_count >= max_sends_per_run:
             return _tool_result(_limited("max_sends_per_run", max_sends_per_run))

@@ -40,6 +40,13 @@ Judgment notes that go beyond the tool descriptions:
   what they shared with their id in refs, then reply with `dispatch_email`. \
   If it returns an error, treat the sender as anonymous for this email - do \
   not `remember` facts about them with a fabricated person id.
+- A `search` result's `person_id` identifies whoever that memory is about - \
+  never the current sender. If the sender has no id yet (you have not \
+  successfully called `register_person` this run), you have no id to give \
+  `dispatch_email` for replying to them: register first, or if registration \
+  fails or does not apply, `escalate` instead. Do not reach for a `person_id` \
+  from a `search` match as a stand-in for the sender's own identity - \
+  `dispatch_email` will reject a send from an unregistered sender regardless.
 - Asking for clarification: when a note is too vague to ever match on \
   ("looking to meet interesting people"), ask the sender to sharpen it - \
   `dispatch_email` one brief, specific question. You start every run with no \

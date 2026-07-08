@@ -111,6 +111,29 @@ async def test_dispatch_sends_to_resolved_address():
 
 
 @pytest.mark.asyncio
+async def test_dispatch_rejects_unregistered_sender_regardless_of_recipient():
+    """An unregistered sender (sender_user_id is None) must not be able to
+    dispatch to any recipient_user_id, including one belonging to an
+    unrelated person surfaced by an earlier search() call in the same run -
+    the confused-deputy path that let one sender's reply be misattributed
+    and sent to a different, unrelated registered person."""
+    _reset_dispatch_limiter()
+    fake_person = _fake_person("unrelated@example.com")
+
+    ctx = FakeCtx(sender_user_id=None, sender_authenticated=True)
+    ctx._mock_sess.get.return_value = fake_person
+
+    with patch("thenetwork.agent.tools.send_reply") as mock_send:
+        result = await dispatch_email(
+            ctx, recipient_user_id="user-unrelated", subject="Hi", body_text="Hello"
+        )
+
+    mock_send.assert_not_called()
+    assert result["status"] == "error"
+    assert result["reason"] == "sender_not_registered"
+
+
+@pytest.mark.asyncio
 async def test_dispatch_threads_reply_to_inbound_sender_only():
     _reset_dispatch_limiter()
     fake_person = _fake_person("alice@example.com")
