@@ -11,6 +11,7 @@ from typing import Any
 from thenetwork.sim.loop import SimTickLoop
 from thenetwork.sim.mail import render_transcript
 from thenetwork.sim.persona import PersonaConfig, TinyPersonEmailAdapter
+from thenetwork.sim.population import SimSchedule
 
 
 Clock = Callable[[], datetime]
@@ -63,6 +64,7 @@ class SimRunRecorder:
         config: SimRunConfig,
         *,
         process=None,
+        schedule: SimSchedule | None = None,
     ) -> SimRunArtifacts:
         run_dir = self._new_run_dir()
         artifacts = SimRunArtifacts(
@@ -86,6 +88,7 @@ class SimRunRecorder:
             run_dir=run_dir,
             process=_recording_process(process_func, events),
             proactive_every=config.proactive_every,
+            schedule=schedule,
         )
         result = await loop.run(ticks=config.ticks)
         for tick in result.ticks:
