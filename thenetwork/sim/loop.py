@@ -111,7 +111,7 @@ class SimTickLoop:
                 text for text in (_extract_body(reply).strip() for reply in replies) if text
             )
             events = self.schedule.events_for(adapter.config, tick)
-            msg = adapter.next_email(
+            msg = await adapter.anext_email(
                 _tick_prompt(adapter.config.goal, tick, events, reply_texts),
                 tick=tick,
                 subject=f"Simulation tick {tick}",
