@@ -3,8 +3,8 @@ services:
     image: pgvector/pgvector:pg17
     env_file: .env
     environment:
-      POSTGRES_DB: network_db
-      POSTGRES_USER: ${POSTGRES_USER:-network}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     # Bind to loopback only: nothing outside the host (or the compose network)
     # should reach Postgres. The worker talks to it over the internal network.
