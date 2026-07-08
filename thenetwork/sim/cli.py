@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from thenetwork.sim.compare import compare_runs, render_compare
@@ -58,6 +60,7 @@ def main(argv: list[str] | None = None) -> None:
                 proactive_every=args.proactive_every or None,
                 mock_process=not args.real_process,
                 personas=args.personas,
+                progress=lambda message: print(message, file=sys.stderr, flush=True),
             )
         )
         print(artifacts.run_dir)
@@ -72,6 +75,7 @@ async def run_sim(
     proactive_every: int | None,
     mock_process: bool = True,
     personas: int | None = None,
+    progress: Callable[[str], None] | None = None,
 ):
     population = default_population()
     if personas is not None:
@@ -97,4 +101,5 @@ async def run_sim(
         adapters,
         config,
         schedule=SimSchedule.from_population(population),
+        progress=progress,
     )

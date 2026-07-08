@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from thenetwork.db.models import Memory
-from thenetwork.sim.loop import SimTickLoop
+from thenetwork.sim.loop import ProgressCallable, SimTickLoop
 from thenetwork.sim.mail import render_transcript
 from thenetwork.sim.persona import PersonaConfig, TinyPersonEmailAdapter
 from thenetwork.sim.population import SimSchedule
@@ -75,6 +75,7 @@ class SimRunRecorder:
         process=None,
         schedule: SimSchedule | None = None,
         memories: Iterable[Memory] = (),
+        progress: ProgressCallable | None = None,
     ) -> SimRunArtifacts:
         run_dir = self._new_run_dir()
         artifacts = SimRunArtifacts(
@@ -112,6 +113,7 @@ class SimRunRecorder:
             process=_recording_process(process_func, events),
             proactive_every=config.proactive_every,
             schedule=schedule,
+            progress=progress,
         )
         result = await loop.run(ticks=config.ticks)
         for tick in result.ticks:
