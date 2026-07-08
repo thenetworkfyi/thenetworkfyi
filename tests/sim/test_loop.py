@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -90,6 +90,44 @@ def test_override_rate_limits_restores_settings():
         settings.unauthenticated_rate_limit_per_hour,
         settings.global_email_rate_limit_per_hour,
     ) == old
+
+
+@pytest.mark.asyncio
+async def test_tick_loop_captures_replies_without_touching_real_smtp(tmp_path):
+    settings = MagicMock()
+    settings.smtp_host = "smtp.example.com"
+    settings.smtp_port = 587
+    settings.smtp_account = "agent@example.com"
+    settings.smtp_password = "secret"
+    settings.email_from = "agent@example.com"
+    settings.imap_account = "join@example.com"
+    settings.growth_footer_enabled = False
+
+    async def process(**kwargs):
+        from thenetwork.email.outbound import send_reply
+
+        send_reply(
+            to_address=kwargs["sender_email"],
+            subject=f"Re: {kwargs['subject']}",
+            body_text="Reply from the agent.",
+        )
+
+    loop = SimTickLoop(
+        [_adapter("Priya", "priya@example.test", ["one"], budget=1)],
+        run_dir=tmp_path,
+        process=process,
+        proactive_every=None,
+    )
+
+    with patch("thenetwork.email.outbound.get_settings", return_value=settings), patch(
+        "thenetwork.email.outbound.smtplib.SMTP"
+    ) as real_smtp:
+        result = await loop.run(ticks=1)
+
+    real_smtp.assert_not_called()
+    (captured,) = result.post_office.messages_for("priya@example.test")
+    assert captured["From"] == "agent@example.com"
+    assert captured.get_content().strip() == "Reply from the agent."
 
 
 @pytest.mark.asyncio
