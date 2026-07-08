@@ -47,10 +47,10 @@ class SimTickLoop:
         *,
         run_dir: Path,
         process: ProcessEmailCallable | None = None,
-        proactive_every: int = 1,
+        proactive_every: int | None = 1,
         rate_limit_per_hour: int = 10_000,
     ) -> None:
-        if proactive_every < 1:
+        if proactive_every is not None and proactive_every < 1:
             raise ValueError("proactive_every must be at least 1")
         self.adapters = tuple(adapters)
         self.run_dir = run_dir
@@ -69,7 +69,7 @@ class SimTickLoop:
             for tick in range(1, ticks + 1):
                 persona_messages = await self._run_persona_turns(tick)
                 proactive_jobs = 0
-                if tick % self.proactive_every == 0:
+                if self.proactive_every is not None and tick % self.proactive_every == 0:
                     proactive_jobs = await run_proactive_scans(
                         timestamp=tick,
                         process=self.process,
@@ -159,4 +159,3 @@ def _tick_prompt(goal: str, tick: int) -> str:
         f"Tick {tick}. Write at most one concise email to The Network if your "
         f"goal still needs action: {goal}"
     )
-

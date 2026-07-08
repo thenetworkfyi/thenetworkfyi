@@ -43,6 +43,7 @@ dev = [
 [project.scripts]
 thenetwork-worker = "thenetwork.worker.tasks:main"
 thenetwork-producer = "thenetwork.worker.tasks:producer_main"
+sim = "thenetwork.sim.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
