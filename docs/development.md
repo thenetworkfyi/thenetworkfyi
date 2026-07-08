@@ -15,8 +15,9 @@ POSTGRES_PASSWORD=network   # literal password; Settings.database_url percent-en
 AGENT_MODEL=anthropic:claude-sonnet-5   # provider chosen by the string prefix
 SMALL_AGENT_MODEL=anthropic:claude-haiku-4-5   # cheaper tier for fixed-prompt subtasks (e.g. the sanitizer LLM pass)
 EMBED_MODEL=text-embedding-3-small
-OPENAI_API_KEY=
-ANTHROPIC_API_KEY=
+AGENT_API_KEY=
+SMALL_AGENT_API_KEY=
+EMBED_API_KEY=
 IMAP_ACCOUNT=agent@example.com  # polled for inbound
 IMAP_PASSWORD=...
 IMAP_HOST=imap.gmail.com
@@ -90,7 +91,7 @@ under `alembic/versions/`.
   and outbound mail are mocked the same way as `test_archetypes.py`, so a run only costs
   model calls, not a live Postgres/SMTP round trip. Every case is marked both `integration`
   and `live_model` (both declared in `pyproject.toml`) and the module skips itself if no
-  `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` is set, so `pytest -m "not integration"` (CI) never
+  `AGENT_API_KEY` is set, so `pytest -m "not integration"` (CI) never
   reaches a live model. Run deliberately with
   `uv run pytest -m live_model tests/scenarios/test_live_archetypes.py`.
 

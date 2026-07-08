@@ -312,8 +312,15 @@ async def test_llm_sanitizer_uses_fixed_no_tools_prompt(monkeypatch):
 
     monkeypatch.setattr("pydantic_ai.Agent", FakeAgent)
     monkeypatch.setattr(
+        "thenetwork.model_config.model_with_api_key",
+        lambda model, api_key: model,
+    )
+    monkeypatch.setattr(
         "thenetwork.settings.get_settings",
-        lambda: SimpleNamespace(small_agent_model="test:model"),
+        lambda: SimpleNamespace(
+            small_agent_model="test:model",
+            small_agent_api_key="small-key",
+        ),
     )
 
     result = await sanitize_mod.sanitize_memory_llm(memory, session)
@@ -377,7 +384,10 @@ async def test_llm_sanitizer_prompt_contract_via_function_model(monkeypatch):
 
     monkeypatch.setattr(
         "thenetwork.settings.get_settings",
-        lambda: SimpleNamespace(small_agent_model=FunctionModel(capture_and_respond)),
+        lambda: SimpleNamespace(
+            small_agent_model=FunctionModel(capture_and_respond),
+            small_agent_api_key="unused-for-concrete-model",
+        ),
     )
 
     result = await sanitize_mod.sanitize_memory_llm(memory, session)
