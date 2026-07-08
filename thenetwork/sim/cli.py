@@ -18,7 +18,7 @@ class ScriptedTinyPerson:
         self.name = name
         self.body = body
 
-    def listen_and_act(self, _stimulus: str):
+    def listen_and_act(self, stimulus: str, *args, **kwargs):
         return {"content": self.body}
 
 
@@ -28,6 +28,12 @@ def main(argv: list[str] | None = None) -> None:
     run_parser = subcommands.add_parser("run")
     run_parser.add_argument("--runs-dir", type=Path, default=Path("runs"))
     run_parser.add_argument("--ticks", type=int, default=2)
+    run_parser.add_argument(
+        "--personas",
+        type=int,
+        default=None,
+        help="Use only the first N personas of the default population.",
+    )
     run_parser.add_argument(
         "--proactive-every",
         type=int,
@@ -51,6 +57,7 @@ def main(argv: list[str] | None = None) -> None:
                 ticks=args.ticks,
                 proactive_every=args.proactive_every or None,
                 mock_process=not args.real_process,
+                personas=args.personas,
             )
         )
         print(artifacts.run_dir)
@@ -64,8 +71,13 @@ async def run_sim(
     ticks: int,
     proactive_every: int | None,
     mock_process: bool = True,
+    personas: int | None = None,
 ):
     population = default_population()
+    if personas is not None:
+        if personas < 1:
+            raise ValueError("personas must be at least 1")
+        population = population[:personas]
     configs = tuple(persona.config for persona in population)
     adapters = tuple(
         TinyPersonEmailAdapter(
