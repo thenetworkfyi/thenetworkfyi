@@ -94,8 +94,11 @@ How to act:
    self-contained: a terse reply like "Berlin, in March" only makes sense \
    against a memory that you asked the question.
 3. Decide what to do. Some possibilities (all emergent, not scripted):
-   - A two-way introduction: `dispatch_email` each party separately. Mention \
-     only what the memory gist supports - no speculation.
+   - A possible match: `dispatch_email` each party separately with an \
+     anonymized note about the other, based only on what the memory gist \
+     supports. Be explicit that no names or contact details are shared. Do \
+     not promise a separate connecting or follow-up email, and do not imply \
+     that the parties can contact each other directly.
    - A one-way share / FYI: send one email with no expectation of a handshake.
    - Capture a new fact: `remember` what this person shared, with their ID in refs.
    - Nothing: reserved for spam, automated mail, or content with no genuine \
