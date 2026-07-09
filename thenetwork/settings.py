@@ -89,9 +89,9 @@ class Settings(BaseSettings):
     sender_identifier_secret: str = ""
 
     # Outbound dispatch caps. Enforced inside dispatch_email, not by prompt.
-    dispatch_max_sends_per_run: int = 3
-    dispatch_recipient_daily_cap: int = 3
-    dispatch_sender_reply_daily_cap: int = 1
+    dispatch_max_sends_per_run: int = 6
+    dispatch_recipient_daily_cap: int = 6
+    dispatch_sender_reply_daily_cap: int = 6
     registration_limit_per_day: int = 50
 
     # Tool abuse bounds. Set a value to 0 or lower to disable that specific

@@ -270,15 +270,16 @@ async def test_proactive_semantic_trigger_never_sets_quote_inputs():
 
 
 def test_dispatch_cap_settings_defaults():
-    assert Settings.model_fields["dispatch_max_sends_per_run"].default == 3
-    assert Settings.model_fields["dispatch_recipient_daily_cap"].default == 3
-    assert Settings.model_fields["dispatch_sender_reply_daily_cap"].default == 1
+    assert Settings.model_fields["dispatch_max_sends_per_run"].default == 6
+    assert Settings.model_fields["dispatch_recipient_daily_cap"].default == 6
+    assert Settings.model_fields["dispatch_sender_reply_daily_cap"].default == 6
 
 
 @pytest.mark.asyncio
 async def test_dispatch_blocks_after_max_sends_per_run():
     _reset_dispatch_limiter()
     ctx = FakeCtx()
+    ctx.deps.settings.dispatch_max_sends_per_run = 3
     ctx.deps.settings.dispatch_recipient_daily_cap = 99
     ctx.deps.settings.dispatch_sender_reply_daily_cap = 99
     ctx._mock_sess.get.return_value = _fake_person()
