@@ -30,3 +30,4 @@ class AgentDeps:
     # Stored as a callable to avoid serialization issues
     session_factory: Callable | None = None
     dispatch_email_sent_count: int = 0
+    server_side_send_count: int = 0
