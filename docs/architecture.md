@@ -15,7 +15,8 @@ The "big picture" that requires reading several files to reconstruct. See
                 Worker (Procrastinate task: process_email)
                     | rate-limit + optional content scan
                     | run the pydantic-ai agent: Think / Act / Observe
-                    | tools: remember / forget / search / dispatch_email / escalate / register_person
+                    | tools: remember / forget / search / dispatch_email /
+                    |        propose_introduction / escalate / register_person
                     v
                 Reply --SMTP--> [Sender]
                     | append to IMAP Sent folder (best-effort, post-send)
@@ -57,7 +58,7 @@ is required; `thenetwork-producer` is just a manual one-shot poll for cron/debug
   into the system prompt. Tools registered in `build_agent`; deps in `agent/deps.py`
   carry `sender_email` + `sender_user_id` (None on first contact).
 
-## Data model - two tables, that is all
+## Data model
 
 `db/models.py`. Everything durable is here.
 
@@ -72,6 +73,15 @@ is required; `thenetwork-producer` is just a manual one-shot poll for cron/debug
 - `refs` `text[]` - the `people.id`s a memory concerns (0..N)
 - `gist` - PII-stripped summary; the **only** thing cross-user search may return
 - `created_at` - recency / perishability signal
+
+**`introduction_consents`** - security state for identity-revealing introductions:
+- one row per unordered person pair
+- server-written consent flags and state (`proposed`, `one_consented`,
+  `introduced`, or `revoked`)
+- opaque reply token used to associate authenticated inbound replies with a pair
+
+This table is security/capability state, not a domain schema over memories. The model
+cannot write consent or read identities from it.
 
 There is no `kind`/`direction`/`status`/`category`/`tags`. Those are distinctions the
 agent draws from `text` at reasoning time, not columns the DB enforces. The cardinality
@@ -88,7 +98,7 @@ exists because some memory references both, edge weight comes from count/recency
 memories. NetworkX does multi-hop proximity math; the LLM does the language→reference
 mapping at write time. Semantic match over memories lives in `search/match.py`.
 
-## Agent surface - six tools (`agent/tools.py`)
+## Agent surface - seven tools (`agent/tools.py`)
 
 | tool | description |
 |---|---|
@@ -96,6 +106,7 @@ mapping at write time. Semantic match over memories lives in `search/match.py`.
 | `forget(memory_id)` | delete a chunk (edit = forget + remember, so embeddings never go stale) |
 | `search(query) -> [{person_id, gist, similarity}]` | semantic recall returning **opaque ids + gist only** for other people |
 | `dispatch_email(recipient_user_id, …)` | opaque id in; the real address is resolved server-side at send time |
+| `propose_introduction(other_person_id, sender_gist, other_gist)` | creates a pairwise proposal and sends fixed anonymous opt-in requests; authenticated replies are handled server-side before the model runs |
 | `register_person(email, name)` | onboard the sender on first contact; self-registration only (must match the authenticated From, must not already exist) - the id it returns is what later `remember`/`dispatch_email` calls key off |
 | `escalate(reason)` | flag this email for human review and notify `admin_emails`; no auto-reply is sent for true escalations. For authenticated unknown senders, it sends the fixed first-contact welcome instead of escalating. The fallback when no safe, useful action is clear (e.g. an unauthenticated first contact) |
 

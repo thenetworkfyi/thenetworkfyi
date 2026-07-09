@@ -48,14 +48,17 @@ _SAFE_FIELDS = frozenset({
     "action", "auth_result_mechanisms", "authserv_id",
     "auto_submitted_present", "body_chars", "duration_ms", "error_type",
     "header_names", "html_present", "message_count", "outcome", "part_kinds",
-    "query_chars", "reason", "recipient_id_present", "record_type", "refs_count",
+    "consent_state", "query_chars", "reason", "recipient_id_present", "record_type", "refs_count",
     "result_count", "sender_authenticated", "sender_id_hash", "sender_known",
     "sender_present", "subject_chars", "tool_called", "tool_name", "tool_names",
     "tool_outcome", "tool_reason", "top_k", "trace_id", "user_message_chars",
 })
 _SAFE_TOKEN = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
 _SAFE_CATEGORIES = {
-    "action": frozenset({"delete", "insert", "lookup", "search", "ban", "unban"}),
+    "action": frozenset({
+        "ban", "consent", "delete", "insert", "lookup", "propose", "revoke",
+        "search", "unban",
+    }),
     "outcome": frozenset({
         "error", "exists", "found", "not_found", "rate_limited",
         "rejected_already_registered", "rejected_forbidden",
@@ -63,22 +66,25 @@ _SAFE_CATEGORIES = {
     }),
     "tool_outcome": frozenset({
         "created", "deleted", "error", "escalated", "exists", "forbidden",
-        "limited", "not_found", "sent", "success", "welcomed",
+        "limited", "not_found", "proposed", "sent", "success", "suppressed",
+        "welcomed",
     }),
     "tool_reason": frozenset({
         "already_registered", "max_sends_per_run", "memory_text_too_long",
         "not_sender_memory", "person_memory_limit_exceeded",
         "recipient_daily_cap", "recipient_not_found",
         "registration_quota_exceeded", "sender_not_authenticated",
-        "sender_reply_daily_cap",
+        "sender_reply_daily_cap", "person_not_found",
     }),
     "reason": frozenset({
         "body_empty", "body_oversize", "content_scan", "rate_limit",
         "unauthenticated_unknown_sender", "banned",
     }),
-    "record_type": frozenset({"memory", "person"}),
+    "record_type": frozenset({"introduction_consent", "memory", "person"}),
+    "consent_state": frozenset({"introduced", "one_consented", "proposed", "revoked"}),
     "tool_name": frozenset({
-        "dispatch_email", "escalate", "forget", "register_person", "remember", "search",
+        "dispatch_email", "escalate", "forget", "propose_introduction",
+        "register_person", "remember", "search",
     }),
 }
 _SAFE_HEADERS = frozenset({"auto-submitted", "from", "subject"})

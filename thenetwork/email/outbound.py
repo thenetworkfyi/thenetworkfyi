@@ -256,3 +256,43 @@ def send_reply(
             smtp.send_message(msg)
 
         _append_to_sent(msg, trace_id=trace_id)
+
+
+def send_group_introduction(
+    *,
+    person_a_name: str,
+    person_a_email: str,
+    person_b_name: str,
+    person_b_email: str,
+    trace_id: str | None = None,
+) -> None:
+    """Send the fixed identity-revealing email after server-verified consent."""
+    with audit_trace(trace_id), audit_span(
+        "email.smtp_send",
+        recipient_id_present=True,
+        subject_chars=len("Your introduction"),
+        body_chars=0,
+        html_present=False,
+    ):
+        settings = get_settings()
+        body = (
+            f"{person_a_name} and {person_b_name},\n\n"
+            "You both opted in to this introduction. Your addresses are included "
+            "on this message so you can take it from here."
+        )
+        msg = EmailMessage()
+        msg["From"] = settings.email_from
+        msg["To"] = (person_a_email, person_b_email)
+        msg["Subject"] = "Your introduction"
+        msg["Date"] = formatdate(localtime=True)
+        msg["Message-ID"] = make_msgid()
+        msg["Auto-Submitted"] = "auto-replied"
+        msg.set_content(body)
+
+        with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as smtp:
+            smtp.ehlo()
+            smtp.starttls()
+            smtp.login(settings.smtp_account, settings.smtp_password)
+            smtp.send_message(msg)
+
+        _append_to_sent(msg, trace_id=trace_id)

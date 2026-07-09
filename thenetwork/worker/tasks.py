@@ -40,6 +40,7 @@ from thenetwork.email.outbound import (
     send_reply,
 )
 from thenetwork.memory.sanitize import assert_presidio_ready
+from thenetwork.introductions import process_consent_reply
 from thenetwork.security.content_scan import scan_content
 from thenetwork.security.rate_limit import check_rate_limit, normalize_rate_limit_identity
 from thenetwork.security.sender_identifier import optional_sender_identifier
@@ -338,6 +339,16 @@ async def process_email(
             record_type="person",
             outcome="found" if sender_user_id is not None else "not_found",
         )
+
+        consent_result = process_consent_reply(
+            sender_person_id=sender_user_id,
+            sender_authenticated=sender_authenticated,
+            subject=subject,
+            body=body,
+            trace_id=trace_id,
+        )
+        if consent_result.handled:
+            return
 
         if not sender_authenticated and sender_user_id is None:
             audit_event(

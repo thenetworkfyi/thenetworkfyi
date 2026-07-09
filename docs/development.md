@@ -50,7 +50,7 @@ proxy layer.
 ## Optional dependencies
 
 - `uv pip install -e ".[content-scan]"` - optional inbound content scanner (`llm-guard`),
-  defense-in-depth per `docs/security.md` layer 10.
+  defense-in-depth per `docs/security.md` layer 12.
 
 Presidio (`presidio-analyzer` + `spacy`) is a core dependency. It powers
 `thenetwork/memory/sanitize.py`'s deterministic `sanitize_memory`, which redacts person
