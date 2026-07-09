@@ -232,6 +232,39 @@ def test_proposal_notifications_contain_only_supplied_gists_not_identity_data():
     assert "bob@example.com" not in bodies[0]
     assert "Alice" not in bodies[1]
     assert "alice@example.com" not in bodies[1]
+    token = f"[intro:{session.proposal.reply_token}]"
+    assert all(token in body for body in bodies)
+
+
+def test_body_token_consents_when_subject_is_from_another_thread():
+    session = FakeSession(proposal=proposal(), people=people())
+
+    with patch("thenetwork.introductions.send_reply"):
+        result = process_consent_reply(
+            sender_person_id="alice",
+            sender_authenticated=True,
+            subject="Re: An unrelated conversation",
+            body="YES\n\n[INTRO:AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA]",
+            session_factory=factory(session),
+        )
+
+    assert result.outcome == "one_consented"
+    assert session.proposal.person_a_consented
+
+
+def test_quoted_body_token_does_not_trigger_consent_handling():
+    session = FakeSession(proposal=proposal(), people=people())
+
+    result = process_consent_reply(
+        sender_person_id="alice",
+        sender_authenticated=True,
+        subject="Re: An unrelated conversation",
+        body="> [intro:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa]\n> Reply YES",
+        session_factory=factory(session),
+    )
+
+    assert result == ConsentReplyResult(handled=False)
+    assert not session.proposal.person_a_consented
 
 
 async def test_consent_reply_is_consumed_before_model_execution():

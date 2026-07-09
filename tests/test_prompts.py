@@ -12,3 +12,5 @@ def test_possible_match_guidance_describes_current_email_capability() -> None:
     assert "Only after both reply yes" in intro_guidance
     assert "you cannot assert consent" in intro_guidance
     assert "Never use `dispatch_email` to work around this flow" in intro_guidance
+    assert "consent-like reply without an `[intro:...]` token" in intro_guidance
+    assert "copy the token string into their reply" in intro_guidance

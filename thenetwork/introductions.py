@@ -90,17 +90,20 @@ def propose_pair(
         session.refresh(proposal)
 
         subject = f"Possible introduction [intro:{proposal.reply_token}]"
+        token = f"[intro:{proposal.reply_token}]"
         sender_body = (
             "A possible match came up:\n\n"
             f"{other_gist}\n\n"
             "No name or contact details have been shared. Reply YES to opt in, "
-            "or NO to decline."
+            "or NO to decline. If you reply from another thread, include this "
+            f"token in your reply: {token}"
         )
         other_body = (
             "A possible match came up:\n\n"
             f"{sender_gist}\n\n"
             "No name or contact details have been shared. Reply YES to opt in, "
-            "or NO to decline."
+            "or NO to decline. If you reply from another thread, include this "
+            f"token in your reply: {token}"
         )
         send_reply(
             to_address=sender.email,
@@ -125,17 +128,34 @@ def propose_pair(
 
 
 def _reply_action(body: str) -> str | None:
-    visible = [
-        line.strip()
-        for line in body.replace("\r", "").splitlines()
-        if line.strip() and not line.lstrip().startswith(">")
-    ]
+    visible = _visible_reply_lines(body)
     if not visible:
         return None
     match = _ACTION_RE.search(visible[0])
     if match is None:
         return None
     return "consent" if match.group("action").lower() == "yes" else "revoke"
+
+
+def _visible_reply_lines(body: str) -> list[str]:
+    """Return non-quoted, non-empty lines authored in this reply."""
+    return [
+        line.strip()
+        for line in body.replace("\r", "").splitlines()
+        if line.strip() and not line.lstrip().startswith(">")
+    ]
+
+
+def _reply_token(subject: str, body: str) -> str | None:
+    """Find a consent token in the subject or a visible reply line."""
+    match = _TOKEN_RE.search(subject)
+    if match is not None:
+        return match.group("token")
+    for line in _visible_reply_lines(body):
+        match = _TOKEN_RE.search(line)
+        if match is not None:
+            return match.group("token")
+    return None
 
 
 def _send_fixed_reply(
@@ -170,8 +190,8 @@ def process_consent_reply(
     trace_id: str | None = None,
 ) -> ConsentReplyResult:
     """Consume a tokened consent reply before any untrusted text reaches the model."""
-    token_match = _TOKEN_RE.search(subject)
-    if token_match is None:
+    token = _reply_token(subject, body)
+    if token is None:
         return ConsentReplyResult(handled=False)
 
     action = _reply_action(body)
@@ -187,7 +207,7 @@ def process_consent_reply(
     with session_factory() as session:
         proposal = session.exec(
             select(IntroductionConsent)
-            .where(IntroductionConsent.reply_token == token_match.group("token"))
+            .where(IntroductionConsent.reply_token == token)
             .with_for_update()
         ).first()
         if proposal is None or sender_person_id not in (

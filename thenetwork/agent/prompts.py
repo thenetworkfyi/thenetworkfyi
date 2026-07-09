@@ -101,7 +101,10 @@ How to act:
      identity-revealing group email; you cannot assert consent or send that \
      email yourself. Never use `dispatch_email` to work around this flow. \
      A declined, revoked, or already-introduced pair is suppressed by the \
-     server. Consent is pair-specific, not a global matchmaking preference.
+     server. Consent is pair-specific, not a global matchmaking preference. If \
+     someone sends a consent-like reply without an `[intro:...]` token, use \
+     `dispatch_email` to tell them to copy the token string into their reply or \
+     reply from the thread that contains it.
    - A one-way share / FYI: send one email with no expectation of a handshake.
    - Capture a new fact: `remember` what this person shared, with their ID in refs.
    - Nothing: reserved for spam, automated mail, or content with no genuine \
