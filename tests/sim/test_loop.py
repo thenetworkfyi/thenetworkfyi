@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from email.message import EmailMessage
+from functools import partial
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from thenetwork.db.models import IntroductionConsent, Person
+from thenetwork.introductions import process_consent_reply
 from thenetwork.settings import get_settings
 from thenetwork.sim.loop import SimTickLoop, override_rate_limits, run_proactive_scans
 from thenetwork.sim.persona import PersonaConfig, TinyPersonEmailAdapter
@@ -31,6 +35,58 @@ class RecordingTinyPerson:
     def listen_and_act(self, stimulus: str):
         self.stimuli.append(stimulus)
         return {"content": self.replies.pop(0)}
+
+
+class Result:
+    def __init__(self, value):
+        self.value = value
+
+    def first(self):
+        return self.value
+
+
+class WorkerSession:
+    def get(self, _model, _identity):
+        return None
+
+    def exec(self, _query):
+        return Result("alice")
+
+
+class ConsentSession:
+    def __init__(self):
+        self.proposal = IntroductionConsent(
+            person_a_id="alice",
+            person_b_id="bob",
+            reply_token="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+        )
+        self.people = {
+            "alice": Person(id="alice", name="Alice", email="alice@example.test"),
+            "bob": Person(id="bob", name="Bob", email="bob@example.test"),
+        }
+
+    def exec(self, _query):
+        return Result(self.proposal)
+
+    def get(self, _model, person_id):
+        return self.people.get(person_id)
+
+    def add(self, value):
+        self.proposal = value
+
+    def commit(self):
+        return None
+
+    def refresh(self, _value):
+        return None
+
+
+def session_factory(session):
+    @contextmanager
+    def open_session():
+        yield session
+
+    return open_session
 
 
 def _adapter(name: str, email: str, replies: list[str], budget: int = 2):
@@ -180,6 +236,51 @@ async def test_persona_turn_drains_post_office_reply_into_next_stimulus(tmp_path
     assert len(person.stimuli) == 2
     assert "Meet Sam" not in person.stimuli[0]
     assert "Meet Sam, they share your interest in ML infrastructure." in person.stimuli[1]
+
+
+@pytest.mark.asyncio
+async def test_tokened_persona_reply_round_trips_through_consent_processing(tmp_path):
+    adapter = _adapter("Alice", "alice@example.test", ["YES"], budget=1)
+    loop = SimTickLoop(
+        [adapter],
+        run_dir=tmp_path,
+        proactive_every=None,
+    )
+    request = EmailMessage()
+    request["From"] = "join@example.test"
+    request["To"] = "alice@example.test"
+    request["Subject"] = "Possible introduction [intro:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa]"
+    request["Message-ID"] = "<proposal@example.test>"
+    request.set_content("A possible match came up. Reply YES to opt in.")
+    loop.post_office.deliver(request)
+
+    consent_session = ConsentSession()
+    with (
+        patch("thenetwork.worker.tasks.get_session", session_factory(WorkerSession())),
+        patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
+        patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)),
+        patch("thenetwork.worker.tasks.verify_admin_request", return_value=None),
+        patch(
+            "thenetwork.worker.tasks.process_consent_reply",
+            side_effect=partial(
+                process_consent_reply,
+                session_factory=session_factory(consent_session),
+            ),
+        ) as consent_handler,
+        patch("thenetwork.introductions.send_reply"),
+        patch(
+            "thenetwork.worker.tasks.run_agent_for_email",
+            new_callable=AsyncMock,
+        ) as run_agent,
+    ):
+        result = await loop.run(ticks=1)
+
+    assert result.persona_messages == 1
+    assert consent_session.proposal.person_a_consented is True
+    assert consent_handler.call_args.kwargs["subject"] == (
+        "Re: Possible introduction [intro:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa]"
+    )
+    run_agent.assert_not_awaited()
 
 
 @pytest.mark.asyncio
