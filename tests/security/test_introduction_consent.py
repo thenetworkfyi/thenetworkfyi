@@ -1,9 +1,17 @@
 from contextlib import contextmanager
+from functools import partial
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from thenetwork.db.models import IntroductionConsent, Person
-from thenetwork.introductions import process_consent_reply, propose_pair
-from thenetwork.introductions import ConsentReplyResult
+from thenetwork.introductions import (
+    CONSENT_ACKNOWLEDGMENT_REPLY,
+    CONSENT_CLARIFICATION_REPLY,
+    ConsentReplyResult,
+    process_consent_reply,
+    propose_pair,
+)
 
 
 class Result:
@@ -82,15 +90,19 @@ def test_model_assertion_cannot_create_unauthenticated_consent():
     group_send.assert_not_called()
 
 
-def test_one_sided_consent_never_sends_revealing_email():
+@pytest.mark.parametrize("body", ["Yes.", "yes, please", "YES!", "Sounds good, yes"])
+def test_tolerant_yes_reply_consents_without_revealing_identity(body):
     session = FakeSession(proposal=proposal(), people=people())
 
-    with patch("thenetwork.introductions.send_group_introduction") as group_send:
+    with (
+        patch("thenetwork.introductions.send_group_introduction") as group_send,
+        patch("thenetwork.introductions.send_reply") as send,
+    ):
         result = process_consent_reply(
             sender_person_id="alice",
             sender_authenticated=True,
             subject="Re: [intro:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa]",
-            body="YES",
+            body=body,
             session_factory=factory(session),
         )
 
@@ -98,6 +110,25 @@ def test_one_sided_consent_never_sends_revealing_email():
     assert session.proposal.person_a_consented
     assert not session.proposal.person_b_consented
     group_send.assert_not_called()
+    send.assert_called_once()
+    assert send.call_args.kwargs["body_text"] == CONSENT_ACKNOWLEDGMENT_REPLY
+
+
+def test_punctuated_no_reply_revokes():
+    session = FakeSession(proposal=proposal(), people=people())
+
+    with patch("thenetwork.introductions.send_reply") as send:
+        result = process_consent_reply(
+            sender_person_id="alice",
+            sender_authenticated=True,
+            subject="Re: [intro:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa]",
+            body="no thanks.",
+            session_factory=factory(session),
+        )
+
+    assert result.outcome == "revoked"
+    assert session.proposal.status == "revoked"
+    send.assert_not_called()
 
 
 def test_both_authenticated_consents_trigger_server_composed_group_email():
@@ -230,3 +261,41 @@ async def test_consent_reply_is_consumed_before_model_execution():
 
     consent_handler.assert_called_once()
     run_agent.assert_not_awaited()
+
+
+async def test_unparseable_tokened_reply_gets_clarification_before_model():
+    from thenetwork.worker.tasks import process_email
+
+    worker_session = FakeSession()
+    worker_session.exec = lambda _query: Result("alice")
+    consent_session = FakeSession(proposal=proposal(), people=people())
+    real_handler = partial(
+        process_consent_reply,
+        session_factory=factory(consent_session),
+    )
+
+    with (
+        patch("thenetwork.worker.tasks.get_session", factory(worker_session)),
+        patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
+        patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)),
+        patch("thenetwork.worker.tasks.verify_admin_request", return_value=None),
+        patch(
+            "thenetwork.worker.tasks.process_consent_reply",
+            side_effect=real_handler,
+        ),
+        patch("thenetwork.introductions.send_reply") as send,
+        patch(
+            "thenetwork.worker.tasks.run_agent_for_email",
+            new_callable=AsyncMock,
+        ) as run_agent,
+    ):
+        await process_email.func(
+            sender_email="alice@example.com",
+            sender_authenticated=True,
+            subject="Re: [intro:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa]",
+            body="Sounds interesting.",
+        )
+
+    run_agent.assert_not_awaited()
+    send.assert_called_once()
+    assert send.call_args.kwargs["body_text"] == CONSENT_CLARIFICATION_REPLY
