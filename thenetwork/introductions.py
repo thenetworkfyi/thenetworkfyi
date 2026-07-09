@@ -68,6 +68,11 @@ def propose_pair(
     trace_id: str | None = None,
 ) -> dict[str, str]:
     """Create one proposal and send fixed, anonymous consent requests."""
+    if not sender_person_id or not other_person_id:
+        return {"status": "error", "reason": "invalid_person_id"}
+    if sender_person_id == other_person_id:
+        return {"status": "error", "reason": "self_introduction"}
+
     low, high = canonical_pair(sender_person_id, other_person_id)
     with session_factory() as session:
         existing = _pair_record(session, low, high)
