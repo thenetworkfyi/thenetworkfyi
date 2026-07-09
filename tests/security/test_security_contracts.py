@@ -108,6 +108,7 @@ async def test_dispatch_sends_to_resolved_address():
     mock_send.assert_called_once()
     assert mock_send.call_args.kwargs["to_address"] == "bob@example.com"
     assert result["status"] == "sent"
+    assert ctx.deps.server_side_send_count == 1
 
 
 @pytest.mark.asyncio
@@ -470,6 +471,25 @@ async def test_propose_introduction_rejects_invalid_target_without_raising(
 
     assert result == {"status": "error", "reason": reason}
     ctx._mock_sess.get.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_propose_introduction_marks_fixed_consent_sends_as_egress():
+    ctx = FakeCtx(sender_authenticated=True)
+
+    with patch(
+        "thenetwork.agent.tools.propose_pair",
+        return_value={"status": "proposed"},
+    ):
+        result = await propose_introduction(
+            ctx,
+            other_person_id="user-bob",
+            sender_gist="builds storage systems",
+            other_gist="operates distributed databases",
+        )
+
+    assert result == {"status": "proposed"}
+    assert ctx.deps.server_side_send_count == 2
 
 
 @pytest.mark.asyncio

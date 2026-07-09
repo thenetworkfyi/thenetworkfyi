@@ -31,6 +31,12 @@ from thenetwork.model_config import model_with_api_key
 from thenetwork.security.sender_identifier import optional_sender_identifier
 from thenetwork.settings import get_settings
 
+_UNDISPATCHED_RESPONSE_SUBJECT = "[The Network] Agent response needs review"
+_UNDISPATCHED_RESPONSE_BODY = (
+    "An agent run generated final text without a dispatch_email or escalate action. "
+    "The text was not sent. Review the correlated audit trace."
+)
+
 
 def build_agent(model: Any = None) -> Agent[AgentDeps, str]:
     """Construct the pydantic-ai agent with all tools registered."""
@@ -136,11 +142,14 @@ async def run_agent_for_email(
             notify_admins(settings, subject, body, trace_id=trace_id)
             return ""
         audit_model_trace(result)
-        tool_called = any(
-            getattr(part, "part_kind", None) == "tool-call"
+        tool_names = {
+            tool_name
             for message in result.all_messages()
             for part in getattr(message, "parts", ())
-        )
+            if getattr(part, "part_kind", None) == "tool-call"
+            if (tool_name := getattr(part, "tool_name", None))
+        }
+        tool_called = bool(tool_names)
         audit_event(
             "agent.response_generated",
             body_chars=len(result.output),
@@ -152,5 +161,21 @@ async def run_agent_for_email(
                 sender_known=sender_user_id is not None,
                 subject_chars=len(email_subject),
                 body_chars=len(email_body),
+            )
+        if (
+            result.output.strip()
+            and not {"dispatch_email", "escalate"}.intersection(tool_names)
+            and deps.server_side_send_count == 0
+        ):
+            audit_event(
+                "agent.undispatched_response",
+                body_chars=len(result.output),
+                sender_known=sender_user_id is not None,
+            )
+            notify_admins(
+                settings,
+                _UNDISPATCHED_RESPONSE_SUBJECT,
+                _UNDISPATCHED_RESPONSE_BODY,
+                trace_id=trace_id,
             )
         return result.output
