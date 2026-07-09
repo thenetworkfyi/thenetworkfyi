@@ -110,11 +110,13 @@ class SimTickLoop:
             reply_texts = tuple(
                 text for text in (_extract_body(reply).strip() for reply in replies) if text
             )
+            reply_to = replies[-1] if replies else None
             events = self.schedule.events_for(adapter.config, tick)
             msg = await adapter.anext_email(
                 _tick_prompt(adapter.config.goal, tick, events, reply_texts),
                 tick=tick,
                 subject=f"Simulation tick {tick}",
+                reply_to=reply_to,
             )
             if msg is None:
                 continue

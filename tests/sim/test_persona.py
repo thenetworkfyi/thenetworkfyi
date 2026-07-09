@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from email.message import EmailMessage
 from unittest.mock import AsyncMock
 
 import pytest
@@ -44,6 +45,40 @@ def test_tinyperson_adapter_returns_email_message_and_tracks_budget():
     assert adapter.next_email("again", tick=8) is None
 
 
+def test_tinyperson_adapter_builds_threaded_reply_with_quoted_original():
+    person = ScriptedTinyPerson("Priya", ["YES"])
+    adapter = TinyPersonEmailAdapter(
+        person,
+        PersonaConfig(
+            name="Priya Shah",
+            email="priya@example.test",
+            goal="Find ML infrastructure operators.",
+            stop_condition="Stop after one message.",
+            agent_address="join@example.test",
+        ),
+    )
+    request = EmailMessage()
+    request["Subject"] = "Possible introduction [intro:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa]"
+    request["Message-ID"] = "<proposal@example.test>"
+    request["References"] = "<opening@example.test>"
+    request.set_content("A possible match came up.\n\nReply YES to opt in.")
+
+    msg = adapter.next_email("write", tick=2, reply_to=request)
+
+    assert msg is not None
+    assert msg["Subject"] == (
+        "Re: Possible introduction [intro:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa]"
+    )
+    assert msg["In-Reply-To"] == "<proposal@example.test>"
+    assert msg["References"] == "<opening@example.test> <proposal@example.test>"
+    assert msg.get_content() == (
+        "YES\n\n"
+        "> A possible match came up.\n"
+        ">\n"
+        "> Reply YES to opt in.\n"
+    )
+
+
 @pytest.mark.asyncio
 async def test_strong_match_scenario_replays_two_personas_to_process_email(tmp_path):
     configs = default_strong_match_configs(agent_address="join@example.test")
@@ -69,4 +104,3 @@ async def test_strong_match_scenario_replays_two_personas_to_process_email(tmp_p
     assert "Samir Vale" in result.transcript
     assert "I need ML infra help in factories." in result.transcript
     assert "I deploy ML infra for factories." in result.transcript
-
