@@ -56,7 +56,7 @@ _SAFE_FIELDS = frozenset({
 _SAFE_TOKEN = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
 _SAFE_CATEGORIES = {
     "action": frozenset({
-        "ban", "consent", "delete", "insert", "lookup", "propose", "revoke",
+        "ban", "clarify", "consent", "delete", "insert", "lookup", "propose", "revoke",
         "search", "unban",
     }),
     "outcome": frozenset({

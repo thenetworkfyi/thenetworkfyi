@@ -21,13 +21,15 @@ _TOKEN_RE = re.compile(
     r"\[intro:(?P<token>[0-9a-f]{8}-[0-9a-f-]{27,})\]",
     re.IGNORECASE,
 )
-_ACTIONS = {
-    "yes": "consent",
-    "yes please": "consent",
-    "no": "revoke",
-    "no thanks": "revoke",
-    "revoke": "revoke",
-}
+_ACTION_RE = re.compile(
+    r"(?<![A-Za-z0-9_'])(?P<action>yes|no|revoke)(?![A-Za-z0-9_'])",
+    re.IGNORECASE,
+)
+CONSENT_CLARIFICATION_REPLY = (
+    "I could not determine your response. Reply with YES to opt in, "
+    "NO to decline, or REVOKE to withdraw consent."
+)
+CONSENT_ACKNOWLEDGMENT_REPLY = "Noted — waiting on the other party."
 
 
 def _utcnow() -> datetime:
@@ -119,11 +121,32 @@ def propose_pair(
 
 def _reply_action(body: str) -> str | None:
     visible = [
-        line.strip().lower()
+        line.strip()
         for line in body.replace("\r", "").splitlines()
         if line.strip() and not line.lstrip().startswith(">")
     ]
-    return _ACTIONS.get(visible[0]) if visible else None
+    if not visible:
+        return None
+    match = _ACTION_RE.search(visible[0])
+    if match is None:
+        return None
+    return "consent" if match.group("action").lower() == "yes" else "revoke"
+
+
+def _send_fixed_reply(
+    *,
+    to_address: str,
+    subject: str,
+    body_text: str,
+    trace_id: str | None,
+) -> None:
+    send_reply(
+        to_address=to_address,
+        subject=f"Re: {subject}",
+        body_text=body_text,
+        include_footer=False,
+        trace_id=trace_id,
+    )
 
 
 @dataclass(frozen=True)
@@ -143,14 +166,14 @@ def process_consent_reply(
 ) -> ConsentReplyResult:
     """Consume a tokened consent reply before any untrusted text reaches the model."""
     token_match = _TOKEN_RE.search(subject)
-    action = _reply_action(body)
-    if token_match is None or action is None:
+    if token_match is None:
         return ConsentReplyResult(handled=False)
 
+    action = _reply_action(body)
     if not sender_authenticated or sender_person_id is None:
         audit_event(
             "introduction.consent_transition",
-            action=action,
+            action=action or "clarify",
             record_type="introduction_consent",
             outcome="rejected_unauthenticated",
         )
@@ -173,6 +196,26 @@ def process_consent_reply(
                 outcome="rejected_forbidden",
             )
             return ConsentReplyResult(handled=True, outcome="rejected")
+
+        sender = session.get(Person, sender_person_id)
+        if sender is None:
+            raise RuntimeError("introduction participant no longer exists")
+
+        if action is None:
+            _send_fixed_reply(
+                to_address=sender.email,
+                subject=subject,
+                body_text=CONSENT_CLARIFICATION_REPLY,
+                trace_id=trace_id,
+            )
+            audit_event(
+                "introduction.consent_transition",
+                action="clarify",
+                record_type="introduction_consent",
+                outcome="success",
+                consent_state=proposal.status,
+            )
+            return ConsentReplyResult(handled=True, outcome="clarification_sent")
 
         if proposal.status == "revoked":
             return ConsentReplyResult(handled=True, outcome=proposal.status)
@@ -209,6 +252,13 @@ def process_consent_reply(
             session.add(proposal)
             session.commit()
             state = proposal.status
+            if state == "one_consented":
+                _send_fixed_reply(
+                    to_address=sender.email,
+                    subject=subject,
+                    body_text=CONSENT_ACKNOWLEDGMENT_REPLY,
+                    trace_id=trace_id,
+                )
 
     audit_event(
         "introduction.consent_transition",
