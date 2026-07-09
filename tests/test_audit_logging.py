@@ -8,7 +8,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from thenetwork.audit import LOGGER_NAME, audit_event, audit_run, audit_warning_event
+from thenetwork.audit import (
+    LOGGER_NAME,
+    audit_event,
+    audit_jsonl_file,
+    audit_run,
+    audit_warning_event,
+)
 
 
 def _events(caplog) -> list[dict]:
@@ -74,6 +80,22 @@ def test_audit_events_are_json_and_correlated(caplog):
     assert [event["event"] for event in events] == ["test.event", "test.next"]
     assert events[0]["run_id"] == events[1]["run_id"]
     assert events[0]["timestamp"].endswith("+00:00")
+
+
+def test_audit_jsonl_file_reenables_disabled_logger_and_restores_it(tmp_path):
+    audit_path = tmp_path / "audit.jsonl"
+    logger = logging.getLogger(LOGGER_NAME)
+    previous_disabled = logger.disabled
+    logger.disabled = True
+
+    try:
+        with audit_jsonl_file(audit_path):
+            audit_event("test.event", message_count=1)
+
+        assert json.loads(audit_path.read_text())["event"] == "test.event"
+        assert logger.disabled is True
+    finally:
+        logger.disabled = previous_disabled
 
 
 def test_audit_api_rejects_content_bearing_fields():

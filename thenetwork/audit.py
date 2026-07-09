@@ -118,11 +118,13 @@ def configure_audit_logging() -> None:
 def audit_jsonl_file(path: Path) -> Iterator[None]:
     """Write audit events to one JSONL file without reconfiguring global logging."""
     stdlib_logger = logging.getLogger(LOGGER_NAME)
+    previous_disabled = stdlib_logger.disabled
     previous_level = stdlib_logger.level
     previous_propagate = stdlib_logger.propagate
     handler = logging.FileHandler(path, encoding="utf-8")
     handler.setFormatter(logging.Formatter("%(message)s"))
     stdlib_logger.addHandler(handler)
+    stdlib_logger.disabled = False
     stdlib_logger.setLevel(logging.INFO)
     stdlib_logger.propagate = False
     try:
@@ -130,6 +132,7 @@ def audit_jsonl_file(path: Path) -> Iterator[None]:
     finally:
         stdlib_logger.removeHandler(handler)
         handler.close()
+        stdlib_logger.disabled = previous_disabled
         stdlib_logger.setLevel(previous_level)
         stdlib_logger.propagate = previous_propagate
 
