@@ -52,6 +52,29 @@ class SimRunArtifacts:
     audit_path: Path
 
 
+def create_run_artifacts(
+    runs_dir: Path,
+    *,
+    clock: Clock | None = None,
+) -> SimRunArtifacts:
+    """Reserve the next timestamped artifact paths for a simulation run."""
+    now = clock or (lambda: datetime.now(timezone.utc))
+    stamp = now().strftime("%Y%m%dT%H%M%SZ")
+    run_dir = runs_dir / stamp
+    suffix = 1
+    while run_dir.exists():
+        run_dir = runs_dir / f"{stamp}-{suffix}"
+        suffix += 1
+    return SimRunArtifacts(
+        run_dir=run_dir,
+        config_path=run_dir / "config.json",
+        mbox_path=run_dir / "all-mail.mbox",
+        transcript_path=run_dir / "transcript.md",
+        events_path=run_dir / "events.jsonl",
+        audit_path=run_dir / "audit.jsonl",
+    )
+
+
 class EventsLog:
     def __init__(self, path: Path) -> None:
         self.path = path
@@ -85,15 +108,8 @@ class SimRunRecorder:
         memories: Iterable[Memory] = (),
         progress: ProgressCallable | None = None,
     ) -> SimRunArtifacts:
-        run_dir = self._new_run_dir()
-        artifacts = SimRunArtifacts(
-            run_dir=run_dir,
-            config_path=run_dir / "config.json",
-            mbox_path=run_dir / "all-mail.mbox",
-            transcript_path=run_dir / "transcript.md",
-            events_path=run_dir / "events.jsonl",
-            audit_path=run_dir / "audit.jsonl",
-        )
+        artifacts = create_run_artifacts(self.runs_dir, clock=self.clock)
+        run_dir = artifacts.run_dir
         run_dir.mkdir(parents=True, exist_ok=False)
         events = EventsLog(artifacts.events_path)
 
@@ -169,16 +185,6 @@ class SimRunRecorder:
                 proactive_jobs=result.proactive_jobs,
             )
         return artifacts
-
-    def _new_run_dir(self) -> Path:
-        stamp = self.clock().strftime("%Y%m%dT%H%M%SZ")
-        candidate = self.runs_dir / stamp
-        suffix = 1
-        while candidate.exists():
-            candidate = self.runs_dir / f"{stamp}-{suffix}"
-            suffix += 1
-        return candidate
-
 
 def _config_payload(config: SimRunConfig, process_mode: str) -> dict[str, Any]:
     payload = asdict(config)
