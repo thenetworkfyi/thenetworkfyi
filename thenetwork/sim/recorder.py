@@ -10,13 +10,17 @@ from pathlib import Path
 from typing import Any
 
 from thenetwork.audit import audit_jsonl_file
-from thenetwork.db.models import Memory
+from sqlmodel import select
+
+from thenetwork.db.models import IntroductionConsent, Memory, Person
+from thenetwork.db.session import get_session
 from thenetwork.sim.loop import ProgressCallable, SimTickLoop
 from thenetwork.sim.mail import render_transcript
 from thenetwork.sim.persona import PersonaConfig, TinyPersonEmailAdapter
 from thenetwork.sim.population import SimSchedule
 from thenetwork.sim.scoring import (
     MemoryExpectation,
+    IntroductionRevealAuthorization,
     PersonaPII,
     score_memory_expectations,
     score_seal_mbox,
@@ -139,7 +143,13 @@ class SimRunRecorder:
             personas_pii = tuple(
                 PersonaPII.from_config(persona) for persona in config.personas
             )
-            tier1 = score_seal_mbox(artifacts.mbox_path, personas_pii)
+            tier1 = score_seal_mbox(
+                artifacts.mbox_path,
+                personas_pii,
+                _introduced_reveal_authorizations()
+                if config.database_name is not None
+                else (),
+            )
             events.write(
                 "sim.score.tier1",
                 passed=tier1.passed,
@@ -175,6 +185,29 @@ def _config_payload(config: SimRunConfig, process_mode: str) -> dict[str, Any]:
     payload["personas"] = [asdict(persona) for persona in config.personas]
     payload["process_mode"] = process_mode
     return payload
+
+
+def _introduced_reveal_authorizations() -> tuple[IntroductionRevealAuthorization, ...]:
+    authorizations = []
+    with get_session() as session:
+        records = session.exec(
+            select(IntroductionConsent).where(
+                IntroductionConsent.status == "introduced"
+            )
+        ).all()
+        for record in records:
+            person_a = session.get(Person, record.person_a_id)
+            person_b = session.get(Person, record.person_b_id)
+            if person_a is None or person_b is None:
+                continue
+            authorizations.append(
+                IntroductionRevealAuthorization(
+                    person_a_email=person_a.email,
+                    person_b_email=person_b.email,
+                    status=record.status,
+                )
+            )
+    return tuple(authorizations)
 
 
 def _mock_process(events: EventsLog):
