@@ -5,6 +5,7 @@ import re
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
+from pathlib import Path
 from time import monotonic
 from typing import Iterator
 from uuid import uuid4
@@ -111,6 +112,26 @@ def configure_audit_logging() -> None:
     # Procrastinate's job start/finish/retry/failure logs are worth surfacing
     # at INFO rather than vanishing under root's default WARNING threshold.
     logging.getLogger("procrastinate").setLevel(logging.INFO)
+
+
+@contextmanager
+def audit_jsonl_file(path: Path) -> Iterator[None]:
+    """Write audit events to one JSONL file without reconfiguring global logging."""
+    stdlib_logger = logging.getLogger(LOGGER_NAME)
+    previous_level = stdlib_logger.level
+    previous_propagate = stdlib_logger.propagate
+    handler = logging.FileHandler(path, encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    stdlib_logger.addHandler(handler)
+    stdlib_logger.setLevel(logging.INFO)
+    stdlib_logger.propagate = False
+    try:
+        yield
+    finally:
+        stdlib_logger.removeHandler(handler)
+        handler.close()
+        stdlib_logger.setLevel(previous_level)
+        stdlib_logger.propagate = previous_propagate
 
 
 def _safe_token(value: object) -> str:

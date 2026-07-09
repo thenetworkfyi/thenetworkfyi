@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from thenetwork.audit import audit_event
 from thenetwork.sim.cli import main, run_sim
 from thenetwork.sim.compare import compare_runs, load_run_metrics
 from thenetwork.sim.persona import PersonaConfig, TinyPersonEmailAdapter
@@ -74,6 +75,8 @@ async def test_sim_run_cli_function_creates_run_directory(tmp_path):
     assert artifacts.mbox_path.name == "all-mail.mbox"
     assert artifacts.transcript_path.name == "transcript.md"
     assert artifacts.events_path.name == "events.jsonl"
+    assert artifacts.audit_path.name == "audit.jsonl"
+    assert not artifacts.audit_path.exists()
     assert len(json.loads(artifacts.config_path.read_text())["personas"]) == 10
 
 
@@ -202,6 +205,64 @@ async def test_run_recorder_routes_through_real_process_email(tmp_path, seeded_d
     assert "sim.process_email_started" in event_names
     assert "sim.process_email_completed" in event_names
     assert "sim.mock_process_email" not in event_names
+
+
+@pytest.mark.asyncio
+async def test_real_process_runs_capture_isolated_traceable_audit_logs(
+    tmp_path, capsys
+):
+    persona_config = PersonaConfig(
+        name="Alice",
+        email="alice@test.com",
+        goal="Find a collaborator for a Rust project.",
+        stop_condition="An introduction is made.",
+        agent_address="join@example.test",
+    )
+    adapters = (
+        TinyPersonEmailAdapter(ScriptedTinyPerson("body 1"), persona_config),
+    )
+    config = SimRunConfig(
+        scenario="real-process",
+        ticks=1,
+        proactive_every=None,
+        personas=(persona_config,),
+        mock_process=False,
+    )
+
+    async def audited_process(**kwargs):
+        audit_event(
+            "agent.tool.completed",
+            tool_name="remember",
+            trace_id=kwargs["trace_id"],
+        )
+
+    clock_calls = iter(
+        [
+            datetime(2026, 7, 8, 1, 0, 0, tzinfo=timezone.utc),
+            datetime(2026, 7, 8, 1, 1, 0, tzinfo=timezone.utc),
+        ]
+    )
+    recorder = SimRunRecorder(runs_dir=tmp_path, clock=lambda: next(clock_calls))
+
+    with patch("thenetwork.sim.recorder.process_email.func", new=audited_process):
+        first = await recorder.run(adapters, config)
+        second = await recorder.run(adapters, config)
+
+    for artifacts in (first, second):
+        audit_events = [
+            json.loads(line) for line in artifacts.audit_path.read_text().splitlines()
+        ]
+        process_events = [
+            json.loads(line)
+            for line in artifacts.events_path.read_text().splitlines()
+            if "process_email_started" in line
+        ]
+        assert len(audit_events) == 1
+        assert audit_events[0]["event"] == "agent.tool.completed"
+        assert audit_events[0]["trace_id"] == process_events[0]["trace_id"]
+    assert first.audit_path.read_text() != ""
+    assert second.audit_path.read_text() != ""
+    assert capsys.readouterr().err == ""
 
 
 @pytest.mark.asyncio

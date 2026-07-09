@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Iterable
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from thenetwork.audit import audit_jsonl_file
 from thenetwork.db.models import Memory
 from thenetwork.sim.loop import ProgressCallable, SimTickLoop
 from thenetwork.sim.mail import render_transcript
@@ -43,6 +45,7 @@ class SimRunArtifacts:
     mbox_path: Path
     transcript_path: Path
     events_path: Path
+    audit_path: Path
 
 
 class EventsLog:
@@ -85,6 +88,7 @@ class SimRunRecorder:
             mbox_path=run_dir / "all-mail.mbox",
             transcript_path=run_dir / "transcript.md",
             events_path=run_dir / "events.jsonl",
+            audit_path=run_dir / "audit.jsonl",
         )
         run_dir.mkdir(parents=True, exist_ok=False)
         events = EventsLog(artifacts.events_path)
@@ -99,53 +103,61 @@ class SimRunRecorder:
             process_mode = "mock"
             process_func = _mock_process(events)
 
-        artifacts.config_path.write_text(
-            json.dumps(
-                _config_payload(config, process_mode), indent=2, sort_keys=True
+        audit_log = (
+            audit_jsonl_file(artifacts.audit_path)
+            if process_mode == "real"
+            else nullcontext()
+        )
+        with audit_log:
+            artifacts.config_path.write_text(
+                json.dumps(
+                    _config_payload(config, process_mode), indent=2, sort_keys=True
+                )
+                + "\n",
+                encoding="utf-8",
             )
-            + "\n",
-            encoding="utf-8",
-        )
-        events.write("sim.run_started", scenario=config.scenario, ticks=config.ticks)
+            events.write("sim.run_started", scenario=config.scenario, ticks=config.ticks)
 
-        loop = SimTickLoop(
-            adapters,
-            run_dir=run_dir,
-            process=_recording_process(process_func, events),
-            proactive_every=config.proactive_every,
-            schedule=schedule,
-            progress=progress,
-        )
-        result = await loop.run(ticks=config.ticks)
-        for tick in result.ticks:
+            loop = SimTickLoop(
+                adapters,
+                run_dir=run_dir,
+                process=_recording_process(process_func, events),
+                proactive_every=config.proactive_every,
+                schedule=schedule,
+                progress=progress,
+            )
+            result = await loop.run(ticks=config.ticks)
+            for tick in result.ticks:
+                events.write(
+                    "sim.tick_completed",
+                    tick=tick.tick,
+                    persona_messages=tick.persona_messages,
+                    proactive_jobs=tick.proactive_jobs,
+                )
+            render_transcript(artifacts.mbox_path, artifacts.transcript_path)
+
+            personas_pii = tuple(
+                PersonaPII.from_config(persona) for persona in config.personas
+            )
+            tier1 = score_seal_mbox(artifacts.mbox_path, personas_pii)
             events.write(
-                "sim.tick_completed",
-                tick=tick.tick,
-                persona_messages=tick.persona_messages,
-                proactive_jobs=tick.proactive_jobs,
+                "sim.score.tier1",
+                passed=tier1.passed,
+                findings=[asdict(finding) for finding in tier1.findings],
             )
-        render_transcript(artifacts.mbox_path, artifacts.transcript_path)
+            if config.expectations:
+                tier2 = score_memory_expectations(memories, config.expectations)
+                events.write(
+                    "sim.score.tier2",
+                    passed=tier2.passed,
+                    findings=[asdict(finding) for finding in tier2.findings],
+                )
 
-        personas_pii = tuple(PersonaPII.from_config(persona) for persona in config.personas)
-        tier1 = score_seal_mbox(artifacts.mbox_path, personas_pii)
-        events.write(
-            "sim.score.tier1",
-            passed=tier1.passed,
-            findings=[asdict(finding) for finding in tier1.findings],
-        )
-        if config.expectations:
-            tier2 = score_memory_expectations(memories, config.expectations)
             events.write(
-                "sim.score.tier2",
-                passed=tier2.passed,
-                findings=[asdict(finding) for finding in tier2.findings],
+                "sim.run_completed",
+                persona_messages=result.persona_messages,
+                proactive_jobs=result.proactive_jobs,
             )
-
-        events.write(
-            "sim.run_completed",
-            persona_messages=result.persona_messages,
-            proactive_jobs=result.proactive_jobs,
-        )
         return artifacts
 
     def _new_run_dir(self) -> Path:
