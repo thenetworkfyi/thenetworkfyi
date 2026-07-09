@@ -7,8 +7,8 @@ def test_possible_match_guidance_describes_current_email_capability() -> None:
     )[0]
     intro_guidance = " ".join(intro_guidance.split())
 
-    assert "each party separately" in intro_guidance
-    assert "anonymized note" in intro_guidance
-    assert "no names or contact details are shared" in intro_guidance
-    assert "Do not promise a separate connecting or follow-up email" in intro_guidance
-    assert "do not imply that the parties can contact each other directly" in intro_guidance
+    assert "`propose_introduction`" in intro_guidance
+    assert "no names or contact details" in intro_guidance
+    assert "Only after both reply yes" in intro_guidance
+    assert "you cannot assert consent" in intro_guidance
+    assert "Never use `dispatch_email` to work around this flow" in intro_guidance

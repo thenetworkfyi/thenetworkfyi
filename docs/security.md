@@ -33,19 +33,25 @@ prompt-injection exfiltrate it, so the privacy boundary cannot be "withhold a co
 5. **Capability-style email tool (confused-deputy fix).** `dispatch_email` takes an opaque
    `recipient_user_id`; the address is resolved server-side at send time. The LLM never
    sees or supplies a raw address.
-6. **Role separation.** Untrusted inbound body is user-role message content, never in the
+6. **Double-opt-in identity reveal.** The model can propose an unordered pair but cannot
+   record consent or compose the revealing message. A random reply token associates an
+   explicit `YES`, `NO`, or `REVOKE` reply with the pair; the worker accepts it only from
+   an authenticated participant before model execution. After both participants consent,
+   server code resolves both identities and sends the fixed group email. Revoked pairs
+   remain structurally suppressed.
+7. **Role separation.** Untrusted inbound body is user-role message content, never in the
    system prompt (`agent/core.py`).
-7. **Mail-loop prevention (RFC 3834).** Inbound carrying `Auto-Submitted` /
+8. **Mail-loop prevention (RFC 3834).** Inbound carrying `Auto-Submitted` /
    `Precedence: bulk|list` / `List-*` is skipped; all outbound sets
    `Auto-Submitted: auto-replied`.
-8. **Rate limiting / anti-DoS.** Per-sender quota via `limits` with Postgres-backed
+9. **Rate limiting / anti-DoS.** Per-sender quota via `limits` with Postgres-backed
    state so counters survive restarts. Keys are normalized and split by
    authentication state: authenticated senders use the normal bucket, while
    unauthenticated `From:` headers use a smaller unauthenticated bucket that cannot
    consume the matching real user's quota. A separate global emails-processed-per-hour
    bucket caps total LLM spend and fails closed if the rate-limit store is unavailable;
    bounded Procrastinate worker concurrency remains an additional ceiling.
-9. **Audit correlation without PII.** Per-message `trace_id` values are minted as
+10. **Audit correlation without PII.** Per-message `trace_id` values are minted as
    opaque UUIDv4-style tokens at IMAP intake and threaded through the Procrastinate
    job, worker, agent run, outbound SMTP send, and IMAP Sent append. Sender-level
    audit correlation must use `security/sender_identifier.py`, which derives
@@ -55,8 +61,8 @@ prompt-injection exfiltrate it, so the privacy boundary cannot be "withhold a co
    keyed digests. If the secret is unset, no sender pseudonym is logged. Never log
    raw sender addresses, and never replace this with a bare `sha256(email)`:
    candidate-address dictionary lookup would make that reversible.
-10. **Credentials.** Loaded from env / `.env` via pydantic-settings; never hardcoded.
-11. **Optional content scanner.** Provider moderation / LLM Guard as opt-in
+11. **Credentials.** Loaded from env / `.env` via pydantic-settings; never hardcoded.
+12. **Optional content scanner.** Provider moderation / LLM Guard as opt-in
     defense-in-depth, never the primary defense (`security/content_scan.py`).
 
 ## The admin channel

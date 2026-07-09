@@ -26,6 +26,7 @@ from thenetwork.email.outbound import (
     send_reply,
 )
 from thenetwork.memory.sanitize import sanitize_memory_high_fidelity
+from thenetwork.introductions import propose_pair
 from thenetwork.search.match import MemoryMatch, match_memories
 
 MAX_CONSOLIDATION_CANDIDATES = 3
@@ -542,3 +543,32 @@ async def dispatch_email(
 
         ctx.deps.dispatch_email_sent_count += 1
         return _tool_result({"status": "sent"})
+
+
+async def propose_introduction(
+    ctx: RunContext[AgentDeps],
+    other_person_id: str,
+    sender_gist: str,
+    other_gist: str,
+) -> dict[str, Any]:
+    """Propose a match without revealing either participant.
+
+    The server derives one participant from the authenticated sender, stores
+    the unordered pair, and sends fixed consent requests. The model supplies
+    only sealed gists and the other person's opaque id.
+    """
+    with audit_span("agent.tool", tool_name="propose_introduction"):
+        if not ctx.deps.sender_authenticated or ctx.deps.sender_user_id is None:
+            return _tool_result({
+                "status": "error",
+                "reason": "sender_not_authenticated",
+            })
+        result = propose_pair(
+            sender_person_id=ctx.deps.sender_user_id,
+            other_person_id=other_person_id,
+            sender_gist=sender_gist,
+            other_gist=other_gist,
+            session_factory=ctx.deps.session_factory or get_session,
+            trace_id=ctx.deps.trace_id,
+        )
+        return _tool_result(result)

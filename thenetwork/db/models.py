@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Column, DateTime, Text
+from sqlalchemy import Column, DateTime, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlmodel import Field, SQLModel
 
@@ -99,6 +99,31 @@ class BannedEmail(SQLModel, table=True):
 
     email: str = Field(primary_key=True)
     created_at: datetime = Field(
+        default_factory=_utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class IntroductionConsent(SQLModel, table=True):
+    """Server-owned pairwise consent state for identity-revealing introductions."""
+
+    __tablename__ = "introduction_consents"
+    __table_args__ = (
+        UniqueConstraint("person_a_id", "person_b_id", name="uq_introduction_pair"),
+    )
+
+    id: str = Field(default_factory=_new_uuid, primary_key=True)
+    person_a_id: str = Field(index=True)
+    person_b_id: str = Field(index=True)
+    reply_token: str = Field(default_factory=_new_uuid, unique=True, index=True)
+    person_a_consented: bool = Field(default=False, nullable=False)
+    person_b_consented: bool = Field(default=False, nullable=False)
+    status: str = Field(default="proposed", nullable=False, index=True)
+    created_at: datetime = Field(
+        default_factory=_utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    updated_at: datetime = Field(
         default_factory=_utcnow,
         sa_column=Column(DateTime(timezone=True), nullable=False),
     )

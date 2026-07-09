@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
-from email.utils import parsedate_to_datetime
+from email.utils import getaddresses, parsedate_to_datetime
 from unittest.mock import MagicMock, patch
 
 from imap_tools import MailMessageFlags
@@ -61,6 +61,34 @@ def test_append_called_on_success():
         send_reply(to_address="bob@example.com", subject="Hi", body_text="Hello", include_footer=False)
 
     mb_instance.append.assert_called_once()
+
+
+def test_group_introduction_addresses_both_consented_people():
+    from thenetwork.email.outbound import send_group_introduction
+
+    captured = []
+    smtp_instance = _mock_smtp()
+    smtp_instance.send_message.side_effect = lambda msg: captured.append(msg)
+    mock_mailbox, _ = _mock_mailbox_success()
+
+    with patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()), \
+         patch("smtplib.SMTP", return_value=smtp_instance), \
+         patch("thenetwork.email.outbound.MailBox", mock_mailbox):
+        send_group_introduction(
+            person_a_name="Alice",
+            person_a_email="alice@example.com",
+            person_b_name="Bob",
+            person_b_email="bob@example.com",
+        )
+
+    assert len(captured) == 1
+    assert [address for _, address in getaddresses(captured[0].get_all("To", []))] == [
+        "alice@example.com",
+        "bob@example.com",
+    ]
+    body = captured[0].get_body(preferencelist=("plain",)).get_content()
+    assert "Alice and Bob" in body
+    assert "both opted in" in body
 
 
 def test_append_uses_configured_folder_name():

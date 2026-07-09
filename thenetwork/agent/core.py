@@ -13,6 +13,7 @@ from thenetwork.agent.tools import (
     dispatch_email,
     escalate,
     forget,
+    propose_introduction,
     register_person,
     remember,
     search,
@@ -51,6 +52,7 @@ def build_agent(model: Any = None) -> Agent[AgentDeps, str]:
     agent.tool(remember)
     agent.tool(forget)
     agent.tool(search)
+    agent.tool(propose_introduction)
     agent.tool(escalate)
     agent.tool(dispatch_email)
     agent.tool(register_person)

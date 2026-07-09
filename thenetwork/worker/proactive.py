@@ -28,6 +28,7 @@ from thenetwork.db.session import get_session
 from thenetwork.search.graph import build_graph
 from thenetwork.search.match import match_memories
 from thenetwork.settings import get_settings
+from thenetwork.introductions import pair_is_suppressed
 from thenetwork.worker.tasks import app, process_email
 
 PROXIMITY_THRESHOLD = 0.3
@@ -135,7 +136,11 @@ async def scan_for_matches(timestamp: int) -> None:
 
                 for arrival in arrivals:
                     pair = frozenset((standing, arrival))
-                    if pair in seen or graph.has_edge(standing, arrival):
+                    if (
+                        pair in seen
+                        or graph.has_edge(standing, arrival)
+                        or pair_is_suppressed(session, standing, arrival)
+                    ):
                         continue
                     seen.add(pair)
 
@@ -150,8 +155,8 @@ async def scan_for_matches(timestamp: int) -> None:
                         f"Person {standing}: {m.gist}\n"
                         f"Person {arrival}: {arrival_mem.gist}\n\n"
                         "If these two share specific, real common ground, "
-                        "introduce them - dispatch_email to each, mentioning "
-                        "only what the gists support. If the overlap is thin "
+                        "propose an introduction with `propose_introduction`, "
+                        "using only what the gists support. If the overlap is thin "
                         "or you are unsure, do nothing."
                     )
                     process_email.defer(
