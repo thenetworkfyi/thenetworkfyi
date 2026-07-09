@@ -33,6 +33,7 @@ class SimRunConfig:
     personas: tuple[PersonaConfig, ...]
     mock_process: bool = True
     expectations: tuple[MemoryExpectation, ...] = ()
+    database_name: str | None = None
 
 
 @dataclass(frozen=True)

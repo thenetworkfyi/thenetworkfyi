@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -73,6 +75,53 @@ async def test_sim_run_cli_function_creates_run_directory(tmp_path):
     assert artifacts.transcript_path.name == "transcript.md"
     assert artifacts.events_path.name == "events.jsonl"
     assert len(json.loads(artifacts.config_path.read_text())["personas"]) == 10
+
+
+@pytest.mark.asyncio
+async def test_real_process_run_uses_and_records_per_run_database(tmp_path):
+    expected = SimpleNamespace(run_dir=tmp_path / "run")
+    database_name = "sim_0123456789abcdef"
+
+    with (
+        patch(
+            "thenetwork.sim.cli.new_sim_database_name",
+            return_value=database_name,
+        ),
+        patch(
+            "thenetwork.sim.cli.provision_sim_database",
+            return_value=nullcontext(database_name),
+        ) as provision,
+        patch.object(
+            SimRunRecorder,
+            "run",
+            AsyncMock(return_value=expected),
+        ) as record,
+    ):
+        artifacts = await run_sim(
+            runs_dir=tmp_path,
+            ticks=1,
+            proactive_every=None,
+            mock_process=False,
+            keep_db=True,
+            personas=1,
+        )
+
+    assert artifacts is expected
+    provision.assert_called_once_with(database_name, keep=True)
+    recorded_config = record.await_args.args[1]
+    assert recorded_config.mock_process is False
+    assert recorded_config.database_name == database_name
+
+
+@pytest.mark.asyncio
+async def test_keep_db_is_rejected_for_mock_run(tmp_path):
+    with pytest.raises(ValueError, match="keep_db requires mock_process=False"):
+        await run_sim(
+            runs_dir=tmp_path,
+            ticks=1,
+            proactive_every=None,
+            keep_db=True,
+        )
 
 
 def test_sim_run_cli_streams_progress_to_stderr_and_only_path_to_stdout(
