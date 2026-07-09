@@ -542,6 +542,7 @@ async def dispatch_email(
             _consume_daily_dispatch_cap(sender_reply_cap_key, sender_reply_daily_cap)
 
         ctx.deps.dispatch_email_sent_count += 1
+        ctx.deps.server_side_send_count += 1
         return _tool_result({"status": "sent"})
 
 
@@ -571,4 +572,6 @@ async def propose_introduction(
             session_factory=ctx.deps.session_factory or get_session,
             trace_id=ctx.deps.trace_id,
         )
+        if result.get("status") == "proposed":
+            ctx.deps.server_side_send_count += 2
         return _tool_result(result)

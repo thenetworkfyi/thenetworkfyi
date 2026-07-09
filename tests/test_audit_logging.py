@@ -306,6 +306,7 @@ async def test_agent_run_applies_configured_usage_limits():
         agent_model="test:model",
         agent_request_limit=3,
         agent_total_tokens_limit=1234,
+        admin_emails=[],
     )
 
     with patch("thenetwork.agent.core.get_settings", return_value=settings), \
@@ -532,9 +533,7 @@ async def test_agent_run_audits_trace_id_on_lifecycle_events(caplog):
 
 @pytest.mark.asyncio
 async def test_agent_no_tool_call_is_flagged_and_logged(caplog):
-    """A run that ends in plain text with no tool call must be surfaced,
-    not silently discarded - the sender gets no reply and no human is
-    notified, so operators need a distinct, greppable signal for it."""
+    """Undispatched final text is escalated without sending it to the user."""
     from thenetwork.agent.core import run_agent_for_email
 
     fake_result = SimpleNamespace(
@@ -551,12 +550,15 @@ async def test_agent_no_tool_call_is_flagged_and_logged(caplog):
     fake_agent = SimpleNamespace(run=AsyncMock(return_value=fake_result))
     caplog.set_level(logging.INFO, logger=LOGGER_NAME)
 
-    with patch("thenetwork.agent.core.build_agent", return_value=fake_agent):
+    with patch("thenetwork.agent.core.build_agent", return_value=fake_agent), patch(
+        "thenetwork.agent.core.notify_admins"
+    ) as notify_admins:
         await run_agent_for_email(
             sender_email="mike@mkly.io",
             sender_user_id=None,
             email_subject="I'm hungry",
             email_body="I would really like a pizza.",
+            trace_id="8b8c9907-2d7b-4347-967a-412c6fe63c27",
         )
 
     events = _events(caplog)
@@ -565,6 +567,89 @@ async def test_agent_no_tool_call_is_flagged_and_logged(caplog):
     no_action_events = [e for e in events if e["event"] == "agent.no_action_taken"]
     assert len(no_action_events) == 1
     assert no_action_events[0]["sender_known"] is False
+    undispatched = next(e for e in events if e["event"] == "agent.undispatched_response")
+    assert undispatched["trace_id"] == "8b8c9907-2d7b-4347-967a-412c6fe63c27"
+    notify_admins.assert_called_once()
+    assert notify_admins.call_args.args[1] == "[The Network] Agent response needs review"
+    assert "pizza" not in notify_admins.call_args.args[2]
+    assert notify_admins.call_args.kwargs["trace_id"] == "8b8c9907-2d7b-4347-967a-412c6fe63c27"
+
+
+@pytest.mark.asyncio
+async def test_empty_agent_output_does_not_escalate_as_undispatched():
+    from thenetwork.agent.core import run_agent_for_email
+
+    fake_result = SimpleNamespace(output="   ", all_messages=lambda: [])
+    fake_agent = SimpleNamespace(run=AsyncMock(return_value=fake_result))
+
+    with patch("thenetwork.agent.core.build_agent", return_value=fake_agent), patch(
+        "thenetwork.agent.core.notify_admins"
+    ) as notify_admins:
+        await run_agent_for_email(
+            sender_email="mike@mkly.io",
+            sender_user_id=None,
+            email_subject="No action",
+            email_body="FYI",
+        )
+
+    notify_admins.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_server_side_send_prevents_undispatched_escalation():
+    from thenetwork.agent.core import run_agent_for_email
+
+    fake_result = SimpleNamespace(output="A consent request was sent.", all_messages=lambda: [])
+
+    async def run_with_server_side_send(_message, *, deps, usage_limits):
+        deps.server_side_send_count = 2
+        return fake_result
+
+    fake_agent = SimpleNamespace(run=AsyncMock(side_effect=run_with_server_side_send))
+
+    with patch("thenetwork.agent.core.build_agent", return_value=fake_agent), patch(
+        "thenetwork.agent.core.notify_admins"
+    ) as notify_admins:
+        await run_agent_for_email(
+            sender_email="mike@mkly.io",
+            sender_user_id="person-mike",
+            email_subject="Introduce me",
+            email_body="Please make the introduction.",
+        )
+
+    notify_admins.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_tool_call_prevents_undispatched_escalation():
+    from thenetwork.agent.core import run_agent_for_email
+
+    fake_result = SimpleNamespace(
+        output="Your reply was sent.",
+        all_messages=lambda: [
+            SimpleNamespace(
+                parts=[
+                    SimpleNamespace(
+                        part_kind="tool-call",
+                        tool_name="dispatch_email",
+                    )
+                ]
+            )
+        ],
+    )
+    fake_agent = SimpleNamespace(run=AsyncMock(return_value=fake_result))
+
+    with patch("thenetwork.agent.core.build_agent", return_value=fake_agent), patch(
+        "thenetwork.agent.core.notify_admins"
+    ) as notify_admins:
+        await run_agent_for_email(
+            sender_email="mike@mkly.io",
+            sender_user_id="person-mike",
+            email_subject="Reply",
+            email_body="Please respond.",
+        )
+
+    notify_admins.assert_not_called()
 
 
 @pytest.mark.asyncio
