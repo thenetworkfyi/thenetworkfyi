@@ -101,6 +101,37 @@ No inbound network access: the service polls IMAP (outbound), pulls jobs from lo
 Postgres, and calls LLM/SMTP APIs (outbound). No web server or public port. A single small
 VPS suffices.
 
+## Double-opt-in simulation
+
+The deterministic introduction simulation exercises the production
+`propose_introduction` tool and `process_email` consent path without calling an LLM or
+an external mail service. It provisions and migrates a disposable database, sends both
+`YES` replies, verifies the identity-revealing group message with the tier 1 SEAL scorer,
+then sends `REVOKE` and verifies that another proposal for the pair is suppressed.
+
+Run it against any local pgvector PostgreSQL instance:
+
+```bash
+POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=5432 \
+  POSTGRES_USER=network POSTGRES_PASSWORD=network POSTGRES_DB=network_db \
+  uv run sim intro-flow --runs-dir runs/intro-flow
+```
+
+The printed run directory contains `events.jsonl`, `audit.jsonl`, `all-mail.mbox`, and
+`transcript.md`. Inside a fresh dev-loop Incus box, install and initialize PostgreSQL
+entirely in the box before running the same command:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y postgresql postgresql-contrib postgresql-16-pgvector
+sudo -u postgres psql -c "CREATE ROLE network LOGIN PASSWORD 'network' CREATEDB"
+sudo -u postgres psql template1 -c "CREATE EXTENSION vector"
+sudo -u postgres createdb -O network network_db
+POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=5432 \
+  POSTGRES_USER=network POSTGRES_PASSWORD=network POSTGRES_DB=network_db \
+  uv run sim intro-flow --runs-dir runs/intro-flow
+```
+
 `docker-compose.yml` runs `db` (pgvector, bound to `127.0.0.1`, state in `pgdata` volume)
 and `worker`. Redeploys are safe by design: durable job rows, `SKIP LOCKED` dequeue,
 SIGTERM graceful drain (`stop_grace_period: 300s`), `max_attempts=3`, and idempotent intake

@@ -10,6 +10,7 @@ from pathlib import Path
 
 from thenetwork.sim.compare import compare_runs, render_compare
 from thenetwork.sim.database import new_sim_database_name, provision_sim_database
+from thenetwork.sim.intro_flow import run_intro_flow_sim
 from thenetwork.sim.persona import TinyPersonEmailAdapter
 from thenetwork.sim.population import PopulationPersona, SimSchedule, default_population
 from thenetwork.sim.recorder import SimRunConfig, SimRunRecorder
@@ -81,6 +82,13 @@ def main(argv: list[str] | None = None) -> None:
     compare_parser = subcommands.add_parser("compare")
     compare_parser.add_argument("before", type=Path)
     compare_parser.add_argument("after", type=Path)
+    intro_parser = subcommands.add_parser("intro-flow")
+    intro_parser.add_argument("--runs-dir", type=Path, default=Path("runs"))
+    intro_parser.add_argument(
+        "--keep-db",
+        action="store_true",
+        help="Retain the per-run Postgres database.",
+    )
     args = parser.parse_args(argv)
 
     if args.command == "run":
@@ -102,6 +110,15 @@ def main(argv: list[str] | None = None) -> None:
         print(artifacts.run_dir)
     elif args.command == "compare":
         print(render_compare(compare_runs(args.before, args.after)), end="")
+    elif args.command == "intro-flow":
+        artifacts = asyncio.run(
+            run_intro_flow_sim(
+                runs_dir=args.runs_dir,
+                keep_db=args.keep_db,
+                progress=lambda message: print(message, file=sys.stderr, flush=True),
+            )
+        )
+        print(artifacts.run_dir)
 
 
 async def run_sim(
