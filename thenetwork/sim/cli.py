@@ -9,6 +9,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from thenetwork.sim.compare import compare_runs, render_compare
+from thenetwork.sim.database import new_sim_database_name, provision_sim_database
 from thenetwork.sim.persona import TinyPersonEmailAdapter
 from thenetwork.sim.population import PopulationPersona, SimSchedule, default_population
 from thenetwork.sim.recorder import SimRunConfig, SimRunRecorder
@@ -61,6 +62,11 @@ def main(argv: list[str] | None = None) -> None:
         help="Route each turn through the real process_email task instead of the mock stub.",
     )
     run_parser.add_argument(
+        "--keep-db",
+        action="store_true",
+        help="Retain the per-run Postgres database after a real-process run.",
+    )
+    run_parser.add_argument(
         "--llm-personas",
         action="store_true",
         help="Drive personas with SMALL_AGENT_MODEL so they hold a real conversation "
@@ -78,12 +84,15 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     if args.command == "run":
+        if args.keep_db and not args.real_process:
+            parser.error("--keep-db requires --real-process")
         artifacts = asyncio.run(
             run_sim(
                 runs_dir=args.runs_dir,
                 ticks=args.ticks,
                 proactive_every=args.proactive_every or None,
                 mock_process=not args.real_process,
+                keep_db=args.keep_db,
                 personas=args.personas,
                 llm_personas=args.llm_personas,
                 message_budget=args.message_budget,
@@ -101,11 +110,14 @@ async def run_sim(
     ticks: int,
     proactive_every: int | None,
     mock_process: bool = True,
+    keep_db: bool = False,
     personas: int | None = None,
     llm_personas: bool = False,
     message_budget: int | None = None,
     progress: Callable[[str], None] | None = None,
 ):
+    if keep_db and mock_process:
+        raise ValueError("keep_db requires mock_process=False")
     population = default_population()
     if personas is not None:
         if personas < 1:
@@ -123,16 +135,25 @@ async def run_sim(
         TinyPersonEmailAdapter(_build_person(persona, llm_personas), persona.config)
         for persona in population
     )
+    database_name = new_sim_database_name() if not mock_process else None
     config = SimRunConfig(
         scenario="default-population",
         ticks=ticks,
         proactive_every=proactive_every,
         personas=configs,
         mock_process=mock_process,
+        database_name=database_name,
     )
-    return await SimRunRecorder(runs_dir=runs_dir).run(
-        adapters,
-        config,
-        schedule=SimSchedule.from_population(population),
-        progress=progress,
-    )
+
+    async def record():
+        return await SimRunRecorder(runs_dir=runs_dir).run(
+            adapters,
+            config,
+            schedule=SimSchedule.from_population(population),
+            progress=progress,
+        )
+
+    if database_name is None:
+        return await record()
+    with provision_sim_database(database_name, keep=keep_db):
+        return await record()
