@@ -91,6 +91,35 @@ def test_group_introduction_addresses_both_consented_people():
     assert "both opted in" in body
 
 
+def test_group_introduction_audits_actual_body_length(caplog):
+    from thenetwork.email.outbound import send_group_introduction
+
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+    mock_mailbox, _ = _mock_mailbox_success()
+
+    with patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()), \
+         patch("smtplib.SMTP", return_value=_mock_smtp()), \
+         patch("thenetwork.email.outbound.MailBox", mock_mailbox):
+        send_group_introduction(
+            person_a_name="Alice",
+            person_a_email="alice@example.com",
+            person_b_name="Bob",
+            person_b_email="bob@example.com",
+        )
+
+    body = (
+        "Alice and Bob,\n\n"
+        "You both opted in to this introduction. Your addresses are included "
+        "on this message so you can take it from here."
+    )
+    smtp_events = [
+        event for event in _events(caplog)
+        if event["event"] in {"email.smtp_send.started", "email.smtp_send.completed"}
+    ]
+    assert len(smtp_events) == 2
+    assert {event["body_chars"] for event in smtp_events} == {len(body)}
+
+
 def test_append_uses_configured_folder_name():
     """The folder passed to append() comes from settings.imap_sent_folder."""
     from thenetwork.email.outbound import send_reply

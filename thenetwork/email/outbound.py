@@ -267,19 +267,19 @@ def send_group_introduction(
     trace_id: str | None = None,
 ) -> None:
     """Send the fixed identity-revealing email after server-verified consent."""
+    body = (
+        f"{person_a_name} and {person_b_name},\n\n"
+        "You both opted in to this introduction. Your addresses are included "
+        "on this message so you can take it from here."
+    )
     with audit_trace(trace_id), audit_span(
         "email.smtp_send",
         recipient_id_present=True,
         subject_chars=len("Your introduction"),
-        body_chars=0,
+        body_chars=len(body),
         html_present=False,
     ):
         settings = get_settings()
-        body = (
-            f"{person_a_name} and {person_b_name},\n\n"
-            "You both opted in to this introduction. Your addresses are included "
-            "on this message so you can take it from here."
-        )
         msg = EmailMessage()
         msg["From"] = settings.email_from
         msg["To"] = (person_a_email, person_b_email)
