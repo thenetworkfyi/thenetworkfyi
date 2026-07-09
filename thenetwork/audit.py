@@ -74,7 +74,8 @@ _SAFE_CATEGORIES = {
         "not_sender_memory", "person_memory_limit_exceeded",
         "recipient_daily_cap", "recipient_not_found",
         "registration_quota_exceeded", "sender_not_authenticated",
-        "sender_reply_daily_cap", "person_not_found",
+        "sender_reply_daily_cap", "person_not_found", "invalid_person_id",
+        "self_introduction",
     }),
     "reason": frozenset({
         "body_empty", "body_oversize", "content_scan", "rate_limit",

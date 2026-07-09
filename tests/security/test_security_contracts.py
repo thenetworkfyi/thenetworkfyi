@@ -12,7 +12,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from thenetwork.agent.deps import AgentDeps
-from thenetwork.agent.tools import dispatch_email, register_person
+from thenetwork.agent.tools import dispatch_email, propose_introduction, register_person
 from thenetwork.audit import LOGGER_NAME, audit_event
 from thenetwork.db.models import Person
 from thenetwork.search.match import MemoryMatch
@@ -443,6 +443,32 @@ async def test_register_person_rejects_unauthenticated_sender():
 
     assert result["status"] == "error"
     assert result["reason"] == "sender_not_authenticated"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("other_person_id", "reason"),
+    [
+        ("user-alice", "self_introduction"),
+        ("", "invalid_person_id"),
+    ],
+)
+async def test_propose_introduction_rejects_invalid_target_without_raising(
+    other_person_id: str,
+    reason: str,
+):
+    """Invalid tool input returns a result, allowing the agent run to continue."""
+    ctx = FakeCtx(sender_authenticated=True)
+
+    result = await propose_introduction(
+        ctx,
+        other_person_id=other_person_id,
+        sender_gist="builds storage systems",
+        other_gist="operates distributed databases",
+    )
+
+    assert result == {"status": "error", "reason": reason}
+    ctx._mock_sess.get.assert_not_called()
 
 
 @pytest.mark.asyncio
