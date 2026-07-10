@@ -955,6 +955,53 @@ async def test_worker_rejection_logs_reason_without_message_content(caplog):
 
 
 @pytest.mark.asyncio
+async def test_agent_failure_is_audited_and_reraised_for_retry(caplog):
+    from thenetwork.worker.tasks import process_email
+
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+    with patch("thenetwork.worker.tasks.check_rate_limit", return_value=True), patch(
+        "thenetwork.worker.tasks.scan_content", return_value=(True, None)
+    ), patch("thenetwork.worker.tasks.verify_admin_request", return_value=None), patch(
+        "thenetwork.worker.tasks.get_session", return_value=_mock_sender_lookup("user-alice")
+    ), patch(
+        "thenetwork.worker.tasks.run_agent_for_email", AsyncMock(side_effect=RuntimeError("provider unavailable"))
+    ), patch("thenetwork.worker.tasks.notify_admins") as notify:
+        with pytest.raises(RuntimeError, match="provider unavailable"):
+            await process_email.func(
+                sender_email="alice@example.com", subject="Hi", body="Please introduce me",
+                sender_authenticated=True,
+            )
+
+    notify.assert_not_called()
+    assert any(
+        event["event"] == "worker.agent_failed" and event["error_type"] == "RuntimeError"
+        for event in _events(caplog)
+    )
+
+
+@pytest.mark.asyncio
+async def test_agent_failure_notifies_admins_on_final_retry_only():
+    from thenetwork.worker.tasks import process_email
+
+    final_context = SimpleNamespace(job=SimpleNamespace(attempts=3))
+    with patch("thenetwork.worker.tasks.check_rate_limit", return_value=True), patch(
+        "thenetwork.worker.tasks.scan_content", return_value=(True, None)
+    ), patch("thenetwork.worker.tasks.verify_admin_request", return_value=None), patch(
+        "thenetwork.worker.tasks.get_session", return_value=_mock_sender_lookup("user-alice")
+    ), patch(
+        "thenetwork.worker.tasks.run_agent_for_email", AsyncMock(side_effect=RuntimeError())
+    ), patch("thenetwork.worker.tasks.notify_admins") as notify:
+        with pytest.raises(RuntimeError):
+            await process_email.func(
+                final_context,
+                sender_email="alice@example.com", subject="Hi", body="Please introduce me",
+                sender_authenticated=True,
+            )
+
+    notify.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_worker_caps_subject_and_body_before_agent():
     from thenetwork.email.inbound import MAX_BODY_CHARS, MAX_SUBJECT_CHARS
     from thenetwork.worker.tasks import process_email
