@@ -91,7 +91,7 @@ class Settings(BaseSettings):
     # dictionary lookup can reverse it.
     sender_identifier_secret: str = ""
 
-    # Outbound dispatch caps. Enforced inside dispatch_email, not by prompt.
+    # Outbound send caps. Enforced inside the email capabilities, not by prompt.
     dispatch_max_sends_per_run: int = 6
     dispatch_recipient_daily_cap: int = 6
     dispatch_sender_reply_daily_cap: int = 6

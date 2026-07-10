@@ -12,7 +12,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from thenetwork.agent.deps import AgentDeps
-from thenetwork.agent.tools import dispatch_email, propose_introduction, register_person
+from thenetwork.agent.tools import reply_to_sender, send_outreach, propose_introduction, register_person
 from thenetwork.audit import LOGGER_NAME, audit_event
 from thenetwork.db.models import Person
 from thenetwork.search.match import MemoryMatch
@@ -75,10 +75,21 @@ def _fake_person(email: str = "bob@example.com"):
 
 
 @pytest.mark.asyncio
-async def test_dispatch_resolves_address_not_from_caller():
-    """The tool signature takes only recipient_user_id - caller cannot supply a raw address."""
+async def test_reply_to_sender_has_no_model_selected_recipient():
+    """A direct reply must not let the caller choose an opaque recipient ID."""
     import inspect
-    sig = inspect.signature(dispatch_email)
+    sig = inspect.signature(reply_to_sender)
+    params = list(sig.parameters.keys())
+    assert "recipient_user_id" not in params
+    assert "to_address" not in params
+    assert "email" not in params
+
+
+@pytest.mark.asyncio
+async def test_outreach_resolves_address_not_from_caller():
+    """Intentional outreach takes only an opaque ID, never a raw address."""
+    import inspect
+    sig = inspect.signature(send_outreach)
     params = list(sig.parameters.keys())
     assert "recipient_user_id" in params
     assert "to_address" not in params
@@ -107,7 +118,7 @@ async def test_dispatch_sends_to_resolved_address():
     ctx._mock_sess.get.return_value = fake_person
 
     with patch("thenetwork.agent.tools.send_reply") as mock_send:
-        result = await dispatch_email(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
+        result = await send_outreach(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
 
     mock_send.assert_called_once()
     assert mock_send.call_args.kwargs["to_address"] == "bob@example.com"
@@ -129,7 +140,7 @@ async def test_dispatch_rejects_unregistered_sender_regardless_of_recipient():
     ctx._mock_sess.get.return_value = fake_person
 
     with patch("thenetwork.agent.tools.send_reply") as mock_send:
-        result = await dispatch_email(
+        result = await send_outreach(
             ctx, recipient_user_id="user-unrelated", subject="Hi", body_text="Hello"
         )
 
@@ -151,12 +162,7 @@ async def test_dispatch_threads_reply_to_inbound_sender_only():
     ctx._mock_sess.get.return_value = fake_person
 
     with patch("thenetwork.agent.tools.send_reply") as mock_send:
-        result = await dispatch_email(
-            ctx,
-            recipient_user_id="user-alice",
-            subject="Re: Hi",
-            body_text="Hello",
-        )
+        result = await reply_to_sender(ctx, subject="Re: Hi", body_text="Hello")
 
     assert result["status"] == "sent"
     assert mock_send.call_args.kwargs["in_reply_to"] == "<abc123@example.com>"
@@ -169,6 +175,55 @@ async def test_dispatch_threads_reply_to_inbound_sender_only():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("sender_user_id", "sender_address", "search_result_person_id", "search_result_address"),
+    [
+        ("user-vic", "vic@example.com", "person-petra", "petra@example.com"),
+        ("user-dana", "dana@example.com", "person-petra", "petra@example.com"),
+        ("user-petra", "petra@example.com", "person-theo", "theo@example.com"),
+    ],
+    ids=("vic-to-petra", "dana-to-petra", "petra-to-theo"),
+)
+async def test_reply_to_sender_cannot_be_redirected_to_a_search_result(
+    sender_user_id: str,
+    sender_address: str,
+    search_result_person_id: str,
+    search_result_address: str,
+):
+    """A direct reply has no recipient slot that a search result can occupy."""
+    _reset_dispatch_limiter()
+    ctx = FakeCtx(sender_user_id=sender_user_id)
+    ctx._mock_sess.get.return_value = _fake_person(sender_address)
+
+    with patch("thenetwork.agent.tools.send_reply") as mock_send:
+        result = await reply_to_sender(ctx, subject="Re: Your note", body_text="Thanks")
+
+    assert result["status"] == "sent"
+    ctx._mock_sess.get.assert_called_once_with(Person, sender_user_id)
+    assert ctx._mock_sess.get.call_args.args[1] != search_result_person_id
+    assert mock_send.call_args.kwargs["to_address"] == sender_address
+    assert mock_send.call_args.kwargs["to_address"] != search_result_address
+
+
+@pytest.mark.asyncio
+async def test_outreach_cannot_be_used_as_a_sender_reply():
+    _reset_dispatch_limiter()
+    ctx = FakeCtx(sender_user_id="user-petra")
+
+    with patch("thenetwork.agent.tools.send_reply") as mock_send:
+        result = await send_outreach(
+            ctx,
+            recipient_user_id="user-petra",
+            subject="Re: Your note",
+            body_text="Thanks",
+        )
+
+    assert result == {"status": "error", "reason": "use_reply_to_sender"}
+    ctx._mock_sess.get.assert_not_called()
+    mock_send.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_dispatch_does_not_thread_agent_outreach():
     _reset_dispatch_limiter()
     fake_person = _fake_person("bob@example.com")
@@ -178,7 +233,7 @@ async def test_dispatch_does_not_thread_agent_outreach():
     ctx._mock_sess.get.return_value = fake_person
 
     with patch("thenetwork.agent.tools.send_reply") as mock_send:
-        result = await dispatch_email(
+        result = await send_outreach(
             ctx,
             recipient_user_id="user-bob",
             subject="Intro",
@@ -204,7 +259,7 @@ async def test_dispatch_never_quotes_inbound_text_to_third_party():
     ctx._mock_sess.get.return_value = fake_person
 
     with patch("thenetwork.agent.tools.send_reply") as mock_send:
-        result = await dispatch_email(
+        result = await send_outreach(
             ctx,
             recipient_user_id="user-bob",
             subject="Intro",
@@ -290,10 +345,10 @@ async def test_dispatch_blocks_after_max_sends_per_run():
     ctx._mock_sess.get.return_value = _fake_person()
 
     with patch("thenetwork.agent.tools.send_reply") as mock_send:
-        first = await dispatch_email(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
-        second = await dispatch_email(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
-        third = await dispatch_email(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
-        fourth = await dispatch_email(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
+        first = await send_outreach(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
+        second = await send_outreach(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
+        third = await send_outreach(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
+        fourth = await send_outreach(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
 
     assert [first["status"], second["status"], third["status"]] == ["sent", "sent", "sent"]
     assert fourth == {"status": "limited", "reason": "max_sends_per_run", "limit": 3}
@@ -310,8 +365,8 @@ async def test_dispatch_recipient_daily_cap_is_settings_configurable():
     ctx._mock_sess.get.return_value = _fake_person()
 
     with patch("thenetwork.agent.tools.send_reply") as mock_send:
-        first = await dispatch_email(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
-        second = await dispatch_email(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
+        first = await send_outreach(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
+        second = await send_outreach(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
 
     assert first["status"] == "sent"
     assert second == {"status": "limited", "reason": "recipient_daily_cap", "limit": 1}
@@ -328,8 +383,8 @@ async def test_dispatch_sender_reply_daily_cap_is_settings_configurable():
     ctx._mock_sess.get.return_value = _fake_person("alice@example.com")
 
     with patch("thenetwork.agent.tools.send_reply") as mock_send:
-        first = await dispatch_email(ctx, recipient_user_id="user-alice", subject="Hi", body_text="Hello")
-        second = await dispatch_email(ctx, recipient_user_id="user-alice", subject="Hi", body_text="Hello")
+        first = await reply_to_sender(ctx, subject="Hi", body_text="Hello")
+        second = await reply_to_sender(ctx, subject="Hi", body_text="Hello")
 
     assert first["status"] == "sent"
     assert second == {"status": "limited", "reason": "sender_reply_daily_cap", "limit": 1}
@@ -342,7 +397,7 @@ async def test_dispatch_unknown_id_returns_error():
     ctx = FakeCtx()
     ctx._mock_sess.get.return_value = None
 
-    result = await dispatch_email(ctx, recipient_user_id="nonexistent", subject="Hi", body_text="Hello")
+    result = await send_outreach(ctx, recipient_user_id="nonexistent", subject="Hi", body_text="Hello")
 
     assert result["status"] == "error"
 
@@ -387,7 +442,7 @@ async def test_dispatch_reads_address_before_session_closes():
     ctx._mock_sess.__exit__ = MagicMock(side_effect=_exit_and_detach)
 
     with patch("thenetwork.agent.tools.send_reply") as mock_send:
-        result = await dispatch_email(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
+        result = await send_outreach(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
 
     assert result["status"] == "sent"
     assert mock_send.call_args.kwargs["to_address"] == "bob@example.com"
@@ -405,10 +460,10 @@ async def test_dispatch_failed_send_does_not_consume_recipient_daily_cap():
 
     with patch("thenetwork.agent.tools.send_reply", side_effect=RuntimeError("smtp down")):
         with pytest.raises(RuntimeError):
-            await dispatch_email(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
+            await send_outreach(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
 
     with patch("thenetwork.agent.tools.send_reply") as mock_send:
-        result = await dispatch_email(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
+        result = await send_outreach(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
 
     assert result["status"] == "sent"
     mock_send.assert_called_once()
@@ -427,10 +482,10 @@ async def test_dispatch_failed_send_does_not_consume_sender_reply_daily_cap():
 
     with patch("thenetwork.agent.tools.send_reply", side_effect=RuntimeError("smtp down")):
         with pytest.raises(RuntimeError):
-            await dispatch_email(ctx, recipient_user_id="user-alice", subject="Hi", body_text="Hello")
+            await reply_to_sender(ctx, subject="Hi", body_text="Hello")
 
     with patch("thenetwork.agent.tools.send_reply") as mock_send:
-        result = await dispatch_email(ctx, recipient_user_id="user-alice", subject="Hi", body_text="Hello")
+        result = await reply_to_sender(ctx, subject="Hi", body_text="Hello")
 
     assert result["status"] == "sent"
     mock_send.assert_called_once()
@@ -653,18 +708,8 @@ async def test_dispatch_to_just_registered_sender_threads_and_counts_sender_repl
 
     with patch("thenetwork.agent.tools.send_reply") as mock_send:
         registered = await register_person(ctx, name="Alice")
-        first = await dispatch_email(
-            ctx,
-            recipient_user_id="new-person-id",
-            subject="Re: Hi",
-            body_text="Hello",
-        )
-        second = await dispatch_email(
-            ctx,
-            recipient_user_id="new-person-id",
-            subject="Re: Hi",
-            body_text="Hello again",
-        )
+        first = await reply_to_sender(ctx, subject="Re: Hi", body_text="Hello")
+        second = await reply_to_sender(ctx, subject="Re: Hi", body_text="Hello again")
 
     assert registered == {"status": "created", "person_id": "new-person-id"}
     assert first["status"] == "sent"

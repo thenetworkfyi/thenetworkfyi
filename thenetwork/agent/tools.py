@@ -2,7 +2,8 @@
 
 Security contracts (THE SEAL) are structurally enforced here:
 - remember/search: cross-user memories return gist (PII-stripped) + opaque ids only
-- dispatch_email: opaque recipient_user_id, address resolved server-side
+- reply_to_sender: sender identity resolved server-side, never model-selected
+- send_outreach: opaque recipient_user_id, address resolved server-side
 - Role separation: untrusted body arrives as user-role, never touches system prompt
 """
 from __future__ import annotations
@@ -310,7 +311,7 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
     Use when intent is ambiguous, the request is outside your capabilities, or
     you have low confidence. A human will follow up with the sender directly.
     Do not use this for an ordinary first contact that can be registered and
-    answered with dispatch_email. The fixed welcome/how-to-join reply is only
+    answered with reply_to_sender. The fixed welcome/how-to-join reply is only
     a fallback for authenticated senders who are still unknown when escalation
     is requested, so they learn how to use the address without giving the model
     control over that copy.
@@ -372,11 +373,11 @@ async def register_person(
     Self-registration only: the server uses the sender's own authenticated
     From: address, and the sender must not already be a known Person. The model
     never supplies a raw address here - accepting one from message content
-    would reopen the confused-deputy risk dispatch_email's opaque-id design
+    would reopen the confused-deputy risk of model-selected recipients
     exists to prevent.
 
     Returns the new person_id. For a normal first contact, use that id in
-    `remember` refs for what the sender shared, then reply with `dispatch_email`.
+    `remember` refs for what the sender shared, then reply with `reply_to_sender`.
     """
     with audit_span("agent.tool", tool_name="register_person"):
         if not ctx.deps.sender_authenticated:
@@ -447,22 +448,19 @@ async def register_person(
         return _tool_result({"status": "created", "person_id": person_id})
 
 
-async def dispatch_email(
+async def _send_email(
     ctx: RunContext[AgentDeps],
     recipient_user_id: str,
     subject: str,
     body_text: str,
     body_html: str | None = None,
+    *,
+    is_sender_reply: bool,
+    tool_name: str,
 ) -> dict[str, Any]:
-    """Send an email to a user by opaque ID.
-
-    The LLM supplies only the opaque internal ID; this function resolves the
-    real address server-side. The LLM never handles or sees raw email addresses
-    (capability-style confused-deputy fix).
-    """
     with audit_span(
         "agent.tool",
-        tool_name="dispatch_email",
+        tool_name=tool_name,
         recipient_id_present=bool(recipient_user_id),
         subject_chars=len(subject),
         body_chars=len(body_text),
@@ -501,7 +499,6 @@ async def dispatch_email(
                 "reason": "recipient_not_found",
             })
 
-        is_sender_reply = recipient_user_id == ctx.deps.sender_user_id
         recipient_daily_cap = _cap(s.dispatch_recipient_daily_cap)
         recipient_cap_key = f"dispatch:recipient:{recipient_user_id}"
         if not _check_daily_dispatch_cap(recipient_cap_key, recipient_daily_cap):
@@ -544,6 +541,71 @@ async def dispatch_email(
         ctx.deps.dispatch_email_sent_count += 1
         ctx.deps.server_side_send_count += 1
         return _tool_result({"status": "sent"})
+
+
+async def reply_to_sender(
+    ctx: RunContext[AgentDeps],
+    subject: str,
+    body_text: str,
+    body_html: str | None = None,
+) -> dict[str, Any]:
+    """Reply to this inbound email's registered sender.
+
+    The caller cannot select a recipient. The server derives the recipient
+    solely from the inbound sender, and only this capability receives inbound
+    threading and quoted-message context.
+    """
+    if ctx.deps.sender_user_id is None:
+        with audit_span("agent.tool", tool_name="reply_to_sender"):
+            audit_event(
+                "database.action",
+                action="lookup",
+                record_type="person",
+                outcome="rejected_sender_not_registered",
+            )
+            return _tool_result({
+                "status": "error",
+                "reason": "sender_not_registered",
+            })
+    return await _send_email(
+        ctx,
+        recipient_user_id=ctx.deps.sender_user_id,
+        subject=subject,
+        body_text=body_text,
+        body_html=body_html,
+        is_sender_reply=True,
+        tool_name="reply_to_sender",
+    )
+
+
+async def send_outreach(
+    ctx: RunContext[AgentDeps],
+    recipient_user_id: str,
+    subject: str,
+    body_text: str,
+    body_html: str | None = None,
+) -> dict[str, Any]:
+    """Send a new, unthreaded email to another user by opaque ID.
+
+    This is deliberately separate from ``reply_to_sender``. It never receives
+    inbound threading headers or quoted inbound content, and cannot be used to
+    reply to the current sender.
+    """
+    if recipient_user_id == ctx.deps.sender_user_id:
+        with audit_span("agent.tool", tool_name="send_outreach"):
+            return _tool_result({
+                "status": "error",
+                "reason": "use_reply_to_sender",
+            })
+    return await _send_email(
+        ctx,
+        recipient_user_id=recipient_user_id,
+        subject=subject,
+        body_text=body_text,
+        body_html=body_html,
+        is_sender_reply=False,
+        tool_name="send_outreach",
+    )
 
 
 async def propose_introduction(

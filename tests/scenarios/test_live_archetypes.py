@@ -330,7 +330,7 @@ strong_match_case = Case(
         ],
     ),
     evaluators=(
-        ToolWasCalled("dispatch_email"),
+        ToolWasCalled("reply_to_sender"),
         NoPersonalSignoff(),
         LLMJudge(
             rubric=(
@@ -447,7 +447,7 @@ removal_case = Case(
     ),
     evaluators=(
         ToolWasCalled("forget"),
-        ToolWasCalled("dispatch_email"),
+        ToolWasCalled("reply_to_sender"),
         ForgotExactly(("mem-maya-1", "mem-maya-2")),
         NoPersonalSignoff(),
         LLMJudge(
