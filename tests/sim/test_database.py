@@ -80,6 +80,12 @@ def test_provision_sim_database_switches_caches_and_cleans_up(monkeypatch):
     assert worker_tasks.app.connector is original_connector
 
 
+def test_project_root_locates_alembic_scripts():
+    root = sim_database._project_root()
+    assert (root / "alembic.ini").is_file()
+    assert (root / "alembic").is_dir()
+
+
 def test_provision_sim_database_rejects_unsafe_names():
     for database_name in ("network_db", "sim_bad-name", "sim_é", "sim_" + "a" * 60):
         with pytest.raises(ValueError):

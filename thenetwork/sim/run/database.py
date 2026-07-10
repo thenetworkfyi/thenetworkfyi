@@ -89,8 +89,12 @@ def provision_sim_database(database_name: str, *, keep: bool = False):
             admin_engine.dispose()
 
 
+def _project_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
 def _upgrade_database() -> None:
-    project_root = Path(__file__).resolve().parents[2]
+    project_root = _project_root()
     config = Config(str(project_root / "alembic.ini"))
     config.set_main_option("script_location", str(project_root / "alembic"))
     command.upgrade(config, "head")
