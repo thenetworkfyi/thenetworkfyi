@@ -5,6 +5,18 @@ from dataclasses import dataclass
 from typing import Any
 
 from thenetwork.sim.persona import PersonaConfig
+from thenetwork.sim.scoring import MemoryExpectation, OutcomeCheck, ScenarioOutcome
+
+
+RUTH_EMAIL = "ruth.sim@example.test"
+INES_EMAIL = "ines.sim@example.test"
+VIC_EMAIL = "vic.sim@example.test"
+OMAR_EMAIL = "omar.sim@example.test"
+
+_INTRODUCTION_SUBJECT = "Your introduction"
+_INES_CANNED_CLARIFICATION = "I could not determine your response."
+_VIC_MAX_MEMORIES = 6
+_VIC_MAX_PAIR_ROWS = 6
 
 
 @dataclass(frozen=True)
@@ -63,6 +75,121 @@ class SimSchedule:
             interruption.persona_email == persona.email and interruption.active(tick)
             for interruption in self.interruptions
         )
+
+
+def _pair_involves(row, email: str) -> bool:
+    return email.lower() in row.participant_emails
+
+
+def _has_pair_with_status(
+    outcome: ScenarioOutcome,
+    email: str,
+    status: str,
+) -> bool:
+    return any(
+        _pair_involves(row, email) and row.status == status
+        for row in outcome.consent_rows
+    )
+
+
+def _has_no_revealing_introduction(outcome: ScenarioOutcome, email: str) -> bool:
+    return not any(
+        message.subject == _INTRODUCTION_SUBJECT
+        and email.lower() in message.recipients
+        for message in outcome.mail_facts
+    )
+
+
+def _has_ines_clarification(outcome: ScenarioOutcome) -> bool:
+    return any(
+        event.get("event") == "introduction.consent_transition"
+        and event.get("action") == "clarify"
+        and event.get("outcome") == "success"
+        for event in outcome.audit_events
+    )
+
+
+def _has_ines_canned_clarification(outcome: ScenarioOutcome) -> bool:
+    return any(
+        INES_EMAIL in message.recipients
+        and _INES_CANNED_CLARIFICATION in message.body
+        for message in outcome.mail_facts
+    )
+
+
+DEFAULT_OUTCOME_CHECKS = (
+    OutcomeCheck(
+        description="Ruth declines an introduction and the pair is revoked",
+        predicate=lambda outcome: _has_pair_with_status(outcome, RUTH_EMAIL, "revoked"),
+        requires_real_process=True,
+        requires_llm_personas=True,
+    ),
+    OutcomeCheck(
+        description="Ruth's declined introduction never reveals a counterpart",
+        predicate=lambda outcome: _has_no_revealing_introduction(outcome, RUTH_EMAIL),
+        requires_real_process=True,
+        requires_llm_personas=True,
+    ),
+    OutcomeCheck(
+        description="Ines receives a consent clarification",
+        predicate=_has_ines_clarification,
+        requires_real_process=True,
+        requires_llm_personas=True,
+    ),
+    OutcomeCheck(
+        description="Ines currently receives the fixed canned clarification reply",
+        predicate=_has_ines_canned_clarification,
+        requires_real_process=True,
+        requires_llm_personas=True,
+    ),
+    OutcomeCheck(
+        description="Vic remains within the structural memory cap",
+        predicate=lambda outcome: outcome.memory_counts.get(VIC_EMAIL, 0)
+        <= _VIC_MAX_MEMORIES,
+        requires_real_process=True,
+        requires_llm_personas=True,
+    ),
+    OutcomeCheck(
+        description=(
+            "Vic has no more than six consent-pair rows; this is a structural "
+            "bound, not an observation of suppressed proposals"
+        ),
+        predicate=lambda outcome: sum(
+            _pair_involves(row, VIC_EMAIL) for row in outcome.consent_rows
+        )
+        <= _VIC_MAX_PAIR_ROWS,
+        requires_real_process=True,
+        requires_llm_personas=True,
+    ),
+    OutcomeCheck(
+        description="Omar has exactly one consented introduction awaiting the other party",
+        predicate=lambda outcome: sum(
+            _pair_involves(row, OMAR_EMAIL) and row.status == "one_consented"
+            for row in outcome.consent_rows
+        )
+        == 1,
+        requires_real_process=True,
+        requires_llm_personas=True,
+    ),
+    OutcomeCheck(
+        description="Omar's one-consented introduction never reveals a counterpart",
+        predicate=lambda outcome: _has_no_revealing_introduction(outcome, OMAR_EMAIL),
+        requires_real_process=True,
+        requires_llm_personas=True,
+    ),
+)
+
+
+DEFAULT_EXPECTATIONS = (
+    MemoryExpectation(
+        description="Nadia's bakery-supply or food-logistics update is remembered",
+        gist_contains="bakery",
+    ),
+    MemoryExpectation(
+        description="Petra's museum-archive provenance interest is remembered",
+        gist_contains="provenance",
+    ),
+)
 
 
 def default_population(agent_address: str = "join@thenetwork.test") -> tuple[PopulationPersona, ...]:
