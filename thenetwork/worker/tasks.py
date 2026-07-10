@@ -36,6 +36,7 @@ from thenetwork.email.outbound import (
     FIRST_CONTACT_WELCOME_REPLY,
     _direct_reply_kwargs,
     _thread_headers,
+    notify_admins,
     reply_subject,
     send_reply,
 )
@@ -193,8 +194,16 @@ def _send_first_contact_welcome_reply(
     return True
 
 
-@app.task(retry=procrastinate.RetryStrategy(max_attempts=3, wait=60))
+_PROCESS_EMAIL_MAX_ATTEMPTS = 3
+
+
+@app.task(
+    retry=procrastinate.RetryStrategy(max_attempts=_PROCESS_EMAIL_MAX_ATTEMPTS, wait=60),
+    pass_context=True,
+)
 async def process_email(
+    context: procrastinate.JobContext | None = None,
+    *,
     sender_email: str,
     subject: str,
     body: str,
@@ -374,7 +383,23 @@ async def process_email(
             agent_kwargs["inbound_references"] = inbound_references
             agent_kwargs["inbound_body_for_quote"] = inbound_body_for_quote or body
             agent_kwargs["inbound_date"] = inbound_date
-        await run_agent_for_email(**agent_kwargs)
+        try:
+            await run_agent_for_email(**agent_kwargs)
+        except Exception as exc:
+            audit_event(
+                "worker.agent_failed",
+                outcome="error",
+                error_type=type(exc).__name__,
+            )
+            if context is not None and context.job.attempts >= _PROCESS_EMAIL_MAX_ATTEMPTS:
+                notify_admins(
+                    get_settings(),
+                    "[The Network] Agent processing failed",
+                    "The agent failed on its final processing attempt. "
+                    "Use the trace id in the audit log to investigate.",
+                    trace_id=trace_id,
+                )
+            raise
 
 
 async def run_worker() -> None:
