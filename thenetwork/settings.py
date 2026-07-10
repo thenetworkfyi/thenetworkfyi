@@ -103,6 +103,12 @@ class Settings(BaseSettings):
     search_query_max_chars: int = 1_000
     person_memory_limit: int = 500
 
+    # Introduction consent pacing. These limits are enforced at the server-side
+    # proposal boundary, never by agent prompt wording. A proposal sends one
+    # fixed consent request to each participant.
+    introduction_max_proposals_per_run: int = 3
+    introduction_max_outstanding_requests_per_person: int = 3
+
     # Admin channel: allowlisted senders + PGP/MIME-signed request (see admin/auth.py)
     admin_emails: list[str] = []
     admin_gpg_public_key: str = ""  # armored public key of the trusted admin signer

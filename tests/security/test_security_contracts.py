@@ -552,6 +552,32 @@ async def test_propose_introduction_marks_fixed_consent_sends_as_egress():
 
 
 @pytest.mark.asyncio
+async def test_propose_introduction_defers_after_per_run_cap():
+    """A model cannot create an unbounded consent-mail burst in one run."""
+    ctx = FakeCtx(sender_authenticated=True)
+
+    with patch(
+        "thenetwork.agent.tools.propose_pair",
+        return_value={"status": "proposed"},
+    ) as propose:
+        results = [
+            await propose_introduction(
+                ctx,
+                other_person_id=f"user-{number}",
+                sender_gist="builds storage systems",
+                other_gist="operates distributed databases",
+            )
+            for number in range(4)
+        ]
+
+    assert [result["status"] for result in results] == [
+        "proposed", "proposed", "proposed", "deferred",
+    ]
+    assert results[-1]["reason"] == "run_proposal_cap"
+    assert propose.call_count == 3
+
+
+@pytest.mark.asyncio
 async def test_register_person_rejects_already_registered_sender():
     """A sender who already has a person_id cannot re-register (or hijack another id)."""
     ctx = FakeCtx(sender_user_id="user-alice", sender_authenticated=True)

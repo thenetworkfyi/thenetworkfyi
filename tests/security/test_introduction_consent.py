@@ -15,22 +15,27 @@ from thenetwork.introductions import (
 
 
 class Result:
-    def __init__(self, value):
+    def __init__(self, value, values=None):
         self.value = value
+        self.values = values if values is not None else []
 
     def first(self):
         return self.value
 
+    def all(self):
+        return self.values
+
 
 class FakeSession:
-    def __init__(self, proposal=None, people=None):
+    def __init__(self, proposal=None, people=None, outstanding_proposals=None):
         self.proposal = proposal
         self.people = people or {}
         self.added = []
         self.commits = 0
+        self.outstanding_proposals = outstanding_proposals or []
 
     def exec(self, _query):
-        return Result(self.proposal)
+        return Result(self.proposal, self.outstanding_proposals)
 
     def get(self, _model, person_id):
         return self.people.get(person_id)
@@ -210,6 +215,29 @@ def test_existing_declined_pair_cannot_be_reproposed():
         )
 
     assert result == {"status": "suppressed", "reason": "revoked"}
+    send.assert_not_called()
+
+
+def test_proposal_defers_when_a_recipient_has_too_many_outstanding_requests():
+    session = FakeSession(
+        people=people(),
+        outstanding_proposals=[proposal() for _ in range(3)],
+    )
+
+    with patch("thenetwork.introductions.send_reply") as send:
+        result = propose_pair(
+            sender_person_id="alice",
+            other_person_id="bob",
+            sender_gist="builds storage systems",
+            other_gist="operates distributed databases",
+            session_factory=factory(session),
+        )
+
+    assert result == {
+        "status": "deferred",
+        "reason": "recipient_outstanding_request_cap",
+        "limit": 3,
+    }
     send.assert_not_called()
 
 
