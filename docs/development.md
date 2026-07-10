@@ -183,6 +183,12 @@ For a user-run end-to-end evaluation against a local pgvector PostgreSQL instanc
 uv run sim run --real-process --llm-personas --ticks 6 --message-budget 6
 ```
 
+Use [simulation-review.md](simulation-review.md) to conduct either an isolated run review or
+a comparison with a compatible baseline, interpret the artifacts and score tiers, inspect
+cited transcript behavior, and write a reproducible report. In particular, do not treat
+`sim compare` as authoritative for real-process token, cost, introduction, or judge metrics;
+those values are not all recorded in `events.jsonl`.
+
 `docker-compose.yml` runs `db` (pgvector, bound to `127.0.0.1`, state in `pgdata` volume)
 and `worker`. Redeploys are safe by design: durable job rows, `SKIP LOCKED` dequeue,
 SIGTERM graceful drain (`stop_grace_period: 300s`), `max_attempts=3`, and idempotent intake
