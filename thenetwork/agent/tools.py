@@ -41,6 +41,10 @@ _registration_limiter: strategies.MovingWindowRateLimiter | None = None
 _registration_storage: storage.Storage | None = None
 
 
+class _SanitizationFailed(Exception):
+    """A referenced memory could not be given its required sealed gist."""
+
+
 def _get_session(ctx: RunContext[AgentDeps]):
     sf = ctx.deps.session_factory
     return sf() if sf is not None else get_session()
@@ -138,13 +142,14 @@ def _memory_ceiling_error(
 
 async def _embed_memory_for_write(memory: Memory, session) -> None:
     if memory.refs:
-        gist = await sanitize_memory_high_fidelity(memory, session)
+        try:
+            gist = await sanitize_memory_high_fidelity(memory, session)
+        except Exception as exc:
+            raise _SanitizationFailed from exc
         if memory.gist is None and isinstance(gist, str):
             memory.gist = gist
         if memory.gist is None:
-            raise RuntimeError(
-                f"Memory {memory.id} has refs but no gist after sanitization"
-            )
+            raise _SanitizationFailed
         memory.embedding = await embed_text(memory.gist)
         return
 
@@ -179,7 +184,24 @@ async def remember(
                 return _tool_result(ceiling_error)
 
             session.add(memory)
-            await _embed_memory_for_write(memory, session)
+            try:
+                await _embed_memory_for_write(memory, session)
+            except _SanitizationFailed:
+                # A referenced memory must never become searchable without a
+                # sanitized gist. Roll back the pending insert rather than
+                # letting an agent-tool exception escape the run.
+                session.rollback()
+                audit_event(
+                    "database.action",
+                    action="insert",
+                    record_type="memory",
+                    refs_count=len(refs),
+                    outcome="blocked",
+                )
+                return _tool_result({
+                    "status": "error",
+                    "reason": "sanitization_failed",
+                })
             memory_id = memory.id
             query_embedding = list(memory.embedding or [])
             session.commit()
@@ -265,7 +287,7 @@ async def search(
     ctx: RunContext[AgentDeps],
     query: str,
     top_k: int = 5,
-) -> list[dict[str, Any]]:
+) -> list[dict[str, Any]] | dict[str, Any]:
     """Semantic search over person-referencing memories.
 
     Returns opaque person_id + PII-stripped gist only. Raw text, names, and
@@ -279,7 +301,11 @@ async def search(
     ):
         max_chars = ctx.deps.settings.search_query_max_chars
         if max_chars > 0 and len(query) > max_chars:
-            raise ValueError("search query exceeds configured length cap")
+            return _tool_result({
+                "status": "error",
+                "reason": "query_too_long",
+                "limit": max_chars,
+            })
 
         query_vec = await embed_text(query)
         with _get_session(ctx) as session:

@@ -1116,11 +1116,35 @@ async def test_search_rejects_query_over_configured_cap():
     ctx = FakeCtx()
     ctx.deps.settings.search_query_max_chars = 5
 
-    with patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock) as mock_embed, \
-         pytest.raises(ValueError, match="length cap"):
-        await search(ctx, query="too long")
+    with patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock) as mock_embed:
+        result = await search(ctx, query="too long")
 
+    assert result == {"status": "error", "reason": "query_too_long", "limit": 5}
     mock_embed.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_remember_blocks_and_rolls_back_when_sanitization_fails(caplog):
+    """A referenced memory cannot persist or become searchable without a gist."""
+    from thenetwork.agent.tools import remember
+
+    ctx = FakeCtx()
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+    with patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock) as mock_sanitize:
+        mock_sanitize.side_effect = RuntimeError("presidio unavailable")
+        result = await remember(ctx, text="Alice builds compilers", refs=["user-alice"])
+
+    assert result == {"status": "error", "reason": "sanitization_failed"}
+    ctx._mock_sess.rollback.assert_called_once()
+    ctx._mock_sess.commit.assert_not_called()
+    payloads = [json.loads(record.message) for record in caplog.records]
+    expected_audit = {
+        "event": "database.action",
+        "action": "insert",
+        "record_type": "memory",
+        "outcome": "blocked",
+    }
+    assert any(expected_audit.items() <= payload.items() for payload in payloads)
 
 
 # ---------------------------------------------------------------------------

@@ -60,7 +60,7 @@ _SAFE_CATEGORIES = {
         "search", "unban",
     }),
     "outcome": frozenset({
-        "error", "exists", "found", "not_found", "rate_limited",
+        "blocked", "error", "exists", "found", "not_found", "rate_limited",
         "rejected_already_registered", "rejected_forbidden",
         "rejected_unauthenticated", "success",
     }),
@@ -72,6 +72,7 @@ _SAFE_CATEGORIES = {
     "tool_reason": frozenset({
         "already_registered", "max_sends_per_run", "memory_text_too_long",
         "not_sender_memory", "person_memory_limit_exceeded",
+        "query_too_long", "sanitization_failed",
         "recipient_daily_cap", "recipient_not_found",
         "registration_quota_exceeded", "sender_not_authenticated",
         "sender_reply_daily_cap", "person_not_found", "invalid_person_id",
