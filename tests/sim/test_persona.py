@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from thenetwork.sim.persona import PersonaConfig, TinyPersonEmailAdapter
+from thenetwork.sim.personas.persona import PersonaConfig, TinyPersonEmailAdapter
 from thenetwork.sim.scenarios import StrongMatchScenario, default_strong_match_configs
 
 

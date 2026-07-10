@@ -16,7 +16,7 @@ from re import Match
 # The authoritative token/decision grammar lives with the production consent
 # parser; reusing it keeps the sim from drifting out of sync with it.
 from thenetwork.introductions import _ACTION_RE, _TOKEN_RE
-from thenetwork.sim.mail import _extract_body
+from thenetwork.sim.run.mail import _extract_body
 
 
 def intro_token(message: EmailMessage) -> str | None:

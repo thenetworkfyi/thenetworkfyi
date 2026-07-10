@@ -13,11 +13,11 @@ import pytest
 from thenetwork.audit import audit_event
 from thenetwork.db.models import IntroductionConsent, Memory, Person
 from thenetwork.sim.cli import main, run_sim
-from thenetwork.sim.compare import compare_runs, load_run_metrics
-from thenetwork.sim.mail import SimPostOffice
-from thenetwork.sim.persona import PersonaConfig, TinyPersonEmailAdapter
-from thenetwork.sim.population import DEFAULT_OUTCOME_CHECKS
-from thenetwork.sim.recorder import (
+from thenetwork.sim.scoring.compare import compare_runs, load_run_metrics
+from thenetwork.sim.run.mail import SimPostOffice
+from thenetwork.sim.personas.persona import PersonaConfig, TinyPersonEmailAdapter
+from thenetwork.sim.personas.population import DEFAULT_OUTCOME_CHECKS
+from thenetwork.sim.run.recorder import (
     SimRunArtifacts,
     SimRunConfig,
     SimRunRecorder,
@@ -26,7 +26,7 @@ from thenetwork.sim.recorder import (
     _database_outcome_state,
 )
 from thenetwork.sim.scenarios import default_strong_match_configs
-from thenetwork.sim.scoring import IntroductionRevealAuthorization, OutcomeCheck
+from thenetwork.sim.scoring.scoring import IntroductionRevealAuthorization, OutcomeCheck
 
 
 class ScriptedTinyPerson:
@@ -276,7 +276,7 @@ async def test_real_process_runs_capture_isolated_traceable_audit_logs(
     )
     recorder = SimRunRecorder(runs_dir=tmp_path, clock=lambda: next(clock_calls))
 
-    with patch("thenetwork.sim.recorder.process_email.func", new=audited_process):
+    with patch("thenetwork.sim.run.recorder.process_email.func", new=audited_process):
         first = await recorder.run(adapters, config)
         second = await recorder.run(adapters, config)
 
@@ -383,7 +383,7 @@ def test_outcome_assembly_reads_fixture_mail_audit_and_database_state(tmp_path):
 
     emails_by_id = {"nadia-id": "nadia.sim@example.test"}
     with patch(
-        "thenetwork.sim.recorder._database_outcome_state",
+        "thenetwork.sim.run.recorder._database_outcome_state",
         return_value=(rows, memories, memory_counts, emails_by_id),
     ):
         outcome, assembled_memories, assembled_emails = _assemble_scenario_outcome(
@@ -487,7 +487,7 @@ def test_database_outcome_state_materializes_values_before_session_closes():
             peer.detached = True
             memory.detached = True
 
-    with patch("thenetwork.sim.recorder.get_session", session_context):
+    with patch("thenetwork.sim.run.recorder.get_session", session_context):
         consent_rows, memories, memory_counts, emails_by_id = _database_outcome_state()
 
     assert consent_rows[0].participant_emails == frozenset(

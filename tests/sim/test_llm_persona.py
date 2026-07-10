@@ -1,7 +1,7 @@
 from pydantic_ai.models.test import TestModel
 
-from thenetwork.sim.llm_persona import LLMTinyPerson, _PERSONA_PROMPT
-from thenetwork.sim.persona import PersonaConfig, TinyPersonEmailAdapter
+from thenetwork.sim.personas.llm_persona import LLMTinyPerson, _PERSONA_PROMPT
+from thenetwork.sim.personas.persona import PersonaConfig, TinyPersonEmailAdapter
 
 
 def _config(**overrides) -> PersonaConfig:
