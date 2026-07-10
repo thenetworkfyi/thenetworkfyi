@@ -393,6 +393,73 @@ def test_omar_outcome_accepts_counterpart_first_consent_and_mutual_reveal():
     assert score.passed is True
 
 
+def test_omar_reveal_accepts_pair_revoked_after_mutual_consent():
+    outcome = replace(
+        _default_outcome(),
+        consent_rows=(
+            IntroductionRevealAuthorization(
+                person_a_email="omar.sim@example.test",
+                person_b_email="samir.sim@example.test",
+                status="revoked",
+                person_a_consented=True,
+                person_b_consented=True,
+            ),
+        ),
+        mail_facts=(
+            MailFacts(
+                sender="join@example.test",
+                recipients=frozenset(
+                    {"omar.sim@example.test", "samir.sim@example.test"}
+                ),
+                subject="Your introduction",
+                body="You both opted in.",
+            ),
+        ),
+    )
+
+    score = score_scenario_outcomes(
+        outcome,
+        (DEFAULT_OUTCOME_CHECKS[7],),
+        real_process=True,
+        llm_personas=True,
+    )
+
+    assert score.passed is True
+
+
+def test_omar_reveal_rejects_revoked_pair_without_mutual_consent():
+    outcome = replace(
+        _default_outcome(),
+        consent_rows=(
+            IntroductionRevealAuthorization(
+                person_a_email="omar.sim@example.test",
+                person_b_email="samir.sim@example.test",
+                status="revoked",
+                person_a_consented=True,
+            ),
+        ),
+        mail_facts=(
+            MailFacts(
+                sender="join@example.test",
+                recipients=frozenset(
+                    {"omar.sim@example.test", "samir.sim@example.test"}
+                ),
+                subject="Your introduction",
+                body="You both opted in.",
+            ),
+        ),
+    )
+
+    score = score_scenario_outcomes(
+        outcome,
+        (DEFAULT_OUTCOME_CHECKS[7],),
+        real_process=True,
+        llm_personas=True,
+    )
+
+    assert score.passed is False
+
+
 @pytest.mark.parametrize(
     "actions",
     [

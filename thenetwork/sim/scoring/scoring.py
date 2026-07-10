@@ -88,12 +88,19 @@ class IntroductionRevealAuthorization:
     person_a_email: str
     person_b_email: str
     status: str
+    person_a_consented: bool = False
+    person_b_consented: bool = False
 
     @property
     def participant_emails(self) -> frozenset[str]:
         return frozenset(
             (self.person_a_email.lower(), self.person_b_email.lower())
         )
+
+    @property
+    def both_consented(self) -> bool:
+        """Whether this pair ever reached mutual consent."""
+        return self.person_a_consented and self.person_b_consented
 
 
 @dataclass(frozen=True)
