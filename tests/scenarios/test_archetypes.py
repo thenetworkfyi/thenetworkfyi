@@ -94,9 +94,9 @@ async def test_matchmaking_returns_opaque_ids_only():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_dispatch_email_resolves_address_server_side():
-    """dispatch_email must look up the address by ID, never accept a raw address."""
-    from thenetwork.agent.tools import dispatch_email
+async def test_send_outreach_resolves_address_server_side():
+    """send_outreach must look up the address by ID, never accept a raw address."""
+    from thenetwork.agent.tools import send_outreach
     from unittest.mock import patch, MagicMock
 
     fake_profile = MagicMock()
@@ -115,7 +115,7 @@ async def test_dispatch_email_resolves_address_server_side():
         mock_session.get.return_value = fake_profile
         mock_get_session.return_value = mock_session
 
-        result = await dispatch_email(
+        result = await send_outreach(
             ctx,
             recipient_user_id="user-bob",
             subject="Hello",
@@ -135,9 +135,9 @@ async def test_dispatch_email_resolves_address_server_side():
 
 @pytest.mark.asyncio
 async def test_double_intro_emails_both_parties():
-    """Agent should call dispatch_email for both sides of an introduction."""
+    """The separate reply and outreach capabilities can email both parties."""
     from thenetwork.agent import tools
-    from thenetwork.agent.tools import dispatch_email
+    from thenetwork.agent.tools import reply_to_sender, send_outreach
     from unittest.mock import patch, MagicMock, AsyncMock, call
 
     tools._dispatch_limiter = None
@@ -168,8 +168,8 @@ async def test_double_intro_emails_both_parties():
         mock_session.get.side_effect = lambda _, uid: profiles.get(uid)
         mock_gs.return_value = mock_session
 
-        await dispatch_email(ctx, recipient_user_id="user-alice", subject="Intro", body_text="Hi Alice.")
-        await dispatch_email(ctx, recipient_user_id="user-bob", subject="Intro", body_text="Hi Bob.")
+        await reply_to_sender(ctx, subject="Intro", body_text="Hi Alice.")
+        await send_outreach(ctx, recipient_user_id="user-bob", subject="Intro", body_text="Hi Bob.")
 
     assert "alice@example.com" in sent_to
     assert "bob@example.com" in sent_to

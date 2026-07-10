@@ -87,16 +87,16 @@ async def test_search_result_keys_sealed(adversarial_text: str):
 
 
 @pytest.mark.asyncio
-async def test_dispatch_signature_has_no_raw_address_param():
-    """dispatch_email must not accept any parameter that could carry a raw email address."""
+async def test_email_capability_signatures_have_no_raw_address_param():
+    """Email capabilities must not accept any parameter carrying a raw address."""
     import inspect
-    from thenetwork.agent.tools import dispatch_email
+    from thenetwork.agent.tools import reply_to_sender, send_outreach
 
-    sig = inspect.signature(dispatch_email)
-    for param_name in sig.parameters:
-        assert "@" not in param_name, f"param {param_name!r} looks like an address"
-        assert "address" not in param_name.lower(), f"param {param_name!r} exposes raw address"
-        assert param_name not in ("email", "to"), f"param {param_name!r} exposes raw address"
+    for capability in (reply_to_sender, send_outreach):
+        for param_name in inspect.signature(capability).parameters:
+            assert "@" not in param_name, f"param {param_name!r} looks like an address"
+            assert "address" not in param_name.lower(), f"param {param_name!r} exposes raw address"
+            assert param_name not in ("email", "to"), f"param {param_name!r} exposes raw address"
 
 
 @pytest.mark.asyncio

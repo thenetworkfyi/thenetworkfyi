@@ -625,7 +625,7 @@ async def test_server_side_send_prevents_undispatched_escalation():
 
 
 @pytest.mark.asyncio
-async def test_dispatch_tool_call_prevents_undispatched_escalation():
+async def test_reply_tool_call_prevents_undispatched_escalation():
     from thenetwork.agent.core import run_agent_for_email
 
     fake_result = SimpleNamespace(
@@ -635,7 +635,7 @@ async def test_dispatch_tool_call_prevents_undispatched_escalation():
                 parts=[
                     SimpleNamespace(
                         part_kind="tool-call",
-                        tool_name="dispatch_email",
+                        tool_name="reply_to_sender",
                     )
                 ]
             )

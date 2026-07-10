@@ -75,7 +75,7 @@ _SAFE_CATEGORIES = {
         "recipient_daily_cap", "recipient_not_found",
         "registration_quota_exceeded", "sender_not_authenticated",
         "sender_reply_daily_cap", "person_not_found", "invalid_person_id",
-        "self_introduction",
+        "self_introduction", "use_reply_to_sender",
     }),
     "reason": frozenset({
         "body_empty", "body_oversize", "content_scan", "rate_limit",
@@ -84,8 +84,9 @@ _SAFE_CATEGORIES = {
     "record_type": frozenset({"introduction_consent", "memory", "person"}),
     "consent_state": frozenset({"introduced", "one_consented", "proposed", "revoked"}),
     "tool_name": frozenset({
-        "dispatch_email", "escalate", "forget", "propose_introduction",
+        "escalate", "forget", "propose_introduction", "reply_to_sender",
         "register_person", "remember", "search",
+        "send_outreach",
     }),
 }
 _SAFE_HEADERS = frozenset({"auto-submitted", "from", "subject"})

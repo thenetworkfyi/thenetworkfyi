@@ -10,13 +10,14 @@ from pydantic_ai.usage import UsageLimits
 from thenetwork.agent.deps import AgentDeps
 from thenetwork.agent.prompts import SYSTEM_PROMPT
 from thenetwork.agent.tools import (
-    dispatch_email,
     escalate,
     forget,
     propose_introduction,
     register_person,
     remember,
+    reply_to_sender,
     search,
+    send_outreach,
 )
 from thenetwork.audit import (
     audit_event,
@@ -33,7 +34,7 @@ from thenetwork.settings import get_settings
 
 _UNDISPATCHED_RESPONSE_SUBJECT = "[The Network] Agent response needs review"
 _UNDISPATCHED_RESPONSE_BODY = (
-    "An agent run generated final text without a dispatch_email or escalate action. "
+    "An agent run generated final text without a reply, outreach, or escalate action. "
     "The text was not sent. Review the correlated audit trace."
 )
 
@@ -60,7 +61,8 @@ def build_agent(model: Any = None) -> Agent[AgentDeps, str]:
     agent.tool(search)
     agent.tool(propose_introduction)
     agent.tool(escalate)
-    agent.tool(dispatch_email)
+    agent.tool(reply_to_sender)
+    agent.tool(send_outreach)
     agent.tool(register_person)
 
     return agent
@@ -164,7 +166,7 @@ async def run_agent_for_email(
             )
         if (
             result.output.strip()
-            and not {"dispatch_email", "escalate"}.intersection(tool_names)
+            and not {"reply_to_sender", "send_outreach", "escalate"}.intersection(tool_names)
             and deps.server_side_send_count == 0
         ):
             audit_event(
