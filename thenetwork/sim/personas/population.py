@@ -102,6 +102,29 @@ def _has_no_revealing_introduction(outcome: ScenarioOutcome, email: str) -> bool
     )
 
 
+def _has_no_premature_revealing_introduction(
+    outcome: ScenarioOutcome, email: str
+) -> bool:
+    for message in outcome.mail_facts:
+        if (
+            message.subject != _INTRODUCTION_SUBJECT
+            or email.lower() not in message.recipients
+        ):
+            continue
+        counterparts = message.recipients - {email.lower()}
+        if not all(
+            any(
+                _pair_involves(row, email)
+                and counterpart in row.participant_emails
+                and row.status == "introduced"
+                for row in outcome.consent_rows
+            )
+            for counterpart in counterparts
+        ):
+            return False
+    return True
+
+
 def _has_ines_clarification(outcome: ScenarioOutcome) -> bool:
     return any(
         event.get("event") == "introduction.consent_transition"
@@ -191,7 +214,7 @@ def _omar_consented_once(outcome: ScenarioOutcome) -> bool:
         len(events) == 1
         and events[0].get("action") == "consent"
         and events[0].get("outcome") == "success"
-        and events[0].get("consent_state") == "one_consented"
+        and events[0].get("consent_state") in {"one_consented", "introduced"}
     )
 
 
@@ -260,8 +283,12 @@ DEFAULT_OUTCOME_CHECKS = (
         evidence=_omar_consent_summary,
     ),
     OutcomeCheck(
-        description="Omar's one-consented introduction never reveals a counterpart",
-        predicate=lambda outcome: _has_no_revealing_introduction(outcome, OMAR_EMAIL),
+        description=(
+            "Omar's introduction never reveals a counterpart before mutual consent"
+        ),
+        predicate=lambda outcome: _has_no_premature_revealing_introduction(
+            outcome, OMAR_EMAIL
+        ),
         requires_real_process=True,
         requires_llm_personas=True,
         evidence=lambda outcome: _reveal_summary(outcome, OMAR_EMAIL),

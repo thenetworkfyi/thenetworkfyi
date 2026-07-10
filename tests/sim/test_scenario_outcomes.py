@@ -352,6 +352,47 @@ def test_omar_outcome_uses_his_audited_action_not_final_pair_status():
     ]
 
 
+def test_omar_outcome_accepts_counterpart_first_consent_and_mutual_reveal():
+    outcome = replace(
+        _default_outcome(),
+        consent_rows=(
+            IntroductionRevealAuthorization(
+                person_a_email="omar.sim@example.test",
+                person_b_email="samir.sim@example.test",
+                status="introduced",
+            ),
+        ),
+        audit_events=(
+            {
+                "event": "introduction.consent_transition",
+                "action": "consent",
+                "outcome": "success",
+                "consent_state": "introduced",
+                "sender_id_hash": "snd_v1_omar",
+            },
+        ),
+        mail_facts=(
+            MailFacts(
+                sender="join@example.test",
+                recipients=frozenset(
+                    {"omar.sim@example.test", "samir.sim@example.test"}
+                ),
+                subject="Your introduction",
+                body="You both opted in.",
+            ),
+        ),
+    )
+
+    score = score_scenario_outcomes(
+        outcome,
+        DEFAULT_OUTCOME_CHECKS[6:8],
+        real_process=True,
+        llm_personas=True,
+    )
+
+    assert score.passed is True
+
+
 @pytest.mark.parametrize(
     "actions",
     [
