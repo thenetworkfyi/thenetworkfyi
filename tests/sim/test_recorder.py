@@ -381,11 +381,12 @@ def test_outcome_assembly_reads_fixture_mail_audit_and_database_state(tmp_path):
     memories = (Memory(id="memory-1", text="raw", refs=["nadia-id"], gist="bakery"),)
     memory_counts = {"nadia.sim@example.test": 1}
 
+    emails_by_id = {"nadia-id": "nadia.sim@example.test"}
     with patch(
         "thenetwork.sim.recorder._database_outcome_state",
-        return_value=(rows, memories, memory_counts),
+        return_value=(rows, memories, memory_counts, emails_by_id),
     ):
-        outcome, assembled_memories = _assemble_scenario_outcome(
+        outcome, assembled_memories, assembled_emails = _assemble_scenario_outcome(
             artifacts,
             memories=(),
             load_database_state=True,
@@ -399,6 +400,7 @@ def test_outcome_assembly_reads_fixture_mail_audit_and_database_state(tmp_path):
     assert outcome.mail_facts[0].body == "Bakery supply co-op update\n"
     assert outcome.memory_counts == memory_counts
     assert assembled_memories == memories
+    assert assembled_emails == emails_by_id
 
 
 def test_database_outcome_state_materializes_values_before_session_closes():
@@ -486,7 +488,7 @@ def test_database_outcome_state_materializes_values_before_session_closes():
             memory.detached = True
 
     with patch("thenetwork.sim.recorder.get_session", session_context):
-        consent_rows, memories, memory_counts = _database_outcome_state()
+        consent_rows, memories, memory_counts, emails_by_id = _database_outcome_state()
 
     assert consent_rows[0].participant_emails == frozenset(
         {"nadia.sim@example.test", "peer@example.test"}
@@ -494,6 +496,10 @@ def test_database_outcome_state_materializes_values_before_session_closes():
     assert memories[0].gist == "bakery"
     assert memories[0].refs == ["nadia-id"]
     assert memory_counts == {"nadia.sim@example.test": 1}
+    assert emails_by_id == {
+        "nadia-id": "nadia.sim@example.test",
+        "peer-id": "peer@example.test",
+    }
 
 
 def test_config_payload_keeps_outcome_check_metadata_without_predicates():

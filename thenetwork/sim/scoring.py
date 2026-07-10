@@ -11,9 +11,16 @@ from typing import Any, Iterable
 
 from pydantic_evals.evaluators import LLMJudge
 
+from thenetwork.agent.core import _UNDISPATCHED_RESPONSE_SUBJECT
 from thenetwork.db.models import Memory
+from thenetwork.introductions import _TOKEN_RE
+from thenetwork.sim.consent import _visible_lines
 from thenetwork.sim.mail import _extract_body
 from thenetwork.sim.persona import PersonaConfig
+
+
+_CONSENT_REQUEST_SUBJECT_PREFIX = "Possible introduction"
+_SIM_DIRECTION_PERSONA_TO_AGENT = "persona->agent"
 
 
 TRANSCRIPT_JUDGE_RUBRIC = (
@@ -60,9 +67,20 @@ class TierScore:
 
 @dataclass(frozen=True)
 class MemoryExpectation:
+    """An expected Memory row, optionally bound to the persona it must be about.
+
+    `persona_email` binds the expectation to a specific persona: a memory only
+    satisfies it when one of the memory's refs resolves to that email (via the
+    `emails_by_id` mapping passed to `score_memory_expectations`, or a ref that
+    is itself an email address). Without the binding, a gist match on any
+    persona's memory would satisfy the expectation - e.g. Petra's provenance
+    expectation passing because Elise has a provenance memory.
+    """
+
     description: str
     refs_all: tuple[str, ...] = ()
     gist_contains: str | None = None
+    persona_email: str | None = None
 
 
 @dataclass(frozen=True)
@@ -106,6 +124,21 @@ class OutcomeCheck:
     predicate: Callable[[ScenarioOutcome], bool]
     requires_real_process: bool = False
     requires_llm_personas: bool = False
+    evidence: Callable[[ScenarioOutcome], dict[str, Any]] | None = None
+
+
+@dataclass(frozen=True)
+class ResponseQualityThresholds:
+    """Limits for the response-quality tier over delivered sim mail.
+
+    `weak_match_pairs` lists persona email pairs that a run's fixture declares
+    too weak to introduce; a consent-request thread proposing such a pair is a
+    matching-quality failure.
+    """
+
+    max_noop_admin_alerts: int = 0
+    max_consent_requests_per_recipient: int = 3
+    weak_match_pairs: tuple[frozenset[str], ...] = ()
 
 
 def score_scenario_outcomes(
@@ -139,6 +172,7 @@ def score_scenario_outcomes(
                 tier="outcome",
                 passed=bool(check.predicate(outcome)),
                 message=check.description,
+                evidence=dict(check.evidence(outcome)) if check.evidence else {},
             )
         )
 
@@ -227,18 +261,31 @@ def score_seal_mbox(
 def score_memory_expectations(
     memories: Iterable[Memory],
     expectations: Iterable[MemoryExpectation],
+    emails_by_id: Mapping[str, str] | None = None,
 ) -> TierScore:
-    """Tier 2: state-based scenario outcome checks over Memory rows."""
+    """Tier 2: state-based scenario outcome checks over Memory rows.
+
+    `emails_by_id` maps `people.id` refs to email addresses so persona-bound
+    expectations can resolve which persona a memory is about; refs that are
+    themselves email addresses resolve without the mapping.
+    """
     memory_list = tuple(memories)
+    id_to_email = dict(emails_by_id or {})
     findings: list[ScoreFinding] = []
     for expectation in expectations:
-        match = _find_matching_memory(memory_list, expectation)
+        match = _find_matching_memory(memory_list, expectation, id_to_email)
+        if match is not None:
+            evidence: dict[str, Any] = {"memory_id": match.id}
+        else:
+            evidence = _expectation_failure_evidence(
+                memory_list, expectation, id_to_email
+            )
         findings.append(
             ScoreFinding(
                 tier="tier2",
                 passed=match is not None,
                 message=expectation.description,
-                evidence={"memory_id": getattr(match, "id", None)} if match else {},
+                evidence=evidence,
             )
         )
     if not findings:
@@ -252,6 +299,175 @@ def score_memory_expectations(
     return TierScore(tier="tier2", findings=tuple(findings))
 
 
+def score_response_quality(
+    mbox_path: Path,
+    *,
+    thresholds: ResponseQualityThresholds = ResponseQualityThresholds(),
+) -> TierScore:
+    """Response-quality tier over delivered sim mail.
+
+    Detects failures the SEAL tier deliberately ignores: replies routed to
+    someone other than their inbound sender, no-op admin-alert noise,
+    consent-request bursts, proposals for configured weak-match pairs, and
+    persona consent replies carrying bundled or mismatched thread tokens.
+    """
+    findings: list[ScoreFinding] = []
+    box = mailbox.mbox(mbox_path)
+    try:
+        messages = list(box)
+    finally:
+        box.close()
+
+    persona_sender_by_message_id: dict[str, str] = {}
+    for message in messages:
+        if str(message.get("X-Sim-Direction", "")) != _SIM_DIRECTION_PERSONA_TO_AGENT:
+            continue
+        message_id = str(message.get("Message-ID", "")).strip()
+        sender = _sender_email(message)
+        if message_id and sender:
+            persona_sender_by_message_id[message_id] = sender
+
+    noop_alert_indices: list[int] = []
+    # (message index, thread token, recipient emails) per consent request.
+    consent_requests: list[tuple[int, str, frozenset[str]]] = []
+    weak_pairs = {
+        frozenset(email.lower() for email in pair)
+        for pair in thresholds.weak_match_pairs
+    }
+
+    for index, message in enumerate(messages, start=1):
+        subject = str(message.get("Subject", ""))
+        if str(message.get("X-Sim-Direction", "")) == _SIM_DIRECTION_PERSONA_TO_AGENT:
+            subject_match = _TOKEN_RE.search(subject)
+            subject_token = (
+                subject_match.group("token").lower() if subject_match else None
+            )
+            body_tokens = {
+                match.group("token").lower()
+                for line in _visible_lines(_extract_body(message))
+                for match in _TOKEN_RE.finditer(line)
+            }
+            bundled = len(body_tokens) > 1
+            mismatched = (
+                subject_token is not None
+                and bool(body_tokens)
+                and body_tokens != {subject_token}
+            )
+            if bundled or mismatched:
+                findings.append(
+                    ScoreFinding(
+                        tier="quality",
+                        passed=False,
+                        message=(
+                            "Persona consent reply carries bundled or mismatched "
+                            "thread tokens"
+                        ),
+                        evidence={
+                            "message_index": index,
+                            "subject_token": subject_token,
+                            "body_tokens": sorted(body_tokens),
+                        },
+                    )
+                )
+            continue
+
+        in_reply_to = str(message.get("In-Reply-To", "")).strip()
+        parent_sender = persona_sender_by_message_id.get(in_reply_to)
+        if parent_sender is not None:
+            recipients = _recipient_emails(message)
+            if parent_sender not in recipients:
+                findings.append(
+                    ScoreFinding(
+                        tier="quality",
+                        passed=False,
+                        message=(
+                            "Reply delivered to someone other than its inbound "
+                            "sender"
+                        ),
+                        evidence={
+                            "message_index": index,
+                            "subject": subject,
+                            "in_reply_to": in_reply_to,
+                            "expected_recipient": parent_sender,
+                            "recipients": sorted(recipients),
+                        },
+                    )
+                )
+        if subject == _UNDISPATCHED_RESPONSE_SUBJECT:
+            noop_alert_indices.append(index)
+        if subject.startswith(_CONSENT_REQUEST_SUBJECT_PREFIX):
+            token_match = _TOKEN_RE.search(subject)
+            if token_match is not None:
+                consent_requests.append(
+                    (
+                        index,
+                        token_match.group("token").lower(),
+                        frozenset(_recipient_emails(message)),
+                    )
+                )
+
+    if len(noop_alert_indices) > thresholds.max_noop_admin_alerts:
+        findings.append(
+            ScoreFinding(
+                tier="quality",
+                passed=False,
+                message="Undispatched-response admin alerts exceed the limit",
+                evidence={
+                    "count": len(noop_alert_indices),
+                    "limit": thresholds.max_noop_admin_alerts,
+                    "message_indices": noop_alert_indices,
+                },
+            )
+        )
+
+    per_recipient: dict[str, list[int]] = {}
+    for index, _token, recipients in consent_requests:
+        for recipient in recipients:
+            per_recipient.setdefault(recipient, []).append(index)
+    for recipient in sorted(per_recipient):
+        indices = per_recipient[recipient]
+        if len(indices) > thresholds.max_consent_requests_per_recipient:
+            findings.append(
+                ScoreFinding(
+                    tier="quality",
+                    passed=False,
+                    message="Consent-request burst to one recipient",
+                    evidence={
+                        "recipient": recipient,
+                        "count": len(indices),
+                        "limit": thresholds.max_consent_requests_per_recipient,
+                        "message_indices": indices,
+                    },
+                )
+            )
+
+    if weak_pairs:
+        recipients_by_token: dict[str, set[str]] = {}
+        for _index, token, recipients in consent_requests:
+            recipients_by_token.setdefault(token, set()).update(recipients)
+        for token in sorted(recipients_by_token):
+            pair = frozenset(recipients_by_token[token])
+            if pair in weak_pairs:
+                findings.append(
+                    ScoreFinding(
+                        tier="quality",
+                        passed=False,
+                        message="Introduction proposed for a configured weak-match pair",
+                        evidence={"token": token, "pair": sorted(pair)},
+                    )
+                )
+
+    if not findings:
+        findings.append(
+            ScoreFinding(
+                tier="quality",
+                passed=True,
+                message="No response-quality failures detected in delivered mail",
+            )
+        )
+    return TierScore(tier="quality", findings=tuple(findings))
+
+
 def build_transcript_judge(model: str | None = None) -> LLMJudge:
     """Tier 3: LLM transcript judge using the live-archetype style rubric."""
     kwargs: dict[str, Any] = {"rubric": TRANSCRIPT_JUDGE_RUBRIC}
@@ -263,6 +479,7 @@ def build_transcript_judge(model: str | None = None) -> LLMJudge:
 def _find_matching_memory(
     memories: tuple[Memory, ...],
     expectation: MemoryExpectation,
+    emails_by_id: Mapping[str, str],
 ) -> Memory | None:
     for memory in memories:
         refs = set(memory.refs or ())
@@ -272,12 +489,57 @@ def _find_matching_memory(
             memory.gist or ""
         ).lower():
             continue
+        if expectation.persona_email is not None and (
+            expectation.persona_email.lower()
+            not in _memory_owner_emails(memory, emails_by_id)
+        ):
+            continue
         return memory
     return None
 
 
+def _memory_owner_emails(
+    memory: Memory, emails_by_id: Mapping[str, str]
+) -> set[str]:
+    emails = set()
+    for ref in memory.refs or ():
+        email = emails_by_id.get(ref, ref if "@" in ref else None)
+        if email is not None:
+            emails.add(email.lower())
+    return emails
+
+
+def _expectation_failure_evidence(
+    memories: tuple[Memory, ...],
+    expectation: MemoryExpectation,
+    emails_by_id: Mapping[str, str],
+) -> dict[str, Any]:
+    """Show which memories matched the gist but belong to other personas."""
+    if not expectation.gist_contains:
+        return {}
+    gist_matches = [
+        {
+            "memory_id": memory.id,
+            "owner_emails": sorted(_memory_owner_emails(memory, emails_by_id)),
+        }
+        for memory in memories
+        if expectation.gist_contains.lower() in (memory.gist or "").lower()
+    ]
+    if not gist_matches:
+        return {}
+    return {
+        "persona_email": expectation.persona_email,
+        "gist_matches_other_owners": gist_matches,
+    }
+
+
 def _recipient_emails(message: Message) -> set[str]:
     return _header_emails(message, "to", "cc")
+
+
+def _sender_email(message: Message) -> str | None:
+    addresses = _header_emails(message, "from")
+    return next(iter(addresses), None)
 
 
 def _header_emails(message: Message, *names: str) -> set[str]:

@@ -5,7 +5,12 @@ from dataclasses import replace
 import pytest
 
 from thenetwork.db.models import Memory
-from thenetwork.sim.population import DEFAULT_EXPECTATIONS, DEFAULT_OUTCOME_CHECKS
+from thenetwork.sim.population import (
+    DEFAULT_EXPECTATIONS,
+    DEFAULT_OUTCOME_CHECKS,
+    NADIA_EMAIL,
+    PETRA_EMAIL,
+)
 from thenetwork.sim.scoring import (
     IntroductionRevealAuthorization,
     MailFacts,
@@ -310,22 +315,45 @@ def test_default_outcome_checks_have_failure_fixtures(
 
 
 @pytest.mark.parametrize(
-    ("expectation_index", "gist", "expected"),
+    ("expectation_index", "owner_email", "gist", "expected"),
     [
-        (0, "Nadia is building a bakery supply co-op.", True),
-        (0, "Nadia is still in ML infrastructure.", False),
-        (1, "Petra studies provenance for museum archives.", True),
-        (1, "Petra wants generic networking advice.", False),
+        (0, NADIA_EMAIL, "Nadia is building a bakery supply co-op.", True),
+        (0, NADIA_EMAIL, "Nadia is still in ML infrastructure.", False),
+        (1, PETRA_EMAIL, "Petra studies provenance for museum archives.", True),
+        (1, PETRA_EMAIL, "Petra wants generic networking advice.", False),
     ],
 )
 def test_default_memory_expectations_have_pass_and_fail_fixtures(
     expectation_index: int,
+    owner_email: str,
     gist: str,
     expected: bool,
 ):
     score = score_memory_expectations(
-        (Memory(id="memory-1", text="raw", gist=gist),),
+        (Memory(id="memory-1", text="raw", refs=[owner_email], gist=gist),),
         (DEFAULT_EXPECTATIONS[expectation_index],),
     )
 
     assert score.passed is expected
+
+
+def test_default_memory_expectations_reject_wrong_persona_owner():
+    score = score_memory_expectations(
+        (
+            Memory(
+                id="memory-1",
+                text="raw",
+                refs=["elise-id"],
+                gist="Elise studies provenance for museum archives.",
+            ),
+        ),
+        (DEFAULT_EXPECTATIONS[1],),
+        emails_by_id={"elise-id": "elise.sim@example.test"},
+    )
+
+    assert score.passed is False
+    evidence = score.findings[0].evidence
+    assert evidence["persona_email"] == PETRA_EMAIL
+    assert evidence["gist_matches_other_owners"] == [
+        {"memory_id": "memory-1", "owner_emails": ["elise.sim@example.test"]}
+    ]

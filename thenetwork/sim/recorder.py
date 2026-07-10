@@ -27,8 +27,10 @@ from thenetwork.sim.scoring import (
     MemoryExpectation,
     OutcomeCheck,
     PersonaPII,
+    ResponseQualityThresholds,
     ScenarioOutcome,
     score_memory_expectations,
+    score_response_quality,
     score_scenario_outcomes,
     score_seal_mbox,
 )
@@ -49,6 +51,7 @@ class SimRunConfig:
     outcome_checks: tuple[OutcomeCheck, ...] = ()
     llm_personas: bool = False
     database_name: str | None = None
+    quality_thresholds: ResponseQualityThresholds = ResponseQualityThresholds()
 
 
 @dataclass(frozen=True)
@@ -168,7 +171,7 @@ class SimRunRecorder:
             personas_pii = tuple(
                 PersonaPII.from_config(persona) for persona in config.personas
             )
-            outcome, outcome_memories = _assemble_scenario_outcome(
+            outcome, outcome_memories, emails_by_id = _assemble_scenario_outcome(
                 artifacts,
                 memories=memories,
                 load_database_state=(
@@ -187,10 +190,20 @@ class SimRunRecorder:
                 passed=tier1.passed,
                 findings=[asdict(finding) for finding in tier1.findings],
             )
+            quality = score_response_quality(
+                artifacts.mbox_path,
+                thresholds=config.quality_thresholds,
+            )
+            events.write(
+                "sim.score.quality",
+                passed=quality.passed,
+                findings=[asdict(finding) for finding in quality.findings],
+            )
             if config.expectations:
                 tier2 = score_memory_expectations(
                     outcome_memories,
                     config.expectations,
+                    emails_by_id,
                 )
                 events.write(
                     "sim.score.tier2",
@@ -235,6 +248,15 @@ def _config_payload(config: SimRunConfig, process_mode: str) -> dict[str, Any]:
         "llm_personas": config.llm_personas,
         "database_name": config.database_name,
         "process_mode": process_mode,
+        "quality_thresholds": {
+            "max_noop_admin_alerts": config.quality_thresholds.max_noop_admin_alerts,
+            "max_consent_requests_per_recipient": (
+                config.quality_thresholds.max_consent_requests_per_recipient
+            ),
+            "weak_match_pairs": sorted(
+                sorted(pair) for pair in config.quality_thresholds.weak_match_pairs
+            ),
+        },
     }
 
 
@@ -243,14 +265,17 @@ def _assemble_scenario_outcome(
     *,
     memories: Iterable[Memory],
     load_database_state: bool,
-) -> tuple[ScenarioOutcome, tuple[Memory, ...]]:
+) -> tuple[ScenarioOutcome, tuple[Memory, ...], dict[str, str]]:
     if load_database_state:
-        consent_rows, database_memories, memory_counts = _database_outcome_state()
+        consent_rows, database_memories, memory_counts, emails_by_id = (
+            _database_outcome_state()
+        )
         outcome_memories = database_memories
     else:
         consent_rows = ()
         outcome_memories = tuple(memories)
-        memory_counts = _memory_counts(outcome_memories, {})
+        emails_by_id = {}
+        memory_counts = _memory_counts(outcome_memories, emails_by_id)
     return (
         ScenarioOutcome(
             consent_rows=consent_rows,
@@ -261,11 +286,15 @@ def _assemble_scenario_outcome(
             memory_counts=memory_counts,
         ),
         outcome_memories,
+        emails_by_id,
     )
 
 
 def _database_outcome_state() -> tuple[
-    tuple[IntroductionRevealAuthorization, ...], tuple[Memory, ...], dict[str, int]
+    tuple[IntroductionRevealAuthorization, ...],
+    tuple[Memory, ...],
+    dict[str, int],
+    dict[str, str],
 ]:
     consent_rows = []
     with get_session() as session:
@@ -295,7 +324,7 @@ def _database_outcome_state() -> tuple[
             person.id: person.email for person in session.exec(select(Person)).all()
         }
         memory_counts = _memory_counts(memories, emails_by_id)
-    return tuple(consent_rows), memories, memory_counts
+    return tuple(consent_rows), memories, memory_counts, emails_by_id
 
 
 def _audit_events(path: Path) -> tuple[dict[str, Any], ...]:
