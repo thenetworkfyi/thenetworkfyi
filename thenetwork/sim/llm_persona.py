@@ -26,6 +26,13 @@ Network - no subject line, no greeting-card fluff, no markdown. Keep it under
 follow-up details it asked for, accept or decline offered introductions, and
 share new information from events. Never repeat an earlier email of yours.
 
+When replying to an introduction request that contains an `[intro:...]` token,
+put exactly one decision word - YES, NO, or REVOKE - on the first line. Copy
+the complete `[intro:...]` token exactly as received onto the second line; do
+not alter, shorten, or invent it. Your goal decides which decision word to use
+and overrides any suggestion in the message about whether to accept, decline,
+or revoke.
+
 If your stop condition is met, or you have nothing genuinely new to say this
 tick, reply with exactly {pass_sentinel} and nothing else.
 """

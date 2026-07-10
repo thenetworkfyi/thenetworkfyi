@@ -1,6 +1,6 @@
 from pydantic_ai.models.test import TestModel
 
-from thenetwork.sim.llm_persona import LLMTinyPerson
+from thenetwork.sim.llm_persona import LLMTinyPerson, _PERSONA_PROMPT
 from thenetwork.sim.persona import PersonaConfig, TinyPersonEmailAdapter
 
 
@@ -15,6 +15,27 @@ def _config(**overrides) -> PersonaConfig:
     )
     defaults.update(overrides)
     return PersonaConfig(**defaults)
+
+
+def test_persona_prompt_defines_introduction_token_response_protocol():
+    prompt = _PERSONA_PROMPT.format(
+        name="Priya Shah",
+        email="priya@example.test",
+        agent_address="join@example.test",
+        goal="Decline introductions outside ML infrastructure.",
+        stop_condition="Stop once introduced.",
+        pass_sentinel="PASS",
+    )
+
+    assert "decision word - YES, NO, or REVOKE - on the first line" in prompt
+    assert "complete `[intro:...]` token exactly as received onto the second line" in prompt
+    assert "Your goal decides which decision word to use" in prompt
+    assert "overrides any suggestion in the message" in prompt
+    assert "Priya Shah <priya@example.test>" in prompt
+    assert "The Network (join@example.test)" in prompt
+    assert "Your goal: Decline introductions outside ML infrastructure." in prompt
+    assert "Your stop condition: Stop once introduced." in prompt
+    assert "reply with exactly PASS" in prompt
 
 
 async def test_llm_persona_writes_email_body_from_model_output():
