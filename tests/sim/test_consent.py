@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from email.message import EmailMessage
 
-from thenetwork.sim.consent import intro_token, make_reply_thread_faithful
+from thenetwork.sim.personas.consent import intro_token, make_reply_thread_faithful
 
 
 TOKEN_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"

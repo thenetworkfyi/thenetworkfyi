@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic_ai import Agent
 
-from thenetwork.sim.persona import PersonaConfig
+from thenetwork.sim.personas.persona import PersonaConfig
 
 
 PASS_SENTINEL = "PASS"

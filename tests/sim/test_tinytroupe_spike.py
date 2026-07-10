@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from thenetwork.sim.tinytroupe_spike import (
+from thenetwork.sim.spikes.tinytroupe import (
     MockNetworkAgent,
     render_transcript,
     run_spike,
@@ -83,4 +83,3 @@ def test_render_transcript_is_compact_and_reviewable():
 def test_spike_requires_positive_turn_count():
     with pytest.raises(ValueError, match="turns must be at least 1"):
         run_spike(create_person=FakeTinyPerson, turns=0)
-

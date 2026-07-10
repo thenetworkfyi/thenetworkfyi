@@ -5,13 +5,13 @@ from dataclasses import replace
 import pytest
 
 from thenetwork.db.models import Memory
-from thenetwork.sim.population import (
+from thenetwork.sim.personas.population import (
     DEFAULT_EXPECTATIONS,
     DEFAULT_OUTCOME_CHECKS,
     NADIA_EMAIL,
     PETRA_EMAIL,
 )
-from thenetwork.sim.scoring import (
+from thenetwork.sim.scoring.scoring import (
     IntroductionRevealAuthorization,
     MailFacts,
     OutcomeCheck,

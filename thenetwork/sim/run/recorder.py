@@ -18,11 +18,11 @@ from sqlmodel import select
 from thenetwork.db.models import IntroductionConsent, Memory, Person
 from thenetwork.db.session import get_session
 from thenetwork.security.sender_identifier import optional_sender_identifier
-from thenetwork.sim.loop import ProgressCallable, SimTickLoop
-from thenetwork.sim.mail import _extract_body, render_transcript
-from thenetwork.sim.persona import PersonaConfig, TinyPersonEmailAdapter
-from thenetwork.sim.population import SimSchedule
-from thenetwork.sim.scoring import (
+from thenetwork.sim.run.loop import ProgressCallable, SimTickLoop
+from thenetwork.sim.run.mail import _extract_body, render_transcript
+from thenetwork.sim.personas.persona import PersonaConfig, TinyPersonEmailAdapter
+from thenetwork.sim.personas.population import SimSchedule
+from thenetwork.sim.scoring.scoring import (
     IntroductionRevealAuthorization,
     MailFacts,
     MemoryExpectation,

@@ -18,23 +18,23 @@ from thenetwork.agent.tools import propose_introduction
 from thenetwork.audit import audit_jsonl_file
 from thenetwork.db.models import IntroductionConsent, Person
 from thenetwork.db.session import get_session
-from thenetwork.sim.database import new_sim_database_name, provision_sim_database
-from thenetwork.sim.loop import override_rate_limits
-from thenetwork.sim.mail import (
+from thenetwork.sim.run.database import new_sim_database_name, provision_sim_database
+from thenetwork.sim.run.loop import override_rate_limits
+from thenetwork.sim.run.mail import (
     SimMessageMeta,
     SimPostOffice,
     capture_outbound,
     deliver_inbound,
     render_transcript,
 )
-from thenetwork.sim.persona import PersonaConfig
-from thenetwork.sim.recorder import (
+from thenetwork.sim.personas.persona import PersonaConfig
+from thenetwork.sim.run.recorder import (
     Clock,
     EventsLog,
     SimRunArtifacts,
     create_run_artifacts,
 )
-from thenetwork.sim.scoring import (
+from thenetwork.sim.scoring.scoring import (
     IntroductionRevealAuthorization,
     PersonaPII,
     score_seal_mbox,
