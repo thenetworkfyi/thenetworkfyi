@@ -132,8 +132,11 @@ class Settings(BaseSettings):
     # deliberately conservative - a false positive costs a real email (unlike
     # interactive search, where the agent can just ignore a weak hit). Lookback
     # bounds the scan to memories created since roughly the last hourly run, so
-    # a match only fires once, when the counterpart first arrives.
-    proactive_match_threshold: float = 0.5
+    # a match only fires once, when the counterpart first arrives. The floor
+    # sits above the ~0.55 band where thin keyword overlap lands (two people
+    # who merely both mention factories) while keeping specific shared-ground
+    # matches (e.g. two ML-in-manufacturing operators, ~0.7+).
+    proactive_match_threshold: float = 0.6
     proactive_rematch_lookback_minutes: int = 65
     proactive_rematch_top_k: int = 5
 

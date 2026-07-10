@@ -287,3 +287,175 @@ async def test_rematch_trigger_body_carries_no_raw_pii():
     assert "p@test.com" not in body
     assert "q@test.com" not in body
     assert "Raw-Name" not in body
+
+
+# --- pacing + relevance gate ------------------------------------------------
+
+def _engaged_ids(defer_calls):
+    """Person ids named in each deferred trigger body ("Person <id>: ...")."""
+    import re
+
+    pairs = []
+    for call in defer_calls:
+        pairs.append(tuple(re.findall(r"Person (\S+):", call.kwargs["body"])))
+    return pairs
+
+
+@pytest.mark.asyncio
+async def test_rematch_gate_rejects_thin_overlap_keeps_specific_match():
+    """A 0.55 thin keyword-overlap match (factory/climate) is rejected even if
+    the match backend returns it; a specific 0.72 manufacturing-ML match stays."""
+    from thenetwork.search.match import MemoryMatch
+    from thenetwork.worker.proactive import scan_for_matches
+
+    recent = [
+        _memory("mi", ["ines"], "runs a climate-adjacent factory project"),
+        _memory("ms", ["samir"], "deploys ML infrastructure on factory floors"),
+    ]
+    per_call_matches = [
+        [MemoryMatch("mn", "nora", "climate founder, industrial heat reuse", 0.55)],
+        [MemoryMatch("mp", "priya", "ML platform work for factory operations", 0.72)],
+    ]
+    persons = {
+        "ines": _person("ines", "ines@test.com"),
+        "samir": _person("samir", "samir@test.com"),
+        "nora": _person("nora", "nora@test.com"),
+        "priya": _person("priya", "priya@test.com"),
+    }
+
+    with patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()), \
+         patch("thenetwork.worker.proactive.get_session", return_value=_rematch_session(recent, persons)), \
+         patch("thenetwork.worker.proactive.match_memories", side_effect=per_call_matches), \
+         patch("thenetwork.worker.proactive.process_email") as mock_pe:
+        await scan_for_matches.func(0)
+
+    assert mock_pe.defer.call_count == 1, "only the specific match may surface"
+    kwargs = mock_pe.defer.call_args.kwargs
+    assert kwargs["sender_email"] == "priya@test.com"
+    for call in mock_pe.defer.call_args_list:
+        assert "nora" not in call.kwargs["body"]
+        assert "ines" not in call.kwargs["body"]
+
+
+@pytest.mark.asyncio
+async def test_rematch_schedules_at_most_one_candidate_per_person():
+    """When two candidates share a person, only the higher-similarity one is
+    scheduled this scan; selection is deterministic (score, then pair key)."""
+    from thenetwork.search.match import MemoryMatch
+    from thenetwork.worker.proactive import scan_for_matches
+
+    recent = [
+        _memory("m1", ["B"], "wants ml manufacturing peers"),
+        _memory("m2", ["C"], "wants ml manufacturing peers too"),
+    ]
+    per_call_matches = [
+        [MemoryMatch("ma", "A", "runs ml in factories", 0.75)],
+        [MemoryMatch("mb", "B", "wants ml manufacturing peers", 0.65)],
+    ]
+    persons = {p: _person(p, f"{p.lower()}@test.com") for p in ("A", "B", "C")}
+
+    with patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()), \
+         patch("thenetwork.worker.proactive.get_session", return_value=_rematch_session(recent, persons)), \
+         patch("thenetwork.worker.proactive.match_memories", side_effect=per_call_matches), \
+         patch("thenetwork.worker.proactive.process_email") as mock_pe:
+        await scan_for_matches.func(0)
+
+    assert mock_pe.defer.call_count == 1, "B may be scheduled only once per scan"
+    kwargs = mock_pe.defer.call_args.kwargs
+    assert kwargs["sender_email"] == "a@test.com", "the higher-similarity pair wins"
+
+
+@pytest.mark.asyncio
+async def test_rematch_manufacturing_cluster_does_not_burst():
+    """Four mutually-matching manufacturing members yield at most two paced
+    pairs per scan (each person in at most one), never the combinatorial six."""
+    from thenetwork.search.match import MemoryMatch
+    from thenetwork.worker.proactive import scan_for_matches
+
+    members = ["P1", "P2", "P3", "P4"]
+    recent = [
+        _memory(f"m{p}", [p], f"{p} does ml for manufacturing") for p in members
+    ]
+    per_call_matches = [
+        [
+            MemoryMatch(f"s{other}", other, f"{other} does ml for manufacturing", 0.7)
+            for other in members
+            if other != p
+        ]
+        for p in members
+    ]
+    persons = {p: _person(p, f"{p.lower()}@test.com") for p in members}
+
+    with patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()), \
+         patch("thenetwork.worker.proactive.get_session", return_value=_rematch_session(recent, persons)), \
+         patch("thenetwork.worker.proactive.match_memories", side_effect=per_call_matches), \
+         patch("thenetwork.worker.proactive.process_email") as mock_pe:
+        await scan_for_matches.func(0)
+
+    assert mock_pe.defer.call_count <= 2, (
+        f"expected at most 2 paced pairs for 4 people, got {mock_pe.defer.call_count}"
+    )
+    engaged = [pid for pair in _engaged_ids(mock_pe.defer.call_args_list) for pid in pair]
+    assert len(engaged) == len(set(engaged)), "a person may appear in at most one pair per scan"
+
+
+@pytest.mark.asyncio
+async def test_rematch_preserves_pair_suppression():
+    """A previously proposed/resolved pair stays suppressed under pacing."""
+    from thenetwork.search.match import MemoryMatch
+    from thenetwork.worker.proactive import scan_for_matches
+
+    recent = [_memory("n1", ["Q"], "wants a rust cofounder")]
+    matches = [MemoryMatch("m1", "P", "rust founder", 0.9)]
+    persons = {"P": _person("P", "p@test.com"), "Q": _person("Q", "q@test.com")}
+
+    with patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()), \
+         patch("thenetwork.worker.proactive.get_session", return_value=_rematch_session(recent, persons)), \
+         patch("thenetwork.worker.proactive.match_memories", return_value=matches), \
+         patch("thenetwork.worker.proactive.pair_is_suppressed", return_value=True), \
+         patch("thenetwork.worker.proactive.process_email") as mock_pe:
+        await scan_for_matches.func(0)
+
+    assert not mock_pe.defer.called
+
+
+@pytest.mark.asyncio
+async def test_opportunities_scan_paces_one_candidate_per_person():
+    """A star graph makes every leaf pair Jaccard 1.0; pacing schedules at most
+    one candidate per person instead of every qualifying pair."""
+    from thenetwork.worker.proactive import scan_for_opportunities
+
+    G = nx.Graph()
+    for leaf in ("a", "b", "c"):
+        G.add_edge(leaf, "hub")
+
+    people = [_person(p, f"{p}@test.com") for p in ("a", "b", "c", "hub")]
+
+    with patch("thenetwork.worker.proactive.build_graph", return_value=G), \
+         patch("thenetwork.worker.proactive.get_session", return_value=_mock_session(people)), \
+         patch("thenetwork.worker.proactive.process_email") as mock_pe:
+        await scan_for_opportunities.func(0)
+
+    assert mock_pe.defer.call_count == 1, (
+        f"three qualifying pairs share persons; expected 1 paced defer, got {mock_pe.defer.call_count}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_opportunities_scan_skips_suppressed_pairs():
+    """A proposed/resolved introduction pair is not re-surfaced by the graph scan."""
+    from thenetwork.worker.proactive import scan_for_opportunities
+
+    G = nx.Graph()
+    G.add_edge("alice", "dave")
+    G.add_edge("bob", "dave")
+
+    people = [_person(p, f"{p}@test.com") for p in ("alice", "bob", "dave")]
+
+    with patch("thenetwork.worker.proactive.build_graph", return_value=G), \
+         patch("thenetwork.worker.proactive.get_session", return_value=_mock_session(people)), \
+         patch("thenetwork.worker.proactive.pair_is_suppressed", return_value=True), \
+         patch("thenetwork.worker.proactive.process_email") as mock_pe:
+        await scan_for_opportunities.func(0)
+
+    assert not mock_pe.defer.called
