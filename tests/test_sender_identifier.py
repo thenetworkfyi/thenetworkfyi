@@ -65,7 +65,12 @@ def test_normalize_sender_identifier_identity_keeps_provider_aliases_literal():
 
 
 def test_sender_identifier_secret_is_configurable():
-    settings = Settings(sender_identifier_secret="audit-secret")
+    settings = Settings(
+        agent_model="test:model",
+        small_agent_model="test:model",
+        embed_model="test:embed",
+        sender_identifier_secret="audit-secret",
+    )
 
     assert settings.sender_identifier_secret == "audit-secret"
 
@@ -73,7 +78,12 @@ def test_sender_identifier_secret_is_configurable():
 def test_optional_sender_identifier_omits_when_secret_missing(monkeypatch):
     monkeypatch.setattr(
         "thenetwork.security.sender_identifier.get_settings",
-        lambda: Settings(sender_identifier_secret=""),
+        lambda: Settings(
+            agent_model="test:model",
+            small_agent_model="test:model",
+            embed_model="test:embed",
+            sender_identifier_secret="",
+        ),
     )
 
     assert optional_sender_identifier("alice@example.com") is None

@@ -31,14 +31,17 @@ class Settings(BaseSettings):
             database=self.postgres_db,
         ).render_as_string(hide_password=False)
 
-    # LLM - provider selected by config string (no vendor lock-in, no LiteLLM)
-    agent_model: str = "anthropic:claude-sonnet-5"
+    # LLM - provider selected by config string (no vendor lock-in, no LiteLLM).
+    # Deliberately no defaults: model selection must be explicit per
+    # deployment, so a missing env var fails at startup instead of silently
+    # running against a fallback vendor/model.
+    agent_model: str
     # Cheaper/smaller-model tier for subtasks that don't need the main agent
     # model (currently: the sanitize_memory_llm gist pass, see memory/sanitize.py).
-    small_agent_model: str = "anthropic:claude-haiku-4-5"
+    small_agent_model: str
     agent_request_limit: int = 12
     agent_total_tokens_limit: int = 100_000
-    embed_model: str = "text-embedding-3-small"
+    embed_model: str
 
     # Workload-specific API keys. Each model receives only its own credential,
     # regardless of which provider its model string selects.

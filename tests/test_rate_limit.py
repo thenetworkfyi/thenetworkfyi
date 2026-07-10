@@ -143,6 +143,9 @@ def test_postgres_rate_limit_state_survives_limiter_rebuild(pg_engine, monkeypat
         rate_limit,
         "get_settings",
         lambda: Settings(
+            agent_model="test:model",
+            small_agent_model="test:model",
+            embed_model="test:embed",
             rate_limit_per_hour=2,
             unauthenticated_rate_limit_per_hour=1,
             global_email_rate_limit_per_hour=10,

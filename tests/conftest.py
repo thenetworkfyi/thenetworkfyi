@@ -3,7 +3,27 @@ from __future__ import annotations
 
 import os
 import uuid
+from pathlib import Path
+
 import pytest
+from dotenv import dotenv_values
+
+# The model settings are deliberately required (no defaults - see
+# thenetwork/settings.py), and thenetwork.worker.tasks reads Settings at import
+# time, so collection needs values from somewhere. Supply test placeholders
+# only for keys that neither the environment nor the repo .env already
+# provides: in CI (no .env) every placeholder gets set; locally the .env
+# values stay authoritative, which tests/scenarios/test_live_archetypes.py
+# depends on to reach the real configured model. The .env path is
+# cwd-relative to match how pydantic-settings itself resolves env_file.
+_dotenv = dotenv_values(Path(".env"))
+for _key, _placeholder in (
+    ("AGENT_MODEL", "test:model"),
+    ("SMALL_AGENT_MODEL", "test:model"),
+    ("EMBED_MODEL", "test:embed"),
+):
+    if _key not in os.environ and not _dotenv.get(_key):
+        os.environ[_key] = _placeholder
 
 from thenetwork.db.models import Memory, Person
 
