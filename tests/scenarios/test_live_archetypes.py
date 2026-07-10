@@ -184,6 +184,14 @@ class DidNotDispatchEmail(Evaluator[EmailScenario, RunOutcome, object]):
 
 
 @dataclass(repr=False)
+class RepliedWithQuestion(Evaluator[EmailScenario, RunOutcome, object]):
+    """A vague standing intent needs a concrete follow-up, not a passive reply."""
+
+    def evaluate(self, ctx: EvaluatorContext[EmailScenario, RunOutcome, object]) -> bool:
+        return any("?" in dispatch["body"] for dispatch in ctx.output.dispatched)
+
+
+@dataclass(repr=False)
 class NoOtherPersonPII(Evaluator[EmailScenario, RunOutcome, object]):
     """SEAL contract: reply text must never carry another person's raw PII."""
 
@@ -389,20 +397,24 @@ ambiguous_case = Case(
     name="ambiguous",
     inputs=EmailScenario(
         subject="hey",
-        body="hey so about that thing, any update?",
+        body="I'm new here and looking to meet interesting people. What should I do?",
         sender_email="unclear@example.com",
-        sender_user_id="user-unclear",
+        sender_user_id=None,
         sender_authenticated=True,
     ),
     evaluators=(
-        DidNotDispatchEmail(),
+        ToolWasCalled("register_person"),
+        ToolWasCalled("reply_to_sender"),
+        RepliedWithQuestion(),
         LLMJudge(
             rubric=(
-                "The email gives no identifiable intent, request, or fact - "
-                "there is nothing concrete to act on. A reasonable response "
-                "either escalates for human follow-up or declines to guess, "
-                "and in particular does not fabricate a match, an "
-                "introduction, or a confident claim about what 'that thing' is."
+                "The sender has a genuine but too-broad standing intent: they "
+                "want to meet interesting people without saying what kind of "
+                "connection would help. Register them, then reply with one "
+                "brief, concrete, curious follow-up question that would narrow "
+                "the intent, such as their sector, stage, or what they want from "
+                "a connection. Do not promise a match, fabricate one, or merely "
+                "say that you will reach out when someone relevant appears."
             ),
             include_input=True,
         ),
