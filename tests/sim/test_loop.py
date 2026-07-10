@@ -296,3 +296,102 @@ async def test_tick_loop_can_disable_proactive_scans(tmp_path):
     result = await loop.run(ticks=1)
 
     assert result.proactive_jobs == 0
+
+
+TOKEN_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+TOKEN_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+
+
+def _consent_request(to_email: str, token: str, message_id: str) -> EmailMessage:
+    request = EmailMessage()
+    request["From"] = "join@example.test"
+    request["To"] = to_email
+    request["Subject"] = f"Possible introduction [intro:{token}]"
+    request["Message-ID"] = message_id
+    request.set_content("A possible match came up. Reply YES to opt in.")
+    return request
+
+
+def _visible_lines(body: str) -> list[str]:
+    return [
+        line.strip()
+        for line in body.splitlines()
+        if line.strip() and not line.lstrip().startswith(">")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_bundled_consent_tokens_are_answered_one_thread_per_turn(tmp_path):
+    """Priya/Samir defect: a persona bundling every pending token into one email.
+
+    The loop must present one consent thread per turn, so the delivered reply
+    carries only the answered thread's token and the other request is answered
+    on the next turn with its own token.
+    """
+    bundled = f"Yes\n[intro:{TOKEN_A}]\n[intro:{TOKEN_B}]"
+    adapter = _adapter("Priya", "priya@example.test", [bundled, bundled], budget=2)
+    process = AsyncMock()
+    loop = SimTickLoop([adapter], run_dir=tmp_path, process=process, proactive_every=None)
+    loop.post_office.deliver(_consent_request("priya@example.test", TOKEN_A, "<req-a@example.test>"))
+    loop.post_office.deliver(_consent_request("priya@example.test", TOKEN_B, "<req-b@example.test>"))
+
+    result = await loop.run(ticks=2)
+
+    assert result.persona_messages == 2
+    first, second = process.await_args_list
+    assert first.kwargs["subject"] == f"Re: Possible introduction [intro:{TOKEN_A}]"
+    assert _visible_lines(first.kwargs["body"])[:2] == ["Yes", f"[intro:{TOKEN_A}]"]
+    assert TOKEN_B not in first.kwargs["body"]
+    assert second.kwargs["subject"] == f"Re: Possible introduction [intro:{TOKEN_B}]"
+    assert _visible_lines(second.kwargs["body"])[:2] == ["Yes", f"[intro:{TOKEN_B}]"]
+    assert TOKEN_A not in second.kwargs["body"]
+
+
+@pytest.mark.asyncio
+async def test_wrong_thread_token_is_rebound_to_the_answered_thread(tmp_path):
+    """Ruth/Omar defect: a decision reply pasting a token from another thread."""
+    adapter = _adapter("Ruth", "ruth@example.test", [f"No\n[intro:{TOKEN_B}]"], budget=1)
+    process = AsyncMock()
+    loop = SimTickLoop([adapter], run_dir=tmp_path, process=process, proactive_every=None)
+    loop.post_office.deliver(_consent_request("ruth@example.test", TOKEN_A, "<req-a@example.test>"))
+
+    await loop.run(ticks=1)
+
+    call = process.await_args
+    assert call.kwargs["subject"] == f"Re: Possible introduction [intro:{TOKEN_A}]"
+    assert _visible_lines(call.kwargs["body"])[:2] == ["No", f"[intro:{TOKEN_A}]"]
+    assert TOKEN_B not in call.kwargs["body"]
+
+
+@pytest.mark.asyncio
+async def test_clarifying_question_keeps_thread_token_without_fabricated_decision(tmp_path):
+    """Ines-style reply: a question, not a decision, must pass through unchanged."""
+    question = f"Before deciding, could you say what this person works on?\n[intro:{TOKEN_A}]"
+    adapter = _adapter("Ines", "ines@example.test", [question], budget=1)
+    process = AsyncMock()
+    loop = SimTickLoop([adapter], run_dir=tmp_path, process=process, proactive_every=None)
+    loop.post_office.deliver(_consent_request("ines@example.test", TOKEN_A, "<req-a@example.test>"))
+
+    await loop.run(ticks=1)
+
+    lines = _visible_lines(process.await_args.kwargs["body"])
+    assert lines[0] == "Before deciding, could you say what this person works on?"
+    assert lines[1] == f"[intro:{TOKEN_A}]"
+
+
+@pytest.mark.asyncio
+async def test_stray_token_is_stripped_when_no_consent_thread_is_pending(tmp_path):
+    adapter = _adapter("Omar", "omar@example.test", [f"Thanks.\n[intro:{TOKEN_B}]"], budget=1)
+    process = AsyncMock()
+    loop = SimTickLoop([adapter], run_dir=tmp_path, process=process, proactive_every=None)
+    plain = EmailMessage()
+    plain["From"] = "join@example.test"
+    plain["To"] = "omar@example.test"
+    plain["Subject"] = "Re: Simulation tick 1"
+    plain["Message-ID"] = "<plain@example.test>"
+    plain.set_content("Noted, I will keep an eye out.")
+    loop.post_office.deliver(plain)
+
+    await loop.run(ticks=1)
+
+    assert "[intro:" not in process.await_args.kwargs["body"]

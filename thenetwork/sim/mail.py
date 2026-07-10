@@ -4,7 +4,7 @@ from __future__ import annotations
 import base64
 import mailbox
 from collections import defaultdict
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterable, Iterator
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -60,6 +60,17 @@ class SimPostOffice:
 
     def pop_all(self, address: str) -> tuple[EmailMessage, ...]:
         return tuple(self._messages.pop(_normalize_address(address), ()))
+
+    def requeue(self, address: str, messages: Iterable[EmailMessage]) -> None:
+        """Put already-delivered messages back at the head of a queue.
+
+        Used by the tick loop to hold extra consent threads for later turns.
+        No mbox append happens here - the messages were logged on delivery.
+        """
+        held = [deepcopy(message) for message in messages]
+        if not held:
+            return
+        self._messages[_normalize_address(address)][:0] = held
 
     @property
     def all_messages(self) -> tuple[EmailMessage, ...]:
