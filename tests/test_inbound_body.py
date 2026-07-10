@@ -12,6 +12,9 @@ from thenetwork.settings import Settings
 
 def _settings() -> Settings:
     return Settings(
+        agent_model="test:model",
+        small_agent_model="test:model",
+        embed_model="test:embed",
         imap_account="agent@example.com",
         imap_password="secret",
         imap_host="imap.example.com",

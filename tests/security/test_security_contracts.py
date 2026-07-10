@@ -48,7 +48,11 @@ class FakeCtx:
         mock_sess.__enter__ = MagicMock(return_value=mock_sess)
         mock_sess.__exit__ = MagicMock(return_value=False)
         self.deps = AgentDeps(
-            settings=Settings(),
+            settings=Settings(
+                agent_model="test:model",
+                small_agent_model="test:model",
+                embed_model="test:embed",
+            ),
             sender_email=sender_email,
             sender_user_id=sender_user_id,
             sender_authenticated=sender_authenticated,
