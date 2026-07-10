@@ -44,11 +44,9 @@ def test_decision_without_any_token_gains_the_thread_token():
     assert make_reply_thread_faithful("REVOKE", TOKEN_A) == f"REVOKE\n[intro:{TOKEN_A}]"
 
 
-def test_decision_with_inline_token_moves_it_to_the_second_line():
+def test_prose_with_inline_token_is_not_normalized_as_a_decision():
     body = f"Yes [intro:{TOKEN_A}], happy to meet."
-    assert make_reply_thread_faithful(body, TOKEN_A) == (
-        f"Yes , happy to meet.\n[intro:{TOKEN_A}]"
-    )
+    assert make_reply_thread_faithful(body, TOKEN_A) == body
 
 
 def test_question_keeps_own_token_and_drops_foreign_ones():
