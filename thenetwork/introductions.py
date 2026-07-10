@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable
 
-from sqlmodel import select
+from sqlmodel import col, select
 
 from thenetwork.audit import audit_event
 from thenetwork.db.models import IntroductionConsent, Person
@@ -58,6 +58,18 @@ def pair_is_suppressed(session, person_a_id: str, person_b_id: str) -> bool:
     return _pair_record(session, person_a_id, person_b_id) is not None
 
 
+def _outstanding_request_count(session, person_id: str) -> int:
+    """Count consent requests still awaiting a response for one person."""
+    requests = session.exec(
+        select(IntroductionConsent).where(
+            (IntroductionConsent.person_a_id == person_id)
+            | (IntroductionConsent.person_b_id == person_id),
+            col(IntroductionConsent.status).in_(("proposed", "one_consented")),
+        )
+    ).all()
+    return len(requests)
+
+
 def propose_pair(
     *,
     sender_person_id: str,
@@ -66,7 +78,8 @@ def propose_pair(
     other_gist: str,
     session_factory: Callable = get_session,
     trace_id: str | None = None,
-) -> dict[str, str]:
+    max_outstanding_requests_per_person: int = 3,
+) -> dict[str, str | int]:
     """Create one proposal and send fixed, anonymous consent requests."""
     if not sender_person_id or not other_person_id:
         return {"status": "error", "reason": "invalid_person_id"}
@@ -78,6 +91,18 @@ def propose_pair(
         existing = _pair_record(session, low, high)
         if existing is not None:
             return {"status": "suppressed", "reason": existing.status}
+
+        if max_outstanding_requests_per_person > 0:
+            for person_id in (low, high):
+                if (
+                    _outstanding_request_count(session, person_id)
+                    >= max_outstanding_requests_per_person
+                ):
+                    return {
+                        "status": "deferred",
+                        "reason": "recipient_outstanding_request_cap",
+                        "limit": max_outstanding_requests_per_person,
+                    }
 
         sender = session.get(Person, sender_person_id)
         other = session.get(Person, other_person_id)

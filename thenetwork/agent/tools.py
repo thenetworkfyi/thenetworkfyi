@@ -626,6 +626,16 @@ async def propose_introduction(
                 "status": "error",
                 "reason": "sender_not_authenticated",
             })
+        proposal_limit = ctx.deps.settings.introduction_max_proposals_per_run
+        if (
+            proposal_limit > 0
+            and ctx.deps.introduction_proposal_count >= proposal_limit
+        ):
+            return _tool_result({
+                "status": "deferred",
+                "reason": "run_proposal_cap",
+                "limit": proposal_limit,
+            })
         result = propose_pair(
             sender_person_id=ctx.deps.sender_user_id,
             other_person_id=other_person_id,
@@ -633,7 +643,11 @@ async def propose_introduction(
             other_gist=other_gist,
             session_factory=ctx.deps.session_factory or get_session,
             trace_id=ctx.deps.trace_id,
+            max_outstanding_requests_per_person=(
+                ctx.deps.settings.introduction_max_outstanding_requests_per_person
+            ),
         )
         if result.get("status") == "proposed":
             ctx.deps.server_side_send_count += 2
+            ctx.deps.introduction_proposal_count += 1
         return _tool_result(result)

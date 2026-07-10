@@ -34,3 +34,4 @@ class AgentDeps:
     session_factory: Callable | None = None
     dispatch_email_sent_count: int = 0
     server_side_send_count: int = 0
+    introduction_proposal_count: int = 0
