@@ -12,7 +12,13 @@ from thenetwork.sim.compare import compare_runs, render_compare
 from thenetwork.sim.database import new_sim_database_name, provision_sim_database
 from thenetwork.sim.intro_flow import run_intro_flow_sim
 from thenetwork.sim.persona import TinyPersonEmailAdapter
-from thenetwork.sim.population import PopulationPersona, SimSchedule, default_population
+from thenetwork.sim.population import (
+    DEFAULT_EXPECTATIONS,
+    DEFAULT_OUTCOME_CHECKS,
+    PopulationPersona,
+    SimSchedule,
+    default_population,
+)
 from thenetwork.sim.recorder import SimRunConfig, SimRunRecorder
 
 
@@ -159,6 +165,9 @@ async def run_sim(
         proactive_every=proactive_every,
         personas=configs,
         mock_process=mock_process,
+        expectations=DEFAULT_EXPECTATIONS,
+        outcome_checks=DEFAULT_OUTCOME_CHECKS,
+        llm_personas=llm_personas,
         database_name=database_name,
     )
 
