@@ -1,12 +1,19 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from thenetwork.db.models import Memory
+from thenetwork.sim.scoring.scoring import score_memory_expectations
 from thenetwork.sim.run.loop import SimTickLoop
 from thenetwork.sim.personas.persona import TinyPersonEmailAdapter
-from thenetwork.sim.personas.population import SimSchedule, default_population
+from thenetwork.sim.personas.population import (
+    DEFAULT_EXPECTATIONS,
+    PETRA_EMAIL,
+    SimSchedule,
+    default_population,
+)
 
 
 class RecordingTinyPerson:
@@ -18,6 +25,33 @@ class RecordingTinyPerson:
     def listen_and_act(self, stimulus: str):
         self.stimuli.append(stimulus)
         return {"content": self.body}
+
+
+class QualifyingPetra:
+    """Reveal Petra's concrete interest only after a useful follow-up."""
+
+    name = "Petra"
+
+    def __init__(self) -> None:
+        self.stimuli: list[str] = []
+
+    def listen_and_act(self, stimulus: str):
+        self.stimuli.append(stimulus)
+        if "You received a reply:" not in stimulus:
+            return {
+                "content": (
+                    "I am interested in archival science and data management, but I am "
+                    "still figuring out what kind of connection would be useful."
+                )
+            }
+        if "which part of archival science" in stimulus.lower():
+            return {
+                "content": (
+                    "I focus on provenance systems for museum archives and would value "
+                    "peers who have worked on collection metadata."
+                )
+            }
+        return {"content": ""}
 
 
 def test_default_population_has_authored_personas_and_schedule():
@@ -137,9 +171,16 @@ def test_default_population_has_authored_personas_and_schedule():
         "Nadia Reyes"
     ].config.goal
     assert additions["Nadia Reyes"].config.message_budget == 5
-    assert "only reveal your real interest" in additions["Petra Lindqvist"].config.goal
+    assert "vague interest in archival science and data management" in additions[
+        "Petra Lindqvist"
+    ].config.goal
+    assert "only reveal your specific interest" in additions["Petra Lindqvist"].config.goal
     assert "provenance systems for museum archives" in additions["Petra Lindqvist"].config.goal
     assert additions["Petra Lindqvist"].config.message_budget == 5
+    assert additions["Petra Lindqvist"].opening_body == (
+        "I am interested in archival science and data management, but I am still "
+        "figuring out what kind of connection would be useful."
+    )
     assert all(persona.config.agent_address == "join@example.test" for persona in additions.values())
 
     schedule = SimSchedule.from_population(population)
@@ -199,3 +240,73 @@ async def test_tick_loop_includes_scheduled_events_in_prompt(tmp_path):
     await loop.run(ticks=3)
 
     assert any("cement plant in Lisbon" in stimulus for stimulus in person.stimuli)
+
+
+@pytest.mark.asyncio
+async def test_petra_qualification_turn_precedes_specific_interest_memory(tmp_path):
+    """A vague networking request gets a question before any introduction proposal."""
+    population = default_population(agent_address="join@example.test")
+    petra = next(persona for persona in population if persona.config.email == PETRA_EMAIL)
+    person = QualifyingPetra()
+    memories: list[Memory] = []
+    first_turn_bodies: list[str] = []
+
+    async def process(**kwargs):
+        body = kwargs["body"]
+        if not first_turn_bodies:
+            first_turn_bodies.append(body)
+            from thenetwork.email.outbound import send_reply
+
+            send_reply(
+                to_address=kwargs["sender_email"],
+                subject=f"Re: {kwargs['subject']}",
+                body_text=(
+                    "Which part of archival science or data management are you focused on, "
+                    "and what kind of connection would be useful?"
+                ),
+                include_footer=False,
+            )
+            return
+
+        assert "provenance systems for museum archives" in body.lower()
+        memories.append(
+            Memory(
+                id="petra-provenance",
+                text=body,
+                refs=[PETRA_EMAIL],
+                gist="Petra is interested in provenance systems for museum archives.",
+            )
+        )
+
+    settings = MagicMock(
+        smtp_host="smtp.example.com",
+        smtp_port=587,
+        smtp_account="agent@example.com",
+        smtp_password="secret",
+        email_from="join@example.test",
+        imap_account="join@example.test",
+        growth_footer_enabled=False,
+    )
+    loop = SimTickLoop(
+        [TinyPersonEmailAdapter(person, petra.config)],
+        run_dir=tmp_path,
+        process=process,
+        proactive_every=None,
+    )
+
+    with patch("thenetwork.email.outbound.get_settings", return_value=settings):
+        await loop.run(ticks=1)
+
+    assert "archival science and data management" in first_turn_bodies[0]
+    assert not any(
+        message["Subject"].startswith("Possible introduction")
+        for message in loop.post_office.messages_for(PETRA_EMAIL)
+    )
+
+    with patch("thenetwork.email.outbound.get_settings", return_value=settings):
+        await loop.run(ticks=1)
+
+    assert len(person.stimuli) == 2
+    assert "Which part of archival science" in person.stimuli[1]
+    score = score_memory_expectations(memories, (DEFAULT_EXPECTATIONS[1],))
+    assert score.passed is True

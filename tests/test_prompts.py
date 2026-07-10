@@ -25,5 +25,9 @@ def test_vague_standing_intent_guidance_requests_a_follow_up() -> None:
     assert "new or existing member" in guidance
     assert "one brief, concrete, curious question" in guidance
     assert "sector, stage, or connection" in guidance
+    assert "This is a qualification turn" in guidance
+    assert "do not call `propose_introduction`" in guidance
+    assert "even if `search` found a semantically adjacent person" in guidance
     assert "Do not interrogate every message" in guidance
     assert "consent reply or a concrete update" in guidance
+    assert "`remember` the specific interest learned under the sender's id" in guidance

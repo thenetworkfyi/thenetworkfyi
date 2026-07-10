@@ -498,15 +498,19 @@ def default_population(agent_address: str = "join@thenetwork.test") -> tuple[Pop
                 name="Petra Lindqvist",
                 email="petra.sim@example.test",
                 goal=(
-                    "You are not sure what you want yet. Answer The Network's questions honestly "
-                    "and only reveal your real interest (provenance systems for museum archives) "
-                    "once it has asked at least one thoughtful follow-up question."
+                    "You have a vague interest in archival science and data management. Answer The "
+                    "Network's questions honestly and only reveal your specific interest (provenance "
+                    "systems for museum archives) once it has asked at least one thoughtful follow-up "
+                    "question."
                 ),
                 stop_condition="Stop once your provenance interest is registered.",
                 message_budget=5,
                 agent_address=agent_address,
             ),
-            opening_body="I am still figuring out what kind of connection would be useful.",
+            opening_body=(
+                "I am interested in archival science and data management, but I am still "
+                "figuring out what kind of connection would be useful."
+            ),
         ),
     )
     return (*original_population, *additions)
