@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import json
+import mailbox
+from collections import Counter
 from collections.abc import Callable, Iterable
 from contextlib import nullcontext
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+from email.utils import getaddresses
 from pathlib import Path
 from typing import Any
 
@@ -15,14 +18,18 @@ from sqlmodel import select
 from thenetwork.db.models import IntroductionConsent, Memory, Person
 from thenetwork.db.session import get_session
 from thenetwork.sim.loop import ProgressCallable, SimTickLoop
-from thenetwork.sim.mail import render_transcript
+from thenetwork.sim.mail import _extract_body, render_transcript
 from thenetwork.sim.persona import PersonaConfig, TinyPersonEmailAdapter
 from thenetwork.sim.population import SimSchedule
 from thenetwork.sim.scoring import (
-    MemoryExpectation,
     IntroductionRevealAuthorization,
+    MailFacts,
+    MemoryExpectation,
+    OutcomeCheck,
     PersonaPII,
+    ScenarioOutcome,
     score_memory_expectations,
+    score_scenario_outcomes,
     score_seal_mbox,
 )
 from thenetwork.worker.tasks import process_email
@@ -39,6 +46,8 @@ class SimRunConfig:
     personas: tuple[PersonaConfig, ...]
     mock_process: bool = True
     expectations: tuple[MemoryExpectation, ...] = ()
+    outcome_checks: tuple[OutcomeCheck, ...] = ()
+    llm_personas: bool = False
     database_name: str | None = None
 
 
@@ -159,12 +168,19 @@ class SimRunRecorder:
             personas_pii = tuple(
                 PersonaPII.from_config(persona) for persona in config.personas
             )
+            outcome, outcome_memories = _assemble_scenario_outcome(
+                artifacts,
+                memories=memories,
+                load_database_state=(
+                    process_mode == "real" and config.database_name is not None
+                ),
+            )
             tier1 = score_seal_mbox(
                 artifacts.mbox_path,
                 personas_pii,
-                _introduced_reveal_authorizations()
-                if config.database_name is not None
-                else (),
+                tuple(
+                    row for row in outcome.consent_rows if row.status == "introduced"
+                ),
             )
             events.write(
                 "sim.score.tier1",
@@ -172,12 +188,26 @@ class SimRunRecorder:
                 findings=[asdict(finding) for finding in tier1.findings],
             )
             if config.expectations:
-                tier2 = score_memory_expectations(memories, config.expectations)
+                tier2 = score_memory_expectations(
+                    outcome_memories,
+                    config.expectations,
+                )
                 events.write(
                     "sim.score.tier2",
                     passed=tier2.passed,
                     findings=[asdict(finding) for finding in tier2.findings],
                 )
+            outcome_score = score_scenario_outcomes(
+                outcome,
+                config.outcome_checks,
+                real_process=process_mode == "real",
+                llm_personas=config.llm_personas,
+            )
+            events.write(
+                "sim.score.outcome",
+                passed=outcome_score.passed,
+                findings=[asdict(finding) for finding in outcome_score.findings],
+            )
 
             events.write(
                 "sim.run_completed",
@@ -187,33 +217,119 @@ class SimRunRecorder:
         return artifacts
 
 def _config_payload(config: SimRunConfig, process_mode: str) -> dict[str, Any]:
-    payload = asdict(config)
-    payload["personas"] = [asdict(persona) for persona in config.personas]
-    payload["process_mode"] = process_mode
-    return payload
+    return {
+        "scenario": config.scenario,
+        "ticks": config.ticks,
+        "proactive_every": config.proactive_every,
+        "personas": [asdict(persona) for persona in config.personas],
+        "mock_process": config.mock_process,
+        "expectations": [asdict(expectation) for expectation in config.expectations],
+        "outcome_checks": [
+            {
+                "description": check.description,
+                "requires_real_process": check.requires_real_process,
+                "requires_llm_personas": check.requires_llm_personas,
+            }
+            for check in config.outcome_checks
+        ],
+        "llm_personas": config.llm_personas,
+        "database_name": config.database_name,
+        "process_mode": process_mode,
+    }
 
 
-def _introduced_reveal_authorizations() -> tuple[IntroductionRevealAuthorization, ...]:
-    authorizations = []
+def _assemble_scenario_outcome(
+    artifacts: SimRunArtifacts,
+    *,
+    memories: Iterable[Memory],
+    load_database_state: bool,
+) -> tuple[ScenarioOutcome, tuple[Memory, ...]]:
+    if load_database_state:
+        consent_rows, database_memories, people = _database_outcome_state()
+        outcome_memories = database_memories
+    else:
+        consent_rows = ()
+        people = ()
+        outcome_memories = tuple(memories)
+    return (
+        ScenarioOutcome(
+            consent_rows=consent_rows,
+            audit_events=_audit_events(artifacts.audit_path)
+            if load_database_state
+            else (),
+            mail_facts=_mail_facts(artifacts.mbox_path),
+            memory_counts=_memory_counts(outcome_memories, people),
+        ),
+        outcome_memories,
+    )
+
+
+def _database_outcome_state() -> tuple[
+    tuple[IntroductionRevealAuthorization, ...], tuple[Memory, ...], tuple[Person, ...]
+]:
+    consent_rows = []
     with get_session() as session:
-        records = session.exec(
-            select(IntroductionConsent).where(
-                IntroductionConsent.status == "introduced"
-            )
-        ).all()
+        records = session.exec(select(IntroductionConsent)).all()
         for record in records:
             person_a = session.get(Person, record.person_a_id)
             person_b = session.get(Person, record.person_b_id)
             if person_a is None or person_b is None:
                 continue
-            authorizations.append(
+            consent_rows.append(
                 IntroductionRevealAuthorization(
                     person_a_email=person_a.email,
                     person_b_email=person_b.email,
                     status=record.status,
                 )
             )
-    return tuple(authorizations)
+        memories = tuple(session.exec(select(Memory)).all())
+        people = tuple(session.exec(select(Person)).all())
+    return tuple(consent_rows), memories, people
+
+
+def _audit_events(path: Path) -> tuple[dict[str, Any], ...]:
+    if not path.exists():
+        return ()
+    return tuple(
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    )
+
+
+def _mail_facts(path: Path) -> tuple[MailFacts, ...]:
+    box = mailbox.mbox(path)
+    try:
+        return tuple(
+            MailFacts(
+                sender=message.get("From", ""),
+                recipients=frozenset(
+                    address.lower()
+                    for _display_name, address in getaddresses(
+                        message.get_all("To", []) + message.get_all("Cc", [])
+                    )
+                    if address
+                ),
+                subject=message.get("Subject", ""),
+                body=_extract_body(message),
+            )
+            for message in box
+        )
+    finally:
+        box.close()
+
+
+def _memory_counts(
+    memories: Iterable[Memory], people: Iterable[Person]
+) -> dict[str, int]:
+    emails_by_id = {person.id: person.email for person in people}
+    counts: Counter[str] = Counter()
+    for memory in memories:
+        for ref in memory.refs or ():
+            email = emails_by_id.get(ref, ref if "@" in ref else None)
+            if email is not None:
+                counts[email] += 1
+    return dict(counts)
 
 
 def _mock_process(events: EventsLog):

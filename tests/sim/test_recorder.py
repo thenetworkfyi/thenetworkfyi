@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -10,11 +11,21 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from thenetwork.audit import audit_event
+from thenetwork.db.models import Memory, Person
 from thenetwork.sim.cli import main, run_sim
 from thenetwork.sim.compare import compare_runs, load_run_metrics
+from thenetwork.sim.mail import SimPostOffice
 from thenetwork.sim.persona import PersonaConfig, TinyPersonEmailAdapter
-from thenetwork.sim.recorder import SimRunConfig, SimRunRecorder
+from thenetwork.sim.population import DEFAULT_OUTCOME_CHECKS
+from thenetwork.sim.recorder import (
+    SimRunArtifacts,
+    SimRunConfig,
+    SimRunRecorder,
+    _assemble_scenario_outcome,
+    _config_payload,
+)
 from thenetwork.sim.scenarios import default_strong_match_configs
+from thenetwork.sim.scoring import IntroductionRevealAuthorization, OutcomeCheck
 
 
 class ScriptedTinyPerson:
@@ -77,7 +88,27 @@ async def test_sim_run_cli_function_creates_run_directory(tmp_path):
     assert artifacts.events_path.name == "events.jsonl"
     assert artifacts.audit_path.name == "audit.jsonl"
     assert not artifacts.audit_path.exists()
-    assert len(json.loads(artifacts.config_path.read_text())["personas"]) == 10
+    config = json.loads(artifacts.config_path.read_text())
+    assert len(config["personas"]) == 17
+    assert len(config["outcome_checks"]) == len(DEFAULT_OUTCOME_CHECKS)
+    assert config["llm_personas"] is False
+    events = [json.loads(line) for line in artifacts.events_path.read_text().splitlines()]
+    assert {"sim.score.tier1", "sim.score.tier2", "sim.score.outcome"} <= {
+        event["event"] for event in events
+    }
+
+
+@pytest.mark.asyncio
+async def test_sim_run_persona_cap_remains_backward_compatible(tmp_path):
+    artifacts = await run_sim(
+        runs_dir=tmp_path,
+        ticks=1,
+        proactive_every=None,
+        personas=10,
+    )
+
+    config = json.loads(artifacts.config_path.read_text())
+    assert len(config["personas"]) == 10
 
 
 @pytest.mark.asyncio
@@ -286,6 +317,113 @@ async def test_run_recorder_writes_tier1_score_before_run_completed(tmp_path):
     assert len(tier1_events) == 1
     assert tier1_events[0]["passed"] is True
     assert events[-1]["event"] == "sim.run_completed"
+
+
+@pytest.mark.asyncio
+async def test_mock_recorder_writes_one_skipped_default_outcome_score(tmp_path):
+    config = PersonaConfig(
+        name="Alice",
+        email="alice@example.test",
+        goal="Find a collaborator.",
+        stop_condition="A connection is made.",
+        agent_address="join@example.test",
+    )
+    artifacts = await SimRunRecorder(runs_dir=tmp_path).run(
+        (TinyPersonEmailAdapter(ScriptedTinyPerson("Looking for peers."), config),),
+        SimRunConfig(
+            scenario="mock-defaults",
+            ticks=1,
+            proactive_every=None,
+            personas=(config,),
+            outcome_checks=DEFAULT_OUTCOME_CHECKS,
+        ),
+    )
+
+    events = [json.loads(line) for line in artifacts.events_path.read_text().splitlines()]
+    outcome_events = [event for event in events if event["event"] == "sim.score.outcome"]
+    assert len(outcome_events) == 1
+    assert len(outcome_events[0]["findings"]) == len(DEFAULT_OUTCOME_CHECKS)
+    assert outcome_events[0]["passed"] is True
+    assert all(
+        finding["evidence"] == {"skipped": True}
+        for finding in outcome_events[0]["findings"]
+    )
+
+
+def test_outcome_assembly_reads_fixture_mail_audit_and_database_state(tmp_path):
+    artifacts = SimRunArtifacts(
+        run_dir=tmp_path,
+        config_path=tmp_path / "config.json",
+        mbox_path=tmp_path / "all-mail.mbox",
+        transcript_path=tmp_path / "transcript.md",
+        events_path=tmp_path / "events.jsonl",
+        audit_path=tmp_path / "audit.jsonl",
+    )
+    message = EmailMessage()
+    message["From"] = "join@example.test"
+    message["To"] = "nadia.sim@example.test"
+    message["Subject"] = "A note"
+    message.set_content("Bakery supply co-op update")
+    SimPostOffice(mbox_path=artifacts.mbox_path).deliver(message)
+    artifacts.audit_path.write_text(
+        json.dumps({"event": "introduction.consent_transition", "action": "clarify"})
+        + "\n",
+        encoding="utf-8",
+    )
+    rows = (
+        IntroductionRevealAuthorization(
+            person_a_email="omar.sim@example.test",
+            person_b_email="peer@example.test",
+            status="one_consented",
+        ),
+    )
+    memories = (Memory(id="memory-1", text="raw", refs=["nadia-id"], gist="bakery"),)
+    people = (Person(id="nadia-id", name="Nadia", email="nadia.sim@example.test"),)
+
+    with patch(
+        "thenetwork.sim.recorder._database_outcome_state",
+        return_value=(rows, memories, people),
+    ):
+        outcome, assembled_memories = _assemble_scenario_outcome(
+            artifacts,
+            memories=(),
+            load_database_state=True,
+        )
+
+    assert outcome.consent_rows == rows
+    assert outcome.audit_events == (
+        {"event": "introduction.consent_transition", "action": "clarify"},
+    )
+    assert outcome.mail_facts[0].recipients == frozenset({"nadia.sim@example.test"})
+    assert outcome.mail_facts[0].body == "Bakery supply co-op update\n"
+    assert outcome.memory_counts == {"nadia.sim@example.test": 1}
+    assert assembled_memories == memories
+
+
+def test_config_payload_keeps_outcome_check_metadata_without_predicates():
+    config = SimRunConfig(
+        scenario="metadata",
+        ticks=1,
+        proactive_every=None,
+        personas=(),
+        outcome_checks=(
+            OutcomeCheck(
+                description="callable-free metadata",
+                predicate=lambda _outcome: True,
+                requires_real_process=True,
+            ),
+        ),
+    )
+
+    payload = _config_payload(config, "mock")
+
+    assert payload["outcome_checks"] == [
+        {
+            "description": "callable-free metadata",
+            "requires_real_process": True,
+            "requires_llm_personas": False,
+        }
+    ]
 
 
 @pytest.mark.asyncio
