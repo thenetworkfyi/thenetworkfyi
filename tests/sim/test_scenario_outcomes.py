@@ -1,0 +1,331 @@
+from __future__ import annotations
+
+from dataclasses import replace
+
+import pytest
+
+from thenetwork.db.models import Memory
+from thenetwork.sim.population import DEFAULT_EXPECTATIONS, DEFAULT_OUTCOME_CHECKS
+from thenetwork.sim.scoring import (
+    IntroductionRevealAuthorization,
+    MailFacts,
+    OutcomeCheck,
+    ScenarioOutcome,
+    score_memory_expectations,
+    score_scenario_outcomes,
+)
+
+
+def _outcome() -> ScenarioOutcome:
+    return ScenarioOutcome(
+        consent_rows=(
+            IntroductionRevealAuthorization(
+                person_a_email="alice@example.test",
+                person_b_email="bob@example.test",
+                status="introduced",
+            ),
+        ),
+        audit_events=({"event": "introduction.sent"},),
+        mail_facts=(
+            MailFacts(
+                sender="join@example.test",
+                recipients=frozenset({"alice@example.test", "bob@example.test"}),
+                subject="Your introduction",
+                body="You both opted in.",
+            ),
+        ),
+        memory_counts={"alice@example.test": 2},
+    )
+
+
+def test_score_scenario_outcomes_records_predicate_pass_and_fail():
+    score = score_scenario_outcomes(
+        _outcome(),
+        (
+            OutcomeCheck(
+                description="an introduction was sent",
+                predicate=lambda outcome: any(
+                    mail.subject == "Your introduction"
+                    for mail in outcome.mail_facts
+                ),
+            ),
+            OutcomeCheck(
+                description="Alice has at most one memory",
+                predicate=lambda outcome: outcome.memory_counts[
+                    "alice@example.test"
+                ] <= 1,
+            ),
+        ),
+        real_process=True,
+        llm_personas=True,
+    )
+
+    assert score.passed is False
+    assert [finding.passed for finding in score.findings] == [True, False]
+    assert [finding.message for finding in score.findings] == [
+        "an introduction was sent",
+        "Alice has at most one memory",
+    ]
+
+
+def test_score_scenario_outcomes_skips_real_process_check_in_mock_mode():
+    score = score_scenario_outcomes(
+        _outcome(),
+        (
+            OutcomeCheck(
+                description="audit event exists",
+                predicate=lambda _outcome: False,
+                requires_real_process=True,
+            ),
+        ),
+        real_process=False,
+        llm_personas=True,
+    )
+
+    assert score.passed is True
+    assert score.findings[0].passed is True
+    assert score.findings[0].evidence == {"skipped": True}
+    assert score.findings[0].message == (
+        "audit event exists (skipped: real-process mode is disabled)"
+    )
+
+
+def test_score_scenario_outcomes_skips_llm_check_without_llm_personas():
+    score = score_scenario_outcomes(
+        _outcome(),
+        (
+            OutcomeCheck(
+                description="persona declines naturally",
+                predicate=lambda _outcome: False,
+                requires_llm_personas=True,
+            ),
+        ),
+        real_process=True,
+        llm_personas=False,
+    )
+
+    assert score.passed is True
+    assert score.findings[0].message == (
+        "persona declines naturally (skipped: LLM-persona mode is disabled)"
+    )
+
+
+def test_score_scenario_outcomes_reports_all_reasons_when_both_modes_required():
+    score = score_scenario_outcomes(
+        _outcome(),
+        (
+            OutcomeCheck(
+                description="real persona interaction is audited",
+                predicate=lambda _outcome: False,
+                requires_real_process=True,
+                requires_llm_personas=True,
+            ),
+        ),
+        real_process=False,
+        llm_personas=False,
+    )
+
+    assert score.findings[0].message == (
+        "real persona interaction is audited (skipped: real-process mode is disabled; "
+        "LLM-persona mode is disabled)"
+    )
+
+
+def test_score_scenario_outcomes_empty_checks_are_a_deterministic_pass():
+    score = score_scenario_outcomes(
+        _outcome(),
+        (),
+        real_process=False,
+        llm_personas=False,
+    )
+
+    assert score.passed is True
+    assert len(score.findings) == 1
+    assert score.findings[0].message == "No scenario outcome checks configured"
+
+
+def _default_outcome() -> ScenarioOutcome:
+    return ScenarioOutcome(
+        consent_rows=(
+            IntroductionRevealAuthorization(
+                person_a_email="ruth.sim@example.test",
+                person_b_email="peer@example.test",
+                status="revoked",
+            ),
+            IntroductionRevealAuthorization(
+                person_a_email="omar.sim@example.test",
+                person_b_email="waiting@example.test",
+                status="one_consented",
+            ),
+            *(
+                IntroductionRevealAuthorization(
+                    person_a_email="vic.sim@example.test",
+                    person_b_email=f"vic-peer-{index}@example.test",
+                    status="proposed",
+                )
+                for index in range(6)
+            ),
+        ),
+        audit_events=(
+            {
+                "event": "introduction.consent_transition",
+                "action": "clarify",
+                "outcome": "success",
+            },
+        ),
+        mail_facts=(
+            MailFacts(
+                sender="join@example.test",
+                recipients=frozenset({"ines.sim@example.test"}),
+                subject="Re: Possible introduction",
+                body=(
+                    "I could not determine your response. Reply with YES to opt in, "
+                    "NO to decline, or REVOKE to withdraw consent."
+                ),
+            ),
+        ),
+        memory_counts={"vic.sim@example.test": 6},
+    )
+
+
+def test_default_outcome_checks_cover_all_persona_situations():
+    score = score_scenario_outcomes(
+        _default_outcome(),
+        DEFAULT_OUTCOME_CHECKS,
+        real_process=True,
+        llm_personas=True,
+    )
+
+    assert score.passed is True
+    assert len(score.findings) == 8
+    assert all(check.requires_real_process for check in DEFAULT_OUTCOME_CHECKS)
+    assert all(check.requires_llm_personas for check in DEFAULT_OUTCOME_CHECKS)
+
+
+@pytest.mark.parametrize(
+    ("check_index", "outcome"),
+    [
+        (
+            0,
+            replace(
+                _default_outcome(),
+                consent_rows=(
+                    IntroductionRevealAuthorization(
+                        person_a_email="ruth.sim@example.test",
+                        person_b_email="peer@example.test",
+                        status="proposed",
+                    ),
+                ),
+            ),
+        ),
+        (
+            1,
+            replace(
+                _default_outcome(),
+                mail_facts=(
+                    MailFacts(
+                        sender="join@example.test",
+                        recipients=frozenset({"ruth.sim@example.test", "peer@example.test"}),
+                        subject="Your introduction",
+                        body="You both opted in.",
+                    ),
+                ),
+            ),
+        ),
+        (2, replace(_default_outcome(), audit_events=())),
+        (
+            3,
+            replace(
+                _default_outcome(),
+                mail_facts=(
+                    MailFacts(
+                        sender="join@example.test",
+                        recipients=frozenset({"ines.sim@example.test"}),
+                        subject="Re: Possible introduction",
+                        body="Tell me more about this person.",
+                    ),
+                ),
+            ),
+        ),
+        (
+            4,
+            replace(_default_outcome(), memory_counts={"vic.sim@example.test": 7}),
+        ),
+        (
+            5,
+            replace(
+                _default_outcome(),
+                consent_rows=tuple(
+                    IntroductionRevealAuthorization(
+                        person_a_email="vic.sim@example.test",
+                        person_b_email=f"vic-peer-{index}@example.test",
+                        status="proposed",
+                    )
+                    for index in range(7)
+                ),
+            ),
+        ),
+        (
+            6,
+            replace(
+                _default_outcome(),
+                consent_rows=(
+                    IntroductionRevealAuthorization(
+                        person_a_email="omar.sim@example.test",
+                        person_b_email="waiting@example.test",
+                        status="proposed",
+                    ),
+                ),
+            ),
+        ),
+        (
+            7,
+            replace(
+                _default_outcome(),
+                mail_facts=(
+                    MailFacts(
+                        sender="join@example.test",
+                        recipients=frozenset({"omar.sim@example.test", "peer@example.test"}),
+                        subject="Your introduction",
+                        body="You both opted in.",
+                    ),
+                ),
+            ),
+        ),
+    ],
+)
+def test_default_outcome_checks_have_failure_fixtures(
+    check_index: int,
+    outcome: ScenarioOutcome,
+):
+    score = score_scenario_outcomes(
+        outcome,
+        (DEFAULT_OUTCOME_CHECKS[check_index],),
+        real_process=True,
+        llm_personas=True,
+    )
+
+    assert score.passed is False
+    assert score.findings[0].passed is False
+
+
+@pytest.mark.parametrize(
+    ("expectation_index", "gist", "expected"),
+    [
+        (0, "Nadia is building a bakery supply co-op.", True),
+        (0, "Nadia is still in ML infrastructure.", False),
+        (1, "Petra studies provenance for museum archives.", True),
+        (1, "Petra wants generic networking advice.", False),
+    ],
+)
+def test_default_memory_expectations_have_pass_and_fail_fixtures(
+    expectation_index: int,
+    gist: str,
+    expected: bool,
+):
+    score = score_memory_expectations(
+        (Memory(id="memory-1", text="raw", gist=gist),),
+        (DEFAULT_EXPECTATIONS[expectation_index],),
+    )
+
+    assert score.passed is expected

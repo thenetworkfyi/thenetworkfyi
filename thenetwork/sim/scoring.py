@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import mailbox
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from email.message import Message
 from email.utils import getaddresses
@@ -75,6 +76,81 @@ class IntroductionRevealAuthorization:
         return frozenset(
             (self.person_a_email.lower(), self.person_b_email.lower())
         )
+
+
+@dataclass(frozen=True)
+class MailFacts:
+    """The stable, predicate-friendly facts extracted from one delivered email."""
+
+    sender: str
+    recipients: frozenset[str]
+    subject: str
+    body: str
+
+
+@dataclass(frozen=True)
+class ScenarioOutcome:
+    """Observable run results made available to scenario outcome predicates."""
+
+    consent_rows: tuple[IntroductionRevealAuthorization, ...] = ()
+    audit_events: tuple[Mapping[str, Any], ...] = ()
+    mail_facts: tuple[MailFacts, ...] = ()
+    memory_counts: Mapping[str, int] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class OutcomeCheck:
+    """A pure scenario predicate plus the run modes needed to evaluate it."""
+
+    description: str
+    predicate: Callable[[ScenarioOutcome], bool]
+    requires_real_process: bool = False
+    requires_llm_personas: bool = False
+
+
+def score_scenario_outcomes(
+    outcome: ScenarioOutcome,
+    checks: Iterable[OutcomeCheck],
+    *,
+    real_process: bool,
+    llm_personas: bool,
+) -> TierScore:
+    """Score scenario predicates, passing checks that the run cannot exercise."""
+    findings: list[ScoreFinding] = []
+    for check in checks:
+        skip_reasons = []
+        if check.requires_real_process and not real_process:
+            skip_reasons.append("real-process mode is disabled")
+        if check.requires_llm_personas and not llm_personas:
+            skip_reasons.append("LLM-persona mode is disabled")
+        if skip_reasons:
+            findings.append(
+                ScoreFinding(
+                    tier="outcome",
+                    passed=True,
+                    message=f"{check.description} (skipped: {'; '.join(skip_reasons)})",
+                    evidence={"skipped": True},
+                )
+            )
+            continue
+
+        findings.append(
+            ScoreFinding(
+                tier="outcome",
+                passed=bool(check.predicate(outcome)),
+                message=check.description,
+            )
+        )
+
+    if not findings:
+        findings.append(
+            ScoreFinding(
+                tier="outcome",
+                passed=True,
+                message="No scenario outcome checks configured",
+            )
+        )
+    return TierScore(tier="outcome", findings=tuple(findings))
 
 
 def score_seal_mbox(
