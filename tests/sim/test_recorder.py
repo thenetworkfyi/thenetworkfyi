@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from pathlib import Path
@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from thenetwork.audit import audit_event
-from thenetwork.db.models import Memory, Person
+from thenetwork.db.models import IntroductionConsent, Memory, Person
 from thenetwork.sim.cli import main, run_sim
 from thenetwork.sim.compare import compare_runs, load_run_metrics
 from thenetwork.sim.mail import SimPostOffice
@@ -23,6 +23,7 @@ from thenetwork.sim.recorder import (
     SimRunRecorder,
     _assemble_scenario_outcome,
     _config_payload,
+    _database_outcome_state,
 )
 from thenetwork.sim.scenarios import default_strong_match_configs
 from thenetwork.sim.scoring import IntroductionRevealAuthorization, OutcomeCheck
@@ -378,11 +379,11 @@ def test_outcome_assembly_reads_fixture_mail_audit_and_database_state(tmp_path):
         ),
     )
     memories = (Memory(id="memory-1", text="raw", refs=["nadia-id"], gist="bakery"),)
-    people = (Person(id="nadia-id", name="Nadia", email="nadia.sim@example.test"),)
+    memory_counts = {"nadia.sim@example.test": 1}
 
     with patch(
         "thenetwork.sim.recorder._database_outcome_state",
-        return_value=(rows, memories, people),
+        return_value=(rows, memories, memory_counts),
     ):
         outcome, assembled_memories = _assemble_scenario_outcome(
             artifacts,
@@ -396,8 +397,103 @@ def test_outcome_assembly_reads_fixture_mail_audit_and_database_state(tmp_path):
     )
     assert outcome.mail_facts[0].recipients == frozenset({"nadia.sim@example.test"})
     assert outcome.mail_facts[0].body == "Bakery supply co-op update\n"
-    assert outcome.memory_counts == {"nadia.sim@example.test": 1}
+    assert outcome.memory_counts == memory_counts
     assert assembled_memories == memories
+
+
+def test_database_outcome_state_materializes_values_before_session_closes():
+    class ExpiringPerson:
+        def __init__(self, person_id: str, email: str) -> None:
+            self._id = person_id
+            self._email = email
+            self.detached = False
+
+        @property
+        def id(self) -> str:
+            if self.detached:
+                raise RuntimeError("detached person id")
+            return self._id
+
+        @property
+        def email(self) -> str:
+            if self.detached:
+                raise RuntimeError("detached person email")
+            return self._email
+
+    class ExpiringMemory:
+        def __init__(self) -> None:
+            self.detached = False
+
+        def _value(self, name: str, value):
+            if self.detached:
+                raise RuntimeError(f"detached memory {name}")
+            return value
+
+        @property
+        def id(self) -> str:
+            return self._value("id", "memory-1")
+
+        @property
+        def text(self) -> str:
+            return self._value("text", "raw")
+
+        @property
+        def refs(self) -> list[str]:
+            return self._value("refs", ["nadia-id"])
+
+        @property
+        def gist(self) -> str:
+            return self._value("gist", "bakery")
+
+    nadia = ExpiringPerson("nadia-id", "nadia.sim@example.test")
+    peer = ExpiringPerson("peer-id", "peer@example.test")
+    memory = ExpiringMemory()
+    consent = SimpleNamespace(
+        person_a_id="nadia-id",
+        person_b_id="peer-id",
+        status="introduced",
+    )
+
+    class Result:
+        def __init__(self, rows) -> None:
+            self.rows = rows
+
+        def all(self):
+            return self.rows
+
+    class Session:
+        def exec(self, statement):
+            entity = statement.column_descriptions[0]["entity"]
+            return Result(
+                {
+                    IntroductionConsent: [consent],
+                    Memory: [memory],
+                    Person: [nadia, peer],
+                }[entity]
+            )
+
+        def get(self, model, row_id):
+            assert model is Person
+            return {"nadia-id": nadia, "peer-id": peer}[row_id]
+
+    @contextmanager
+    def session_context():
+        try:
+            yield Session()
+        finally:
+            nadia.detached = True
+            peer.detached = True
+            memory.detached = True
+
+    with patch("thenetwork.sim.recorder.get_session", session_context):
+        consent_rows, memories, memory_counts = _database_outcome_state()
+
+    assert consent_rows[0].participant_emails == frozenset(
+        {"nadia.sim@example.test", "peer@example.test"}
+    )
+    assert memories[0].gist == "bakery"
+    assert memories[0].refs == ["nadia-id"]
+    assert memory_counts == {"nadia.sim@example.test": 1}
 
 
 def test_config_payload_keeps_outcome_check_metadata_without_predicates():
