@@ -64,6 +64,7 @@ async def scan_for_opportunities(timestamp: int) -> None:
                         f"[System trigger] You have a high-proximity match "
                         f"(score={score:.2f}). Consider reaching out."
                     ),
+                    sender_authenticated=True,
                 )
 
 
@@ -163,4 +164,5 @@ async def scan_for_matches(timestamp: int) -> None:
                         sender_email=recipient,
                         subject="[Proactive] Possible connection",
                         body=body,
+                        sender_authenticated=True,
                     )
