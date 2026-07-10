@@ -79,7 +79,7 @@ _SAFE_CATEGORIES = {
         "self_introduction", "use_reply_to_sender",
     }),
     "reason": frozenset({
-        "body_empty", "body_oversize", "content_scan", "rate_limit",
+        "body_empty", "body_oversize", "content_scan", "rate_limit", "scanner_error",
         "unauthenticated_unknown_sender", "banned",
     }),
     "record_type": frozenset({"introduction_consent", "memory", "person"}),
