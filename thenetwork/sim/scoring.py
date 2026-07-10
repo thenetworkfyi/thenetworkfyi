@@ -112,6 +112,7 @@ class ScenarioOutcome:
 
     consent_rows: tuple[IntroductionRevealAuthorization, ...] = ()
     audit_events: tuple[Mapping[str, Any], ...] = ()
+    sender_id_hashes: Mapping[str, str] = field(default_factory=dict)
     mail_facts: tuple[MailFacts, ...] = ()
     memory_counts: Mapping[str, int] = field(default_factory=dict)
 

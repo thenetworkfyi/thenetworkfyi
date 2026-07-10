@@ -172,6 +172,36 @@ def _vic_pair_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
     return {**_pair_summary(outcome, VIC_EMAIL), "limit": _VIC_MAX_PAIR_ROWS}
 
 
+def _omar_consent_events(outcome: ScenarioOutcome) -> list[dict[str, Any]]:
+    sender_id_hash = outcome.sender_id_hashes.get(OMAR_EMAIL)
+    if sender_id_hash is None:
+        return []
+    return [
+        dict(event)
+        for event in outcome.audit_events
+        if event.get("event") == "introduction.consent_transition"
+        and event.get("sender_id_hash") == sender_id_hash
+        and event.get("action") in {"consent", "revoke"}
+    ]
+
+
+def _omar_consented_once(outcome: ScenarioOutcome) -> bool:
+    events = _omar_consent_events(outcome)
+    return (
+        len(events) == 1
+        and events[0].get("action") == "consent"
+        and events[0].get("outcome") == "success"
+        and events[0].get("consent_state") == "one_consented"
+    )
+
+
+def _omar_consent_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
+    return {
+        "sender_id_hash_present": OMAR_EMAIL in outcome.sender_id_hashes,
+        "consent_events": _omar_consent_events(outcome),
+    }
+
+
 DEFAULT_OUTCOME_CHECKS = (
     OutcomeCheck(
         description="Ruth declines an introduction and the pair is revoked",
@@ -223,15 +253,11 @@ DEFAULT_OUTCOME_CHECKS = (
         evidence=_vic_pair_summary,
     ),
     OutcomeCheck(
-        description="Omar has exactly one consented introduction awaiting the other party",
-        predicate=lambda outcome: sum(
-            _pair_involves(row, OMAR_EMAIL) and row.status == "one_consented"
-            for row in outcome.consent_rows
-        )
-        == 1,
+        description="Omar consents exactly once and never revokes",
+        predicate=_omar_consented_once,
         requires_real_process=True,
         requires_llm_personas=True,
-        evidence=lambda outcome: _pair_summary(outcome, OMAR_EMAIL),
+        evidence=_omar_consent_summary,
     ),
     OutcomeCheck(
         description="Omar's one-consented introduction never reveals a counterpart",
