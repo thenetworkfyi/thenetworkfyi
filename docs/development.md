@@ -157,8 +157,9 @@ outcomes rather than force a particular conversation.
 - **Nadia Reyes** changes direction at tick 3 from ML infrastructure to a bakery-supply
   co-op seeking food-logistics contacts. Tier 2 expects the resulting bakery update in
   memory.
-- **Petra Lindqvist** reveals her museum-archive provenance interest only after a thoughtful
-  follow-up. Tier 2 expects that provenance interest in memory.
+- **Petra Lindqvist** starts with a vague archival-science and data-management interest,
+  then reveals her museum-archive provenance interest only after a thoughtful follow-up.
+  Tier 2 expects that provenance interest in memory.
 
 The recorder emits three score-event tiers: tier 1 for delivered-mail SEAL checks, tier 2
 for memory expectations, and `sim.score.outcome` for the persona outcome predicates. The

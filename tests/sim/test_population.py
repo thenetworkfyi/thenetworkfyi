@@ -137,9 +137,16 @@ def test_default_population_has_authored_personas_and_schedule():
         "Nadia Reyes"
     ].config.goal
     assert additions["Nadia Reyes"].config.message_budget == 5
-    assert "only reveal your real interest" in additions["Petra Lindqvist"].config.goal
+    assert "vague interest in archival science and data management" in additions[
+        "Petra Lindqvist"
+    ].config.goal
+    assert "only reveal your specific interest" in additions["Petra Lindqvist"].config.goal
     assert "provenance systems for museum archives" in additions["Petra Lindqvist"].config.goal
     assert additions["Petra Lindqvist"].config.message_budget == 5
+    assert additions["Petra Lindqvist"].opening_body == (
+        "I am interested in archival science and data management, but I am still "
+        "figuring out what kind of connection would be useful."
+    )
     assert all(persona.config.agent_address == "join@example.test" for persona in additions.values())
 
     schedule = SimSchedule.from_population(population)
