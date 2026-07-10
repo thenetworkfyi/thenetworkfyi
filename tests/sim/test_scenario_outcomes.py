@@ -177,7 +177,15 @@ def _default_outcome() -> ScenarioOutcome:
                 "action": "clarify",
                 "outcome": "success",
             },
+            {
+                "event": "introduction.consent_transition",
+                "action": "consent",
+                "outcome": "success",
+                "consent_state": "one_consented",
+                "sender_id_hash": "snd_v1_omar",
+            },
         ),
+        sender_id_hashes={"omar.sim@example.test": "snd_v1_omar"},
         mail_facts=(
             MailFacts(
                 sender="join@example.test",
@@ -274,13 +282,7 @@ def test_default_outcome_checks_cover_all_persona_situations():
             6,
             replace(
                 _default_outcome(),
-                consent_rows=(
-                    IntroductionRevealAuthorization(
-                        person_a_email="omar.sim@example.test",
-                        person_b_email="waiting@example.test",
-                        status="proposed",
-                    ),
-                ),
+                audit_events=(),
             ),
         ),
         (
@@ -312,6 +314,86 @@ def test_default_outcome_checks_have_failure_fixtures(
 
     assert score.passed is False
     assert score.findings[0].passed is False
+
+
+def test_omar_outcome_uses_his_audited_action_not_final_pair_status():
+    outcome = replace(
+        _default_outcome(),
+        consent_rows=(
+            IntroductionRevealAuthorization(
+                person_a_email="omar.sim@example.test",
+                person_b_email="samir.sim@example.test",
+                status="revoked",
+            ),
+            IntroductionRevealAuthorization(
+                person_a_email="omar.sim@example.test",
+                person_b_email="ines.sim@example.test",
+                status="proposed",
+            ),
+        ),
+    )
+
+    score = score_scenario_outcomes(
+        outcome,
+        (DEFAULT_OUTCOME_CHECKS[6],),
+        real_process=True,
+        llm_personas=True,
+    )
+
+    assert score.passed is True
+    assert score.findings[0].evidence["consent_events"] == [
+        {
+            "event": "introduction.consent_transition",
+            "action": "consent",
+            "outcome": "success",
+            "consent_state": "one_consented",
+            "sender_id_hash": "snd_v1_omar",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "actions",
+    [
+        (),
+        (
+            {
+                "event": "introduction.consent_transition",
+                "action": "consent",
+                "outcome": "success",
+                "consent_state": "one_consented",
+                "sender_id_hash": "snd_v1_omar",
+            },
+            {
+                "event": "introduction.consent_transition",
+                "action": "consent",
+                "outcome": "success",
+                "consent_state": "introduced",
+                "sender_id_hash": "snd_v1_omar",
+            },
+        ),
+        (
+            {
+                "event": "introduction.consent_transition",
+                "action": "revoke",
+                "outcome": "success",
+                "consent_state": "revoked",
+                "sender_id_hash": "snd_v1_omar",
+            },
+        ),
+    ],
+)
+def test_omar_outcome_rejects_missing_repeated_or_revoked_consent(actions):
+    outcome = replace(_default_outcome(), audit_events=actions)
+
+    score = score_scenario_outcomes(
+        outcome,
+        (DEFAULT_OUTCOME_CHECKS[6],),
+        real_process=True,
+        llm_personas=True,
+    )
+
+    assert score.passed is False
 
 
 @pytest.mark.parametrize(
