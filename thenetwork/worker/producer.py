@@ -14,7 +14,11 @@ import asyncio
 import base64
 
 from thenetwork.audit import audit_event, audit_run, audit_sender, audit_span, audit_trace
-from thenetwork.email.dedup import is_message_processed, mark_message_processed
+from thenetwork.email.dedup import (
+    is_message_processed,
+    mark_message_processed,
+    unmark_message_processed,
+)
 from thenetwork.email.inbound import mark_messages_seen, poll_unseen
 from thenetwork.security.sender_identifier import optional_sender_identifier
 from thenetwork.worker.tasks import app, process_email
@@ -79,9 +83,14 @@ def _poll_and_enqueue() -> int:
                     job_kwargs["inbound_references"] = msg.message_references
                     job_kwargs["inbound_body_for_quote"] = msg.body
                     job_kwargs["inbound_date"] = msg.message_date
-                process_email.defer(**job_kwargs)
                 if msg.message_id:
                     mark_message_processed(msg.message_id)
+                try:
+                    process_email.defer(**job_kwargs)
+                except Exception:
+                    if msg.message_id:
+                        unmark_message_processed(msg.message_id)
+                    raise
                 handled_uids.append(msg.uid)
                 count += 1
         # Mark seen only after each message has either been enqueued or
