@@ -454,6 +454,8 @@ def test_database_outcome_state_materializes_values_before_session_closes():
         person_a_id="nadia-id",
         person_b_id="peer-id",
         status="introduced",
+        person_a_consented=True,
+        person_b_consented=True,
     )
 
     class Result:
@@ -493,6 +495,7 @@ def test_database_outcome_state_materializes_values_before_session_closes():
     assert consent_rows[0].participant_emails == frozenset(
         {"nadia.sim@example.test", "peer@example.test"}
     )
+    assert consent_rows[0].both_consented is True
     assert memories[0].gist == "bakery"
     assert memories[0].refs == ["nadia-id"]
     assert memory_counts == {"nadia.sim@example.test": 1}

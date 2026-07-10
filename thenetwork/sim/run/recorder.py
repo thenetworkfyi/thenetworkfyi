@@ -317,6 +317,8 @@ def _database_outcome_state() -> tuple[
                     person_a_email=person_a.email,
                     person_b_email=person_b.email,
                     status=record.status,
+                    person_a_consented=record.person_a_consented,
+                    person_b_consented=record.person_b_consented,
                 )
             )
         memories = tuple(

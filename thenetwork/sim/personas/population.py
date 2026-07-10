@@ -116,7 +116,7 @@ def _has_no_premature_revealing_introduction(
             any(
                 _pair_involves(row, email)
                 and counterpart in row.participant_emails
-                and row.status == "introduced"
+                and (row.status == "introduced" or row.both_consented)
                 for row in outcome.consent_rows
             )
             for counterpart in counterparts
