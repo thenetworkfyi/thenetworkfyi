@@ -10,8 +10,8 @@ import pytest
 from thenetwork.db.models import IntroductionConsent, Person
 from thenetwork.introductions import process_consent_reply
 from thenetwork.settings import get_settings
-from thenetwork.sim.loop import SimTickLoop, override_rate_limits, run_proactive_scans
-from thenetwork.sim.persona import PersonaConfig, TinyPersonEmailAdapter
+from thenetwork.sim.run.loop import SimTickLoop, override_rate_limits, run_proactive_scans
+from thenetwork.sim.personas.persona import PersonaConfig, TinyPersonEmailAdapter
 from thenetwork.worker import proactive
 
 

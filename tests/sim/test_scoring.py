@@ -3,8 +3,8 @@ from __future__ import annotations
 from email.message import EmailMessage
 
 from thenetwork.db.models import Memory
-from thenetwork.sim.mail import SimMessageMeta, SimPostOffice
-from thenetwork.sim.scoring import (
+from thenetwork.sim.run.mail import SimMessageMeta, SimPostOffice
+from thenetwork.sim.scoring.scoring import (
     IntroductionRevealAuthorization,
     MemoryExpectation,
     OutcomeCheck,

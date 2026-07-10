@@ -8,7 +8,7 @@ import pytest
 
 import thenetwork.db.session as db_session
 import thenetwork.security.rate_limit as rate_limit
-import thenetwork.sim.database as sim_database
+import thenetwork.sim.run.database as sim_database
 import thenetwork.worker.tasks as worker_tasks
 from thenetwork.settings import get_settings
 

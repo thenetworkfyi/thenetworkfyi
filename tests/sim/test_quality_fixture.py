@@ -17,8 +17,8 @@ from email.message import EmailMessage
 from pathlib import Path
 
 from thenetwork.db.models import Memory
-from thenetwork.sim.mail import SimMessageMeta, SimPostOffice
-from thenetwork.sim.scoring import (
+from thenetwork.sim.run.mail import SimMessageMeta, SimPostOffice
+from thenetwork.sim.scoring.scoring import (
     MemoryExpectation,
     ResponseQualityThresholds,
     score_memory_expectations,

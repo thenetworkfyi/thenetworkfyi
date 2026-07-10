@@ -5,8 +5,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
-from thenetwork.sim.mail import SimPostOffice, deliver_inbound, render_transcript
-from thenetwork.sim.persona import PersonaConfig, TinyPersonEmailAdapter
+from thenetwork.sim.run.mail import SimPostOffice, deliver_inbound, render_transcript
+from thenetwork.sim.personas.persona import PersonaConfig, TinyPersonEmailAdapter
 
 
 @dataclass(frozen=True)
@@ -100,4 +100,3 @@ def _initial_prompt(config: PersonaConfig) -> str:
         f"Your goal: {config.goal} "
         f"Stop condition: {config.stop_condition}"
     )
-

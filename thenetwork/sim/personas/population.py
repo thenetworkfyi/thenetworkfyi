@@ -4,8 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from thenetwork.sim.persona import PersonaConfig
-from thenetwork.sim.scoring import MemoryExpectation, OutcomeCheck, ScenarioOutcome
+from thenetwork.sim.personas.persona import PersonaConfig
+from thenetwork.sim.scoring.scoring import MemoryExpectation, OutcomeCheck, ScenarioOutcome
 
 
 RUTH_EMAIL = "ruth.sim@example.test"

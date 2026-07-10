@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 
 from thenetwork.sim.cli import main
-from thenetwork.sim.compare import compare_runs, load_run_metrics, render_compare
+from thenetwork.sim.scoring.compare import compare_runs, load_run_metrics, render_compare
 
 
 def _write_events(run_dir, events):
@@ -64,4 +64,3 @@ def test_compare_cli_prints_table(tmp_path, capsys):
     main(["compare", str(before), str(after)])
 
     assert "| introductions | 0 | 1 | +1 |" in capsys.readouterr().out
-
