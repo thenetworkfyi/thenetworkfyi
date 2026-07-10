@@ -28,14 +28,26 @@ class Result:
 
 
 class FakeSession:
-    def __init__(self, proposal=None, people=None, outstanding_proposals=None):
+    def __init__(
+        self,
+        proposal=None,
+        people=None,
+        outstanding_proposals=None,
+        recent_proposals=None,
+    ):
         self.proposal = proposal
         self.people = people or {}
         self.added = []
         self.commits = 0
         self.outstanding_proposals = outstanding_proposals or []
+        self.recent_proposals = recent_proposals or []
 
-    def exec(self, _query):
+    def exec(self, query):
+        rendered = str(query)
+        if "created_at >=" in rendered:
+            return Result(None, self.recent_proposals)
+        if "status IN" in rendered:
+            return Result(None, self.outstanding_proposals)
         return Result(self.proposal, self.outstanding_proposals)
 
     def get(self, _model, person_id):
@@ -286,6 +298,39 @@ def test_proposal_defers_when_a_recipient_has_too_many_outstanding_requests():
     assert result == {
         "status": "deferred",
         "reason": "recipient_outstanding_request_cap",
+        "limit": 3,
+    }
+    send.assert_not_called()
+
+
+def test_proposal_defers_when_a_recipient_reached_the_windowed_request_cap():
+    session = FakeSession(
+        people=people(),
+        recent_proposals=[
+            proposal(
+                person_a_id="alice",
+                person_b_id=f"near-duplicate-{number}",
+                status="introduced",
+            )
+            for number in range(3)
+        ],
+    )
+
+    with patch("thenetwork.introductions.send_reply") as send:
+        result = propose_pair(
+            sender_person_id="alice",
+            other_person_id="bob",
+            sender_gist="builds storage systems",
+            other_gist="operates distributed databases",
+            session_factory=factory(session),
+            max_outstanding_requests_per_person=0,
+            max_requests_per_person_in_window=3,
+            request_window_seconds=3_600,
+        )
+
+    assert result == {
+        "status": "deferred",
+        "reason": "recipient_consent_request_cap",
         "limit": 3,
     }
     send.assert_not_called()

@@ -646,6 +646,12 @@ async def propose_introduction(
             max_outstanding_requests_per_person=(
                 ctx.deps.settings.introduction_max_outstanding_requests_per_person
             ),
+            max_requests_per_person_in_window=(
+                ctx.deps.settings.introduction_max_requests_per_person_in_window
+            ),
+            request_window_seconds=(
+                ctx.deps.settings.introduction_request_window_seconds
+            ),
         )
         if result.get("status") == "proposed":
             ctx.deps.server_side_send_count += 2

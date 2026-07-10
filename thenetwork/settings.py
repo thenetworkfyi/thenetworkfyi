@@ -108,6 +108,8 @@ class Settings(BaseSettings):
     # fixed consent request to each participant.
     introduction_max_proposals_per_run: int = 3
     introduction_max_outstanding_requests_per_person: int = 3
+    introduction_max_requests_per_person_in_window: int = 3
+    introduction_request_window_seconds: int = 86_400
 
     # Admin channel: allowlisted senders + PGP/MIME-signed request (see admin/auth.py)
     admin_emails: list[str] = []

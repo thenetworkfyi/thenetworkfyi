@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 from sqlmodel import col, select
@@ -72,6 +72,18 @@ def _outstanding_request_count(session, person_id: str) -> int:
     return len(requests)
 
 
+def _recent_request_count(session, person_id: str, *, since: datetime) -> int:
+    """Count all consent requests delivered to one person within a window."""
+    requests = session.exec(
+        select(IntroductionConsent).where(
+            (IntroductionConsent.person_a_id == person_id)
+            | (IntroductionConsent.person_b_id == person_id),
+            col(IntroductionConsent.created_at) >= since,
+        )
+    ).all()
+    return len(requests)
+
+
 def propose_pair(
     *,
     sender_person_id: str,
@@ -81,6 +93,8 @@ def propose_pair(
     session_factory: Callable = get_session,
     trace_id: str | None = None,
     max_outstanding_requests_per_person: int = 3,
+    max_requests_per_person_in_window: int = 3,
+    request_window_seconds: int = 86_400,
 ) -> dict[str, str | int]:
     """Create one proposal and send fixed, anonymous consent requests."""
     if not sender_person_id or not other_person_id:
@@ -93,6 +107,22 @@ def propose_pair(
         existing = _pair_record(session, low, high)
         if existing is not None:
             return {"status": "suppressed", "reason": existing.status}
+
+        if (
+            max_requests_per_person_in_window > 0
+            and request_window_seconds > 0
+        ):
+            since = _utcnow() - timedelta(seconds=request_window_seconds)
+            for person_id in (low, high):
+                if (
+                    _recent_request_count(session, person_id, since=since)
+                    >= max_requests_per_person_in_window
+                ):
+                    return {
+                        "status": "deferred",
+                        "reason": "recipient_consent_request_cap",
+                        "limit": max_requests_per_person_in_window,
+                    }
 
         if max_outstanding_requests_per_person > 0:
             for person_id in (low, high):
