@@ -12,6 +12,8 @@ RUTH_EMAIL = "ruth.sim@example.test"
 INES_EMAIL = "ines.sim@example.test"
 VIC_EMAIL = "vic.sim@example.test"
 OMAR_EMAIL = "omar.sim@example.test"
+NADIA_EMAIL = "nadia.sim@example.test"
+PETRA_EMAIL = "petra.sim@example.test"
 
 _INTRODUCTION_SUBJECT = "Your introduction"
 _INES_CANNED_CLARIFICATION = "I could not determine your response."
@@ -117,30 +119,87 @@ def _has_ines_canned_clarification(outcome: ScenarioOutcome) -> bool:
     )
 
 
+def _pair_summary(outcome: ScenarioOutcome, email: str) -> dict[str, Any]:
+    return {
+        "pairs": [
+            {"pair": sorted(row.participant_emails), "status": row.status}
+            for row in outcome.consent_rows
+            if _pair_involves(row, email)
+        ]
+    }
+
+
+def _reveal_summary(outcome: ScenarioOutcome, email: str) -> dict[str, Any]:
+    return {
+        "revealing_recipients": [
+            sorted(message.recipients)
+            for message in outcome.mail_facts
+            if message.subject == _INTRODUCTION_SUBJECT
+            and email.lower() in message.recipients
+        ]
+    }
+
+
+def _clarify_audit_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
+    return {
+        "clarify_events": [
+            dict(event)
+            for event in outcome.audit_events
+            if event.get("event") == "introduction.consent_transition"
+            and event.get("action") == "clarify"
+        ]
+    }
+
+
+def _ines_reply_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
+    return {
+        "ines_reply_subjects": [
+            message.subject
+            for message in outcome.mail_facts
+            if INES_EMAIL in message.recipients
+        ]
+    }
+
+
+def _vic_memory_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
+    return {
+        "count": outcome.memory_counts.get(VIC_EMAIL, 0),
+        "limit": _VIC_MAX_MEMORIES,
+    }
+
+
+def _vic_pair_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
+    return {**_pair_summary(outcome, VIC_EMAIL), "limit": _VIC_MAX_PAIR_ROWS}
+
+
 DEFAULT_OUTCOME_CHECKS = (
     OutcomeCheck(
         description="Ruth declines an introduction and the pair is revoked",
         predicate=lambda outcome: _has_pair_with_status(outcome, RUTH_EMAIL, "revoked"),
         requires_real_process=True,
         requires_llm_personas=True,
+        evidence=lambda outcome: _pair_summary(outcome, RUTH_EMAIL),
     ),
     OutcomeCheck(
         description="Ruth's declined introduction never reveals a counterpart",
         predicate=lambda outcome: _has_no_revealing_introduction(outcome, RUTH_EMAIL),
         requires_real_process=True,
         requires_llm_personas=True,
+        evidence=lambda outcome: _reveal_summary(outcome, RUTH_EMAIL),
     ),
     OutcomeCheck(
         description="Ines receives a consent clarification",
         predicate=_has_ines_clarification,
         requires_real_process=True,
         requires_llm_personas=True,
+        evidence=_clarify_audit_summary,
     ),
     OutcomeCheck(
         description="Ines currently receives the fixed canned clarification reply",
         predicate=_has_ines_canned_clarification,
         requires_real_process=True,
         requires_llm_personas=True,
+        evidence=_ines_reply_summary,
     ),
     OutcomeCheck(
         description="Vic remains within the structural memory cap",
@@ -148,6 +207,7 @@ DEFAULT_OUTCOME_CHECKS = (
         <= _VIC_MAX_MEMORIES,
         requires_real_process=True,
         requires_llm_personas=True,
+        evidence=_vic_memory_summary,
     ),
     OutcomeCheck(
         description=(
@@ -160,6 +220,7 @@ DEFAULT_OUTCOME_CHECKS = (
         <= _VIC_MAX_PAIR_ROWS,
         requires_real_process=True,
         requires_llm_personas=True,
+        evidence=_vic_pair_summary,
     ),
     OutcomeCheck(
         description="Omar has exactly one consented introduction awaiting the other party",
@@ -170,12 +231,14 @@ DEFAULT_OUTCOME_CHECKS = (
         == 1,
         requires_real_process=True,
         requires_llm_personas=True,
+        evidence=lambda outcome: _pair_summary(outcome, OMAR_EMAIL),
     ),
     OutcomeCheck(
         description="Omar's one-consented introduction never reveals a counterpart",
         predicate=lambda outcome: _has_no_revealing_introduction(outcome, OMAR_EMAIL),
         requires_real_process=True,
         requires_llm_personas=True,
+        evidence=lambda outcome: _reveal_summary(outcome, OMAR_EMAIL),
     ),
 )
 
@@ -184,10 +247,12 @@ DEFAULT_EXPECTATIONS = (
     MemoryExpectation(
         description="Nadia's bakery-supply or food-logistics update is remembered",
         gist_contains="bakery",
+        persona_email=NADIA_EMAIL,
     ),
     MemoryExpectation(
         description="Petra's museum-archive provenance interest is remembered",
         gist_contains="provenance",
+        persona_email=PETRA_EMAIL,
     ),
 )
 
