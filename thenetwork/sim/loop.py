@@ -9,6 +9,7 @@ from typing import Any
 from unittest.mock import patch
 
 from thenetwork.settings import get_settings
+from thenetwork.sim.consent import intro_token, make_reply_thread_faithful
 from thenetwork.sim.mail import (
     ProcessEmailCallable,
     SimPostOffice,
@@ -107,16 +108,34 @@ class SimTickLoop:
             if self.schedule.is_interrupted(adapter.config, tick):
                 continue
             replies = self.post_office.pop_all(adapter.config.email)
-            reply_texts = tuple(
-                text for text in (_extract_body(reply).strip() for reply in replies) if text
+            consent_threads = [reply for reply in replies if intro_token(reply) is not None]
+            plain_replies = [reply for reply in replies if intro_token(reply) is None]
+            active_thread = consent_threads[0] if consent_threads else None
+            if len(consent_threads) > 1:
+                # One consent thread per turn: hold the rest so each decision
+                # is authored against its own thread and token on a later turn.
+                self.post_office.requeue(adapter.config.email, consent_threads[1:])
+            turn_replies = (
+                [*plain_replies, active_thread] if active_thread is not None else list(replies)
             )
-            reply_to = replies[-1] if replies else None
+            reply_texts = tuple(
+                text
+                for text in (_extract_body(reply).strip() for reply in turn_replies)
+                if text
+            )
+            reply_to = active_thread if active_thread is not None else (
+                replies[-1] if replies else None
+            )
+            thread_token = intro_token(reply_to) if reply_to is not None else None
             events = self.schedule.events_for(adapter.config, tick)
             msg = await adapter.anext_email(
                 _tick_prompt(adapter.config.goal, tick, events, reply_texts),
                 tick=tick,
                 subject=f"Simulation tick {tick}",
                 reply_to=reply_to,
+                body_filter=lambda body, token=thread_token: make_reply_thread_faithful(
+                    body, token
+                ),
             )
             if msg is None:
                 continue

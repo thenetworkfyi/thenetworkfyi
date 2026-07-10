@@ -166,6 +166,16 @@ default outcome predicates depend on both the real process and LLM personas; a r
 either mode records each unavailable predicate as a passing skipped finding with its reason.
 This makes offline/mock runs useful without presenting unexercised behavior as a failure.
 
+Simulated consent replies are thread-faithful by construction
+(`thenetwork/sim/consent.py`). The tick loop presents at most one pending consent
+thread per persona turn - extra `[intro:...]` requests are held in the post office
+for later turns - and each authored reply is normalized against the thread it
+answers: tokens copied from other threads are stripped, and a decision word on the
+first line is always followed by exactly the answered thread's token on the second
+line. Replies with no decision on the first line (for example Ines asking why a
+match was chosen) keep their own-thread token untouched, so the authored decline,
+clarification, consent, and dormancy behaviors are unchanged.
+
 For a user-run end-to-end evaluation against a local pgvector PostgreSQL instance:
 
 ```bash

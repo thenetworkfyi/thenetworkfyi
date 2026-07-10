@@ -49,6 +49,7 @@ class TinyPersonEmailAdapter:
         subject: str = "The Network",
         reply_to: EmailMessage | None = None,
         fallback_body: Callable[[PersonaConfig], str] | None = None,
+        body_filter: Callable[[str], str] | None = None,
     ) -> EmailMessage | None:
         if self.exhausted:
             return None
@@ -62,6 +63,10 @@ class TinyPersonEmailAdapter:
                 f"I am {self.config.name}. {self.config.goal} "
                 f"My stop condition is: {self.config.stop_condition}"
             )
+        if body_filter is not None:
+            body = body_filter(body)
+        if not body:
+            return None
         return self._build_message(body, tick=tick, subject=subject, reply_to=reply_to)
 
     async def anext_email(
@@ -72,6 +77,7 @@ class TinyPersonEmailAdapter:
         subject: str = "The Network",
         reply_to: EmailMessage | None = None,
         fallback_body: Callable[[PersonaConfig], str] | None = None,
+        body_filter: Callable[[str], str] | None = None,
     ) -> EmailMessage | None:
         """Async variant; personas exposing `alisten_and_act` may decline to write."""
         listener = getattr(self.person, "alisten_and_act", None)
@@ -82,10 +88,13 @@ class TinyPersonEmailAdapter:
                 subject=subject,
                 reply_to=reply_to,
                 fallback_body=fallback_body,
+                body_filter=body_filter,
             )
         if self.exhausted:
             return None
         body = extract_action_text(await listener(stimulus))
+        if body and body_filter is not None:
+            body = body_filter(body)
         if not body:
             return None
         return self._build_message(body, tick=tick, subject=subject, reply_to=reply_to)

@@ -195,3 +195,34 @@ async def test_deliver_inbound_rejects_messages_without_sender():
 
     with pytest.raises(ValueError, match="From address"):
         await deliver_inbound(message, process=AsyncMock())
+
+
+def test_requeue_returns_messages_to_the_front_without_relogging(tmp_path):
+    import mailbox
+
+    from thenetwork.sim.mail import SimPostOffice
+
+    post_office = SimPostOffice(mbox_path=tmp_path / "all-mail.mbox")
+    first = EmailMessage()
+    first["From"] = "join@example.test"
+    first["To"] = "priya@example.test"
+    first["Subject"] = "first"
+    first.set_content("first")
+    second = EmailMessage()
+    second["From"] = "join@example.test"
+    second["To"] = "priya@example.test"
+    second["Subject"] = "second"
+    second.set_content("second")
+    post_office.deliver(first)
+    post_office.deliver(second)
+
+    popped = post_office.pop_all("priya@example.test")
+    post_office.requeue("priya@example.test", popped[1:])
+
+    pending = post_office.messages_for("priya@example.test")
+    assert [str(message["Subject"]) for message in pending] == ["second"]
+    box = mailbox.mbox(tmp_path / "all-mail.mbox")
+    try:
+        assert len(box) == 2
+    finally:
+        box.close()
