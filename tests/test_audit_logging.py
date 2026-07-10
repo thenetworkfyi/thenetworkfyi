@@ -829,6 +829,30 @@ def test_intake_enqueues_inbound_message_id_when_present(caplog):
     mark_processed.assert_called_once_with(message.message_id)
 
 
+def test_intake_reserves_message_id_before_defer_and_releases_on_defer_failure():
+    from thenetwork.email.inbound import InboundMessage
+    from thenetwork.worker.producer import _poll_and_enqueue
+
+    message = InboundMessage(
+        uid="123", sender="alice@example.com", subject="Hello", body="Need an intro",
+        auto_submitted=None, sender_authenticated=True, message_id="<abc@example.com>",
+    )
+    calls: list[str] = []
+    with patch("thenetwork.worker.producer.poll_unseen", return_value=[message]), patch(
+        "thenetwork.worker.producer.is_message_processed", return_value=False
+    ), patch("thenetwork.worker.producer.mark_messages_seen") as mark_seen, patch(
+        "thenetwork.worker.producer.mark_message_processed", side_effect=lambda _: calls.append("reserve")
+    ), patch(
+        "thenetwork.worker.producer.unmark_message_processed", side_effect=lambda _: calls.append("release")
+    ), patch("thenetwork.worker.producer.process_email") as process_email:
+        process_email.defer.side_effect = RuntimeError("queue unavailable")
+        with pytest.raises(RuntimeError, match="queue unavailable"):
+            _poll_and_enqueue()
+
+    assert calls == ["reserve", "release"]
+    mark_seen.assert_not_called()
+
+
 def test_intake_enqueue_audits_and_defers_same_trace_id(caplog):
     from thenetwork.email.inbound import InboundMessage
     from thenetwork.security.sender_identifier import sender_identifier

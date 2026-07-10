@@ -27,7 +27,7 @@ def is_message_processed(message_id: str) -> bool:
 
 
 def mark_message_processed(message_id: str) -> None:
-    """Durably record that a job was enqueued for this Message-ID."""
+    """Durably reserve a Message-ID before its job is enqueued."""
     engine = get_engine()
     with engine.begin() as conn:
         conn.execute(
@@ -38,5 +38,15 @@ def mark_message_processed(message_id: str) -> None:
                 ON CONFLICT (message_id) DO NOTHING
                 """
             ),
+            {"message_id": message_id},
+        )
+
+
+def unmark_message_processed(message_id: str) -> None:
+    """Release an intake reservation when deferring its job fails."""
+    engine = get_engine()
+    with engine.begin() as conn:
+        conn.execute(
+            text("DELETE FROM processed_messages WHERE message_id = :message_id"),
             {"message_id": message_id},
         )
