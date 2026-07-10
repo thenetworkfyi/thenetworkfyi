@@ -9,6 +9,7 @@ from thenetwork.introductions import (
     CONSENT_ACKNOWLEDGMENT_REPLY,
     CONSENT_CLARIFICATION_REPLY,
     ConsentReplyResult,
+    _reply_action,
     process_consent_reply,
     propose_pair,
 )
@@ -95,7 +96,7 @@ def test_model_assertion_cannot_create_unauthenticated_consent():
     group_send.assert_not_called()
 
 
-@pytest.mark.parametrize("body", ["Yes.", "yes, please", "YES!", "Sounds good, yes"])
+@pytest.mark.parametrize("body", ["Yes.", "yes, please", "YES!"])
 def test_tolerant_yes_reply_consents_without_revealing_identity(body):
     session = FakeSession(proposal=proposal(), people=people())
 
@@ -117,6 +118,55 @@ def test_tolerant_yes_reply_consents_without_revealing_identity(body):
     group_send.assert_not_called()
     send.assert_called_once()
     assert send.call_args.kwargs["body_text"] == CONSENT_ACKNOWLEDGMENT_REPLY
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        ("YES", "consent"),
+        ("NO", "revoke"),
+        ("REVOKE", "revoke"),
+        ("Yes, please", "consent"),
+        ("no thanks.", "revoke"),
+    ],
+)
+def test_reply_action_accepts_only_short_decisions(body, expected):
+    assert _reply_action(body) == expected
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "I have had a change in direction. I am no longer looking for simulation modeling peers.",
+        "No problem, I will reply when I have decided.",
+        "Yes and I have an update about bakery supplies.",
+        "Sounds good, yes",
+    ],
+)
+def test_reply_action_rejects_prose_containing_decision_words(body):
+    assert _reply_action(body) is None
+
+
+def test_tokened_prose_reply_gets_clarification_without_revoking_pair():
+    session = FakeSession(proposal=proposal(), people=people())
+
+    with patch("thenetwork.introductions.send_reply") as send:
+        result = process_consent_reply(
+            sender_person_id="alice",
+            sender_authenticated=True,
+            subject="Re: [intro:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa]",
+            body=(
+                "I have had a change in direction. "
+                "I am no longer looking for simulation modeling peers."
+            ),
+            session_factory=factory(session),
+        )
+
+    assert result.outcome == "clarification_sent"
+    assert session.proposal.status == "proposed"
+    assert not session.proposal.person_a_consented
+    assert session.commits == 0
+    assert send.call_args.kwargs["body_text"] == CONSENT_CLARIFICATION_REPLY
 
 
 def test_punctuated_no_reply_revokes():

@@ -22,7 +22,9 @@ _TOKEN_RE = re.compile(
     re.IGNORECASE,
 )
 _ACTION_RE = re.compile(
-    r"(?<![A-Za-z0-9_'])(?P<action>yes|no|revoke)(?![A-Za-z0-9_'])",
+    r"^\s*(?:[\"'([{]\s*)?(?P<action>yes|no|revoke)"
+    r"(?:\s*,?\s*(?:please|thanks?|thank\s+you))?"
+    r"\s*[.!?;:)\]}'\"]*\s*$",
     re.IGNORECASE,
 )
 CONSENT_CLARIFICATION_REPLY = (
@@ -156,7 +158,7 @@ def _reply_action(body: str) -> str | None:
     visible = _visible_reply_lines(body)
     if not visible:
         return None
-    match = _ACTION_RE.search(visible[0])
+    match = _ACTION_RE.fullmatch(visible[0])
     if match is None:
         return None
     return "consent" if match.group("action").lower() == "yes" else "revoke"
