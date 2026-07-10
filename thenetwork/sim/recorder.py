@@ -245,12 +245,12 @@ def _assemble_scenario_outcome(
     load_database_state: bool,
 ) -> tuple[ScenarioOutcome, tuple[Memory, ...]]:
     if load_database_state:
-        consent_rows, database_memories, people = _database_outcome_state()
+        consent_rows, database_memories, memory_counts = _database_outcome_state()
         outcome_memories = database_memories
     else:
         consent_rows = ()
-        people = ()
         outcome_memories = tuple(memories)
+        memory_counts = _memory_counts(outcome_memories, {})
     return (
         ScenarioOutcome(
             consent_rows=consent_rows,
@@ -258,14 +258,14 @@ def _assemble_scenario_outcome(
             if load_database_state
             else (),
             mail_facts=_mail_facts(artifacts.mbox_path),
-            memory_counts=_memory_counts(outcome_memories, people),
+            memory_counts=memory_counts,
         ),
         outcome_memories,
     )
 
 
 def _database_outcome_state() -> tuple[
-    tuple[IntroductionRevealAuthorization, ...], tuple[Memory, ...], tuple[Person, ...]
+    tuple[IntroductionRevealAuthorization, ...], tuple[Memory, ...], dict[str, int]
 ]:
     consent_rows = []
     with get_session() as session:
@@ -282,9 +282,20 @@ def _database_outcome_state() -> tuple[
                     status=record.status,
                 )
             )
-        memories = tuple(session.exec(select(Memory)).all())
-        people = tuple(session.exec(select(Person)).all())
-    return tuple(consent_rows), memories, people
+        memories = tuple(
+            Memory(
+                id=memory.id,
+                text=memory.text,
+                refs=list(memory.refs or ()),
+                gist=memory.gist,
+            )
+            for memory in session.exec(select(Memory)).all()
+        )
+        emails_by_id = {
+            person.id: person.email for person in session.exec(select(Person)).all()
+        }
+        memory_counts = _memory_counts(memories, emails_by_id)
+    return tuple(consent_rows), memories, memory_counts
 
 
 def _audit_events(path: Path) -> tuple[dict[str, Any], ...]:
@@ -320,9 +331,8 @@ def _mail_facts(path: Path) -> tuple[MailFacts, ...]:
 
 
 def _memory_counts(
-    memories: Iterable[Memory], people: Iterable[Person]
+    memories: Iterable[Memory], emails_by_id: dict[str, str]
 ) -> dict[str, int]:
-    emails_by_id = {person.id: person.email for person in people}
     counts: Counter[str] = Counter()
     for memory in memories:
         for ref in memory.refs or ():
