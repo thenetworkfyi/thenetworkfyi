@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pytest
 import networkx as nx
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 
 def _mock_session(people):
@@ -41,6 +41,7 @@ async def test_scan_enqueues_high_proximity_pair():
     assert mock_pe.defer.called, "process_email.defer must be called for a high-proximity pair"
     sender_emails = {c.kwargs["sender_email"] for c in mock_pe.defer.call_args_list}
     assert "alice@test.com" in sender_emails
+    assert all(call.kwargs["sender_authenticated"] for call in mock_pe.defer.call_args_list)
 
 
 @pytest.mark.asyncio
@@ -163,6 +164,44 @@ async def test_rematch_enqueues_new_match_against_standing_note():
     assert "P" in kwargs["body"] and "Q" in kwargs["body"]
     assert "rust startup" in kwargs["body"]  # P's gist
     assert "rust cofounder" in kwargs["body"]  # Q's gist
+    assert kwargs["sender_authenticated"] is True
+
+
+@pytest.mark.asyncio
+async def test_rematch_job_reaches_agent_through_real_worker_handoff():
+    """Synthetic rematch jobs authenticate their DB-resolved sender identity."""
+    from thenetwork.introductions import ConsentReplyResult
+    from thenetwork.search.match import MemoryMatch
+    from thenetwork.worker.proactive import scan_for_matches
+    from thenetwork.worker.tasks import process_email
+
+    recent = [_memory("n1", ["Q"], "just started looking for a rust cofounder")]
+    matches = [MemoryMatch("m1", "P", "building a rust startup, wants a cofounder", 0.72)]
+    persons = {"P": _person("P", "p@test.com"), "Q": _person("Q", "q@test.com")}
+
+    with patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()), \
+         patch("thenetwork.worker.proactive.get_session", return_value=_rematch_session(recent, persons)), \
+         patch("thenetwork.worker.proactive.match_memories", return_value=matches), \
+         patch("thenetwork.worker.proactive.process_email") as deferred:
+        await scan_for_matches.func(0)
+
+    job = deferred.defer.call_args.kwargs
+    worker_session = MagicMock()
+    worker_session.__enter__ = MagicMock(return_value=worker_session)
+    worker_session.__exit__ = MagicMock(return_value=False)
+    worker_session.exec.return_value.first.return_value = None
+
+    with patch("thenetwork.worker.tasks.get_session", return_value=worker_session), \
+         patch("thenetwork.worker.tasks.check_rate_limit", return_value=True), \
+         patch("thenetwork.worker.tasks.scan_content", return_value=(True, "ok")), \
+         patch("thenetwork.worker.tasks.verify_admin_request", return_value=None), \
+         patch("thenetwork.worker.tasks.process_consent_reply", return_value=ConsentReplyResult(handled=False)), \
+         patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()) as run_agent:
+        await process_email.func(**job)
+
+    run_agent.assert_awaited_once()
+    assert run_agent.call_args.kwargs["sender_authenticated"] is True
+    assert run_agent.call_args.kwargs["sender_email"] == "p@test.com"
 
 
 @pytest.mark.asyncio
