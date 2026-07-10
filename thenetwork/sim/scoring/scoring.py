@@ -14,9 +14,9 @@ from pydantic_evals.evaluators import LLMJudge
 from thenetwork.agent.core import _UNDISPATCHED_RESPONSE_SUBJECT
 from thenetwork.db.models import Memory
 from thenetwork.introductions import _TOKEN_RE
-from thenetwork.sim.consent import _visible_lines
-from thenetwork.sim.mail import _extract_body
-from thenetwork.sim.persona import PersonaConfig
+from thenetwork.sim.personas.consent import _visible_lines
+from thenetwork.sim.run.mail import _extract_body
+from thenetwork.sim.personas.persona import PersonaConfig
 
 
 _CONSENT_REQUEST_SUBJECT_PREFIX = "Possible introduction"
@@ -112,6 +112,7 @@ class ScenarioOutcome:
 
     consent_rows: tuple[IntroductionRevealAuthorization, ...] = ()
     audit_events: tuple[Mapping[str, Any], ...] = ()
+    sender_id_hashes: Mapping[str, str] = field(default_factory=dict)
     mail_facts: tuple[MailFacts, ...] = ()
     memory_counts: Mapping[str, int] = field(default_factory=dict)
 

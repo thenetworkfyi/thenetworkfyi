@@ -4,8 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from thenetwork.sim.persona import PersonaConfig
-from thenetwork.sim.scoring import MemoryExpectation, OutcomeCheck, ScenarioOutcome
+from thenetwork.sim.personas.persona import PersonaConfig
+from thenetwork.sim.scoring.scoring import MemoryExpectation, OutcomeCheck, ScenarioOutcome
 
 
 RUTH_EMAIL = "ruth.sim@example.test"
@@ -102,6 +102,29 @@ def _has_no_revealing_introduction(outcome: ScenarioOutcome, email: str) -> bool
     )
 
 
+def _has_no_premature_revealing_introduction(
+    outcome: ScenarioOutcome, email: str
+) -> bool:
+    for message in outcome.mail_facts:
+        if (
+            message.subject != _INTRODUCTION_SUBJECT
+            or email.lower() not in message.recipients
+        ):
+            continue
+        counterparts = message.recipients - {email.lower()}
+        if not all(
+            any(
+                _pair_involves(row, email)
+                and counterpart in row.participant_emails
+                and row.status == "introduced"
+                for row in outcome.consent_rows
+            )
+            for counterpart in counterparts
+        ):
+            return False
+    return True
+
+
 def _has_ines_clarification(outcome: ScenarioOutcome) -> bool:
     return any(
         event.get("event") == "introduction.consent_transition"
@@ -172,6 +195,36 @@ def _vic_pair_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
     return {**_pair_summary(outcome, VIC_EMAIL), "limit": _VIC_MAX_PAIR_ROWS}
 
 
+def _omar_consent_events(outcome: ScenarioOutcome) -> list[dict[str, Any]]:
+    sender_id_hash = outcome.sender_id_hashes.get(OMAR_EMAIL)
+    if sender_id_hash is None:
+        return []
+    return [
+        dict(event)
+        for event in outcome.audit_events
+        if event.get("event") == "introduction.consent_transition"
+        and event.get("sender_id_hash") == sender_id_hash
+        and event.get("action") in {"consent", "revoke"}
+    ]
+
+
+def _omar_consented_once(outcome: ScenarioOutcome) -> bool:
+    events = _omar_consent_events(outcome)
+    return (
+        len(events) == 1
+        and events[0].get("action") == "consent"
+        and events[0].get("outcome") == "success"
+        and events[0].get("consent_state") in {"one_consented", "introduced"}
+    )
+
+
+def _omar_consent_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
+    return {
+        "sender_id_hash_present": OMAR_EMAIL in outcome.sender_id_hashes,
+        "consent_events": _omar_consent_events(outcome),
+    }
+
+
 DEFAULT_OUTCOME_CHECKS = (
     OutcomeCheck(
         description="Ruth declines an introduction and the pair is revoked",
@@ -223,19 +276,19 @@ DEFAULT_OUTCOME_CHECKS = (
         evidence=_vic_pair_summary,
     ),
     OutcomeCheck(
-        description="Omar has exactly one consented introduction awaiting the other party",
-        predicate=lambda outcome: sum(
-            _pair_involves(row, OMAR_EMAIL) and row.status == "one_consented"
-            for row in outcome.consent_rows
-        )
-        == 1,
+        description="Omar consents exactly once and never revokes",
+        predicate=_omar_consented_once,
         requires_real_process=True,
         requires_llm_personas=True,
-        evidence=lambda outcome: _pair_summary(outcome, OMAR_EMAIL),
+        evidence=_omar_consent_summary,
     ),
     OutcomeCheck(
-        description="Omar's one-consented introduction never reveals a counterpart",
-        predicate=lambda outcome: _has_no_revealing_introduction(outcome, OMAR_EMAIL),
+        description=(
+            "Omar's introduction never reveals a counterpart before mutual consent"
+        ),
+        predicate=lambda outcome: _has_no_premature_revealing_introduction(
+            outcome, OMAR_EMAIL
+        ),
         requires_real_process=True,
         requires_llm_personas=True,
         evidence=lambda outcome: _reveal_summary(outcome, OMAR_EMAIL),

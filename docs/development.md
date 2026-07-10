@@ -167,7 +167,7 @@ either mode records each unavailable predicate as a passing skipped finding with
 This makes offline/mock runs useful without presenting unexercised behavior as a failure.
 
 Simulated consent replies are thread-faithful by construction
-(`thenetwork/sim/consent.py`). The tick loop presents at most one pending consent
+(`thenetwork/sim/personas/consent.py`). The tick loop presents at most one pending consent
 thread per persona turn - extra `[intro:...]` requests are held in the post office
 for later turns - and each authored reply is normalized against the thread it
 answers: tokens copied from other threads are stripped, and a decision word on the

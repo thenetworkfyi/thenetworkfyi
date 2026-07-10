@@ -17,11 +17,12 @@ from sqlmodel import select
 
 from thenetwork.db.models import IntroductionConsent, Memory, Person
 from thenetwork.db.session import get_session
-from thenetwork.sim.loop import ProgressCallable, SimTickLoop
-from thenetwork.sim.mail import _extract_body, render_transcript
-from thenetwork.sim.persona import PersonaConfig, TinyPersonEmailAdapter
-from thenetwork.sim.population import SimSchedule
-from thenetwork.sim.scoring import (
+from thenetwork.security.sender_identifier import optional_sender_identifier
+from thenetwork.sim.run.loop import ProgressCallable, SimTickLoop
+from thenetwork.sim.run.mail import _extract_body, render_transcript
+from thenetwork.sim.personas.persona import PersonaConfig, TinyPersonEmailAdapter
+from thenetwork.sim.personas.population import SimSchedule
+from thenetwork.sim.scoring.scoring import (
     IntroductionRevealAuthorization,
     MailFacts,
     MemoryExpectation,
@@ -177,6 +178,7 @@ class SimRunRecorder:
                 load_database_state=(
                     process_mode == "real" and config.database_name is not None
                 ),
+                persona_emails=(persona.email for persona in config.personas),
             )
             tier1 = score_seal_mbox(
                 artifacts.mbox_path,
@@ -265,6 +267,7 @@ def _assemble_scenario_outcome(
     *,
     memories: Iterable[Memory],
     load_database_state: bool,
+    persona_emails: Iterable[str] = (),
 ) -> tuple[ScenarioOutcome, tuple[Memory, ...], dict[str, str]]:
     if load_database_state:
         consent_rows, database_memories, memory_counts, emails_by_id = (
@@ -282,6 +285,11 @@ def _assemble_scenario_outcome(
             audit_events=_audit_events(artifacts.audit_path)
             if load_database_state
             else (),
+            sender_id_hashes={
+                email.lower(): sender_id
+                for email in persona_emails
+                if (sender_id := optional_sender_identifier(email)) is not None
+            },
             mail_facts=_mail_facts(artifacts.mbox_path),
             memory_counts=memory_counts,
         ),

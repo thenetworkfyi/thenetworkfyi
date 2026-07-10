@@ -4,9 +4,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from thenetwork.sim.loop import SimTickLoop
-from thenetwork.sim.persona import TinyPersonEmailAdapter
-from thenetwork.sim.population import SimSchedule, default_population
+from thenetwork.sim.run.loop import SimTickLoop
+from thenetwork.sim.personas.persona import TinyPersonEmailAdapter
+from thenetwork.sim.personas.population import SimSchedule, default_population
 
 
 class RecordingTinyPerson:

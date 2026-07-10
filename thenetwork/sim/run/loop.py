@@ -9,16 +9,16 @@ from typing import Any
 from unittest.mock import patch
 
 from thenetwork.settings import get_settings
-from thenetwork.sim.consent import intro_token, make_reply_thread_faithful
-from thenetwork.sim.mail import (
+from thenetwork.sim.personas.consent import intro_token, make_reply_thread_faithful
+from thenetwork.sim.run.mail import (
     ProcessEmailCallable,
     SimPostOffice,
     _extract_body,
     capture_outbound,
     deliver_inbound,
 )
-from thenetwork.sim.persona import TinyPersonEmailAdapter
-from thenetwork.sim.population import SimSchedule
+from thenetwork.sim.personas.persona import TinyPersonEmailAdapter
+from thenetwork.sim.personas.population import SimSchedule
 from thenetwork.worker import proactive
 
 

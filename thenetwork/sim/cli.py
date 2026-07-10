@@ -8,18 +8,18 @@ from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
-from thenetwork.sim.compare import compare_runs, render_compare
-from thenetwork.sim.database import new_sim_database_name, provision_sim_database
+from thenetwork.sim.scoring.compare import compare_runs, render_compare
+from thenetwork.sim.run.database import new_sim_database_name, provision_sim_database
 from thenetwork.sim.intro_flow import run_intro_flow_sim
-from thenetwork.sim.persona import TinyPersonEmailAdapter
-from thenetwork.sim.population import (
+from thenetwork.sim.personas.persona import TinyPersonEmailAdapter
+from thenetwork.sim.personas.population import (
     DEFAULT_EXPECTATIONS,
     DEFAULT_OUTCOME_CHECKS,
     PopulationPersona,
     SimSchedule,
     default_population,
 )
-from thenetwork.sim.recorder import SimRunConfig, SimRunRecorder
+from thenetwork.sim.run.recorder import SimRunConfig, SimRunRecorder
 
 
 class ScriptedTinyPerson:
@@ -38,7 +38,7 @@ def _build_person(persona: PopulationPersona, llm_personas: bool):
         return ScriptedTinyPerson(persona.config.name, persona.opening_body)
     from thenetwork.model_config import model_with_api_key
     from thenetwork.settings import get_settings
-    from thenetwork.sim.llm_persona import LLMTinyPerson
+    from thenetwork.sim.personas.llm_persona import LLMTinyPerson
 
     settings = get_settings()
     model = model_with_api_key(settings.small_agent_model, settings.small_agent_api_key)

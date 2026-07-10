@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from thenetwork.sim.mail import (
+from thenetwork.sim.run.mail import (
     SimMessageMeta,
     SimPostOffice,
     capture_outbound,
@@ -200,7 +200,7 @@ async def test_deliver_inbound_rejects_messages_without_sender():
 def test_requeue_returns_messages_to_the_front_without_relogging(tmp_path):
     import mailbox
 
-    from thenetwork.sim.mail import SimPostOffice
+    from thenetwork.sim.run.mail import SimPostOffice
 
     post_office = SimPostOffice(mbox_path=tmp_path / "all-mail.mbox")
     first = EmailMessage()
