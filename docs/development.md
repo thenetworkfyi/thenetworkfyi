@@ -202,8 +202,9 @@ Unit-tested in `tests/test_proactive.py`.
 
 `scan_for_opportunities` (`cron="0 * * * *"`, graph proximity). Builds the NetworkX
 graph, scores person pairs by Jaccard proximity over shared neighbours, and for each pair
-above `PROXIMITY_THRESHOLD` (0.3) `defer`s a synthetic `process_email` job. Requires
-pre-existing connection density, so it says nothing at cold start.
+above `PROXIMITY_THRESHOLD` (0.3) that is not already suppressed as a proposed/resolved
+introduction pair, `defer`s a synthetic `process_email` job. Requires pre-existing
+connection density, so it says nothing at cold start.
 
 `scan_for_matches` (`cron="30 * * * *"`, semantic rematch). This is the cold-start /
 dormant-user path: it re-evaluates standing intents against *new* arrivals rather than
@@ -211,12 +212,18 @@ only at write time. Driven by memories created within
 `proactive_rematch_lookback_minutes` (65) so a pair surfaces once, when the counterpart
 shows up; for each such arrival it runs `match_memories` and, for any older
 person-referencing memory about a *different* person scoring at least
-`proactive_match_threshold` (0.5), `defer`s a job that re-engages the dormant owner of the
+`proactive_match_threshold` (0.6), `defer`s a job that re-engages the dormant owner of the
 older note. Guards: pairs already connected in the projected graph are skipped (the
 introduction memory is the durable dedup record); the similarity floor is conservative
 *here specifically* because unsolicited outreach makes a false positive costly - the
-interactive `search` tool deliberately takes no such floor. The trigger body carries only
+interactive `search` tool deliberately takes no such floor, and the floor sits above the
+~0.55 band where thin keyword overlap lands. The trigger body carries only
 opaque ids + PII-stripped gists; real addresses and raw memory text never enter it.
+
+Both scans pace their output: candidates are ordered deterministically (score
+descending, canonical pair id as tiebreak) and each person is scheduled for at most one
+new candidate per scan, so a dense cluster of similar members surfaces best-first over
+successive hours instead of as a combinatorial proposal burst.
 
 ## Sharp edges
 
