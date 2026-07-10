@@ -26,6 +26,9 @@ class AgentDeps:
     # Tools that can create or mutate identity (e.g. register_person) must
     # gate on this - the From: header alone is spoofable.
     sender_authenticated: bool = False
+    # Synthetic jobs emitted by proactive scans are agent prompts, not inbound
+    # user messages. A no-op is an expected, auditable outcome for these runs.
+    is_proactive: bool = False
     # Session factory: () -> contextmanager[Session]
     # Stored as a callable to avoid serialization issues
     session_factory: Callable | None = None

@@ -80,6 +80,7 @@ async def run_agent_for_email(
     inbound_body_for_quote: str | None = None,
     inbound_date: str | None = None,
     trace_id: str | None = None,
+    is_proactive: bool = False,
 ) -> str:
     """Run the agent for one inbound email.
 
@@ -104,6 +105,7 @@ async def run_agent_for_email(
             inbound_body_for_quote=inbound_body_for_quote,
             inbound_date=inbound_date,
             trace_id=trace_id,
+            is_proactive=is_proactive,
         )
         settings = get_settings()
         agent = build_agent(model=settings.agent_model)
@@ -164,11 +166,18 @@ async def run_agent_for_email(
                 subject_chars=len(email_subject),
                 body_chars=len(email_body),
             )
-        if (
+        has_undispatched_text = (
             result.output.strip()
             and not {"reply_to_sender", "send_outreach", "escalate"}.intersection(tool_names)
             and deps.server_side_send_count == 0
-        ):
+        )
+        if has_undispatched_text and deps.is_proactive:
+            audit_event(
+                "agent.proactive_no_action",
+                sender_known=sender_user_id is not None,
+                body_chars=len(result.output),
+            )
+        elif has_undispatched_text:
             audit_event(
                 "agent.undispatched_response",
                 body_chars=len(result.output),
