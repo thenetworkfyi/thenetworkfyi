@@ -65,6 +65,7 @@ async def scan_for_opportunities(timestamp: int) -> None:
                         f"(score={score:.2f}). Consider reaching out."
                     ),
                     sender_authenticated=True,
+                    is_proactive=True,
                 )
 
 
@@ -165,4 +166,5 @@ async def scan_for_matches(timestamp: int) -> None:
                         subject="[Proactive] Possible connection",
                         body=body,
                         sender_authenticated=True,
+                        is_proactive=True,
                     )

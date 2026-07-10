@@ -600,6 +600,62 @@ async def test_empty_agent_output_does_not_escalate_as_undispatched():
 
 
 @pytest.mark.asyncio
+async def test_proactive_no_action_is_audited_without_admin_notification(caplog):
+    from thenetwork.agent.core import run_agent_for_email
+
+    fake_result = SimpleNamespace(
+        output="No specific common ground supports an introduction.",
+        all_messages=lambda: [],
+    )
+    fake_agent = SimpleNamespace(run=AsyncMock(return_value=fake_result))
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    with patch("thenetwork.agent.core.build_agent", return_value=fake_agent), patch(
+        "thenetwork.agent.core.notify_admins"
+    ) as notify_admins:
+        await run_agent_for_email(
+            sender_email="mike@mkly.io",
+            sender_user_id="person-mike",
+            email_subject="[Proactive] Possible connection",
+            email_body="[System match] Consider a connection.",
+            is_proactive=True,
+        )
+
+    events = _events(caplog)
+    assert any(event["event"] == "agent.proactive_no_action" for event in events)
+    assert not any(event["event"] == "agent.undispatched_response" for event in events)
+    notify_admins.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_proactive_no_op_alert_regression_fixture_has_no_admin_messages(caplog):
+    """Seventeen no-op proactive jobs model the alert-heavy simulation run."""
+    from thenetwork.agent.core import run_agent_for_email
+
+    fake_result = SimpleNamespace(
+        output="No supported action for this proactive candidate.",
+        all_messages=lambda: [],
+    )
+    fake_agent = SimpleNamespace(run=AsyncMock(return_value=fake_result))
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    with patch("thenetwork.agent.core.build_agent", return_value=fake_agent), patch(
+        "thenetwork.agent.core.notify_admins"
+    ) as notify_admins:
+        for _ in range(17):
+            await run_agent_for_email(
+                sender_email="mike@mkly.io",
+                sender_user_id="person-mike",
+                email_subject="[Proactive] Possible connection",
+                email_body="[System match] Consider a connection.",
+                is_proactive=True,
+            )
+
+    assert len([e for e in _events(caplog) if e["event"] == "agent.proactive_no_action"]) == 17
+    notify_admins.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_server_side_send_prevents_undispatched_escalation():
     from thenetwork.agent.core import run_agent_for_email
 
