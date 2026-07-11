@@ -55,6 +55,13 @@ def build_agent(model: Any = None) -> Agent[AgentDeps, str]:
         system_prompt=SYSTEM_PROMPT,
         deps_type=AgentDeps,
         output_type=str,
+        # Serial tool calls only. Some providers/models mis-serialize the
+        # arguments boundary between multiple parallel tool calls in one
+        # turn (e.g. concatenating several JSON objects into one arguments
+        # string), which fails before pydantic-ai's own per-tool retry ever
+        # sees a parsed call. Disabling parallel calls removes that failure
+        # class structurally, independent of which model is configured.
+        model_settings={"parallel_tool_calls": False},
     )
 
     # One retry is exclusively for malformed tool arguments. World-state and
