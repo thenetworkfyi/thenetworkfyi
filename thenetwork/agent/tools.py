@@ -181,6 +181,8 @@ async def remember(
     knowledge; 1 ref = attribute of one person; 2+ refs = graph edge.
     A gist (PII-stripped) is automatically produced for all non-empty refs
     so the memory is eligible for cross-user retrieval (SEAL requirement).
+    Each consolidation candidate contains only a memory ID, gist, and
+    similarity to the newly stored memory.
     """
     with audit_span("agent.tool", tool_name="remember", refs_count=len(refs)):
         max_chars = ctx.deps.settings.remember_text_max_chars
@@ -244,7 +246,7 @@ async def remember(
                 {
                     "memory_id": m.memory_id,
                     "gist": m.gist,
-                    "score": round(m.similarity, 3),
+                    "similarity": round(m.similarity, 3),
                 }
             )
             if len(candidates) == MAX_CONSOLIDATION_CANDIDATES:
