@@ -181,6 +181,7 @@ async def test_remember_tool_stores_gist_free_of_name_variants_end_to_end():
     mock_sess = MagicMock()
     mock_sess.__enter__ = MagicMock(return_value=mock_sess)
     mock_sess.__exit__ = MagicMock(return_value=False)
+    mock_sess.exec.return_value.one.return_value = 0
     ctx = MagicMock()
     ctx.deps = AgentDeps(
         sender_email="bob@example.com",

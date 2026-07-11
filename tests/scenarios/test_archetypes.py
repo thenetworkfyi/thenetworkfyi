@@ -41,6 +41,7 @@ async def test_onboarding_calls_save_profile():
         mock_session = MagicMock()
         mock_session.__enter__ = MagicMock(return_value=mock_session)
         mock_session.__exit__ = MagicMock(return_value=False)
+        mock_session.exec.return_value.one.return_value = 0
         mock_session.execute.return_value.scalar_one.return_value = "user-abc"
         mock_gs.return_value = mock_session
 
@@ -368,6 +369,7 @@ async def test_vague_intent_qualification_asks_question_and_no_proposal():
     mock_session = MagicMock()
     mock_session.__enter__ = MagicMock(return_value=mock_session)
     mock_session.__exit__ = MagicMock(return_value=False)
+    mock_session.exec.return_value.one.return_value = 0
 
     sent = []
 
@@ -459,6 +461,7 @@ async def test_vague_intent_answer_forgets_asked_note_and_captures_interest():
     mock_session = MagicMock()
     mock_session.__enter__ = MagicMock(return_value=mock_session)
     mock_session.__exit__ = MagicMock(return_value=False)
+    mock_session.exec.return_value.one.return_value = 0
     mock_session.get.return_value = asked_note
 
     sent = []
