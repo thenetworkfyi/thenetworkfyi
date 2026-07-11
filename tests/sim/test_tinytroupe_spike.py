@@ -52,7 +52,10 @@ def test_spike_runs_four_email_turns_with_action_correction_enabled():
     assert person.action_generator.enable_regeneration is True
     assert len(transcript.turns) == 4
     assert len(person.stimuli) == 4
-    assert transcript.turns[0].persona_email["From"] == "Mara Vidal <mara.vidal@example.test>"
+    assert (
+        transcript.turns[0].persona_email["From"]
+        == "Mara Vidal <mara.vidal@example.test>"
+    )
     assert transcript.turns[0].persona_email["To"] == "join@thenetwork.test"
     assert transcript.turns[0].persona_email["X-Sim-Turn"] == "1"
     assert "skeptical turn 1" in transcript.turns[0].persona_email.get_content()

@@ -5,6 +5,7 @@ Revises:
 Create Date: 2026-06-17
 
 """
+
 from typing import Sequence, Union
 
 import sqlalchemy as sa
@@ -55,9 +56,7 @@ def upgrade() -> None:
     )
 
     # GIN index on refs array for fast containment / overlap queries
-    op.execute(
-        "CREATE INDEX ix_memories_refs ON memories USING gin (refs)"
-    )
+    op.execute("CREATE INDEX ix_memories_refs ON memories USING gin (refs)")
 
 
 def downgrade() -> None:

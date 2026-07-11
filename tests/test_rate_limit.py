@@ -50,9 +50,12 @@ def test_rate_limit_normalizes_sender_keys():
 
     limiter = FakeLimiter()
 
-    with patch("thenetwork.security.rate_limit.get_settings", return_value=_settings()), patch(
-        "thenetwork.security.rate_limit._get_limiter",
-        return_value=(limiter, HealthyStorage()),
+    with (
+        patch("thenetwork.security.rate_limit.get_settings", return_value=_settings()),
+        patch(
+            "thenetwork.security.rate_limit._get_limiter",
+            return_value=(limiter, HealthyStorage()),
+        ),
     ):
         assert check_rate_limit(" Alice@Example.COM ", sender_authenticated=True)
 
@@ -85,14 +88,19 @@ def test_plus_addressed_senders_share_a_rate_limit_bucket():
 
     limiter = FakeLimiter()
 
-    with patch("thenetwork.security.rate_limit.get_settings", return_value=_settings()), patch(
-        "thenetwork.security.rate_limit._get_limiter",
-        return_value=(limiter, HealthyStorage()),
+    with (
+        patch("thenetwork.security.rate_limit.get_settings", return_value=_settings()),
+        patch(
+            "thenetwork.security.rate_limit._get_limiter",
+            return_value=(limiter, HealthyStorage()),
+        ),
     ):
         assert check_rate_limit("alice+one@gmail.com", sender_authenticated=False)
         assert check_rate_limit("alice+two@gmail.com", sender_authenticated=False)
 
-    sender_hits = [key for key in limiter.hit_keys if key.startswith("unauthenticated-sender:")]
+    sender_hits = [
+        key for key in limiter.hit_keys if key.startswith("unauthenticated-sender:")
+    ]
     assert sender_hits == [
         "unauthenticated-sender:alice@gmail.com",
         "unauthenticated-sender:alice@gmail.com",
@@ -104,13 +112,19 @@ def test_unauthenticated_sender_uses_smaller_separate_bucket():
 
     limiter = FakeLimiter()
 
-    with patch("thenetwork.security.rate_limit.get_settings", return_value=_settings()), patch(
-        "thenetwork.security.rate_limit._get_limiter",
-        return_value=(limiter, HealthyStorage()),
+    with (
+        patch("thenetwork.security.rate_limit.get_settings", return_value=_settings()),
+        patch(
+            "thenetwork.security.rate_limit._get_limiter",
+            return_value=(limiter, HealthyStorage()),
+        ),
     ):
         assert check_rate_limit("real@example.com", sender_authenticated=False)
 
-    assert limiter.tested[0] == ("3 per 1 hour", "unauthenticated-sender:real@example.com")
+    assert limiter.tested[0] == (
+        "3 per 1 hour",
+        "unauthenticated-sender:real@example.com",
+    )
     assert "authenticated-sender:real@example.com" not in limiter.hit_keys
 
 
@@ -119,11 +133,16 @@ def test_global_cap_blocks_without_consuming_sender_bucket():
 
     limiter = FakeLimiter(test_results={"global:emails-processed": False})
 
-    with patch("thenetwork.security.rate_limit.get_settings", return_value=_settings()), patch(
-        "thenetwork.security.rate_limit._get_limiter",
-        return_value=(limiter, HealthyStorage()),
+    with (
+        patch("thenetwork.security.rate_limit.get_settings", return_value=_settings()),
+        patch(
+            "thenetwork.security.rate_limit._get_limiter",
+            return_value=(limiter, HealthyStorage()),
+        ),
     ):
-        assert check_rate_limit("person@example.com", sender_authenticated=True) is False
+        assert (
+            check_rate_limit("person@example.com", sender_authenticated=True) is False
+        )
 
     assert limiter.hit_keys == []
 
@@ -133,9 +152,12 @@ def test_proactive_rate_limit_skips_sender_bucket_but_keeps_global_cap():
 
     limiter = FakeLimiter()
 
-    with patch("thenetwork.security.rate_limit.get_settings", return_value=_settings()), patch(
-        "thenetwork.security.rate_limit._get_limiter",
-        return_value=(limiter, HealthyStorage()),
+    with (
+        patch("thenetwork.security.rate_limit.get_settings", return_value=_settings()),
+        patch(
+            "thenetwork.security.rate_limit._get_limiter",
+            return_value=(limiter, HealthyStorage()),
+        ),
     ):
         assert check_rate_limit(
             "person@example.com",
@@ -152,11 +174,16 @@ def test_rate_limit_fails_closed_when_storage_unhealthy():
 
     storage = SimpleNamespace(check=lambda: False)
 
-    with patch("thenetwork.security.rate_limit.get_settings", return_value=_settings()), patch(
-        "thenetwork.security.rate_limit._get_limiter",
-        return_value=(FakeLimiter(), storage),
+    with (
+        patch("thenetwork.security.rate_limit.get_settings", return_value=_settings()),
+        patch(
+            "thenetwork.security.rate_limit._get_limiter",
+            return_value=(FakeLimiter(), storage),
+        ),
     ):
-        assert check_rate_limit("person@example.com", sender_authenticated=True) is False
+        assert (
+            check_rate_limit("person@example.com", sender_authenticated=True) is False
+        )
 
 
 @pytest.mark.integration
@@ -191,7 +218,9 @@ def test_postgres_rate_limit_state_survives_limiter_rebuild(pg_engine, monkeypat
     rate_limit._storage = None
 
     try:
-        assert not rate_limit.check_rate_limit("persist@example.com", sender_authenticated=True)
+        assert not rate_limit.check_rate_limit(
+            "persist@example.com", sender_authenticated=True
+        )
     finally:
         rate_limit._limiter = None
         rate_limit._storage = None
@@ -201,18 +230,34 @@ def test_outbound_registration_and_welcome_quotas_fail_closed_when_storage_is_un
     from thenetwork.agent import tools
     from thenetwork.worker import tasks
 
-    with patch.object(tools, "_get_dispatch_limiter", return_value=(UnavailableLimiter(), None)), \
-         patch.object(tools, "_get_registration_limiter", return_value=(UnavailableLimiter(), None)), \
-         patch.object(tasks, "_get_welcome_limiter", return_value=(UnavailableLimiter(), None)):
+    with (
+        patch.object(
+            tools, "_get_dispatch_limiter", return_value=(UnavailableLimiter(), None)
+        ),
+        patch.object(
+            tools,
+            "_get_registration_limiter",
+            return_value=(UnavailableLimiter(), None),
+        ),
+        patch.object(
+            tasks, "_get_welcome_limiter", return_value=(UnavailableLimiter(), None)
+        ),
+    ):
         assert not tools._check_daily_dispatch_cap("dispatch:test", 1)
         assert not tools._hit_registration_quota(
-            SimpleNamespace(deps=SimpleNamespace(settings=SimpleNamespace(registration_limit_per_day=1)))
+            SimpleNamespace(
+                deps=SimpleNamespace(
+                    settings=SimpleNamespace(registration_limit_per_day=1)
+                )
+            )
         )
         assert not tasks._hit_welcome_quota("person@example.com")
 
 
 @pytest.mark.integration
-def test_outbound_registration_and_welcome_limiters_use_durable_storage(pg_engine, monkeypatch):
+def test_outbound_registration_and_welcome_limiters_use_durable_storage(
+    pg_engine, monkeypatch
+):
     """All non-inbound quotas share Postgres state across limiter recreation."""
     import thenetwork.db.session as sess_mod
     from thenetwork.agent import tools
@@ -224,9 +269,27 @@ def test_outbound_registration_and_welcome_limiters_use_durable_storage(pg_engin
 
     limit = __import__("limits").parse("1/day")
     cases = [
-        (tools, "_dispatch_limiter", "_dispatch_storage", tools._get_dispatch_limiter, "test:dispatch"),
-        (tools, "_registration_limiter", "_registration_storage", tools._get_registration_limiter, "test:registration"),
-        (tasks, "_welcome_limiter", "_welcome_storage", tasks._get_welcome_limiter, "test:welcome"),
+        (
+            tools,
+            "_dispatch_limiter",
+            "_dispatch_storage",
+            tools._get_dispatch_limiter,
+            "test:dispatch",
+        ),
+        (
+            tools,
+            "_registration_limiter",
+            "_registration_storage",
+            tools._get_registration_limiter,
+            "test:registration",
+        ),
+        (
+            tasks,
+            "_welcome_limiter",
+            "_welcome_storage",
+            tasks._get_welcome_limiter,
+            "test:welcome",
+        ),
     ]
     for module, limiter_attr, storage_attr, factory, key in cases:
         setattr(module, limiter_attr, None)

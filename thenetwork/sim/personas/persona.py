@@ -1,4 +1,5 @@
 """TinyPerson email adapter for the simulation harness."""
+
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
@@ -143,7 +144,9 @@ def _reply_body(body: str, reply_to: EmailMessage | None) -> str:
     original_body = _plain_text_body(reply_to).strip()
     if not original_body:
         return reply
-    quote = "\n".join(f"> {line}" if line else ">" for line in original_body.splitlines())
+    quote = "\n".join(
+        f"> {line}" if line else ">" for line in original_body.splitlines()
+    )
     return f"{reply}\n\n{quote}"
 
 

@@ -3,6 +3,7 @@
 These tests prove that the structural security guarantees hold regardless of
 what the LLM outputs. They do not require a live DB or LLM.
 """
+
 from __future__ import annotations
 
 import json
@@ -13,7 +14,12 @@ from limits import storage, strategies
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from thenetwork.agent.deps import AgentDeps
-from thenetwork.agent.tools import reply_to_sender, send_outreach, propose_introduction, register_person
+from thenetwork.agent.tools import (
+    reply_to_sender,
+    send_outreach,
+    propose_introduction,
+    register_person,
+)
 from thenetwork.audit import LOGGER_NAME, audit_event
 from thenetwork.db.models import Person
 from thenetwork.search.match import MemoryMatch
@@ -49,6 +55,7 @@ def test_audit_correlation_fields_do_not_log_raw_email(caplog):
     assert payload["sender_id_hash"] == "unknown"
     assert "alice@example.com" not in caplog.records[0].message
 
+
 class FakeCtx:
     def __init__(
         self,
@@ -76,6 +83,7 @@ class FakeCtx:
 
 def _reset_dispatch_limiter():
     from thenetwork.agent import tools
+
     tools._dispatch_storage = storage.MemoryStorage()
     tools._dispatch_limiter = strategies.FixedWindowRateLimiter(tools._dispatch_storage)
 
@@ -90,6 +98,7 @@ def _fake_person(email: str = "bob@example.com"):
 async def test_reply_to_sender_has_no_model_selected_recipient():
     """A direct reply must not let the caller choose an opaque recipient ID."""
     import inspect
+
     sig = inspect.signature(reply_to_sender)
     params = list(sig.parameters.keys())
     assert "recipient_user_id" not in params
@@ -101,6 +110,7 @@ async def test_reply_to_sender_has_no_model_selected_recipient():
 async def test_outreach_resolves_address_not_from_caller():
     """Intentional outreach takes only an opaque ID, never a raw address."""
     import inspect
+
     sig = inspect.signature(send_outreach)
     params = list(sig.parameters.keys())
     assert "recipient_user_id" in params
@@ -112,6 +122,7 @@ async def test_outreach_resolves_address_not_from_caller():
 async def test_register_person_resolves_address_not_from_caller():
     """The tool signature takes only name - caller cannot supply a raw address."""
     import inspect
+
     sig = inspect.signature(register_person)
     params = list(sig.parameters.keys())
     assert "name" in params
@@ -130,7 +141,9 @@ async def test_dispatch_sends_to_resolved_address():
     ctx._mock_sess.get.return_value = fake_person
 
     with patch("thenetwork.agent.tools.send_reply") as mock_send:
-        result = await send_outreach(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
+        result = await send_outreach(
+            ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello"
+        )
 
     mock_send.assert_called_once()
     assert mock_send.call_args.kwargs["to_address"] == "bob@example.com"
@@ -183,12 +196,19 @@ async def test_dispatch_threads_reply_to_inbound_sender_only():
         == "<root@example.com> <parent@example.com> <abc123@example.com>"
     )
     assert mock_send.call_args.kwargs["quoted_body_text"] == "Original request"
-    assert mock_send.call_args.kwargs["quoted_date"] == "Sat, 04 Jul 2026 12:00:00 -0700"
+    assert (
+        mock_send.call_args.kwargs["quoted_date"] == "Sat, 04 Jul 2026 12:00:00 -0700"
+    )
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("sender_user_id", "sender_address", "search_result_person_id", "search_result_address"),
+    (
+        "sender_user_id",
+        "sender_address",
+        "search_result_person_id",
+        "search_result_address",
+    ),
     [
         ("user-vic", "vic@example.com", "person-petra", "petra@example.com"),
         ("user-dana", "dana@example.com", "person-petra", "petra@example.com"),
@@ -292,16 +312,21 @@ async def test_proactive_graph_trigger_never_sets_quote_inputs():
     graph = nx.Graph()
     graph.add_edge("alice", "shared")
     graph.add_edge("bob", "shared")
-    people = [MagicMock(id="alice", email="alice@example.com"), MagicMock(id="bob", email="bob@example.com")]
+    people = [
+        MagicMock(id="alice", email="alice@example.com"),
+        MagicMock(id="bob", email="bob@example.com"),
+    ]
     session = MagicMock()
     session.__enter__ = MagicMock(return_value=session)
     session.__exit__ = MagicMock(return_value=False)
     session.exec.return_value.all.return_value = people
     session.exec.return_value.first.return_value = None
 
-    with patch("thenetwork.worker.proactive.build_graph", return_value=graph), \
-         patch("thenetwork.worker.proactive.get_session", return_value=session), \
-         patch("thenetwork.worker.proactive.process_email") as process_email:
+    with (
+        patch("thenetwork.worker.proactive.build_graph", return_value=graph),
+        patch("thenetwork.worker.proactive.get_session", return_value=session),
+        patch("thenetwork.worker.proactive.process_email") as process_email,
+    ):
         await scan_for_opportunities.func(0)
 
     assert process_email.defer.called
@@ -319,7 +344,9 @@ async def test_proactive_semantic_trigger_never_sets_quote_inputs():
     from thenetwork.search.match import MemoryMatch
     from thenetwork.worker.proactive import scan_for_matches
 
-    recent = MagicMock(id="recent", refs=["arrival"], gist="arrival gist", embedding=[0.0])
+    recent = MagicMock(
+        id="recent", refs=["arrival"], gist="arrival gist", embedding=[0.0]
+    )
     standing_person = MagicMock(id="standing", email="standing@example.com")
     session = MagicMock()
     session.__enter__ = MagicMock(return_value=session)
@@ -329,10 +356,12 @@ async def test_proactive_semantic_trigger_never_sets_quote_inputs():
     session.get.return_value = standing_person
     matches = [MemoryMatch("older", "standing", "standing gist", 0.9)]
 
-    with patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()), \
-         patch("thenetwork.worker.proactive.get_session", return_value=session), \
-         patch("thenetwork.worker.proactive.match_memories", return_value=matches), \
-         patch("thenetwork.worker.proactive.process_email") as process_email:
+    with (
+        patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()),
+        patch("thenetwork.worker.proactive.get_session", return_value=session),
+        patch("thenetwork.worker.proactive.match_memories", return_value=matches),
+        patch("thenetwork.worker.proactive.process_email") as process_email,
+    ):
         await scan_for_matches.func(0)
 
     process_email.defer.assert_called_once()
@@ -359,12 +388,24 @@ async def test_dispatch_blocks_after_max_sends_per_run():
     ctx._mock_sess.get.return_value = _fake_person()
 
     with patch("thenetwork.agent.tools.send_reply") as mock_send:
-        first = await send_outreach(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
-        second = await send_outreach(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
-        third = await send_outreach(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
-        fourth = await send_outreach(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
+        first = await send_outreach(
+            ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello"
+        )
+        second = await send_outreach(
+            ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello"
+        )
+        third = await send_outreach(
+            ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello"
+        )
+        fourth = await send_outreach(
+            ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello"
+        )
 
-    assert [first["status"], second["status"], third["status"]] == ["sent", "sent", "sent"]
+    assert [first["status"], second["status"], third["status"]] == [
+        "sent",
+        "sent",
+        "sent",
+    ]
     assert fourth == {"status": "limited", "reason": "max_sends_per_run", "limit": 3}
     assert mock_send.call_count == 3
 
@@ -379,8 +420,12 @@ async def test_dispatch_recipient_daily_cap_is_settings_configurable():
     ctx._mock_sess.get.return_value = _fake_person()
 
     with patch("thenetwork.agent.tools.send_reply") as mock_send:
-        first = await send_outreach(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
-        second = await send_outreach(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
+        first = await send_outreach(
+            ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello"
+        )
+        second = await send_outreach(
+            ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello"
+        )
 
     assert first["status"] == "sent"
     assert second == {"status": "limited", "reason": "recipient_daily_cap", "limit": 1}
@@ -401,7 +446,11 @@ async def test_dispatch_sender_reply_daily_cap_is_settings_configurable():
         second = await reply_to_sender(ctx, subject="Hi", body_text="Hello")
 
     assert first["status"] == "sent"
-    assert second == {"status": "limited", "reason": "sender_reply_daily_cap", "limit": 1}
+    assert second == {
+        "status": "limited",
+        "reason": "sender_reply_daily_cap",
+        "limit": 1,
+    }
     mock_send.assert_called_once()
 
 
@@ -411,7 +460,9 @@ async def test_dispatch_unknown_id_returns_error():
     ctx = FakeCtx()
     ctx._mock_sess.get.return_value = None
 
-    result = await send_outreach(ctx, recipient_user_id="nonexistent", subject="Hi", body_text="Hello")
+    result = await send_outreach(
+        ctx, recipient_user_id="nonexistent", subject="Hi", body_text="Hello"
+    )
 
     assert result["status"] == "error"
 
@@ -456,7 +507,9 @@ async def test_dispatch_reads_address_before_session_closes():
     ctx._mock_sess.__exit__ = MagicMock(side_effect=_exit_and_detach)
 
     with patch("thenetwork.agent.tools.send_reply") as mock_send:
-        result = await send_outreach(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
+        result = await send_outreach(
+            ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello"
+        )
 
     assert result["status"] == "sent"
     assert mock_send.call_args.kwargs["to_address"] == "bob@example.com"
@@ -472,12 +525,18 @@ async def test_dispatch_failed_send_does_not_consume_recipient_daily_cap():
     ctx.deps.settings.dispatch_sender_reply_daily_cap = 99
     ctx._mock_sess.get.return_value = _fake_person()
 
-    with patch("thenetwork.agent.tools.send_reply", side_effect=RuntimeError("smtp down")):
+    with patch(
+        "thenetwork.agent.tools.send_reply", side_effect=RuntimeError("smtp down")
+    ):
         with pytest.raises(RuntimeError):
-            await send_outreach(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
+            await send_outreach(
+                ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello"
+            )
 
     with patch("thenetwork.agent.tools.send_reply") as mock_send:
-        result = await send_outreach(ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello")
+        result = await send_outreach(
+            ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello"
+        )
 
     assert result["status"] == "sent"
     mock_send.assert_called_once()
@@ -494,7 +553,9 @@ async def test_dispatch_failed_send_does_not_consume_sender_reply_daily_cap():
     ctx.deps.settings.dispatch_sender_reply_daily_cap = 1
     ctx._mock_sess.get.return_value = _fake_person("alice@example.com")
 
-    with patch("thenetwork.agent.tools.send_reply", side_effect=RuntimeError("smtp down")):
+    with patch(
+        "thenetwork.agent.tools.send_reply", side_effect=RuntimeError("smtp down")
+    ):
         with pytest.raises(RuntimeError):
             await reply_to_sender(ctx, subject="Hi", body_text="Hello")
 
@@ -508,6 +569,7 @@ async def test_dispatch_failed_send_does_not_consume_sender_reply_daily_cap():
 # ---------------------------------------------------------------------------
 # register_person: self-registration only - no confused-deputy re-opening
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_register_person_rejects_unauthenticated_sender():
@@ -585,7 +647,10 @@ async def test_propose_introduction_defers_after_per_run_cap():
         ]
 
     assert [result["status"] for result in results] == [
-        "proposed", "proposed", "proposed", "deferred",
+        "proposed",
+        "proposed",
+        "proposed",
+        "deferred",
     ]
     assert results[-1]["reason"] == "run_proposal_cap"
     assert propose.call_count == 3
@@ -763,7 +828,9 @@ async def test_register_person_enforces_global_daily_quota():
     limiter = MagicMock()
     limiter.hit.return_value = False
 
-    with patch("thenetwork.agent.tools._get_registration_limiter", return_value=(limiter, None)):
+    with patch(
+        "thenetwork.agent.tools._get_registration_limiter", return_value=(limiter, None)
+    ):
         result = await register_person(ctx, name="Alice")
 
     assert result == {
@@ -784,17 +851,27 @@ async def test_register_person_updates_sender_id_before_same_run_escalation():
         sender_authenticated=True,
     )
     ctx._mock_sess.exec.return_value.first.return_value = None
-    ctx._mock_sess.refresh.side_effect = lambda person: setattr(person, "id", "new-person-id")
+    ctx._mock_sess.refresh.side_effect = lambda person: setattr(
+        person, "id", "new-person-id"
+    )
 
     async def fake_sanitize(memory, session):
         memory.gist = "[name] needs human review."
         return memory.gist
 
-    with patch("thenetwork.agent.tools.embed_text", new=AsyncMock(return_value=[0.0] * 1536)), \
-         patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new=AsyncMock(side_effect=fake_sanitize)), \
-         patch("thenetwork.agent.tools.notify_admins") as mock_notify, \
-         patch("thenetwork.agent.tools.send_reply") as mock_send, \
-         patch("thenetwork.agent.tools.audit_event") as mock_audit:
+    with (
+        patch(
+            "thenetwork.agent.tools.embed_text",
+            new=AsyncMock(return_value=[0.0] * 1536),
+        ),
+        patch(
+            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
+            new=AsyncMock(side_effect=fake_sanitize),
+        ),
+        patch("thenetwork.agent.tools.notify_admins") as mock_notify,
+        patch("thenetwork.agent.tools.send_reply") as mock_send,
+        patch("thenetwork.agent.tools.audit_event") as mock_audit,
+    ):
         registered = await register_person(ctx, name="Alice")
         escalated = await escalate(ctx, reason="Needs human review")
 
@@ -825,7 +902,9 @@ async def test_dispatch_to_just_registered_sender_threads_and_counts_sender_repl
     ctx.deps.inbound_body_for_quote = "Original request"
     ctx.deps.inbound_date = "Sat, 04 Jul 2026 12:00:00 -0700"
     ctx._mock_sess.exec.return_value.first.return_value = None
-    ctx._mock_sess.refresh.side_effect = lambda person: setattr(person, "id", "new-person-id")
+    ctx._mock_sess.refresh.side_effect = lambda person: setattr(
+        person, "id", "new-person-id"
+    )
     ctx._mock_sess.get.return_value = _fake_person("alice@example.com")
 
     with patch("thenetwork.agent.tools.send_reply") as mock_send:
@@ -835,15 +914,23 @@ async def test_dispatch_to_just_registered_sender_threads_and_counts_sender_repl
 
     assert registered == {"status": "created", "person_id": "new-person-id"}
     assert first["status"] == "sent"
-    assert second == {"status": "limited", "reason": "sender_reply_daily_cap", "limit": 1}
+    assert second == {
+        "status": "limited",
+        "reason": "sender_reply_daily_cap",
+        "limit": 1,
+    }
     mock_send.assert_called_once()
     assert mock_send.call_args.kwargs["in_reply_to"] == "<abc123@example.com>"
-    assert mock_send.call_args.kwargs["references"] == "<root@example.com> <abc123@example.com>"
+    assert (
+        mock_send.call_args.kwargs["references"]
+        == "<root@example.com> <abc123@example.com>"
+    )
 
 
 # ---------------------------------------------------------------------------
 # SEAL: memory storage creates gist; search returns only gist + opaque id
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_remember_stores_with_gist():
@@ -854,10 +941,23 @@ async def test_remember_stores_with_gist():
     ctx._mock_sess.get.return_value = MagicMock(spec=Person, id="user-alice")
     sanitized = "[name] is an ml engineer"
 
-    with patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock, return_value=[0.0] * 1536) as mock_embed, \
-         patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock) as mock_sanitize:
+    with (
+        patch(
+            "thenetwork.agent.tools.embed_text",
+            new_callable=AsyncMock,
+            return_value=[0.0] * 1536,
+        ) as mock_embed,
+        patch(
+            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
+            new_callable=AsyncMock,
+        ) as mock_sanitize,
+    ):
         mock_sanitize.return_value = sanitized
-        await remember(ctx, text="Alice Smith is an ML engineer at Acme Corp, alice@acme.com", refs=["user-alice"])
+        await remember(
+            ctx,
+            text="Alice Smith is an ML engineer at Acme Corp, alice@acme.com",
+            refs=["user-alice"],
+        )
 
     mock_sanitize.assert_awaited_once()
     mock_embed.assert_awaited_once_with(sanitized)
@@ -873,8 +973,17 @@ async def test_remember_zero_ref_does_not_sanitize_or_set_gist():
     ctx._mock_sess.add.side_effect = added.append
     raw = "General system note with no person refs"
 
-    with patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock, return_value=[0.0] * 1536) as mock_embed, \
-         patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock) as mock_sanitize:
+    with (
+        patch(
+            "thenetwork.agent.tools.embed_text",
+            new_callable=AsyncMock,
+            return_value=[0.0] * 1536,
+        ) as mock_embed,
+        patch(
+            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
+            new_callable=AsyncMock,
+        ) as mock_sanitize,
+    ):
         await remember(ctx, text=raw, refs=[])
 
     mock_sanitize.assert_not_awaited()
@@ -890,8 +999,15 @@ async def test_remember_rejects_text_over_configured_cap():
     ctx = FakeCtx()
     ctx.deps.settings.remember_text_max_chars = 5
 
-    with patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock) as mock_embed, \
-         patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock) as mock_sanitize:
+    with (
+        patch(
+            "thenetwork.agent.tools.embed_text", new_callable=AsyncMock
+        ) as mock_embed,
+        patch(
+            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
+            new_callable=AsyncMock,
+        ) as mock_sanitize,
+    ):
         result = await remember(ctx, text="too long", refs=["user-alice"])
 
     assert result == {
@@ -917,9 +1033,18 @@ async def test_remember_rejects_when_person_memory_ceiling_reached():
     ctx.deps.settings.person_memory_limit = 1
     ctx._mock_sess.exec.return_value = FakeExecResult()
 
-    with patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock) as mock_embed, \
-         patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock) as mock_sanitize:
-        result = await remember(ctx, text="Alice is an ML engineer", refs=["user-alice"])
+    with (
+        patch(
+            "thenetwork.agent.tools.embed_text", new_callable=AsyncMock
+        ) as mock_embed,
+        patch(
+            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
+            new_callable=AsyncMock,
+        ) as mock_sanitize,
+    ):
+        result = await remember(
+            ctx, text="Alice is an ML engineer", refs=["user-alice"]
+        )
 
     assert result == {
         "status": "error",
@@ -942,9 +1067,19 @@ async def test_remember_returns_empty_consolidation_candidates():
     ctx._mock_sess.add.side_effect = added.append
     sanitized = "[name] is an ml engineer"
 
-    with patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock, return_value=[0.0] * 1536), \
-         patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock, return_value=sanitized), \
-         patch("thenetwork.agent.tools.match_memories", return_value=[]) as mock_match:
+    with (
+        patch(
+            "thenetwork.agent.tools.embed_text",
+            new_callable=AsyncMock,
+            return_value=[0.0] * 1536,
+        ),
+        patch(
+            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
+            new_callable=AsyncMock,
+            return_value=sanitized,
+        ),
+        patch("thenetwork.agent.tools.match_memories", return_value=[]) as mock_match,
+    ):
         result = await remember(
             ctx,
             text="Alice Smith is an ML engineer at Acme Corp, alice@acme.com",
@@ -1005,9 +1140,19 @@ async def test_remember_returns_sealed_duplicate_consolidation_candidates():
             ),
         ]
 
-    with patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock, return_value=[0.0] * 1536), \
-         patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock, return_value="[name] researches privacy."), \
-         patch("thenetwork.agent.tools.match_memories", side_effect=fake_match_memories):
+    with (
+        patch(
+            "thenetwork.agent.tools.embed_text",
+            new_callable=AsyncMock,
+            return_value=[0.0] * 1536,
+        ),
+        patch(
+            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
+            new_callable=AsyncMock,
+            return_value="[name] researches privacy.",
+        ),
+        patch("thenetwork.agent.tools.match_memories", side_effect=fake_match_memories),
+    ):
         result = await remember(
             ctx,
             text=raw_other_person_text,
@@ -1073,9 +1218,19 @@ async def test_remember_dedupes_consolidation_candidates_by_memory_id():
             ),
         ]
 
-    with patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock, return_value=[0.0] * 1536), \
-         patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock, return_value="[name] is a cofounder."), \
-         patch("thenetwork.agent.tools.match_memories", side_effect=fake_match_memories):
+    with (
+        patch(
+            "thenetwork.agent.tools.embed_text",
+            new_callable=AsyncMock,
+            return_value=[0.0] * 1536,
+        ),
+        patch(
+            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
+            new_callable=AsyncMock,
+            return_value="[name] is a cofounder.",
+        ),
+        patch("thenetwork.agent.tools.match_memories", side_effect=fake_match_memories),
+    ):
         result = await remember(
             ctx,
             text="Alice is a cofounder",
@@ -1103,8 +1258,14 @@ async def test_search_returns_gist_not_raw_text():
     )
 
     ctx = FakeCtx()
-    with patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock, return_value=[0.0] * 1536), \
-         patch("thenetwork.agent.tools.match_memories", return_value=[mock_match]):
+    with (
+        patch(
+            "thenetwork.agent.tools.embed_text",
+            new_callable=AsyncMock,
+            return_value=[0.0] * 1536,
+        ),
+        patch("thenetwork.agent.tools.match_memories", return_value=[mock_match]),
+    ):
         results = await search(ctx, query="who works in ml")
 
     assert results
@@ -1129,8 +1290,14 @@ async def test_search_result_keys_sealed_for_other_people():
     )
 
     ctx = FakeCtx()
-    with patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock, return_value=[0.0] * 1536), \
-         patch("thenetwork.agent.tools.match_memories", return_value=[mock_match]):
+    with (
+        patch(
+            "thenetwork.agent.tools.embed_text",
+            new_callable=AsyncMock,
+            return_value=[0.0] * 1536,
+        ),
+        patch("thenetwork.agent.tools.match_memories", return_value=[mock_match]),
+    ):
         results = await search(ctx, query="ml engineer")
 
     allowed_keys = {"person_id", "gist", "similarity", "is_sender_owned"}
@@ -1160,8 +1327,14 @@ async def test_search_includes_memory_id_only_for_sender_owned_results():
     ]
 
     ctx = FakeCtx(sender_user_id="user-alice")
-    with patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock, return_value=[0.0] * 1536), \
-         patch("thenetwork.agent.tools.match_memories", return_value=matches):
+    with (
+        patch(
+            "thenetwork.agent.tools.embed_text",
+            new_callable=AsyncMock,
+            return_value=[0.0] * 1536,
+        ),
+        patch("thenetwork.agent.tools.match_memories", return_value=matches),
+    ):
         results = await search(ctx, query="my stored facts")
 
     assert results[0]["memory_id"] == "self-memory"
@@ -1176,7 +1349,9 @@ async def test_forget_deletes_only_sender_owned_memory():
     from thenetwork.db.models import Memory
 
     ctx = FakeCtx(sender_user_id="user-alice")
-    memory = Memory(id="self-memory", text="Alice works on compilers", refs=["user-alice"])
+    memory = Memory(
+        id="self-memory", text="Alice works on compilers", refs=["user-alice"]
+    )
     ctx._mock_sess.get.return_value = memory
 
     result = await forget(ctx, "self-memory")
@@ -1214,7 +1389,9 @@ async def test_search_rejects_query_over_configured_cap():
     ctx = FakeCtx()
     ctx.deps.settings.search_query_max_chars = 5
 
-    with patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock) as mock_embed:
+    with patch(
+        "thenetwork.agent.tools.embed_text", new_callable=AsyncMock
+    ) as mock_embed:
         result = await search(ctx, query="too long")
 
     assert result == {"status": "error", "reason": "query_too_long", "limit": 5}
@@ -1228,7 +1405,9 @@ async def test_remember_blocks_and_rolls_back_when_sanitization_fails(caplog):
 
     ctx = FakeCtx()
     caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-    with patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock) as mock_sanitize:
+    with patch(
+        "thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock
+    ) as mock_sanitize:
         mock_sanitize.side_effect = RuntimeError("presidio unavailable")
         result = await remember(ctx, text="Alice builds compilers", refs=["user-alice"])
 
@@ -1248,6 +1427,7 @@ async def test_remember_blocks_and_rolls_back_when_sanitization_fails(caplog):
 # ---------------------------------------------------------------------------
 # Mail-loop prevention: RFC 3834 header skipping
 # ---------------------------------------------------------------------------
+
 
 def test_auto_submitted_messages_are_skipped():
     """Messages with Auto-Submitted != no must be filtered out by the poller."""
@@ -1274,9 +1454,11 @@ def test_outbound_has_auto_submitted_header():
     def fake_send_message(msg):
         captured.append(msg)
 
-    with patch("thenetwork.email.outbound.get_settings") as mock_settings, \
-         patch("smtplib.SMTP") as mock_smtp, \
-         patch("thenetwork.email.outbound.MailBox") as mock_mailbox:
+    with (
+        patch("thenetwork.email.outbound.get_settings") as mock_settings,
+        patch("smtplib.SMTP") as mock_smtp,
+        patch("thenetwork.email.outbound.MailBox") as mock_mailbox,
+    ):
         s = MagicMock()
         s.smtp_host = "smtp.example.com"
         s.smtp_port = 587
@@ -1302,6 +1484,7 @@ def test_outbound_has_auto_submitted_header():
         mock_mailbox.return_value.login.return_value = mb_instance
 
         from thenetwork.email.outbound import send_reply
+
         send_reply(to_address="bob@example.com", subject="Hi", body_text="Hello")
 
     assert len(captured) == 1
@@ -1311,6 +1494,7 @@ def test_outbound_has_auto_submitted_header():
 # ---------------------------------------------------------------------------
 # Rate limiting: over-quota sender is blocked
 # ---------------------------------------------------------------------------
+
 
 def test_rate_limit_blocks_after_quota():
     """A sender who exceeds their hourly quota must be blocked."""
@@ -1331,12 +1515,15 @@ def test_rate_limit_blocks_after_quota():
     mock_storage = MagicMock()
     mock_storage.check.return_value = True
 
-    with patch("thenetwork.security.rate_limit._get_limiter", return_value=(mock_limiter, mock_storage)):
+    with patch(
+        "thenetwork.security.rate_limit._get_limiter",
+        return_value=(mock_limiter, mock_storage),
+    ):
         results = [
             check_rate_limit("flood@attacker.com", sender_authenticated=True)
             for _ in range(12)
         ]
 
-    assert all(results[:10])   # first 10 allowed
-    assert not results[10]     # 11th blocked
-    assert not results[11]     # 12th blocked
+    assert all(results[:10])  # first 10 allowed
+    assert not results[10]  # 11th blocked
+    assert not results[11]  # 12th blocked

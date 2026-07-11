@@ -38,6 +38,7 @@ Sign with any standard PGP/MIME-capable mail client (Thunderbird, Apple Mail
 and use the client's normal "digitally sign" action. No token to generate,
 nothing to run by hand.
 """
+
 from __future__ import annotations
 
 import email
@@ -122,7 +123,9 @@ def _extract_multipart_signed(raw_message: bytes) -> tuple[bytes, bytes] | None:
     return raw_message[content_start:content_end], sig_bytes
 
 
-def _verify_pgp_mime(raw_message: bytes, public_key: str) -> tuple[bytes, str, int] | None:
+def _verify_pgp_mime(
+    raw_message: bytes, public_key: str
+) -> tuple[bytes, str, int] | None:
     """Return (verified signed content, signature digest, signature
     timestamp), or None if invalid.
 
@@ -167,7 +170,9 @@ def _consume_signature(sig_hash: str, window_seconds: int) -> bool:
         return False
 
 
-def verify_admin_request(sender_email: str, subject: str, raw_message: bytes | None) -> str | None:
+def verify_admin_request(
+    sender_email: str, subject: str, raw_message: bytes | None
+) -> str | None:
     """Return the verified cleartext body if this is a valid signed admin
     request, else None. Consumes the signature's digest on success (single
     use)."""

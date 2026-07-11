@@ -17,6 +17,7 @@ DB access and outbound mail are still mocked (same style as `test_archetypes.py`
 so a live run costs one model call per case, not a live Postgres + SMTP
 round trip - the substrate under test here is model reasoning, not the store.
 """
+
 from __future__ import annotations
 
 import re
@@ -49,6 +50,7 @@ def _skip_without_credentials() -> None:
 # ---------------------------------------------------------------------------
 # Scenario inputs / captured outcome
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class EmailScenario:
@@ -124,12 +126,21 @@ async def run_scenario(inputs: EmailScenario) -> RunOutcome:
         remembered.append({"text": memory.text, "refs": list(memory.refs or [])})
         return memory.gist or "note"
 
-    with patch("thenetwork.agent.tools.get_session", return_value=mock_session), \
-         patch("thenetwork.agent.tools.send_reply", side_effect=fake_send_reply), \
-         patch("thenetwork.agent.tools.embed_text", new=AsyncMock(side_effect=fake_embed_text)), \
-         patch("thenetwork.agent.tools.match_memories", return_value=inputs.search_results), \
-         patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new=AsyncMock(side_effect=fake_sanitize)):
-
+    with (
+        patch("thenetwork.agent.tools.get_session", return_value=mock_session),
+        patch("thenetwork.agent.tools.send_reply", side_effect=fake_send_reply),
+        patch(
+            "thenetwork.agent.tools.embed_text",
+            new=AsyncMock(side_effect=fake_embed_text),
+        ),
+        patch(
+            "thenetwork.agent.tools.match_memories", return_value=inputs.search_results
+        ),
+        patch(
+            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
+            new=AsyncMock(side_effect=fake_sanitize),
+        ),
+    ):
         settings = get_settings()
         agent = build_agent(model=settings.agent_model)
         deps = AgentDeps(
@@ -167,13 +178,16 @@ async def run_scenario(inputs: EmailScenario) -> RunOutcome:
 # Structural evaluators (hard assertions, not the LLM judge)
 # ---------------------------------------------------------------------------
 
+
 @dataclass(repr=False)
 class ToolWasCalled(Evaluator[EmailScenario, RunOutcome, object]):
     """Asserts a given tool name appears in the tool-call trace."""
 
     tool_name: str = ""
 
-    def evaluate(self, ctx: EvaluatorContext[EmailScenario, RunOutcome, object]) -> bool:
+    def evaluate(
+        self, ctx: EvaluatorContext[EmailScenario, RunOutcome, object]
+    ) -> bool:
         return self.tool_name in ctx.output.tool_calls
 
 
@@ -181,7 +195,9 @@ class ToolWasCalled(Evaluator[EmailScenario, RunOutcome, object]):
 class DidNotDispatchEmail(Evaluator[EmailScenario, RunOutcome, object]):
     """A weak/ambiguous match should not produce an unearned introduction."""
 
-    def evaluate(self, ctx: EvaluatorContext[EmailScenario, RunOutcome, object]) -> bool:
+    def evaluate(
+        self, ctx: EvaluatorContext[EmailScenario, RunOutcome, object]
+    ) -> bool:
         return len(ctx.output.dispatched) == 0
 
 
@@ -189,7 +205,9 @@ class DidNotDispatchEmail(Evaluator[EmailScenario, RunOutcome, object]):
 class RepliedWithQuestion(Evaluator[EmailScenario, RunOutcome, object]):
     """A vague standing intent needs a concrete follow-up, not a passive reply."""
 
-    def evaluate(self, ctx: EvaluatorContext[EmailScenario, RunOutcome, object]) -> bool:
+    def evaluate(
+        self, ctx: EvaluatorContext[EmailScenario, RunOutcome, object]
+    ) -> bool:
         return any("?" in dispatch["body"] for dispatch in ctx.output.dispatched)
 
 
@@ -199,7 +217,9 @@ class NoOtherPersonPII(Evaluator[EmailScenario, RunOutcome, object]):
 
     forbidden: tuple[str, ...] = ()
 
-    def evaluate(self, ctx: EvaluatorContext[EmailScenario, RunOutcome, object]) -> bool:
+    def evaluate(
+        self, ctx: EvaluatorContext[EmailScenario, RunOutcome, object]
+    ) -> bool:
         haystacks = [ctx.output.reply] + [d["body"] for d in ctx.output.dispatched]
         blob = "\n".join(haystacks).lower()
         return not any(needle.lower() in blob for needle in self.forbidden)
@@ -211,7 +231,9 @@ class ToolWasNotCalled(Evaluator[EmailScenario, RunOutcome, object]):
 
     tool_name: str = ""
 
-    def evaluate(self, ctx: EvaluatorContext[EmailScenario, RunOutcome, object]) -> bool:
+    def evaluate(
+        self, ctx: EvaluatorContext[EmailScenario, RunOutcome, object]
+    ) -> bool:
         return self.tool_name not in ctx.output.tool_calls
 
 
@@ -221,7 +243,9 @@ class ToolCalledAtMostOnce(Evaluator[EmailScenario, RunOutcome, object]):
 
     tool_name: str = ""
 
-    def evaluate(self, ctx: EvaluatorContext[EmailScenario, RunOutcome, object]) -> bool:
+    def evaluate(
+        self, ctx: EvaluatorContext[EmailScenario, RunOutcome, object]
+    ) -> bool:
         return ctx.output.tool_calls.count(self.tool_name) <= 1
 
 
@@ -231,7 +255,9 @@ class ForgotExactly(Evaluator[EmailScenario, RunOutcome, object]):
 
     memory_ids: tuple[str, ...] = ()
 
-    def evaluate(self, ctx: EvaluatorContext[EmailScenario, RunOutcome, object]) -> bool:
+    def evaluate(
+        self, ctx: EvaluatorContext[EmailScenario, RunOutcome, object]
+    ) -> bool:
         return sorted(ctx.output.forget_attempts) == sorted(self.memory_ids)
 
 
@@ -258,7 +284,9 @@ class NoPersonalSignoff(Evaluator[EmailScenario, RunOutcome, object]):
     model's own reply text should not add "Best, <name>" or similar.
     """
 
-    def evaluate(self, ctx: EvaluatorContext[EmailScenario, RunOutcome, object]) -> bool:
+    def evaluate(
+        self, ctx: EvaluatorContext[EmailScenario, RunOutcome, object]
+    ) -> bool:
         bodies = [ctx.output.reply] + [d["body"] for d in ctx.output.dispatched]
         return not any(_SIGNOFF_RE.search(body) for body in bodies if body)
 
@@ -300,7 +328,7 @@ onboarding_case = Case(
                 "lifted verbatim from internal instructions (e.g. 'that's "
                 "normal, not a bad sign') rather than something a person "
                 "would actually say. The reply must not close with a personal "
-                "sign-off or invented name (e.g. \"Best, Alex\") - The "
+                'sign-off or invented name (e.g. "Best, Alex") - The '
                 "Network has no personal name, and identity is attached only "
                 "by a footer added at send time."
             ),
@@ -645,4 +673,6 @@ async def test_live_model_archetype_suite():
         for case in report.cases
         if not all(a.value for a in case.assertions.values())
     ]
-    assert not failures, f"live-model archetype suite had failing assertions: {failures}"
+    assert not failures, (
+        f"live-model archetype suite had failing assertions: {failures}"
+    )

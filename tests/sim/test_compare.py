@@ -3,7 +3,11 @@ from __future__ import annotations
 import json
 
 from thenetwork.sim.cli import main
-from thenetwork.sim.scoring.compare import compare_runs, load_run_metrics, render_compare
+from thenetwork.sim.scoring.compare import (
+    compare_runs,
+    load_run_metrics,
+    render_compare,
+)
 
 
 def _write_events(run_dir, events):
@@ -21,7 +25,12 @@ def test_load_run_metrics_counts_population_deltas(tmp_path):
         [
             {"event": "sim.process_email_started"},
             {"event": "introduction.sent", "total_tokens": 20, "cost_usd": 0.01},
-            {"event": "sim.judge.transcript", "score": 7, "token_usage": 5, "cost_usd": 0.02},
+            {
+                "event": "sim.judge.transcript",
+                "score": 7,
+                "token_usage": 5,
+                "cost_usd": 0.02,
+            },
             {"event": "sim.judge.transcript", "score": 9},
         ],
     )
@@ -38,7 +47,9 @@ def test_load_run_metrics_counts_population_deltas(tmp_path):
 def test_compare_runs_renders_metric_table(tmp_path):
     before = tmp_path / "before"
     after = tmp_path / "after"
-    _write_events(before, [{"event": "sim.judge.transcript", "score": 6, "total_tokens": 10}])
+    _write_events(
+        before, [{"event": "sim.judge.transcript", "score": 6, "total_tokens": 10}]
+    )
     _write_events(
         after,
         [

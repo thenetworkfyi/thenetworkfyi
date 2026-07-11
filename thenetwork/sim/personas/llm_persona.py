@@ -1,4 +1,5 @@
 """LLM-driven simulated persona for conversational sim runs."""
+
 from __future__ import annotations
 
 from typing import Any

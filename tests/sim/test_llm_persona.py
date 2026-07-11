@@ -28,7 +28,10 @@ def test_persona_prompt_defines_introduction_token_response_protocol():
     )
 
     assert "decision word - YES, NO, or REVOKE - on the first line" in prompt
-    assert "complete `[intro:...]` token exactly as received onto the second line" in prompt
+    assert (
+        "complete `[intro:...]` token exactly as received onto the second line"
+        in prompt
+    )
     assert "Your goal decides which decision word to use" in prompt
     assert "overrides any suggestion in the message" in prompt
     assert "Priya Shah <priya@example.test>" in prompt
@@ -39,7 +42,9 @@ def test_persona_prompt_defines_introduction_token_response_protocol():
 
 
 async def test_llm_persona_writes_email_body_from_model_output():
-    person = LLMTinyPerson(_config(), TestModel(custom_output_text="Hi, I run ML platforms."))
+    person = LLMTinyPerson(
+        _config(), TestModel(custom_output_text="Hi, I run ML platforms.")
+    )
     adapter = TinyPersonEmailAdapter(person, _config())
 
     msg = await adapter.anext_email("Tick 1. Write an email.", tick=1, subject="Tick 1")

@@ -5,7 +5,8 @@ from sqlalchemy.engine import URL
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore")
+        env_file=".env", env_file_encoding="utf-8", extra="ignore"
+    )
 
     # Database - kept as separate parts rather than a single DATABASE_URL.
     # Postgres itself gets POSTGRES_PASSWORD as a literal string (no

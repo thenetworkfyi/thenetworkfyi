@@ -1,4 +1,5 @@
 """Tests for the admin channel: PGP/MIME auth, command parsing, task routing."""
+
 from __future__ import annotations
 
 import tempfile
@@ -24,6 +25,7 @@ import pytest
 # whole stdin stream, silently corrupting the signed data. Keys generated with
 # no_protection=True need no passphrase at all, so the bug is simply avoided.
 
+
 def _gen_gpg_identity(name_email: str) -> SimpleNamespace:
     home = tempfile.mkdtemp(prefix="thenetwork-test-gpg-")
     gpg = gnupg.GPG(gnupghome=home)
@@ -39,7 +41,9 @@ def _gen_gpg_identity(name_email: str) -> SimpleNamespace:
     fingerprint = str(key)
     if not fingerprint:
         pytest.skip(f"gpg keygen failed: {key.stderr}")
-    return SimpleNamespace(gpg=gpg, fingerprint=fingerprint, public_key=gpg.export_keys(fingerprint))
+    return SimpleNamespace(
+        gpg=gpg, fingerprint=fingerprint, public_key=gpg.export_keys(fingerprint)
+    )
 
 
 @pytest.fixture(scope="module")
@@ -55,7 +59,9 @@ def attacker_identity():
 
 
 def _build_signed_part(cleartext: str) -> bytes:
-    return b"Content-Type: text/plain; charset=us-ascii\r\n\r\n" + cleartext.encode("ascii")
+    return b"Content-Type: text/plain; charset=us-ascii\r\n\r\n" + cleartext.encode(
+        "ascii"
+    )
 
 
 def _build_pgp_mime_message(
@@ -67,7 +73,9 @@ def _build_pgp_mime_message(
     boundary: str = "THENETWORKTESTBOUNDARY",
 ) -> bytes:
     """Build a raw multipart/signed (RFC 3156) message, signed for real."""
-    sig = identity.gpg.sign(signed_part, keyid=identity.fingerprint, detach=True, passphrase=None)
+    sig = identity.gpg.sign(
+        signed_part, keyid=identity.fingerprint, detach=True, passphrase=None
+    )
     assert sig.status == "signature created", sig.stderr
     sig_bytes = bytes(sig.data)
 
@@ -147,15 +155,19 @@ def _reset_gpg_cache():
 
 # ─── Auth ────────────────────────────────────────────────────────────────────
 
+
 def test_verify_admin_request_valid(admin_identity):
     from thenetwork.admin.auth import verify_admin_request
 
     raw = _admin_message(admin_identity, command="status")
     cm, session = _fresh_nonce_session()
-    with patch(
-        "thenetwork.admin.auth.get_settings",
-        return_value=_settings(public_key=admin_identity.public_key),
-    ), patch("thenetwork.admin.auth.get_session", return_value=cm):
+    with (
+        patch(
+            "thenetwork.admin.auth.get_settings",
+            return_value=_settings(public_key=admin_identity.public_key),
+        ),
+        patch("thenetwork.admin.auth.get_session", return_value=cm),
+    ):
         result = verify_admin_request("admin@example.com", "ADMIN: status", raw)
 
     assert result is not None
@@ -168,11 +180,16 @@ def test_verify_admin_request_case_insensitive_subject(admin_identity):
 
     raw = _admin_message(admin_identity, command="status", subject="admin: status")
     cm, _ = _fresh_nonce_session()
-    with patch(
-        "thenetwork.admin.auth.get_settings",
-        return_value=_settings(public_key=admin_identity.public_key),
-    ), patch("thenetwork.admin.auth.get_session", return_value=cm):
-        assert verify_admin_request("admin@example.com", "admin: status", raw) is not None
+    with (
+        patch(
+            "thenetwork.admin.auth.get_settings",
+            return_value=_settings(public_key=admin_identity.public_key),
+        ),
+        patch("thenetwork.admin.auth.get_session", return_value=cm),
+    ):
+        assert (
+            verify_admin_request("admin@example.com", "admin: status", raw) is not None
+        )
 
 
 def test_verify_admin_request_wrong_sender(admin_identity):
@@ -186,12 +203,16 @@ def test_verify_admin_request_wrong_sender(admin_identity):
         assert verify_admin_request("attacker@evil.com", "ADMIN: status", raw) is None
 
 
-def test_verify_admin_request_signed_by_untrusted_key(admin_identity, attacker_identity):
+def test_verify_admin_request_signed_by_untrusted_key(
+    admin_identity, attacker_identity
+):
     """A signature that verifies fine against the signer's own key must still
     be rejected if that key isn't the one configured in ADMIN_GPG_PUBLIC_KEY."""
     from thenetwork.admin.auth import verify_admin_request
 
-    raw = _admin_message(attacker_identity, command="status", sender="admin@example.com")
+    raw = _admin_message(
+        attacker_identity, command="status", sender="admin@example.com"
+    )
     with patch(
         "thenetwork.admin.auth.get_settings",
         return_value=_settings(public_key=admin_identity.public_key),
@@ -226,7 +247,9 @@ def test_verify_admin_request_disabled_when_no_public_key(admin_identity):
     from thenetwork.admin.auth import verify_admin_request
 
     raw = _admin_message(admin_identity, command="status")
-    with patch("thenetwork.admin.auth.get_settings", return_value=_settings(public_key="")):
+    with patch(
+        "thenetwork.admin.auth.get_settings", return_value=_settings(public_key="")
+    ):
         assert verify_admin_request("admin@example.com", "ADMIN: status", raw) is None
 
 
@@ -249,10 +272,13 @@ def test_verify_admin_request_expired_timestamp(admin_identity):
 
     raw = _admin_message(admin_identity, command="status")
     future = time.time() + 600
-    with patch(
-        "thenetwork.admin.auth.get_settings",
-        return_value=_settings(public_key=admin_identity.public_key, window=300),
-    ), patch("thenetwork.admin.auth.time.time", return_value=future):
+    with (
+        patch(
+            "thenetwork.admin.auth.get_settings",
+            return_value=_settings(public_key=admin_identity.public_key, window=300),
+        ),
+        patch("thenetwork.admin.auth.time.time", return_value=future),
+    ):
         assert verify_admin_request("admin@example.com", "ADMIN: status", raw) is None
 
 
@@ -269,10 +295,13 @@ def test_verify_admin_request_rejects_replayed_signature(admin_identity):
     cm = MagicMock()
     cm.__enter__ = MagicMock(return_value=session)
     cm.__exit__ = MagicMock(return_value=False)
-    with patch(
-        "thenetwork.admin.auth.get_settings",
-        return_value=_settings(public_key=admin_identity.public_key),
-    ), patch("thenetwork.admin.auth.get_session", return_value=cm):
+    with (
+        patch(
+            "thenetwork.admin.auth.get_settings",
+            return_value=_settings(public_key=admin_identity.public_key),
+        ),
+        patch("thenetwork.admin.auth.get_session", return_value=cm),
+    ):
         assert verify_admin_request("admin@example.com", "ADMIN: status", raw) is None
     session.add.assert_not_called()
 
@@ -317,7 +346,9 @@ def test_verify_admin_request_signature_bound_to_signed_content(admin_identity):
         "thenetwork.admin.auth.get_settings",
         return_value=_settings(public_key=admin_identity.public_key),
     ):
-        assert verify_admin_request("admin@example.com", "ADMIN: status", tampered) is None
+        assert (
+            verify_admin_request("admin@example.com", "ADMIN: status", tampered) is None
+        )
 
 
 def test_extract_command():
@@ -331,10 +362,7 @@ def test_extract_command():
 def test_extract_body_text_strips_signature_and_quotes():
     from thenetwork.admin.auth import extract_body_text
 
-    cleartext = (
-        "COMMAND: remember\n\n"
-        "Real content here.\n> Quoted line\nMore content."
-    )
+    cleartext = "COMMAND: remember\n\nReal content here.\n> Quoted line\nMore content."
     result = extract_body_text(cleartext)
     assert "COMMAND:" not in result
     assert "Quoted line" not in result
@@ -343,6 +371,7 @@ def test_extract_body_text_strips_signature_and_quotes():
 
 
 # ─── Task routing ────────────────────────────────────────────────────────────
+
 
 def test_process_email_routes_admin_to_handler():
     """Admin emails are handled by admin channel, not the agent."""
@@ -360,27 +389,37 @@ def test_process_email_routes_admin_to_handler():
     mock_session.get.return_value = None
     mock_session.exec.return_value.first.return_value = None
 
-    with patch("thenetwork.worker.tasks.check_rate_limit", return_value=True), \
-         patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)), \
-         patch("thenetwork.worker.tasks.verify_admin_request", return_value=verified_cleartext), \
-         patch("thenetwork.worker.tasks.extract_command", return_value="status"), \
-         patch("thenetwork.worker.tasks.extract_body_text", return_value=""), \
-         patch("thenetwork.worker.tasks.handle_admin_command", mock_reply), \
-         patch("thenetwork.worker.tasks.send_reply", mock_send), \
-         patch("thenetwork.worker.tasks.get_session", return_value=mock_session), \
-         patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()) as mock_agent:
-        asyncio.run(process_email.func(
-            sender_email="admin@example.com",
-            subject="ADMIN: status",
-            body="COMMAND: status",
-            inbound_message_id="<admin123@example.com>",
-            inbound_references="<root@example.com>",
-        ))
+    with (
+        patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
+        patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)),
+        patch(
+            "thenetwork.worker.tasks.verify_admin_request",
+            return_value=verified_cleartext,
+        ),
+        patch("thenetwork.worker.tasks.extract_command", return_value="status"),
+        patch("thenetwork.worker.tasks.extract_body_text", return_value=""),
+        patch("thenetwork.worker.tasks.handle_admin_command", mock_reply),
+        patch("thenetwork.worker.tasks.send_reply", mock_send),
+        patch("thenetwork.worker.tasks.get_session", return_value=mock_session),
+        patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()) as mock_agent,
+    ):
+        asyncio.run(
+            process_email.func(
+                sender_email="admin@example.com",
+                subject="ADMIN: status",
+                body="COMMAND: status",
+                inbound_message_id="<admin123@example.com>",
+                inbound_references="<root@example.com>",
+            )
+        )
 
     mock_reply.assert_called_once_with("status", "")
     mock_send.assert_called_once()
     assert mock_send.call_args.kwargs["in_reply_to"] == "<admin123@example.com>"
-    assert mock_send.call_args.kwargs["references"] == "<root@example.com> <admin123@example.com>"
+    assert (
+        mock_send.call_args.kwargs["references"]
+        == "<root@example.com> <admin123@example.com>"
+    )
     assert "quoted_body_text" not in mock_send.call_args.kwargs
     assert "quoted_date" not in mock_send.call_args.kwargs
     mock_agent.assert_not_called()
@@ -394,23 +433,27 @@ def test_process_email_authenticated_non_admin_goes_to_agent():
 
     mock_agent = AsyncMock()
 
-    with patch("thenetwork.worker.tasks.check_rate_limit", return_value=True), \
-         patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)), \
-         patch("thenetwork.worker.tasks.verify_admin_request", return_value=None), \
-         patch("thenetwork.worker.tasks.get_session") as mock_gs, \
-         patch("thenetwork.worker.tasks.run_agent_for_email", mock_agent):
+    with (
+        patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
+        patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)),
+        patch("thenetwork.worker.tasks.verify_admin_request", return_value=None),
+        patch("thenetwork.worker.tasks.get_session") as mock_gs,
+        patch("thenetwork.worker.tasks.run_agent_for_email", mock_agent),
+    ):
         mock_session = MagicMock()
         mock_session.__enter__ = MagicMock(return_value=mock_session)
         mock_session.__exit__ = MagicMock(return_value=False)
         mock_session.get.return_value = None
         mock_session.exec.return_value.first.return_value = None
         mock_gs.return_value = mock_session
-        asyncio.run(process_email.func(
-            sender_email="user@example.com",
-            subject="Hello",
-            body="I'm looking for a cofounder.",
-            sender_authenticated=True,
-        ))
+        asyncio.run(
+            process_email.func(
+                sender_email="user@example.com",
+                subject="Hello",
+                body="I'm looking for a cofounder.",
+                sender_authenticated=True,
+            )
+        )
 
     mock_agent.assert_called_once()
 
@@ -423,24 +466,28 @@ def test_process_email_drops_unauthenticated_unknown_sender_before_agent():
 
     mock_agent = AsyncMock()
 
-    with patch("thenetwork.worker.tasks.check_rate_limit", return_value=True), \
-         patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)), \
-         patch("thenetwork.worker.tasks.verify_admin_request", return_value=None), \
-         patch("thenetwork.worker.tasks.get_session") as mock_gs, \
-         patch("thenetwork.worker.tasks.audit_event") as mock_audit, \
-         patch("thenetwork.worker.tasks.run_agent_for_email", mock_agent):
+    with (
+        patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
+        patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)),
+        patch("thenetwork.worker.tasks.verify_admin_request", return_value=None),
+        patch("thenetwork.worker.tasks.get_session") as mock_gs,
+        patch("thenetwork.worker.tasks.audit_event") as mock_audit,
+        patch("thenetwork.worker.tasks.run_agent_for_email", mock_agent),
+    ):
         mock_session = MagicMock()
         mock_session.__enter__ = MagicMock(return_value=mock_session)
         mock_session.__exit__ = MagicMock(return_value=False)
         mock_session.get.return_value = None
         mock_session.exec.return_value.first.return_value = None
         mock_gs.return_value = mock_session
-        asyncio.run(process_email.func(
-            sender_email="stranger@example.com",
-            subject="Hello",
-            body="Please add me.",
-            sender_authenticated=False,
-        ))
+        asyncio.run(
+            process_email.func(
+                sender_email="stranger@example.com",
+                subject="Hello",
+                body="Please add me.",
+                sender_authenticated=False,
+            )
+        )
 
     mock_agent.assert_not_called()
     mock_audit.assert_any_call(
@@ -457,32 +504,38 @@ def test_process_email_dev_auth_bypass_still_goes_to_agent():
 
     mock_agent = AsyncMock()
 
-    with patch("thenetwork.worker.tasks.check_rate_limit", return_value=True), \
-         patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)), \
-         patch("thenetwork.worker.tasks.verify_admin_request", return_value=None), \
-         patch("thenetwork.worker.tasks.get_session") as mock_gs, \
-         patch("thenetwork.worker.tasks.run_agent_for_email", mock_agent):
+    with (
+        patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
+        patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)),
+        patch("thenetwork.worker.tasks.verify_admin_request", return_value=None),
+        patch("thenetwork.worker.tasks.get_session") as mock_gs,
+        patch("thenetwork.worker.tasks.run_agent_for_email", mock_agent),
+    ):
         mock_session = MagicMock()
         mock_session.__enter__ = MagicMock(return_value=mock_session)
         mock_session.__exit__ = MagicMock(return_value=False)
         mock_session.get.return_value = None
         mock_session.exec.return_value.first.return_value = None
         mock_gs.return_value = mock_session
-        asyncio.run(process_email.func(
-            sender_email="dev@example.com",
-            subject="Hello",
-            body="Please add me.",
-            sender_authenticated=True,
-        ))
+        asyncio.run(
+            process_email.func(
+                sender_email="dev@example.com",
+                subject="Hello",
+                body="Please add me.",
+                sender_authenticated=True,
+            )
+        )
 
     mock_agent.assert_called_once()
 
 
 # ─── Command dispatch ─────────────────────────────────────────────────────────
 
+
 def test_handle_admin_command_unknown():
     import asyncio
     from thenetwork.admin.commands import handle_admin_command
+
     result = asyncio.run(handle_admin_command("explode", ""))
     assert "Unknown command" in result
     assert "explode" in result
@@ -491,6 +544,7 @@ def test_handle_admin_command_unknown():
 def test_handle_admin_command_search_no_query():
     import asyncio
     from thenetwork.admin.commands import handle_admin_command
+
     result = asyncio.run(handle_admin_command("search", ""))
     assert "Usage" in result
 
@@ -498,6 +552,7 @@ def test_handle_admin_command_search_no_query():
 def test_handle_admin_command_show_no_arg():
     import asyncio
     from thenetwork.admin.commands import handle_admin_command
+
     result = asyncio.run(handle_admin_command("show", ""))
     assert "Usage" in result
 
@@ -517,6 +572,7 @@ def test_handle_admin_command_show_reads_memories_before_session_closes(seeded_d
 def test_handle_admin_command_forget_no_arg():
     import asyncio
     from thenetwork.admin.commands import handle_admin_command
+
     result = asyncio.run(handle_admin_command("forget", ""))
     assert "Usage" in result
 
@@ -524,6 +580,7 @@ def test_handle_admin_command_forget_no_arg():
 def test_handle_admin_command_remember_no_body():
     import asyncio
     from thenetwork.admin.commands import handle_admin_command
+
     result = asyncio.run(handle_admin_command("remember", "   "))
     assert "No memory text" in result
 
@@ -553,12 +610,19 @@ def test_handle_admin_command_remember_refs_awaits_high_fidelity_sanitizer():
         memory.gist = "[name] knows privacy-preserving ML."
         return memory.gist
 
-    with patch("thenetwork.admin.commands.embed_text", new=AsyncMock(return_value=[0.0] * 1536)) as mock_embed, \
-         patch("thenetwork.admin.commands.get_session", side_effect=[resolve_cm, write_cm]), \
-         patch(
-             "thenetwork.admin.commands.sanitize_memory_high_fidelity",
-             new=AsyncMock(side_effect=fake_sanitize),
-         ) as mock_sanitize:
+    with (
+        patch(
+            "thenetwork.admin.commands.embed_text",
+            new=AsyncMock(return_value=[0.0] * 1536),
+        ) as mock_embed,
+        patch(
+            "thenetwork.admin.commands.get_session", side_effect=[resolve_cm, write_cm]
+        ),
+        patch(
+            "thenetwork.admin.commands.sanitize_memory_high_fidelity",
+            new=AsyncMock(side_effect=fake_sanitize),
+        ) as mock_sanitize,
+    ):
         result = asyncio.run(
             handle_admin_command(
                 "remember refs:alice@example.com",
@@ -587,9 +651,17 @@ def test_handle_admin_command_remember_without_refs_does_not_sanitize():
 
     raw = "General note with no refs."
 
-    with patch("thenetwork.admin.commands.embed_text", new=AsyncMock(return_value=[0.0] * 1536)) as mock_embed, \
-         patch("thenetwork.admin.commands.get_session", return_value=write_cm), \
-         patch("thenetwork.admin.commands.sanitize_memory_high_fidelity", new_callable=AsyncMock) as mock_sanitize:
+    with (
+        patch(
+            "thenetwork.admin.commands.embed_text",
+            new=AsyncMock(return_value=[0.0] * 1536),
+        ) as mock_embed,
+        patch("thenetwork.admin.commands.get_session", return_value=write_cm),
+        patch(
+            "thenetwork.admin.commands.sanitize_memory_high_fidelity",
+            new_callable=AsyncMock,
+        ) as mock_sanitize,
+    ):
         result = asyncio.run(handle_admin_command("remember", raw))
 
     assert "Stored memory" in result
@@ -611,8 +683,10 @@ def test_handle_admin_command_ban_unban():
     cm.__enter__ = MagicMock(return_value=session)
     cm.__exit__ = MagicMock(return_value=False)
 
-    with patch("thenetwork.admin.commands.get_session", return_value=cm), \
-         patch("thenetwork.admin.commands.audit_event") as mock_audit:
+    with (
+        patch("thenetwork.admin.commands.get_session", return_value=cm),
+        patch("thenetwork.admin.commands.audit_event") as mock_audit,
+    ):
         result = asyncio.run(handle_admin_command("ban baduser@example.com", ""))
 
     assert "Banned email: baduser@example.com" in result
@@ -645,8 +719,10 @@ def test_handle_admin_command_ban_unban():
     cm.__enter__ = MagicMock(return_value=session)
     cm.__exit__ = MagicMock(return_value=False)
 
-    with patch("thenetwork.admin.commands.get_session", return_value=cm), \
-         patch("thenetwork.admin.commands.audit_event") as mock_audit:
+    with (
+        patch("thenetwork.admin.commands.get_session", return_value=cm),
+        patch("thenetwork.admin.commands.audit_event") as mock_audit,
+    ):
         result = asyncio.run(handle_admin_command("unban baduser@example.com", ""))
 
     assert "Unbanned email: baduser@example.com" in result
@@ -709,13 +785,21 @@ async def test_process_email_drops_banned_email_without_reply():
     cm.__enter__ = MagicMock(return_value=session)
     cm.__exit__ = MagicMock(return_value=False)
 
-    with patch("thenetwork.worker.tasks.check_rate_limit", return_value=True) as mock_rate_limit, \
-         patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)) as mock_scan, \
-         patch("thenetwork.worker.tasks.verify_admin_request", return_value=None) as mock_admin, \
-         patch("thenetwork.worker.tasks.get_session", return_value=cm), \
-         patch("thenetwork.worker.tasks.send_reply", mock_send_reply), \
-         patch("thenetwork.worker.tasks.audit_event") as mock_audit, \
-         patch("thenetwork.worker.tasks.run_agent_for_email", mock_agent):
+    with (
+        patch(
+            "thenetwork.worker.tasks.check_rate_limit", return_value=True
+        ) as mock_rate_limit,
+        patch(
+            "thenetwork.worker.tasks.scan_content", return_value=(True, None)
+        ) as mock_scan,
+        patch(
+            "thenetwork.worker.tasks.verify_admin_request", return_value=None
+        ) as mock_admin,
+        patch("thenetwork.worker.tasks.get_session", return_value=cm),
+        patch("thenetwork.worker.tasks.send_reply", mock_send_reply),
+        patch("thenetwork.worker.tasks.audit_event") as mock_audit,
+        patch("thenetwork.worker.tasks.run_agent_for_email", mock_agent),
+    ):
         await process_email.func(
             sender_email="banned@example.com",
             subject="Hello",
@@ -754,13 +838,15 @@ async def test_process_email_drops_banned_email_alias():
     cm.__enter__ = MagicMock(return_value=session)
     cm.__exit__ = MagicMock(return_value=False)
 
-    with patch("thenetwork.worker.tasks.check_rate_limit", return_value=True), \
-         patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)), \
-         patch("thenetwork.worker.tasks.verify_admin_request", return_value=None), \
-         patch("thenetwork.worker.tasks.get_session", return_value=cm), \
-         patch("thenetwork.worker.tasks.send_reply", mock_send_reply), \
-         patch("thenetwork.worker.tasks.audit_event") as mock_audit, \
-         patch("thenetwork.worker.tasks.run_agent_for_email", mock_agent):
+    with (
+        patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
+        patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)),
+        patch("thenetwork.worker.tasks.verify_admin_request", return_value=None),
+        patch("thenetwork.worker.tasks.get_session", return_value=cm),
+        patch("thenetwork.worker.tasks.send_reply", mock_send_reply),
+        patch("thenetwork.worker.tasks.audit_event") as mock_audit,
+        patch("thenetwork.worker.tasks.run_agent_for_email", mock_agent),
+    ):
         await process_email.func(
             sender_email="ba.nned+spam@gmail.com",
             subject="Hello",

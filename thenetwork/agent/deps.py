@@ -1,4 +1,5 @@
 """Dependency container injected into every pydantic-ai tool via RunContext."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

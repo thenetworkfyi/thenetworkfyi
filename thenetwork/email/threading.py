@@ -1,4 +1,5 @@
 """Validation helpers for email threading headers."""
+
 from __future__ import annotations
 
 

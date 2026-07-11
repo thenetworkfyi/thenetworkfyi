@@ -50,15 +50,14 @@ def test_score_scenario_outcomes_records_predicate_pass_and_fail():
             OutcomeCheck(
                 description="an introduction was sent",
                 predicate=lambda outcome: any(
-                    mail.subject == "Your introduction"
-                    for mail in outcome.mail_facts
+                    mail.subject == "Your introduction" for mail in outcome.mail_facts
                 ),
             ),
             OutcomeCheck(
                 description="Alice has at most one memory",
-                predicate=lambda outcome: outcome.memory_counts[
-                    "alice@example.test"
-                ] <= 1,
+                predicate=lambda outcome: (
+                    outcome.memory_counts["alice@example.test"] <= 1
+                ),
             ),
         ),
         real_process=True,
@@ -238,7 +237,9 @@ def test_default_outcome_checks_cover_all_persona_situations():
                 mail_facts=(
                     MailFacts(
                         sender="join@example.test",
-                        recipients=frozenset({"ruth.sim@example.test", "peer@example.test"}),
+                        recipients=frozenset(
+                            {"ruth.sim@example.test", "peer@example.test"}
+                        ),
                         subject="Your introduction",
                         body="You both opted in.",
                     ),
@@ -313,7 +314,9 @@ def test_default_outcome_checks_cover_all_persona_situations():
                 mail_facts=(
                     MailFacts(
                         sender="join@example.test",
-                        recipients=frozenset({"omar.sim@example.test", "peer@example.test"}),
+                        recipients=frozenset(
+                            {"omar.sim@example.test", "peer@example.test"}
+                        ),
                         subject="Your introduction",
                         body="You both opted in.",
                     ),

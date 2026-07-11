@@ -11,6 +11,7 @@ Tool result policy: expected world-state and policy outcomes return a dict with
 once or escalate; ``limited``, ``deferred``, ``forbidden``, and ``suppressed``
 are final for this run. Pydantic AI gets one retry only for argument validation.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -130,7 +131,9 @@ def _hit_registration_quota(ctx: RunContext[AgentDeps]) -> bool:
 
 def _person_memory_count(session, person_id: str) -> int:
     return session.exec(
-        select(func.count()).select_from(Memory).where(Memory.refs.contains([person_id]))
+        select(func.count())
+        .select_from(Memory)
+        .where(Memory.refs.contains([person_id]))
     ).one()
 
 
@@ -187,11 +190,13 @@ async def remember(
     with audit_span("agent.tool", tool_name="remember", refs_count=len(refs)):
         max_chars = ctx.deps.settings.remember_text_max_chars
         if max_chars > 0 and len(text) > max_chars:
-            return _tool_result({
-                "status": "error",
-                "reason": "memory_text_too_long",
-                "limit": max_chars,
-            })
+            return _tool_result(
+                {
+                    "status": "error",
+                    "reason": "memory_text_too_long",
+                    "limit": max_chars,
+                }
+            )
 
         memory = Memory(text=text, refs=refs)
         with _get_session(ctx) as session:
@@ -214,10 +219,12 @@ async def remember(
                     refs_count=len(refs),
                     outcome="blocked",
                 )
-                return _tool_result({
-                    "status": "error",
-                    "reason": "sanitization_failed",
-                })
+                return _tool_result(
+                    {
+                        "status": "error",
+                        "reason": "sanitization_failed",
+                    }
+                )
             memory_id = memory.id
             query_embedding = list(memory.embedding or [])
             session.commit()
@@ -251,10 +258,12 @@ async def remember(
             )
             if len(candidates) == MAX_CONSOLIDATION_CANDIDATES:
                 break
-        return _tool_result({
-            "memory_id": memory_id,
-            "consolidation_candidates": candidates,
-        })
+        return _tool_result(
+            {
+                "memory_id": memory_id,
+                "consolidation_candidates": candidates,
+            }
+        )
 
 
 async def forget(ctx: RunContext[AgentDeps], memory_id: str) -> dict[str, str]:
@@ -290,10 +299,12 @@ async def forget(ctx: RunContext[AgentDeps], memory_id: str) -> dict[str, str]:
                     record_type="memory",
                     outcome="rejected_forbidden",
                 )
-                return _tool_result({
-                    "status": "forbidden",
-                    "reason": "not_sender_memory",
-                })
+                return _tool_result(
+                    {
+                        "status": "forbidden",
+                        "reason": "not_sender_memory",
+                    }
+                )
             session.delete(memory)
             session.commit()
         audit_event(
@@ -323,11 +334,13 @@ async def search(
     ):
         max_chars = ctx.deps.settings.search_query_max_chars
         if max_chars > 0 and len(query) > max_chars:
-            return _tool_result({
-                "status": "error",
-                "reason": "query_too_long",
-                "limit": max_chars,
-            })
+            return _tool_result(
+                {
+                    "status": "error",
+                    "reason": "query_too_long",
+                    "limit": max_chars,
+                }
+            )
 
         query_vec = await embed_text(query)
         with _get_session(ctx) as session:
@@ -444,10 +457,12 @@ async def register_person(
                 record_type="person",
                 outcome="rejected_unauthenticated",
             )
-            return _tool_result({
-                "status": "error",
-                "reason": "sender_not_authenticated",
-            })
+            return _tool_result(
+                {
+                    "status": "error",
+                    "reason": "sender_not_authenticated",
+                }
+            )
 
         if ctx.deps.sender_user_id is not None:
             audit_event(
@@ -456,11 +471,13 @@ async def register_person(
                 record_type="person",
                 outcome="rejected_already_registered",
             )
-            return _tool_result({
-                "status": "error",
-                "reason": "already_registered",
-                "person_id": ctx.deps.sender_user_id,
-            })
+            return _tool_result(
+                {
+                    "status": "error",
+                    "reason": "already_registered",
+                    "person_id": ctx.deps.sender_user_id,
+                }
+            )
 
         with _get_session(ctx) as session:
             existing = session.exec(
@@ -483,11 +500,13 @@ async def register_person(
                     record_type="person",
                     outcome="rate_limited",
                 )
-                return _tool_result({
-                    "status": "error",
-                    "reason": "registration_quota_exceeded",
-                    "limit": ctx.deps.settings.registration_limit_per_day,
-                })
+                return _tool_result(
+                    {
+                        "status": "error",
+                        "reason": "registration_quota_exceeded",
+                        "limit": ctx.deps.settings.registration_limit_per_day,
+                    }
+                )
 
             person = Person(email=ctx.deps.sender_email, name=name)
             session.add(person)
@@ -531,10 +550,12 @@ async def _send_email(
                 record_type="person",
                 outcome="rejected_sender_not_registered",
             )
-            return _tool_result({
-                "status": "error",
-                "reason": "sender_not_registered",
-            })
+            return _tool_result(
+                {
+                    "status": "error",
+                    "reason": "sender_not_registered",
+                }
+            )
 
         max_sends_per_run = _cap(s.dispatch_max_sends_per_run)
         if ctx.deps.outbound_send_count >= max_sends_per_run:
@@ -551,10 +572,12 @@ async def _send_email(
             outcome="found" if person is not None else "not_found",
         )
         if person is None or to_address is None:
-            return _tool_result({
-                "status": "error",
-                "reason": "recipient_not_found",
-            })
+            return _tool_result(
+                {
+                    "status": "error",
+                    "reason": "recipient_not_found",
+                }
+            )
 
         recipient_daily_cap = _cap(s.dispatch_recipient_daily_cap)
         recipient_cap_key = f"dispatch:recipient:{recipient_user_id}"
@@ -620,10 +643,12 @@ async def reply_to_sender(
                 record_type="person",
                 outcome="rejected_sender_not_registered",
             )
-            return _tool_result({
-                "status": "error",
-                "reason": "sender_not_registered",
-            })
+            return _tool_result(
+                {
+                    "status": "error",
+                    "reason": "sender_not_registered",
+                }
+            )
     return await _send_email(
         ctx,
         recipient_user_id=ctx.deps.sender_user_id,
@@ -650,10 +675,12 @@ async def send_outreach(
     """
     if recipient_user_id == ctx.deps.sender_user_id:
         with audit_span("agent.tool", tool_name="send_outreach"):
-            return _tool_result({
-                "status": "error",
-                "reason": "use_reply_to_sender",
-            })
+            return _tool_result(
+                {
+                    "status": "error",
+                    "reason": "use_reply_to_sender",
+                }
+            )
     return await _send_email(
         ctx,
         recipient_user_id=recipient_user_id,
@@ -679,33 +706,41 @@ async def propose_introduction(
     """
     with audit_span("agent.tool", tool_name="propose_introduction"):
         if not ctx.deps.sender_authenticated or ctx.deps.sender_user_id is None:
-            return _tool_result({
-                "status": "error",
-                "reason": "sender_not_authenticated",
-            })
+            return _tool_result(
+                {
+                    "status": "error",
+                    "reason": "sender_not_authenticated",
+                }
+            )
         if other_person_id == ctx.deps.sender_user_id:
-            return _tool_result({
-                "status": "error",
-                "reason": "self_introduction",
-            })
+            return _tool_result(
+                {
+                    "status": "error",
+                    "reason": "self_introduction",
+                }
+            )
         if ctx.deps.is_proactive and (
             not ctx.deps.proactive_candidate_id
             or other_person_id != ctx.deps.proactive_candidate_id
         ):
-            return _tool_result({
-                "status": "error",
-                "reason": "outside_proactive_pair",
-            })
+            return _tool_result(
+                {
+                    "status": "error",
+                    "reason": "outside_proactive_pair",
+                }
+            )
         proposal_limit = ctx.deps.settings.introduction_max_proposals_per_run
         if (
             proposal_limit > 0
             and ctx.deps.introduction_proposal_count >= proposal_limit
         ):
-            return _tool_result({
-                "status": "deferred",
-                "reason": "run_proposal_cap",
-                "limit": proposal_limit,
-            })
+            return _tool_result(
+                {
+                    "status": "deferred",
+                    "reason": "run_proposal_cap",
+                    "limit": proposal_limit,
+                }
+            )
         result = propose_pair(
             sender_person_id=ctx.deps.sender_user_id,
             other_person_id=other_person_id,

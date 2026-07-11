@@ -58,7 +58,9 @@ def test_tinyperson_adapter_builds_threaded_reply_with_quoted_original():
         ),
     )
     request = EmailMessage()
-    request["Subject"] = "Possible introduction [intro:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa]"
+    request["Subject"] = (
+        "Possible introduction [intro:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa]"
+    )
     request["Message-ID"] = "<proposal@example.test>"
     request["References"] = "<opening@example.test>"
     request.set_content("A possible match came up.\n\nReply YES to opt in.")
@@ -72,10 +74,7 @@ def test_tinyperson_adapter_builds_threaded_reply_with_quoted_original():
     assert msg["In-Reply-To"] == "<proposal@example.test>"
     assert msg["References"] == "<opening@example.test> <proposal@example.test>"
     assert msg.get_content() == (
-        "YES\n\n"
-        "> A possible match came up.\n"
-        ">\n"
-        "> Reply YES to opt in.\n"
+        "YES\n\n> A possible match came up.\n>\n> Reply YES to opt in.\n"
     )
 
 

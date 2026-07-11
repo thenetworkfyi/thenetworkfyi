@@ -30,11 +30,15 @@ async def test_near_empty_authenticated_unknown_sender_gets_welcome_after_rate_l
     _reset_welcome_limiter()
     mock_session = _mock_sender_lookup(None)
 
-    with patch("thenetwork.worker.tasks.get_session", return_value=mock_session), \
-         patch("thenetwork.worker.tasks.check_rate_limit", return_value=True) as check_rate_limit, \
-         patch("thenetwork.worker.tasks.scan_content") as scan_content, \
-         patch("thenetwork.worker.tasks.send_reply") as send_reply, \
-         patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()) as mock_agent:
+    with (
+        patch("thenetwork.worker.tasks.get_session", return_value=mock_session),
+        patch(
+            "thenetwork.worker.tasks.check_rate_limit", return_value=True
+        ) as check_rate_limit,
+        patch("thenetwork.worker.tasks.scan_content") as scan_content,
+        patch("thenetwork.worker.tasks.send_reply") as send_reply,
+        patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()) as mock_agent,
+    ):
         await process_email.func(
             sender_email="new@example.com",
             subject="",
@@ -64,10 +68,12 @@ async def test_first_contact_welcome_threads_reply_when_message_id_present():
     _reset_welcome_limiter()
     mock_session = _mock_sender_lookup(None)
 
-    with patch("thenetwork.worker.tasks.get_session", return_value=mock_session), \
-         patch("thenetwork.worker.tasks.check_rate_limit", return_value=True), \
-         patch("thenetwork.worker.tasks.send_reply") as send_reply, \
-         patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()):
+    with (
+        patch("thenetwork.worker.tasks.get_session", return_value=mock_session),
+        patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
+        patch("thenetwork.worker.tasks.send_reply") as send_reply,
+        patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()),
+    ):
         await process_email.func(
             sender_email="new@example.com",
             subject="",
@@ -97,10 +103,12 @@ async def test_first_contact_welcome_appends_to_references_chain():
     _reset_welcome_limiter()
     mock_session = _mock_sender_lookup(None)
 
-    with patch("thenetwork.worker.tasks.get_session", return_value=mock_session), \
-         patch("thenetwork.worker.tasks.check_rate_limit", return_value=True), \
-         patch("thenetwork.worker.tasks.send_reply") as send_reply, \
-         patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()):
+    with (
+        patch("thenetwork.worker.tasks.get_session", return_value=mock_session),
+        patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
+        patch("thenetwork.worker.tasks.send_reply") as send_reply,
+        patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()),
+    ):
         await process_email.func(
             sender_email="new@example.com",
             subject="",
@@ -131,10 +139,12 @@ async def test_first_contact_welcome_drops_unsafe_message_id():
     _reset_welcome_limiter()
     mock_session = _mock_sender_lookup(None)
 
-    with patch("thenetwork.worker.tasks.get_session", return_value=mock_session), \
-         patch("thenetwork.worker.tasks.check_rate_limit", return_value=True), \
-         patch("thenetwork.worker.tasks.send_reply") as send_reply, \
-         patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()):
+    with (
+        patch("thenetwork.worker.tasks.get_session", return_value=mock_session),
+        patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
+        patch("thenetwork.worker.tasks.send_reply") as send_reply,
+        patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()),
+    ):
         await process_email.func(
             sender_email="new@example.com",
             subject="",
@@ -160,10 +170,12 @@ async def test_near_empty_known_authenticated_sender_stays_silent():
     _reset_welcome_limiter()
     mock_session = _mock_sender_lookup("person-id")
 
-    with patch("thenetwork.worker.tasks.get_session", return_value=mock_session), \
-         patch("thenetwork.worker.tasks.check_rate_limit", return_value=True), \
-         patch("thenetwork.worker.tasks.send_reply") as send_reply, \
-         patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()) as mock_agent:
+    with (
+        patch("thenetwork.worker.tasks.get_session", return_value=mock_session),
+        patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
+        patch("thenetwork.worker.tasks.send_reply") as send_reply,
+        patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()) as mock_agent,
+    ):
         await process_email.func(
             sender_email="known@example.com",
             subject="Hello",
@@ -182,10 +194,12 @@ async def test_rate_limited_blank_known_sender_stays_silent():
     _reset_welcome_limiter()
     mock_session = _mock_sender_lookup(None)
 
-    with patch("thenetwork.worker.tasks.get_session", return_value=mock_session), \
-         patch("thenetwork.worker.tasks.check_rate_limit", return_value=False), \
-         patch("thenetwork.worker.tasks.send_reply") as send_reply, \
-         patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()) as mock_agent:
+    with (
+        patch("thenetwork.worker.tasks.get_session", return_value=mock_session),
+        patch("thenetwork.worker.tasks.check_rate_limit", return_value=False),
+        patch("thenetwork.worker.tasks.send_reply") as send_reply,
+        patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()) as mock_agent,
+    ):
         await process_email.func(
             sender_email="known@example.com",
             subject="Hello",
@@ -204,10 +218,12 @@ async def test_near_empty_unauthenticated_unknown_sender_stays_silent():
     _reset_welcome_limiter()
     mock_session = _mock_sender_lookup(None)
 
-    with patch("thenetwork.worker.tasks.get_session", return_value=mock_session), \
-         patch("thenetwork.worker.tasks.check_rate_limit", return_value=True), \
-         patch("thenetwork.worker.tasks.send_reply") as send_reply, \
-         patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()) as mock_agent:
+    with (
+        patch("thenetwork.worker.tasks.get_session", return_value=mock_session),
+        patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
+        patch("thenetwork.worker.tasks.send_reply") as send_reply,
+        patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()) as mock_agent,
+    ):
         await process_email.func(
             sender_email="spoof@example.com",
             subject="Hello",
@@ -226,10 +242,12 @@ async def test_welcome_is_limited_per_sender():
     _reset_welcome_limiter()
     mock_session = _mock_sender_lookup(None)
 
-    with patch("thenetwork.worker.tasks.get_session", return_value=mock_session), \
-         patch("thenetwork.worker.tasks.check_rate_limit", return_value=True), \
-         patch("thenetwork.worker.tasks.send_reply") as send_reply, \
-         patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()):
+    with (
+        patch("thenetwork.worker.tasks.get_session", return_value=mock_session),
+        patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
+        patch("thenetwork.worker.tasks.send_reply") as send_reply,
+        patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()),
+    ):
         for _ in range(2):
             await process_email.func(
                 sender_email="new@example.com",
@@ -248,10 +266,12 @@ async def test_rate_limited_blank_first_contact_does_not_get_welcome():
     _reset_welcome_limiter()
     mock_session = _mock_sender_lookup(None)
 
-    with patch("thenetwork.worker.tasks.get_session", return_value=mock_session), \
-         patch("thenetwork.worker.tasks.check_rate_limit", return_value=False), \
-         patch("thenetwork.worker.tasks.send_reply") as send_reply, \
-         patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()) as mock_agent:
+    with (
+        patch("thenetwork.worker.tasks.get_session", return_value=mock_session),
+        patch("thenetwork.worker.tasks.check_rate_limit", return_value=False),
+        patch("thenetwork.worker.tasks.send_reply") as send_reply,
+        patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()) as mock_agent,
+    ):
         await process_email.func(
             sender_email="new@example.com",
             subject="Hello",

@@ -70,8 +70,7 @@ async def test_run_recorder_writes_config_mbox_transcript_and_events(tmp_path):
     assert len(config["personas"]) == 2
     assert "body 1" in artifacts.transcript_path.read_text()
     events = [
-        json.loads(line)
-        for line in artifacts.events_path.read_text().splitlines()
+        json.loads(line) for line in artifacts.events_path.read_text().splitlines()
     ]
     assert events[0]["event"] == "sim.run_started"
     assert any(event["event"] == "sim.tick_completed" for event in events)
@@ -93,7 +92,9 @@ async def test_sim_run_cli_function_creates_run_directory(tmp_path):
     assert len(config["personas"]) == 17
     assert len(config["outcome_checks"]) == len(DEFAULT_OUTCOME_CHECKS)
     assert config["llm_personas"] is False
-    events = [json.loads(line) for line in artifacts.events_path.read_text().splitlines()]
+    events = [
+        json.loads(line) for line in artifacts.events_path.read_text().splitlines()
+    ]
     assert {"sim.score.tier1", "sim.score.tier2", "sim.score.outcome"} <= {
         event["event"] for event in events
     }
@@ -250,9 +251,7 @@ async def test_real_process_runs_capture_isolated_traceable_audit_logs(
         stop_condition="An introduction is made.",
         agent_address="join@example.test",
     )
-    adapters = (
-        TinyPersonEmailAdapter(ScriptedTinyPerson("body 1"), persona_config),
-    )
+    adapters = (TinyPersonEmailAdapter(ScriptedTinyPerson("body 1"), persona_config),)
     config = SimRunConfig(
         scenario="real-process",
         ticks=1,
@@ -308,7 +307,9 @@ async def test_run_recorder_writes_tier1_score_before_run_completed(tmp_path):
 
     artifacts = await recorder.run(
         adapters,
-        SimRunConfig(scenario="strong-match", ticks=1, proactive_every=10, personas=configs),
+        SimRunConfig(
+            scenario="strong-match", ticks=1, proactive_every=10, personas=configs
+        ),
     )
 
     events = [
@@ -340,8 +341,12 @@ async def test_mock_recorder_writes_one_skipped_default_outcome_score(tmp_path):
         ),
     )
 
-    events = [json.loads(line) for line in artifacts.events_path.read_text().splitlines()]
-    outcome_events = [event for event in events if event["event"] == "sim.score.outcome"]
+    events = [
+        json.loads(line) for line in artifacts.events_path.read_text().splitlines()
+    ]
+    outcome_events = [
+        event for event in events if event["event"] == "sim.score.outcome"
+    ]
     assert len(outcome_events) == 1
     assert len(outcome_events[0]["findings"]) == len(DEFAULT_OUTCOME_CHECKS)
     assert outcome_events[0]["passed"] is True
@@ -542,7 +547,10 @@ async def test_run_recorder_does_not_multiply_or_drop_outcome_metrics(tmp_path):
     )
     adapters = (TinyPersonEmailAdapter(ScriptedTinyPerson("body 1"), persona_config),)
     config = SimRunConfig(
-        scenario="strong-match", ticks=1, proactive_every=None, personas=(persona_config,)
+        scenario="strong-match",
+        ticks=1,
+        proactive_every=None,
+        personas=(persona_config,),
     )
 
     async def two_tool_calls(**_kwargs):
@@ -557,7 +565,9 @@ async def test_run_recorder_does_not_multiply_or_drop_outcome_metrics(tmp_path):
 
     recorder = SimRunRecorder(runs_dir=tmp_path)
     multi_tool = await recorder.run(adapters, config, process=two_tool_calls)
-    zero_tool = await recorder.run(adapters, config, process=zero_tool_calls_with_tokens)
+    zero_tool = await recorder.run(
+        adapters, config, process=zero_tool_calls_with_tokens
+    )
 
     multi_metrics = load_run_metrics(multi_tool.run_dir)
     zero_metrics = load_run_metrics(zero_tool.run_dir)
@@ -594,7 +604,9 @@ async def test_two_recorded_runs_produce_a_comparable_non_empty_delta(tmp_path):
         ]
     )
     recorder = SimRunRecorder(runs_dir=tmp_path, clock=lambda: next(clock_calls))
-    config = SimRunConfig(scenario="strong-match", ticks=1, proactive_every=10, personas=configs)
+    config = SimRunConfig(
+        scenario="strong-match", ticks=1, proactive_every=10, personas=configs
+    )
 
     before = await recorder.run(adapters, config, process=quiet_process)
     after = await recorder.run(adapters, config, process=busy_process)

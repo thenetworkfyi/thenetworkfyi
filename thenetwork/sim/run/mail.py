@@ -1,4 +1,5 @@
 """Email transport helpers for simulation harness runs."""
+
 from __future__ import annotations
 
 import base64
@@ -44,7 +45,9 @@ class SimPostOffice:
         default_factory=lambda: defaultdict(list)
     )
 
-    def deliver(self, message: EmailMessage, meta: SimMessageMeta | None = None) -> None:
+    def deliver(
+        self, message: EmailMessage, meta: SimMessageMeta | None = None
+    ) -> None:
         message = deepcopy(message)
         if meta is not None:
             _stamp_sim_headers(message, meta)
@@ -137,8 +140,9 @@ def capture_outbound(
     IMAP Sent append is disabled because the post office is the run's mail log.
     """
     smtp = _PostOfficeSMTP(post_office, meta)
-    with patch("thenetwork.email.outbound.smtplib.SMTP", smtp), patch(
-        "thenetwork.email.outbound._append_to_sent", return_value=None
+    with (
+        patch("thenetwork.email.outbound.smtplib.SMTP", smtp),
+        patch("thenetwork.email.outbound._append_to_sent", return_value=None),
     ):
         yield post_office
 
@@ -267,9 +271,7 @@ def _stamp_sim_headers(message: EmailMessage, meta: SimMessageMeta) -> None:
 
 def _recipient_addresses(message: EmailMessage) -> tuple[str, ...]:
     header_values = [
-        value
-        for name in ("to", "cc", "bcc")
-        for value in message.get_all(name, [])
+        value for name in ("to", "cc", "bcc") for value in message.get_all(name, [])
     ]
     addresses = {
         _normalize_address(address)

@@ -1,4 +1,5 @@
 """IMAP inbox polling via imap-tools."""
+
 from __future__ import annotations
 
 import re
@@ -232,11 +233,17 @@ def poll_unseen() -> list[InboundMessage]:
             message_references = clean_references(_first_header(msg, "references"))
             message_date = _first_header(msg, "date")
             subject = cap_subject(msg.subject)
-            sender_display_name = cap_sender_name(msg.from_values.name if msg.from_values else None)
+            sender_display_name = cap_sender_name(
+                msg.from_values.name if msg.from_values else None
+            )
             # Only admin-looking subjects need the raw bytes (PGP/MIME
             # verification in admin/auth.py); everything else discards them
             # to avoid holding the full raw message in memory.
-            raw_message = msg.raw_message_bytes if subject.strip().lower().startswith("admin:") else None
+            raw_message = (
+                msg.raw_message_bytes
+                if subject.strip().lower().startswith("admin:")
+                else None
+            )
             try:
                 body = cap_body(msg.text or _html_to_text(msg.html))
             except BodyTooLargeError as exc:

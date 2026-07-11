@@ -3,6 +3,7 @@
 Marked with pytest.mark.integration - require a live pgvector DB.
 Run with: pytest -m integration
 """
+
 from __future__ import annotations
 
 import uuid
@@ -29,10 +30,13 @@ def _insert_memory(
     created_at_sql: str = "NOW()",
 ) -> None:
     refs_sql = "ARRAY[" + ",".join(f"'{r}'" for r in refs) + "]::text[]"
-    conn.execute(text(f"""
+    conn.execute(
+        text(f"""
         INSERT INTO memories (id, text, embedding, refs, gist, created_at)
         VALUES (:mid, :txt, CAST(:emb AS vector), {refs_sql}, :gist, {created_at_sql})
-    """), {"mid": memory_id, "txt": raw_text, "emb": emb, "gist": gist})
+    """),
+        {"mid": memory_id, "txt": raw_text, "emb": emb, "gist": gist},
+    )
 
 
 @pytest.mark.asyncio
@@ -52,10 +56,16 @@ async def test_e2e_producer_to_agent(monkeypatch):
     ):
         return "Thanks for your email."
 
-    with patch("thenetwork.worker.tasks.run_agent_for_email", new_callable=AsyncMock, side_effect=fake_run_agent), \
-         patch("thenetwork.worker.tasks.check_rate_limit", return_value=True), \
-         patch("thenetwork.worker.tasks.scan_content", return_value=(True, "ok")), \
-         patch("thenetwork.worker.tasks.get_session") as mock_gs:
+    with (
+        patch(
+            "thenetwork.worker.tasks.run_agent_for_email",
+            new_callable=AsyncMock,
+            side_effect=fake_run_agent,
+        ),
+        patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
+        patch("thenetwork.worker.tasks.scan_content", return_value=(True, "ok")),
+        patch("thenetwork.worker.tasks.get_session") as mock_gs,
+    ):
         mock_session = MagicMock()
         mock_session.__enter__ = MagicMock(return_value=mock_session)
         mock_session.__exit__ = MagicMock(return_value=False)
@@ -81,10 +91,13 @@ def test_match_memories_ranks_by_similarity(seeded_db):
 
     assert results, "expected at least one result from pgvector query"
     person_ids = [r.person_id for r in results]
-    assert seeded_db["carol_id"] in person_ids, "carol (similar to ml query) must appear"
+    assert seeded_db["carol_id"] in person_ids, (
+        "carol (similar to ml query) must appear"
+    )
     if seeded_db["bob_id"] in person_ids:
-        assert person_ids.index(seeded_db["carol_id"]) < person_ids.index(seeded_db["bob_id"]), \
-            "carol must rank above bob for an ml-direction query"
+        assert person_ids.index(seeded_db["carol_id"]) < person_ids.index(
+            seeded_db["bob_id"]
+        ), "carol must rank above bob for an ml-direction query"
 
 
 @pytest.mark.integration
@@ -218,7 +231,9 @@ def test_match_memories_min_similarity_filters_raw_similarity(seeded_db, pg_engi
         assert all(r.similarity >= 0.8 for r in results)
     finally:
         with pg_engine.connect() as conn:
-            conn.execute(text("DELETE FROM memories WHERE id = :id"), {"id": low_similarity_id})
+            conn.execute(
+                text("DELETE FROM memories WHERE id = :id"), {"id": low_similarity_id}
+            )
             conn.commit()
 
 
@@ -264,17 +279,22 @@ def test_match_memories_excludes_ungisted(seeded_db, pg_engine):
     nogist_id = str(uuid.uuid4())
     alice_id = seeded_db["alice_id"]
     with pg_engine.connect() as conn:
-        conn.execute(text(f"""
+        conn.execute(
+            text(f"""
             INSERT INTO memories (id, text, embedding, refs, gist, created_at)
             VALUES (:mid, 'ungisted memory', CAST(:emb AS vector), ARRAY['{alice_id}']::text[], NULL, NOW())
-        """), {"mid": nogist_id, "emb": _vec_str(1.0, 0.0)})
+        """),
+            {"mid": nogist_id, "emb": _vec_str(1.0, 0.0)},
+        )
         conn.commit()
 
     try:
         with get_session() as session:
             results = match_memories(seeded_db["query_ml"], session, limit=20)
         returned_ids = [r.memory_id for r in results]
-        assert nogist_id not in returned_ids, "memory with gist=NULL must be excluded by match_memories"
+        assert nogist_id not in returned_ids, (
+            "memory with gist=NULL must be excluded by match_memories"
+        )
     finally:
         with pg_engine.connect() as conn:
             conn.execute(text("DELETE FROM memories WHERE id = :id"), {"id": nogist_id})
@@ -287,10 +307,15 @@ def test_build_graph_contains_alice_carol_edge(seeded_db):
     from thenetwork.search.graph import build_graph
 
     G = build_graph()
-    assert seeded_db["alice_id"] in G.nodes, "alice must be in graph (linked by intro-mem)"
-    assert seeded_db["carol_id"] in G.nodes, "carol must be in graph (linked by intro-mem)"
-    assert G.has_edge(seeded_db["alice_id"], seeded_db["carol_id"]), \
+    assert seeded_db["alice_id"] in G.nodes, (
+        "alice must be in graph (linked by intro-mem)"
+    )
+    assert seeded_db["carol_id"] in G.nodes, (
+        "carol must be in graph (linked by intro-mem)"
+    )
+    assert G.has_edge(seeded_db["alice_id"], seeded_db["carol_id"]), (
         "alice and carol must share an edge via intro-mem"
+    )
 
 
 @pytest.mark.integration
@@ -299,7 +324,9 @@ def test_build_graph_excludes_solo_person(seeded_db):
     from thenetwork.search.graph import build_graph
 
     G = build_graph()
-    assert seeded_db["dave_id"] not in G.nodes, "dave has no multi-ref memories; must not appear in graph"
+    assert seeded_db["dave_id"] not in G.nodes, (
+        "dave has no multi-ref memories; must not appear in graph"
+    )
 
 
 @pytest.mark.integration
@@ -307,9 +334,13 @@ def test_score_proximity_absent_node_returns_zero(seeded_db):
     """score_proximity returns 0 for a requester not in the graph."""
     from thenetwork.search.graph import score_proximity
 
-    scores = score_proximity(seeded_db["dave_id"], [seeded_db["alice_id"], seeded_db["carol_id"]])
+    scores = score_proximity(
+        seeded_db["dave_id"], [seeded_db["alice_id"], seeded_db["carol_id"]]
+    )
     for cid, v in scores.items():
-        assert v == 0.0, f"dave has no graph presence; score for {cid} must be 0, got {v}"
+        assert v == 0.0, (
+            f"dave has no graph presence; score for {cid} must be 0, got {v}"
+        )
 
 
 @pytest.mark.integration
@@ -318,5 +349,6 @@ def test_score_proximity_direct_edge_no_common_neighbors(seeded_db):
     from thenetwork.search.graph import score_proximity
 
     scores = score_proximity(seeded_db["alice_id"], [seeded_db["carol_id"]])
-    assert scores[seeded_db["carol_id"]] == 0.0, \
+    assert scores[seeded_db["carol_id"]] == 0.0, (
         "Jaccard coefficient is 0 when two nodes share only a direct edge with no common neighbors"
+    )

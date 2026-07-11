@@ -1,4 +1,5 @@
 """Compare two recorded simulation runs."""
+
 from __future__ import annotations
 
 import json
@@ -28,9 +29,15 @@ def compare_runs(before: Path, after: Path) -> tuple[MetricDelta, ...]:
     before_metrics = load_run_metrics(before)
     after_metrics = load_run_metrics(after)
     return (
-        _int_delta("introductions", before_metrics.introductions, after_metrics.introductions),
-        _score_delta("judge_score", before_metrics.judge_score, after_metrics.judge_score),
-        _int_delta("token_usage", before_metrics.token_usage, after_metrics.token_usage),
+        _int_delta(
+            "introductions", before_metrics.introductions, after_metrics.introductions
+        ),
+        _score_delta(
+            "judge_score", before_metrics.judge_score, after_metrics.judge_score
+        ),
+        _int_delta(
+            "token_usage", before_metrics.token_usage, after_metrics.token_usage
+        ),
         _float_delta("cost_usd", before_metrics.cost_usd, after_metrics.cost_usd),
         _int_delta(
             "process_email_calls",
@@ -67,7 +74,9 @@ def render_compare(deltas: tuple[MetricDelta, ...]) -> str:
         "| --- | ---: | ---: | ---: |",
     ]
     for delta in deltas:
-        lines.append(f"| {delta.name} | {delta.before} | {delta.after} | {delta.delta} |")
+        lines.append(
+            f"| {delta.name} | {delta.before} | {delta.after} | {delta.delta} |"
+        )
     return "\n".join(lines) + "\n"
 
 
@@ -104,4 +113,3 @@ def _score_delta(name: str, before: float | None, after: float | None) -> Metric
     after_text = "n/a" if after is None else f"{after:.2f}"
     delta = "n/a" if before is None or after is None else f"{after - before:+.2f}"
     return MetricDelta(name, before_text, after_text, delta)
-

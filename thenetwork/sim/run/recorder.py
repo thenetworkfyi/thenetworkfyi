@@ -1,4 +1,5 @@
 """Run recording for simulation harness executions."""
+
 from __future__ import annotations
 
 import json
@@ -149,7 +150,9 @@ class SimRunRecorder:
                 + "\n",
                 encoding="utf-8",
             )
-            events.write("sim.run_started", scenario=config.scenario, ticks=config.ticks)
+            events.write(
+                "sim.run_started", scenario=config.scenario, ticks=config.ticks
+            )
 
             loop = SimTickLoop(
                 adapters,
@@ -230,6 +233,7 @@ class SimRunRecorder:
                 proactive_jobs=result.proactive_jobs,
             )
         return artifacts
+
 
 def _config_payload(config: SimRunConfig, process_mode: str) -> dict[str, Any]:
     return {

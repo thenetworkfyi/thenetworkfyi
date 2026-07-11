@@ -1,4 +1,5 @@
 """Deterministic real-process simulation for the double-opt-in introduction flow."""
+
 from __future__ import annotations
 
 import json

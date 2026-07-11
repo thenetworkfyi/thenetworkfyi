@@ -8,12 +8,19 @@ Polling runs as a periodic task INSIDE the worker (see ``poll_inbox``), so a
 single long-running worker process handles intake, processing, and proactive
 scans. ``run_producer_cycle`` remains for manual/one-shot CLI use.
 """
+
 from __future__ import annotations
 
 import asyncio
 import base64
 
-from thenetwork.audit import audit_event, audit_run, audit_sender, audit_span, audit_trace
+from thenetwork.audit import (
+    audit_event,
+    audit_run,
+    audit_sender,
+    audit_span,
+    audit_trace,
+)
 from thenetwork.email.dedup import (
     is_message_processed,
     mark_message_processed,
@@ -27,13 +34,18 @@ from thenetwork.worker.tasks import app, process_email
 def _poll_and_enqueue() -> int:
     """Poll inbox, enqueue one job per message, mark seen. Assumes app is open."""
     with audit_run(), audit_span("producer.poll"):
-        messages = poll_unseen()   # does NOT mark seen
+        messages = poll_unseen()  # does NOT mark seen
         count = 0
         handled_uids: list[str] = []
         for msg in messages:
-            with audit_trace(msg.trace_id), audit_sender(optional_sender_identifier(msg.sender)):
+            with (
+                audit_trace(msg.trace_id),
+                audit_sender(optional_sender_identifier(msg.sender)),
+            ):
                 auto_submitted = msg.auto_submitted
-                body_chars = msg.body_chars if msg.body_chars is not None else len(msg.body)
+                body_chars = (
+                    msg.body_chars if msg.body_chars is not None else len(msg.body)
+                )
                 if msg.rejection_reason:
                     audit_event(
                         "intake.message_rejected",
@@ -68,7 +80,11 @@ def _poll_and_enqueue() -> int:
                     auto_submitted_present=bool(auto_submitted),
                     header_names=["from", "subject", "auto-submitted"],
                 )
-                raw_message_b64 = base64.b64encode(msg.raw_message).decode() if msg.raw_message else None
+                raw_message_b64 = (
+                    base64.b64encode(msg.raw_message).decode()
+                    if msg.raw_message
+                    else None
+                )
                 job_kwargs = {
                     "sender_email": msg.sender,
                     "subject": msg.subject,

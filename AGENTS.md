@@ -43,6 +43,8 @@ uv run pytest -m "not integration"  # skip tests needing a live pgvector DB (wha
 uv run pytest tests/security/       # the SEAL red-team + contracts
 uv run pytest tests/test_match_pipeline.py::test_name   # a single test
 uv run --extra dev ruff check .     # lint the repository
+uv run --extra dev ruff format .    # format the repository
+uv run --extra dev ruff format --check .  # verify formatting without changes
 ```
 
 CI (`.github/workflows/ci.yml`) runs only `pytest -m "not integration"` on Python 3.12 -

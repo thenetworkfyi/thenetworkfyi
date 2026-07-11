@@ -1,4 +1,5 @@
 """PII-safe structured audit events for the agent execution lifecycle."""
+
 from __future__ import annotations
 import logging
 import re
@@ -14,7 +15,9 @@ import structlog
 
 LOGGER_NAME = "thenetwork.audit"
 _run_id: ContextVar[str | None] = ContextVar("thenetwork_audit_run_id", default=None)
-_trace_id: ContextVar[str | None] = ContextVar("thenetwork_audit_trace_id", default=None)
+_trace_id: ContextVar[str | None] = ContextVar(
+    "thenetwork_audit_trace_id", default=None
+)
 _sender_id_hash: ContextVar[str | None] = ContextVar(
     "thenetwork_audit_sender_id_hash",
     default=None,
@@ -37,58 +40,147 @@ _SHARED_PROCESSORS = [
     structlog.stdlib.add_logger_name,
     _iso_timestamp,
 ]
-_JSON_RENDERER = structlog.processors.JSONRenderer(sort_keys=True, separators=(",", ":"))
+_JSON_RENDERER = structlog.processors.JSONRenderer(
+    sort_keys=True, separators=(",", ":")
+)
 
 _logger = structlog.wrap_logger(
     logging.getLogger(LOGGER_NAME),
     processors=[*_SHARED_PROCESSORS, _JSON_RENDERER],
 )
 
-_SAFE_FIELDS = frozenset({
-    "action", "auth_result_mechanisms", "authserv_id",
-    "auto_submitted_present", "body_chars", "duration_ms", "error_type",
-    "header_names", "html_present", "message_count", "outcome", "part_kinds",
-    "consent_state", "query_chars", "reason", "recipient_id_present", "record_type", "refs_count",
-    "result_count", "sender_authenticated", "sender_id_hash", "sender_known",
-    "sender_present", "subject_chars", "tool_called", "tool_name", "tool_names",
-    "tool_outcome", "tool_reason", "top_k", "trace_id", "user_message_chars",
-})
+_SAFE_FIELDS = frozenset(
+    {
+        "action",
+        "auth_result_mechanisms",
+        "authserv_id",
+        "auto_submitted_present",
+        "body_chars",
+        "duration_ms",
+        "error_type",
+        "header_names",
+        "html_present",
+        "message_count",
+        "outcome",
+        "part_kinds",
+        "consent_state",
+        "query_chars",
+        "reason",
+        "recipient_id_present",
+        "record_type",
+        "refs_count",
+        "result_count",
+        "sender_authenticated",
+        "sender_id_hash",
+        "sender_known",
+        "sender_present",
+        "subject_chars",
+        "tool_called",
+        "tool_name",
+        "tool_names",
+        "tool_outcome",
+        "tool_reason",
+        "top_k",
+        "trace_id",
+        "user_message_chars",
+    }
+)
 _SAFE_TOKEN = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
 _SAFE_CATEGORIES = {
-    "action": frozenset({
-        "ban", "clarify", "consent", "decline", "delete", "insert", "lookup", "propose", "revoke",
-        "search", "unban",
-    }),
-    "outcome": frozenset({
-        "blocked", "error", "exists", "found", "not_found", "rate_limited",
-        "rejected_already_registered", "rejected_forbidden",
-        "rejected_unauthenticated", "success",
-    }),
-    "tool_outcome": frozenset({
-        "created", "deleted", "error", "escalated", "exists", "forbidden",
-        "limited", "not_found", "proposed", "sent", "success", "suppressed",
-        "welcomed", "welcomed_and_escalated",
-    }),
-    "tool_reason": frozenset({
-        "already_registered", "max_sends_per_run", "memory_text_too_long",
-        "not_sender_memory", "person_memory_limit_exceeded",
-        "query_too_long", "sanitization_failed",
-        "recipient_daily_cap", "recipient_not_found",
-        "registration_quota_exceeded", "sender_not_authenticated",
-        "sender_reply_daily_cap", "person_not_found", "invalid_person_id",
-        "self_introduction", "use_reply_to_sender",
-    }),
-    "reason": frozenset({
-        "body_empty", "body_oversize", "content_scan", "rate_limit", "scanner_error",
-        "unauthenticated_unknown_sender", "banned",
-    }),
+    "action": frozenset(
+        {
+            "ban",
+            "clarify",
+            "consent",
+            "decline",
+            "delete",
+            "insert",
+            "lookup",
+            "propose",
+            "revoke",
+            "search",
+            "unban",
+        }
+    ),
+    "outcome": frozenset(
+        {
+            "blocked",
+            "error",
+            "exists",
+            "found",
+            "not_found",
+            "rate_limited",
+            "rejected_already_registered",
+            "rejected_forbidden",
+            "rejected_unauthenticated",
+            "success",
+        }
+    ),
+    "tool_outcome": frozenset(
+        {
+            "created",
+            "deleted",
+            "error",
+            "escalated",
+            "exists",
+            "forbidden",
+            "limited",
+            "not_found",
+            "proposed",
+            "sent",
+            "success",
+            "suppressed",
+            "welcomed",
+            "welcomed_and_escalated",
+        }
+    ),
+    "tool_reason": frozenset(
+        {
+            "already_registered",
+            "max_sends_per_run",
+            "memory_text_too_long",
+            "not_sender_memory",
+            "person_memory_limit_exceeded",
+            "query_too_long",
+            "sanitization_failed",
+            "recipient_daily_cap",
+            "recipient_not_found",
+            "registration_quota_exceeded",
+            "sender_not_authenticated",
+            "sender_reply_daily_cap",
+            "person_not_found",
+            "invalid_person_id",
+            "self_introduction",
+            "use_reply_to_sender",
+        }
+    ),
+    "reason": frozenset(
+        {
+            "body_empty",
+            "body_oversize",
+            "content_scan",
+            "rate_limit",
+            "scanner_error",
+            "unauthenticated_unknown_sender",
+            "banned",
+        }
+    ),
     "record_type": frozenset({"introduction_consent", "memory", "person"}),
-    "consent_state": frozenset({"declined", "introduced", "one_consented", "proposed", "revoked"}),
-    "tool_name": frozenset({
-        "escalate", "forget", "propose_introduction", "reply_to_sender",
-        "register_person", "remember", "search",
-        "send_outreach",
-    }),
+    "consent_state": frozenset(
+        {"declined", "introduced", "one_consented", "proposed", "revoked"}
+    ),
+    "tool_name": frozenset(
+        {
+            "escalate",
+            "forget",
+            "propose_introduction",
+            "reply_to_sender",
+            "register_person",
+            "remember",
+            "search",
+            "send_outreach",
+        }
+    ),
 }
 _SAFE_HEADERS = frozenset({"auto-submitted", "from", "subject"})
 
@@ -110,10 +202,15 @@ def configure_audit_logging() -> None:
     # Non-structlog (plain stdlib) log records land here via the standard
     # foreign_pre_chain/ProcessorFormatter bridge, rendered to the same JSON.
     root_handler = logging.StreamHandler()
-    root_handler.setFormatter(structlog.stdlib.ProcessorFormatter(
-        foreign_pre_chain=_SHARED_PROCESSORS,
-        processors=[structlog.stdlib.ProcessorFormatter.remove_processors_meta, _JSON_RENDERER],
-    ))
+    root_handler.setFormatter(
+        structlog.stdlib.ProcessorFormatter(
+            foreign_pre_chain=_SHARED_PROCESSORS,
+            processors=[
+                structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+                _JSON_RENDERER,
+            ],
+        )
+    )
     root_logger = logging.getLogger()
     root_logger.handlers = [root_handler]
     root_logger.setLevel(logging.WARNING)  # keep third-party libraries quiet by default
@@ -165,7 +262,9 @@ def _validate_value(name: str, value: object) -> object:
             allowed = _SAFE_CATEGORIES["tool_name"]
             return [item if item in allowed else "unknown" for item in value]
         return [_safe_token(item) for item in value]
-    raise TypeError(f"unsupported audit field type for {name!r}: {type(value).__name__}")
+    raise TypeError(
+        f"unsupported audit field type for {name!r}: {type(value).__name__}"
+    )
 
 
 def _audit_payload(fields: dict[str, object]) -> dict[str, object]:
@@ -182,7 +281,9 @@ def _audit_payload(fields: dict[str, object]) -> dict[str, object]:
     sender_id_hash = _sender_id_hash.get()
     if sender_id_hash is not None and "sender_id_hash" not in fields:
         payload["sender_id_hash"] = _validate_value("sender_id_hash", sender_id_hash)
-    payload.update({name: _validate_value(name, value) for name, value in fields.items()})
+    payload.update(
+        {name: _validate_value(name, value) for name, value in fields.items()}
+    )
     return payload
 
 

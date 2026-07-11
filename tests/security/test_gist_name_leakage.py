@@ -9,6 +9,7 @@ form: plain ("Alice Chen"), possessive ("Alice Chen's"), or lowercase
     high-fidelity path `remember()` actually calls in production
     (`sanitize_memory_high_fidelity`, optional LLM with deterministic fallback).
 """
+
 from __future__ import annotations
 
 import re
@@ -59,7 +60,9 @@ class _NameAwareFakeAnalyzer:
         pattern = "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True))
         self._pattern = re.compile(pattern, re.IGNORECASE)
 
-    def analyze(self, text: str, entities: list[str], language: str) -> list[_FakeRecognizerResult]:
+    def analyze(
+        self, text: str, entities: list[str], language: str
+    ) -> list[_FakeRecognizerResult]:
         return [
             _FakeRecognizerResult("PERSON", m.start(), m.end())
             for m in self._pattern.finditer(text)
@@ -70,7 +73,9 @@ def _assert_no_name_variants(gist: str, name: str) -> None:
     first = name.split()[0]
     for variant in (name, f"{name}'s", first, f"{first}'s"):
         assert variant not in gist, f"{variant!r} leaked into gist: {gist!r}"
-        assert variant.lower() not in gist.lower(), f"{variant.lower()!r} leaked into gist: {gist!r}"
+        assert variant.lower() not in gist.lower(), (
+            f"{variant.lower()!r} leaked into gist: {gist!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -98,12 +103,16 @@ NAME_VARIANT_TEXTS = [
 
 
 @pytest.mark.parametrize("text", NAME_VARIANT_TEXTS)
-def test_sanitize_memory_gist_never_contains_name_variant_presidio_active(monkeypatch, text):
+def test_sanitize_memory_gist_never_contains_name_variant_presidio_active(
+    monkeypatch, text
+):
     """No surface form of the referenced name survives into the gist."""
     memory = Memory(text=text, refs=["person-1"])
     session = FakeSession()
     monkeypatch.setattr(
-        sanitize_mod, "_get_presidio_analyzer", lambda: _NameAwareFakeAnalyzer(["Alice Chen", "Alice"])
+        sanitize_mod,
+        "_get_presidio_analyzer",
+        lambda: _NameAwareFakeAnalyzer(["Alice Chen", "Alice"]),
     )
 
     gist = sanitize_mod.sanitize_memory(memory, session)
@@ -113,7 +122,9 @@ def test_sanitize_memory_gist_never_contains_name_variant_presidio_active(monkey
     assert "[name]" in gist
 
 
-def test_sanitize_memory_gist_never_contains_any_variant_in_single_multivariant_text(monkeypatch):
+def test_sanitize_memory_gist_never_contains_any_variant_in_single_multivariant_text(
+    monkeypatch,
+):
     """All surface forms in one memory - plain, possessive, and lowercase together."""
     text = (
         "Alice Chen is a Rust developer. Alice Chen's startup raised a seed "
@@ -122,7 +133,9 @@ def test_sanitize_memory_gist_never_contains_any_variant_in_single_multivariant_
     memory = Memory(text=text, refs=["person-1"])
     session = FakeSession()
     monkeypatch.setattr(
-        sanitize_mod, "_get_presidio_analyzer", lambda: _NameAwareFakeAnalyzer(["Alice Chen", "Alice"])
+        sanitize_mod,
+        "_get_presidio_analyzer",
+        lambda: _NameAwareFakeAnalyzer(["Alice Chen", "Alice"]),
     )
 
     gist = sanitize_mod.sanitize_memory(memory, session)
@@ -136,9 +149,12 @@ def test_sanitize_memory_gist_never_contains_any_variant_in_single_multivariant_
 # sanitize_memory_high_fidelity), LLM path
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("text", NAME_VARIANT_TEXTS)
-async def test_high_fidelity_gist_never_contains_name_variant_via_llm(monkeypatch, text):
+async def test_high_fidelity_gist_never_contains_name_variant_via_llm(
+    monkeypatch, text
+):
     """remember()'s production path (LLM-first sanitizer) must also drop every
     surface form of the name, independent of whether Presidio is installed.
     """
@@ -151,7 +167,9 @@ async def test_high_fidelity_gist_never_contains_name_variant_via_llm(monkeypatc
     # asserts on rather than silently falling back to the deterministic one.
     monkeypatch.setattr(
         "thenetwork.settings.get_settings",
-        lambda: SimpleNamespace(agent_model="test:model", sanitize_llm_tier_enabled=True),
+        lambda: SimpleNamespace(
+            agent_model="test:model", sanitize_llm_tier_enabled=True
+        ),
     )
 
     async def fake_llm(mem: Memory, sess: FakeSession) -> str:
@@ -161,7 +179,9 @@ async def test_high_fidelity_gist_never_contains_name_variant_via_llm(monkeypatc
         sess.flush()
         return redacted
 
-    monkeypatch.setattr(sanitize_mod, "sanitize_memory_llm", AsyncMock(side_effect=fake_llm))
+    monkeypatch.setattr(
+        sanitize_mod, "sanitize_memory_llm", AsyncMock(side_effect=fake_llm)
+    )
 
     gist = await sanitize_mod.sanitize_memory_high_fidelity(memory, session)
 
@@ -201,9 +221,18 @@ async def test_remember_tool_stores_gist_free_of_name_variants_end_to_end():
         memory.gist = redacted
         return redacted
 
-    with patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock, return_value=[0.0] * 1536), \
-         patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new=AsyncMock(side_effect=fake_llm)), \
-         patch("thenetwork.agent.tools.match_memories", return_value=[]):
+    with (
+        patch(
+            "thenetwork.agent.tools.embed_text",
+            new_callable=AsyncMock,
+            return_value=[0.0] * 1536,
+        ),
+        patch(
+            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
+            new=AsyncMock(side_effect=fake_llm),
+        ),
+        patch("thenetwork.agent.tools.match_memories", return_value=[]),
+    ):
         await remember(ctx, text=raw, refs=["user-alice", "user-bob"])
 
     stored = added[0]

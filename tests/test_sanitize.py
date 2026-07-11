@@ -42,7 +42,9 @@ class _FakeAnalyzer:
     def __init__(self, results: list[_FakeRecognizerResult]) -> None:
         self._results = results
 
-    def analyze(self, text: str, entities: list[str], language: str) -> list[_FakeRecognizerResult]:
+    def analyze(
+        self, text: str, entities: list[str], language: str
+    ) -> list[_FakeRecognizerResult]:
         return self._results
 
 
@@ -52,7 +54,11 @@ def test_sanitize_memory_redacts_names_emails_phones_with_presidio(monkeypatch):
     session = FakeSession()
 
     fake_results = [
-        _FakeRecognizerResult("PERSON", text.index("Alice Smith"), text.index("Alice Smith") + len("Alice Smith")),
+        _FakeRecognizerResult(
+            "PERSON",
+            text.index("Alice Smith"),
+            text.index("Alice Smith") + len("Alice Smith"),
+        ),
         _FakeRecognizerResult(
             "EMAIL_ADDRESS",
             text.index("alice@example.com"),
@@ -70,7 +76,9 @@ def test_sanitize_memory_redacts_names_emails_phones_with_presidio(monkeypatch):
 
     result = sanitize_mod.sanitize_memory(memory, session)
 
-    assert result == "[name] works at Acme Corp in Berlin. Email [email] or call [phone]."
+    assert (
+        result == "[name] works at Acme Corp in Berlin. Email [email] or call [phone]."
+    )
     assert memory.gist == result
     assert "Alice" not in result
     assert "Acme Corp" in result
@@ -105,7 +113,9 @@ def test_sanitize_memory_redacts_with_real_presidio_analyzer():
     try:
         analyzer = sanitize_mod._get_presidio_analyzer()
         if analyzer is None:
-            pytest.skip("real Presidio analyzer unavailable; install its local Spacy model")
+            pytest.skip(
+                "real Presidio analyzer unavailable; install its local Spacy model"
+            )
 
         text = "Alice Smith lives in Seattle. Email alice.smith@example.com or call 415-555-0199."
         memory = Memory(text=text, refs=["person-1"])
@@ -155,7 +165,9 @@ def _enable_llm_tier(monkeypatch) -> None:
     patching the module attribute is enough)."""
     monkeypatch.setattr(
         "thenetwork.settings.get_settings",
-        lambda: SimpleNamespace(agent_model="test:model", sanitize_llm_tier_enabled=True),
+        lambda: SimpleNamespace(
+            agent_model="test:model", sanitize_llm_tier_enabled=True
+        ),
     )
 
 
@@ -170,8 +182,7 @@ async def test_high_fidelity_sanitizer_uses_llm_output_when_tier_enabled(monkeyp
     )
     session = FakeSession()
     sanitized = (
-        "[name] can mentor founders. Email [email], call [phone], "
-        "or meet at [address]."
+        "[name] can mentor founders. Email [email], call [phone], or meet at [address]."
     )
     _enable_llm_tier(monkeypatch)
 
@@ -198,7 +209,9 @@ async def test_high_fidelity_sanitizer_uses_llm_output_when_tier_enabled(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_high_fidelity_sanitizer_falls_back_to_deterministic_strip_on_llm_error(monkeypatch):
+async def test_high_fidelity_sanitizer_falls_back_to_deterministic_strip_on_llm_error(
+    monkeypatch,
+):
     raw_text = (
         "Alice Smith lives at 123 Main Street and can discuss compilers "
         "via alice@example.com or 415-555-0199."
@@ -215,7 +228,11 @@ async def test_high_fidelity_sanitizer_falls_back_to_deterministic_strip_on_llm_
     mock_audit = MagicMock()
     monkeypatch.setattr(sanitize_mod, "audit_event", mock_audit)
     fake_results = [
-        _FakeRecognizerResult("PERSON", raw_text.index("Alice Smith"), raw_text.index("Alice Smith") + len("Alice Smith")),
+        _FakeRecognizerResult(
+            "PERSON",
+            raw_text.index("Alice Smith"),
+            raw_text.index("Alice Smith") + len("Alice Smith"),
+        ),
         _FakeRecognizerResult(
             "EMAIL_ADDRESS",
             raw_text.index("alice@example.com"),
@@ -251,16 +268,24 @@ async def test_high_fidelity_sanitizer_skips_llm_when_tier_disabled(monkeypatch)
     """Default settings (sanitize_llm_tier_enabled=False) must never call the
     LLM sanitizer - the opt-in tier is off by default because it costs a
     model call and adds latency on every person-referencing write."""
-    raw_text = "Alice Smith lives in Berlin. Email alice@example.com or call 415-555-0199."
+    raw_text = (
+        "Alice Smith lives in Berlin. Email alice@example.com or call 415-555-0199."
+    )
     memory = Memory(text=raw_text, refs=["person-1"])
     session = FakeSession()
 
     monkeypatch.setattr(
         "thenetwork.settings.get_settings",
-        lambda: SimpleNamespace(agent_model="test:model", sanitize_llm_tier_enabled=False),
+        lambda: SimpleNamespace(
+            agent_model="test:model", sanitize_llm_tier_enabled=False
+        ),
     )
     fake_results = [
-        _FakeRecognizerResult("PERSON", raw_text.index("Alice Smith"), raw_text.index("Alice Smith") + len("Alice Smith")),
+        _FakeRecognizerResult(
+            "PERSON",
+            raw_text.index("Alice Smith"),
+            raw_text.index("Alice Smith") + len("Alice Smith"),
+        ),
         _FakeRecognizerResult(
             "EMAIL_ADDRESS",
             raw_text.index("alice@example.com"),
@@ -275,7 +300,9 @@ async def test_high_fidelity_sanitizer_skips_llm_when_tier_disabled(monkeypatch)
     monkeypatch.setattr(
         sanitize_mod, "_get_presidio_analyzer", lambda: _FakeAnalyzer(fake_results)
     )
-    mock_llm = AsyncMock(side_effect=AssertionError("LLM sanitizer must not run when tier is disabled"))
+    mock_llm = AsyncMock(
+        side_effect=AssertionError("LLM sanitizer must not run when tier is disabled")
+    )
     monkeypatch.setattr(sanitize_mod, "sanitize_memory_llm", mock_llm)
 
     result = await sanitize_mod.sanitize_memory_high_fidelity(memory, session)
@@ -346,7 +373,10 @@ async def test_llm_sanitizer_uses_fixed_no_tools_prompt(monkeypatch):
     assert "email addresses" in kwargs["system_prompt"]
     assert "phone numbers" in kwargs["system_prompt"]
     assert "specific street addresses" in kwargs["system_prompt"]
-    assert "employers" in kwargs["system_prompt"] or "organizations" in kwargs["system_prompt"]
+    assert (
+        "employers" in kwargs["system_prompt"]
+        or "organizations" in kwargs["system_prompt"]
+    )
     assert "social media handles" in kwargs["system_prompt"]
     assert "URLs" in kwargs["system_prompt"] or "links" in kwargs["system_prompt"]
     assert "quasi-identifying combinations" in kwargs["system_prompt"]
@@ -365,7 +395,12 @@ async def test_llm_sanitizer_prompt_contract_via_function_model(monkeypatch):
     actual pydantic-ai message plumbing rather than a hand-rolled Agent
     double (matches the FunctionModel/TestModel convention used elsewhere,
     e.g. tests/scenarios/test_archetypes.py, tests/security/test_redteam.py)."""
-    from pydantic_ai.messages import ModelMessage, ModelResponse, SystemPromptPart, TextPart
+    from pydantic_ai.messages import (
+        ModelMessage,
+        ModelResponse,
+        SystemPromptPart,
+        TextPart,
+    )
     from pydantic_ai.models.function import AgentInfo, FunctionModel
 
     memory = Memory(
@@ -375,7 +410,9 @@ async def test_llm_sanitizer_prompt_contract_via_function_model(monkeypatch):
     session = FakeSession()
     captured: dict[str, object] = {}
 
-    async def capture_and_respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    async def capture_and_respond(
+        messages: list[ModelMessage], info: AgentInfo
+    ) -> ModelResponse:
         captured["info"] = info
         captured["messages"] = messages
         system_texts = [
@@ -385,7 +422,13 @@ async def test_llm_sanitizer_prompt_contract_via_function_model(monkeypatch):
             if isinstance(part, SystemPromptPart)
         ]
         captured["system_prompt"] = "\n".join(system_texts)
-        return ModelResponse(parts=[TextPart(content="[name] works at [org] and tweets [handle], see [url].")])
+        return ModelResponse(
+            parts=[
+                TextPart(
+                    content="[name] works at [org] and tweets [handle], see [url]."
+                )
+            ]
+        )
 
     monkeypatch.setattr(
         "thenetwork.settings.get_settings",
