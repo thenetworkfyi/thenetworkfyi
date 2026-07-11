@@ -211,7 +211,7 @@ def poll_unseen() -> list[InboundMessage]:
     Caller is responsible for calling mark_messages_seen() after successfully
     enqueuing each message - this ensures no email is lost if the process
     crashes between fetch and enqueue (RFC 3834 durable intake).
-    Skips auto-generated messages and self-sends to prevent mail loops.
+    Skips automatic messages and self-sends to prevent mail loops.
     """
     s = get_settings()
     messages: list[InboundMessage] = []

@@ -1,14 +1,12 @@
 """pydantic-evals scenario tests for agent archetypes.
 
 These are emergent-behavior assertions - no branching control flow in the agent.
-Tests use pydantic-ai FunctionModel / TestModel for deterministic, offline runs.
+Tests use pydantic-ai FunctionModel for deterministic, offline runs.
 """
 from __future__ import annotations
 
 import pytest
 from limits import storage, strategies
-from pydantic_ai.models.test import TestModel
-
 from thenetwork.agent.core import build_agent
 from thenetwork.agent.deps import AgentDeps
 
@@ -29,29 +27,72 @@ def _use_in_memory_dispatch_limiter():
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_onboarding_calls_save_profile():
-    """A new sender's first email should trigger save_or_update_profile."""
-    from unittest.mock import patch, MagicMock, AsyncMock
-    agent = build_agent(model=TestModel())
+async def test_onboarding_registers_sender_then_remembers_under_sender_id():
+    """A new sender is registered before their first-contact note is stored."""
+    from unittest.mock import AsyncMock, MagicMock, patch
 
-    with patch("thenetwork.agent.tools.get_session") as mock_gs, \
-         patch("thenetwork.agent.tools.send_reply") as mock_send, \
-         patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock, return_value=[0.0] * 1536):
-        
-        mock_session = MagicMock()
-        mock_session.__enter__ = MagicMock(return_value=mock_session)
-        mock_session.__exit__ = MagicMock(return_value=False)
-        mock_session.exec.return_value.one.return_value = 0
-        mock_session.execute.return_value.scalar_one.return_value = "user-abc"
-        mock_gs.return_value = mock_session
+    from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+    from thenetwork.db.models import Person
 
-        deps = AgentDeps(sender_email="new@example.com", sender_user_id=None)
-        result = await agent.run(
+    call_count = 0
+
+    async def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(
+                tool_name="register_person",
+                args={"name": "Priya"},
+            )])
+        if call_count == 2:
+            return ModelResponse(parts=[ToolCallPart(
+                tool_name="remember",
+                args={
+                    "text": "backend engineer looking to meet ML engineers",
+                    "refs": ["user-priya"],
+                },
+            )])
+        return ModelResponse(parts=[TextPart(content="Onboarding recorded.")])
+
+    mock_session = MagicMock()
+    mock_session.__enter__ = MagicMock(return_value=mock_session)
+    mock_session.__exit__ = MagicMock(return_value=False)
+    mock_session.exec.return_value.first.return_value = None
+    mock_session.exec.return_value.one.return_value = 0
+
+    def refresh_person(person: Person) -> None:
+        person.id = "user-priya"
+
+    mock_session.refresh.side_effect = refresh_person
+
+    async def fake_sanitize(memory, session) -> str:
+        return "backend engineer looking to meet ML engineers"
+
+    with patch("thenetwork.agent.tools.get_session", return_value=mock_session), \
+         patch("thenetwork.agent.tools._hit_registration_quota", return_value=True), \
+         patch("thenetwork.agent.tools.embed_text", new=AsyncMock(return_value=[0.0] * 1536)), \
+         patch("thenetwork.agent.tools.match_memories", return_value=[]), \
+         patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new=AsyncMock(side_effect=fake_sanitize)):
+        deps = AgentDeps(
+            sender_email="priya@example.com",
+            sender_user_id=None,
+            sender_authenticated=True,
+        )
+        result = await build_agent(model=FunctionModel(script)).run(
             "Hi, I'm new here. I'm a backend engineer looking to meet ML engineers.",
             deps=deps,
         )
-    assert result.output is not None
-    assert isinstance(result.output, str)
+
+    tool_calls = [
+        part
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    ]
+    assert [call.tool_name for call in tool_calls] == ["register_person", "remember"]
+    assert tool_calls[1].args_as_dict()["refs"] == ["user-priya"]
+    assert deps.sender_user_id == "user-priya"
 
 
 # ---------------------------------------------------------------------------
@@ -103,7 +144,7 @@ async def test_matchmaking_returns_opaque_ids_only():
 
 
 # ---------------------------------------------------------------------------
-# Dispatch email: capability tool, address resolved server-side
+# Outreach email: capability tool, address resolved server-side
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
