@@ -210,7 +210,7 @@ def test_default_outcome_checks_cover_all_persona_situations():
     )
 
     assert score.passed is True
-    assert len(score.findings) == 8
+    assert len(score.findings) == 9
     assert all(check.requires_real_process for check in DEFAULT_OUTCOME_CHECKS)
     assert all(check.requires_llm_personas for check in DEFAULT_OUTCOME_CHECKS)
 
@@ -282,11 +282,32 @@ def test_default_outcome_checks_cover_all_persona_situations():
             6,
             replace(
                 _default_outcome(),
-                audit_events=(),
+                consent_rows=(
+                    IntroductionRevealAuthorization(
+                        person_a_email="ruth.sim@example.test",
+                        person_b_email="peer@example.test",
+                        status="declined",
+                    ),
+                    *(
+                        IntroductionRevealAuthorization(
+                            person_a_email="vic.sim@example.test",
+                            person_b_email=f"vic-peer-{index}@example.test",
+                            status="proposed",
+                        )
+                        for index in range(6)
+                    ),
+                ),
             ),
         ),
         (
             7,
+            replace(
+                _default_outcome(),
+                audit_events=(),
+            ),
+        ),
+        (
+            8,
             replace(
                 _default_outcome(),
                 mail_facts=(
@@ -335,7 +356,7 @@ def test_omar_outcome_uses_his_audited_action_not_final_pair_status():
 
     score = score_scenario_outcomes(
         outcome,
-        (DEFAULT_OUTCOME_CHECKS[6],),
+        (DEFAULT_OUTCOME_CHECKS[7],),
         real_process=True,
         llm_personas=True,
     )
@@ -385,7 +406,7 @@ def test_omar_outcome_accepts_counterpart_first_consent_and_mutual_reveal():
 
     score = score_scenario_outcomes(
         outcome,
-        DEFAULT_OUTCOME_CHECKS[6:8],
+        DEFAULT_OUTCOME_CHECKS[7:9],
         real_process=True,
         llm_personas=True,
     )
@@ -419,7 +440,7 @@ def test_omar_reveal_accepts_pair_revoked_after_mutual_consent():
 
     score = score_scenario_outcomes(
         outcome,
-        (DEFAULT_OUTCOME_CHECKS[7],),
+        (DEFAULT_OUTCOME_CHECKS[8],),
         real_process=True,
         llm_personas=True,
     )
@@ -452,7 +473,7 @@ def test_omar_reveal_rejects_revoked_pair_without_mutual_consent():
 
     score = score_scenario_outcomes(
         outcome,
-        (DEFAULT_OUTCOME_CHECKS[7],),
+        (DEFAULT_OUTCOME_CHECKS[8],),
         real_process=True,
         llm_personas=True,
     )
@@ -496,7 +517,7 @@ def test_omar_outcome_rejects_missing_repeated_or_revoked_consent(actions):
 
     score = score_scenario_outcomes(
         outcome,
-        (DEFAULT_OUTCOME_CHECKS[6],),
+        (DEFAULT_OUTCOME_CHECKS[7],),
         real_process=True,
         llm_personas=True,
     )

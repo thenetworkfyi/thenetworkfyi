@@ -17,10 +17,18 @@ Both hand the agent only opaque ids + PII-stripped gists in the trigger body,
 never raw text, names, or addresses (SEAL).
 
 Both scans are *paced*: candidates are collected, ordered deterministically
-(score descending, then the canonical pair key), and each person is scheduled
-for at most one new candidate per scan. A dense cluster - e.g. several
-manufacturing-adjacent members arriving together - therefore surfaces as a few
-best-first pairs per hour instead of a combinatorial burst of proposals.
+(request-load ascending, then score descending, then the canonical pair key),
+and each person is scheduled for at most one new candidate per scan. A dense
+cluster - e.g. several manufacturing-adjacent members arriving together -
+therefore surfaces as a few best-first pairs per hour instead of a
+combinatorial burst of proposals. Ordering by request load first means a
+recipient with outstanding or recent consent requests is deprioritized behind
+an equally- or similarly-relevant candidate who has none, so pacing does not
+keep re-selecting already-engaged people while a strong, unengaged match waits
+- see `introductions.request_load`. This only reorders candidates that already
+cleared the relevance floor; it never lowers `PROXIMITY_THRESHOLD` or
+`proactive_match_threshold`, and the `introduction_max_*` caps are still the
+ones enforced (at proposal time) in `introductions.propose_pair`.
 """
 from __future__ import annotations
 
@@ -35,27 +43,29 @@ from thenetwork.db.session import get_session
 from thenetwork.search.graph import build_graph
 from thenetwork.search.match import match_memories
 from thenetwork.settings import get_settings
-from thenetwork.introductions import pair_is_suppressed
+from thenetwork.introductions import pair_is_suppressed, request_load
 from thenetwork.worker.tasks import app, process_email
 
 PROXIMITY_THRESHOLD = 0.3
 
 
 def _pace_one_per_person(
-    candidates: list[tuple[float, tuple[str, str], dict]],
+    candidates: list[tuple[int, float, tuple[str, str], dict]],
 ) -> list[dict]:
     """Order candidates deterministically and cap scheduling at one per person.
 
-    `candidates` items are (score, canonical_pair_key, payload). Ordering is
-    score-descending with the pair key as a stable tiebreak, so the same state
-    always yields the same picks. A person already scheduled this scan blocks
-    any further candidate involving them; the skipped pair simply waits for a
-    later scan (or is superseded by real activity in the meantime).
+    `candidates` items are (request_load, score, canonical_pair_key, payload).
+    Ordering is request-load ascending first - so an unengaged candidate is
+    tried before an already-engaged one regardless of a modest score gap -
+    then score-descending, then the pair key as a stable tiebreak, so the same
+    state always yields the same picks. A person already scheduled this scan
+    blocks any further candidate involving them; the skipped pair simply waits
+    for a later scan (or is superseded by real activity in the meantime).
     """
-    candidates.sort(key=lambda c: (-c[0], c[1]))
+    candidates.sort(key=lambda c: (c[0], -c[1], c[2]))
     engaged: set[str] = set()
     picks: list[dict] = []
-    for _score, pair_key, payload in candidates:
+    for _load, _score, pair_key, payload in candidates:
         if pair_key[0] in engaged or pair_key[1] in engaged:
             continue
         engaged.update(pair_key)
@@ -79,13 +89,25 @@ async def scan_for_opportunities(timestamp: int) -> None:
     if len(person_ids) < 2:
         return
 
+    s = get_settings()
+    since = datetime.now(timezone.utc) - timedelta(
+        seconds=s.introduction_request_window_seconds
+    )
+
     with get_session() as session:
         people = session.exec(
             select(Person).where(col(Person.id).in_(person_ids))
         ).all()
         email_by_id = {p.id: p.email for p in people}
 
-        candidates: list[tuple[float, tuple[str, str], dict]] = []
+        load_cache: dict[str, int] = {}
+
+        def load_for(pid: str) -> int:
+            if pid not in load_cache:
+                load_cache[pid] = request_load(session, pid, since=since)
+            return load_cache[pid]
+
+        candidates: list[tuple[int, float, tuple[str, str], dict]] = []
         for i, pid_a in enumerate(person_ids):
             if pid_a not in email_by_id:
                 continue
@@ -97,8 +119,10 @@ async def scan_for_opportunities(timestamp: int) -> None:
                 if pair_is_suppressed(session, pid_a, pid_b):
                     continue
                 pair_key: tuple[str, str] = tuple(sorted((pid_a, pid_b)))  # type: ignore[assignment]
+                pair_load = max(load_for(pid_a), load_for(pid_b))
                 candidates.append(
                     (
+                        pair_load,
                         score,
                         pair_key,
                         {
@@ -163,6 +187,10 @@ async def scan_for_matches(timestamp: int) -> None:
         graph = build_graph()
         seen: set[frozenset[str]] = set()
         email_cache: dict[str, str | None] = {}
+        load_cache: dict[str, int] = {}
+        since = datetime.now(timezone.utc) - timedelta(
+            seconds=s.introduction_request_window_seconds
+        )
 
         def email_for(pid: str) -> str | None:
             if pid not in email_cache:
@@ -170,7 +198,12 @@ async def scan_for_matches(timestamp: int) -> None:
                 email_cache[pid] = person.email if person else None
             return email_cache[pid]
 
-        candidates: list[tuple[float, tuple[str, str], dict]] = []
+        def load_for(pid: str) -> int:
+            if pid not in load_cache:
+                load_cache[pid] = request_load(session, pid, since=since)
+            return load_cache[pid]
+
+        candidates: list[tuple[int, float, tuple[str, str], dict]] = []
         for arrival_mem in recent:
             arrivals = [r for r in arrival_mem.refs if r]
             if not arrivals:
@@ -217,8 +250,10 @@ async def scan_for_matches(timestamp: int) -> None:
                         "or you are unsure, do nothing."
                     )
                     pair_key: tuple[str, str] = tuple(sorted(pair))  # type: ignore[assignment]
+                    pair_load = max(load_for(standing), load_for(arrival))
                     candidates.append(
                         (
+                            pair_load,
                             m.similarity,
                             pair_key,
                             {

@@ -439,6 +439,56 @@ async def test_rematch_preserves_pair_suppression():
 
 
 @pytest.mark.asyncio
+async def test_rematch_prioritizes_zero_load_candidate_over_saturated_peers():
+    """Reproduces the run-shaped scenario where four already-engaged recipients
+    kept winning pacing while a strong, unengaged match (Omar-like) never got
+    scheduled. All candidates here compete for the same newly-arrived person,
+    so only one is paced; request-load ordering must pick the zero-load
+    candidate even though the saturated candidates score as high or higher,
+    without lowering the relevance floor or the per-scan one-per-person cap."""
+    from thenetwork.search.match import MemoryMatch
+    from thenetwork.worker.proactive import scan_for_matches
+
+    recent = [
+        _memory("arrival", ["newcomer"], "ml infrastructure operator, seeking collaborators")
+    ]
+    saturated = ["s1", "s2", "s3", "s4"]
+    per_call_matches = [
+        [
+            MemoryMatch("m-omar", "omar", "ml infrastructure standing note", 0.68),
+            *[
+                MemoryMatch(f"m-{s}", s, "ml infrastructure standing note", 0.75)
+                for s in saturated
+            ],
+        ]
+    ]
+    persons = {
+        "newcomer": _person("newcomer", "newcomer@test.com"),
+        "omar": _person("omar", "omar@test.com"),
+        **{s: _person(s, f"{s}@test.com") for s in saturated},
+    }
+
+    def fake_request_load(_session, person_id, *, since):
+        return 0 if person_id in ("newcomer", "omar") else 3
+
+    with patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()), \
+         patch("thenetwork.worker.proactive.get_session", return_value=_rematch_session(recent, persons)), \
+         patch("thenetwork.worker.proactive.match_memories", side_effect=per_call_matches), \
+         patch("thenetwork.worker.proactive.request_load", side_effect=fake_request_load), \
+         patch("thenetwork.worker.proactive.process_email") as mock_pe:
+        await scan_for_matches.func(0)
+
+    assert mock_pe.defer.call_count == 1, (
+        "all candidates compete for the same newcomer; only one may be paced"
+    )
+    kwargs = mock_pe.defer.call_args.kwargs
+    assert kwargs["sender_email"] == "omar@test.com", (
+        "the zero-load candidate must be scheduled ahead of similarly relevant "
+        "saturated candidates, even though the saturated ones score higher"
+    )
+
+
+@pytest.mark.asyncio
 async def test_opportunities_scan_paces_one_candidate_per_person():
     """A star graph makes every leaf pair Jaccard 1.0; pacing schedules at most
     one candidate per person instead of every qualifying pair."""

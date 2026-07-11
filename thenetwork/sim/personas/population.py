@@ -225,6 +225,14 @@ def _omar_consent_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
     }
 
 
+def _omar_has_consent_pair(outcome: ScenarioOutcome) -> bool:
+    return any(_pair_involves(row, OMAR_EMAIL) for row in outcome.consent_rows)
+
+
+def _omar_pair_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
+    return _pair_summary(outcome, OMAR_EMAIL)
+
+
 DEFAULT_OUTCOME_CHECKS = (
     OutcomeCheck(
         description="Ruth declines an introduction and the pair enters cooldown",
@@ -274,6 +282,17 @@ DEFAULT_OUTCOME_CHECKS = (
         requires_real_process=True,
         requires_llm_personas=True,
         evidence=_vic_pair_summary,
+    ),
+    OutcomeCheck(
+        description=(
+            "Omar receives at least one consent-pair row; a strong, unengaged "
+            "match must not be starved of any proposal while other candidates "
+            "repeatedly reach the per-recipient request ceiling"
+        ),
+        predicate=_omar_has_consent_pair,
+        requires_real_process=True,
+        requires_llm_personas=True,
+        evidence=_omar_pair_summary,
     ),
     OutcomeCheck(
         description="Omar consents exactly once and never revokes",
