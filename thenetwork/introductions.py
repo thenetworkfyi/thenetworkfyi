@@ -114,15 +114,6 @@ def propose_pair(
                 and existing.declined_at is not None
                 and existing.declined_at <= _utcnow() - timedelta(days=decline_cooldown_days)
             ):
-                existing.status = "proposed"
-                existing.person_a_consented = False
-                existing.person_b_consented = False
-                existing.declined_at = None
-                existing.reply_token = str(uuid.uuid4())
-                existing.updated_at = _utcnow()
-                session.add(existing)
-                session.commit()
-                session.refresh(existing)
                 proposal = existing
             else:
                 return {"status": "suppressed", "reason": existing.status}
@@ -164,6 +155,16 @@ def propose_pair(
 
         if proposal is None:
             proposal = IntroductionConsent(person_a_id=low, person_b_id=high)
+            session.add(proposal)
+            session.commit()
+            session.refresh(proposal)
+        else:
+            proposal.status = "proposed"
+            proposal.person_a_consented = False
+            proposal.person_b_consented = False
+            proposal.declined_at = None
+            proposal.reply_token = str(uuid.uuid4())
+            proposal.updated_at = _utcnow()
             session.add(proposal)
             session.commit()
             session.refresh(proposal)
