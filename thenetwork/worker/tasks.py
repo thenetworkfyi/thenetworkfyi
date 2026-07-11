@@ -43,7 +43,11 @@ from thenetwork.email.outbound import (
 from thenetwork.memory.sanitize import assert_presidio_ready
 from thenetwork.introductions import process_consent_reply
 from thenetwork.security.content_scan import scan_content
-from thenetwork.security.rate_limit import check_rate_limit, normalize_rate_limit_identity
+from thenetwork.security.rate_limit import (
+    PostgresFixedWindowStorage,
+    check_rate_limit,
+    normalize_rate_limit_identity,
+)
 from thenetwork.security.sender_identifier import optional_sender_identifier
 from thenetwork.settings import get_settings
 
@@ -82,22 +86,25 @@ _INFRASTRUCTURE_REJECTION_REPLIES = {
     ),
 }
 _WELCOME_LIMIT = parse("1/day")
-_welcome_limiter: strategies.MovingWindowRateLimiter | None = None
-_welcome_storage: storage.Storage | None = None
+_welcome_limiter: strategies.FixedWindowRateLimiter | None = None
+_welcome_storage: PostgresFixedWindowStorage | None = None
 
 
-def _get_welcome_limiter() -> tuple[strategies.MovingWindowRateLimiter, object]:
+def _get_welcome_limiter() -> tuple[strategies.FixedWindowRateLimiter, object]:
     global _welcome_limiter, _welcome_storage
     if _welcome_limiter is None:
-        _welcome_storage = storage.MemoryStorage()
-        _welcome_limiter = strategies.MovingWindowRateLimiter(_welcome_storage)
+        _welcome_storage = PostgresFixedWindowStorage()
+        _welcome_limiter = strategies.FixedWindowRateLimiter(_welcome_storage)
     return _welcome_limiter, _welcome_storage
 
 
 def _hit_welcome_quota(sender_email: str) -> bool:
     limiter, _ = _get_welcome_limiter()
     identity = normalize_rate_limit_identity(sender_email)
-    return limiter.hit(_WELCOME_LIMIT, f"welcome:first-contact:{identity}")
+    try:
+        return limiter.hit(_WELCOME_LIMIT, f"welcome:first-contact:{identity}")
+    except Exception:
+        return False
 
 
 def _trace_kwargs(trace_id: str | None) -> dict[str, str]:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from limits import storage, strategies
 
 
 def _mock_sender_lookup(sender_id: str | None) -> MagicMock:
@@ -16,8 +17,8 @@ def _mock_sender_lookup(sender_id: str | None) -> MagicMock:
 def _reset_welcome_limiter() -> None:
     from thenetwork.worker import tasks
 
-    tasks._welcome_limiter = None
-    tasks._welcome_storage = None
+    tasks._welcome_storage = storage.MemoryStorage()
+    tasks._welcome_limiter = strategies.FixedWindowRateLimiter(tasks._welcome_storage)
 
 
 @pytest.mark.asyncio

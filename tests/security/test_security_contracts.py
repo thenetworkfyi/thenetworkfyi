@@ -9,6 +9,7 @@ import json
 import logging
 
 import pytest
+from limits import storage, strategies
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from thenetwork.agent.deps import AgentDeps
@@ -17,6 +18,17 @@ from thenetwork.audit import LOGGER_NAME, audit_event
 from thenetwork.db.models import Person
 from thenetwork.search.match import MemoryMatch
 from thenetwork.settings import Settings
+
+
+@pytest.fixture(autouse=True)
+def _use_in_memory_registration_limiter():
+    """Unit tests isolate quota state; persistence is covered by DB tests."""
+    from thenetwork.agent import tools
+
+    tools._registration_storage = storage.MemoryStorage()
+    tools._registration_limiter = strategies.FixedWindowRateLimiter(
+        tools._registration_storage
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -63,9 +75,8 @@ class FakeCtx:
 
 def _reset_dispatch_limiter():
     from thenetwork.agent import tools
-
-    tools._dispatch_limiter = None
-    tools._dispatch_storage = None
+    tools._dispatch_storage = storage.MemoryStorage()
+    tools._dispatch_limiter = strategies.FixedWindowRateLimiter(tools._dispatch_storage)
 
 
 def _fake_person(email: str = "bob@example.com"):
