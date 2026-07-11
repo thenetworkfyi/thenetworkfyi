@@ -32,7 +32,9 @@ The whole thing runs on a single VPS against Postgres.
                   Worker (Procrastinate task)
                       | rate-limit + optional content scan
                       | run the pydantic-ai agent: Think / Act / Observe
-                      | tools: remember / forget / search / dispatch_email
+                      | tools: remember / forget / search / reply_to_sender /
+                      |        send_outreach / propose_introduction / escalate /
+                      |        register_person
                       v
                   Reply --SMTP--> [Sender]
 ```
@@ -99,15 +101,18 @@ reference mapping at write time.
 
 ## Agent surface
 
-Memory is CRUD exposed as tools; everything else is emergent behavior
-(`thenetwork/agent/tools.py`).
+The agent has eight tools (`thenetwork/agent/tools.py`):
 
 | tool | description |
 |---|---|
 | `remember(text, refs)` | write a chunk; a PII-stripped gist is produced automatically for any memory with refs |
-| `forget(memory_id)` | delete a chunk (edit = forget + remember, so embeddings never go stale) |
+| `forget(memory_id)` | delete a sender-owned, single-ref chunk (edit = forget + remember, so embeddings never go stale) |
 | `search(query) -> [{person_id, gist, similarity}]` | semantic recall returning **opaque ids + gist only** for other people |
-| `dispatch_email(recipient_user_id, subject, body, …)` | opaque id in; the real address is resolved server-side at send time |
+| `reply_to_sender(subject, body_text, …)` | reply only to the registered inbound sender; the model cannot select a recipient |
+| `send_outreach(recipient_user_id, subject, body_text, …)` | send a new, unthreaded message to another user by opaque id; the address is resolved server-side |
+| `propose_introduction(other_person_id, sender_gist, other_gist)` | create a sealed pairwise proposal; server-owned consent controls any identity reveal |
+| `escalate(reason)` | flag the inbound email for human review; authenticated unknown senders receive fixed first-contact guidance instead |
+| `register_person(name)` | self-register an authenticated first-contact sender; the server supplies the sender address |
 
 ---
 
@@ -141,9 +146,10 @@ column." Instead:
    tools. Missing Presidio is a deployment error, not a silent downgrade. The component
    that sees raw cross-user data stays small and auditable; the main agent never
    self-censors.
-5. **Capability-style email tool (confused-deputy fix).** `dispatch_email` takes
-   an opaque `recipient_user_id`; the address is resolved server-side at send time.
-   The LLM never sees or supplies a raw address.
+5. **Capability-style email tools (confused-deputy fix).** `reply_to_sender`
+   derives its only recipient from the inbound sender. `send_outreach` accepts an
+   opaque `recipient_user_id`; the address is resolved server-side at send time.
+   Neither tool lets the LLM see or supply a raw address.
 6. **Role separation.** The untrusted inbound body is passed as user-role message
    content, never into the system prompt (`thenetwork/agent/core.py`).
 7. **Mail-loop prevention (RFC 3834).** Inbound carrying `Auto-Submitted` /

@@ -33,9 +33,10 @@ prompt-injection exfiltrate it, so the privacy boundary cannot be "withhold a co
    model). Missing Presidio is a deployment error, not a silent downgrade. The component
    that sees raw cross-user data stays small and auditable; the main agent never
    self-censors.
-5. **Capability-style email tool (confused-deputy fix).** `dispatch_email` takes an opaque
-   `recipient_user_id`; the address is resolved server-side at send time. The LLM never
-   sees or supplies a raw address.
+5. **Capability-style email tools (confused-deputy fix).** `reply_to_sender` has no
+   recipient argument and derives its only recipient from the inbound sender.
+   `send_outreach` takes an opaque `recipient_user_id`; the address is resolved
+   server-side at send time. The LLM never sees or supplies a raw address.
 6. **Double-opt-in identity reveal.** The model can propose an unordered pair but cannot
    record consent or compose the revealing message. A random reply token associates an
    explicit `YES`, `NO`, or `REVOKE` reply with the pair; the worker accepts it only from

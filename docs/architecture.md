@@ -15,8 +15,9 @@ The "big picture" that requires reading several files to reconstruct. See
                 Worker (Procrastinate task: process_email)
                     | rate-limit + optional content scan
                     | run the pydantic-ai agent: Think / Act / Observe
-                    | tools: remember / forget / search / dispatch_email /
-                    |        propose_introduction / escalate / register_person
+                    | tools: remember / forget / search / reply_to_sender /
+                    |        send_outreach / propose_introduction / escalate /
+                    |        register_person
                     v
                 Reply --SMTP--> [Sender]
                     | append to IMAP Sent folder (best-effort, post-send)
@@ -98,16 +99,17 @@ exists because some memory references both, edge weight comes from count/recency
 memories. NetworkX does multi-hop proximity math; the LLM does the language→reference
 mapping at write time. Semantic match over memories lives in `search/match.py`.
 
-## Agent surface - seven tools (`agent/tools.py`)
+## Agent surface - eight tools (`agent/tools.py`)
 
 | tool | description |
 |---|---|
 | `remember(text, refs)` | write a chunk; a PII-stripped gist is auto-produced for any memory with refs |
-| `forget(memory_id)` | delete a chunk (edit = forget + remember, so embeddings never go stale) |
+| `forget(memory_id)` | delete a sender-owned, single-ref chunk (edit = forget + remember, so embeddings never go stale) |
 | `search(query) -> [{person_id, gist, similarity}]` | semantic recall returning **opaque ids + gist only** for other people |
-| `dispatch_email(recipient_user_id, …)` | opaque id in; the real address is resolved server-side at send time |
+| `reply_to_sender(subject, body_text, …)` | reply only to the registered inbound sender; the model cannot select a recipient, and only this tool receives inbound threading and quoted-message context |
+| `send_outreach(recipient_user_id, subject, body_text, …)` | send a new, unthreaded message to another user by opaque id; the address is resolved server-side |
 | `propose_introduction(other_person_id, sender_gist, other_gist)` | creates a pairwise proposal and sends fixed anonymous opt-in requests; authenticated replies are handled server-side before the model runs |
-| `register_person(email, name)` | onboard the sender on first contact; self-registration only (must match the authenticated From, must not already exist) - the id it returns is what later `remember`/`dispatch_email` calls key off |
+| `register_person(name)` | onboard an authenticated sender on first contact; self-registration only, with the address supplied from the verified inbound sender - the id it returns is what later `remember` calls key off |
 | `escalate(reason)` | flag this email for human review and notify `admin_emails`; no auto-reply is sent for true escalations. For authenticated unknown senders, it sends the fixed first-contact welcome instead of escalating. The fallback when no safe, useful action is clear (e.g. an unauthenticated first contact) |
 
 ## Stack
