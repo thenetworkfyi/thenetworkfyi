@@ -47,6 +47,10 @@ async def test_scan_enqueues_high_proximity_pair():
     trace_ids = [call.kwargs["trace_id"] for call in mock_pe.defer.call_args_list]
     assert len(trace_ids) == len(set(trace_ids))
     assert all(str(UUID(trace_id, version=4)) == trace_id for trace_id in trace_ids)
+    # the bound counterpart is the surfaced high-proximity pair's other id, and
+    # never the effective sender's own id (propose_introduction pairing binding)
+    call = next(c for c in mock_pe.defer.call_args_list if c.kwargs["sender_email"] == "alice@test.com")
+    assert call.kwargs["proactive_candidate_id"] == "bob"
 
 
 @pytest.mark.asyncio
@@ -171,6 +175,9 @@ async def test_rematch_enqueues_new_match_against_standing_note():
     assert "rust cofounder" in kwargs["body"]  # Q's gist
     assert kwargs["sender_authenticated"] is True
     assert str(UUID(kwargs["trace_id"], version=4)) == kwargs["trace_id"]
+    # the bound counterpart is the newly-arrived person (Q), not the dormant
+    # standing-note owner (P) who is the effective sender
+    assert kwargs["proactive_candidate_id"] == "Q"
 
 
 @pytest.mark.asyncio
@@ -211,6 +218,9 @@ async def test_rematch_job_reaches_agent_through_real_worker_handoff():
     )
     assert run_agent.call_args.kwargs["sender_authenticated"] is True
     assert run_agent.call_args.kwargs["sender_email"] == "p@test.com"
+    # the bound candidate id survives the full defer() -> process_email.func()
+    # -> run_agent_for_email handoff, so propose_introduction can enforce it
+    assert run_agent.call_args.kwargs["proactive_candidate_id"] == "Q"
 
 
 @pytest.mark.asyncio

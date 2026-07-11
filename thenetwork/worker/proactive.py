@@ -110,6 +110,7 @@ async def scan_for_opportunities(timestamp: int) -> None:
                             ),
                             "sender_authenticated": True,
                             "is_proactive": True,
+                            "proactive_candidate_id": pid_b,
                         },
                     )
                 )
@@ -226,6 +227,7 @@ async def scan_for_matches(timestamp: int) -> None:
                                 "body": body,
                                 "sender_authenticated": True,
                                 "is_proactive": True,
+                                "proactive_candidate_id": arrival,
                             },
                         )
                     )

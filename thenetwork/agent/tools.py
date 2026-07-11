@@ -681,6 +681,19 @@ async def propose_introduction(
                 "status": "error",
                 "reason": "sender_not_authenticated",
             })
+        if other_person_id == ctx.deps.sender_user_id:
+            return _tool_result({
+                "status": "error",
+                "reason": "self_introduction",
+            })
+        if ctx.deps.is_proactive and (
+            not ctx.deps.proactive_candidate_id
+            or other_person_id != ctx.deps.proactive_candidate_id
+        ):
+            return _tool_result({
+                "status": "error",
+                "reason": "outside_proactive_pair",
+            })
         proposal_limit = ctx.deps.settings.introduction_max_proposals_per_run
         if (
             proposal_limit > 0
