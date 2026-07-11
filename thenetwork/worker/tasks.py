@@ -274,9 +274,12 @@ async def process_email(
             return
 
         if is_near_empty_body(body):
+            rate_limit_kwargs = {"sender_authenticated": sender_authenticated}
+            if is_proactive:
+                rate_limit_kwargs["skip_sender_limit"] = True
             if not check_rate_limit(
                 sender_email,
-                sender_authenticated=sender_authenticated,
+                **rate_limit_kwargs,
             ):
                 audit_event("worker.message_rejected", reason=REJECT_RATE_LIMIT)
                 return
@@ -295,10 +298,10 @@ async def process_email(
                 audit_event("worker.first_contact_welcome_sent")
             return
 
-        if not check_rate_limit(
-            sender_email,
-            sender_authenticated=sender_authenticated,
-        ):
+        rate_limit_kwargs = {"sender_authenticated": sender_authenticated}
+        if is_proactive:
+            rate_limit_kwargs["skip_sender_limit"] = True
+        if not check_rate_limit(sender_email, **rate_limit_kwargs):
             audit_event("worker.message_rejected", reason=REJECT_RATE_LIMIT)
             _send_infrastructure_rejection_reply(
                 sender_email=sender_email,

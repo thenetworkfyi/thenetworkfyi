@@ -25,6 +25,7 @@ best-first pairs per hour instead of a combinatorial burst of proposals.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 import networkx as nx
 from sqlmodel import col, select
@@ -60,6 +61,12 @@ def _pace_one_per_person(
         engaged.update(pair_key)
         picks.append(payload)
     return picks
+
+
+def _defer_proactive_jobs(payloads: list[dict]) -> None:
+    """Enqueue each synthetic job with its own opaque audit correlation id."""
+    for payload in payloads:
+        process_email.defer(**payload, trace_id=str(uuid4()))
 
 
 @app.periodic(cron="0 * * * *", periodic_id="scan_for_opportunities")
@@ -107,8 +114,7 @@ async def scan_for_opportunities(timestamp: int) -> None:
                     )
                 )
 
-    for payload in _pace_one_per_person(candidates):
-        process_email.defer(**payload)
+    _defer_proactive_jobs(_pace_one_per_person(candidates))
 
 
 @app.periodic(cron="30 * * * *", periodic_id="scan_for_matches")
@@ -224,5 +230,4 @@ async def scan_for_matches(timestamp: int) -> None:
                         )
                     )
 
-        for payload in _pace_one_per_person(candidates):
-            process_email.defer(**payload)
+        _defer_proactive_jobs(_pace_one_per_person(candidates))

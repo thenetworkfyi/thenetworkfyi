@@ -128,6 +128,25 @@ def test_global_cap_blocks_without_consuming_sender_bucket():
     assert limiter.hit_keys == []
 
 
+def test_proactive_rate_limit_skips_sender_bucket_but_keeps_global_cap():
+    from thenetwork.security.rate_limit import check_rate_limit
+
+    limiter = FakeLimiter()
+
+    with patch("thenetwork.security.rate_limit.get_settings", return_value=_settings()), patch(
+        "thenetwork.security.rate_limit._get_limiter",
+        return_value=(limiter, HealthyStorage()),
+    ):
+        assert check_rate_limit(
+            "person@example.com",
+            sender_authenticated=True,
+            skip_sender_limit=True,
+        )
+
+    assert limiter.tested == [("100 per 1 hour", "global:emails-processed")]
+    assert limiter.hit_keys == ["global:emails-processed"]
+
+
 def test_rate_limit_fails_closed_when_storage_unhealthy():
     from thenetwork.security.rate_limit import check_rate_limit
 

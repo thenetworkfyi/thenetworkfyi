@@ -159,8 +159,18 @@ def _sender_key(sender_email: str, *, sender_authenticated: bool) -> str:
     return f"{prefix}:{identity}"
 
 
-def check_rate_limit(sender_email: str, *, sender_authenticated: bool = True) -> bool:
-    """Return True when sender and global hourly quotas both allow processing."""
+def check_rate_limit(
+    sender_email: str,
+    *,
+    sender_authenticated: bool = True,
+    skip_sender_limit: bool = False,
+) -> bool:
+    """Return True when applicable sender and global hourly quotas allow processing.
+
+    Synthetic proactive jobs run on behalf of an already-selected person rather
+    than an inbound sender. They skip only the per-sender bucket, while still
+    consuming the global budget that bounds total agent work.
+    """
     s = get_settings()
     sender_quota = (
         s.rate_limit_per_hour
@@ -176,11 +186,11 @@ def check_rate_limit(sender_email: str, *, sender_authenticated: bool = True) ->
         limiter, limit_storage = _get_limiter()
         if not limit_storage.check():
             return False
-        if not limiter.test(sender_limit, sender_key):
+        if not skip_sender_limit and not limiter.test(sender_limit, sender_key):
             return False
         if not limiter.test(global_limit, global_key):
             return False
-        if not limiter.hit(sender_limit, sender_key):
+        if not skip_sender_limit and not limiter.hit(sender_limit, sender_key):
             return False
         return limiter.hit(global_limit, global_key)
     except Exception:

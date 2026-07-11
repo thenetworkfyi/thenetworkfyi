@@ -1,6 +1,8 @@
 """Unit tests for thenetwork.worker.proactive."""
 from __future__ import annotations
 
+from uuid import UUID
+
 import pytest
 import networkx as nx
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -42,6 +44,9 @@ async def test_scan_enqueues_high_proximity_pair():
     sender_emails = {c.kwargs["sender_email"] for c in mock_pe.defer.call_args_list}
     assert "alice@test.com" in sender_emails
     assert all(call.kwargs["sender_authenticated"] for call in mock_pe.defer.call_args_list)
+    trace_ids = [call.kwargs["trace_id"] for call in mock_pe.defer.call_args_list]
+    assert len(trace_ids) == len(set(trace_ids))
+    assert all(str(UUID(trace_id, version=4)) == trace_id for trace_id in trace_ids)
 
 
 @pytest.mark.asyncio
@@ -165,6 +170,7 @@ async def test_rematch_enqueues_new_match_against_standing_note():
     assert "rust startup" in kwargs["body"]  # P's gist
     assert "rust cofounder" in kwargs["body"]  # Q's gist
     assert kwargs["sender_authenticated"] is True
+    assert str(UUID(kwargs["trace_id"], version=4)) == kwargs["trace_id"]
 
 
 @pytest.mark.asyncio
@@ -192,7 +198,7 @@ async def test_rematch_job_reaches_agent_through_real_worker_handoff():
     worker_session.exec.return_value.first.return_value = None
 
     with patch("thenetwork.worker.tasks.get_session", return_value=worker_session), \
-         patch("thenetwork.worker.tasks.check_rate_limit", return_value=True), \
+         patch("thenetwork.worker.tasks.check_rate_limit", return_value=True) as check_rate_limit, \
          patch("thenetwork.worker.tasks.scan_content", return_value=(True, "ok")), \
          patch("thenetwork.worker.tasks.verify_admin_request", return_value=None), \
          patch("thenetwork.worker.tasks.process_consent_reply", return_value=ConsentReplyResult(handled=False)), \
@@ -200,6 +206,9 @@ async def test_rematch_job_reaches_agent_through_real_worker_handoff():
         await process_email.func(**job)
 
     run_agent.assert_awaited_once()
+    check_rate_limit.assert_called_once_with(
+        "p@test.com", sender_authenticated=True, skip_sender_limit=True
+    )
     assert run_agent.call_args.kwargs["sender_authenticated"] is True
     assert run_agent.call_args.kwargs["sender_email"] == "p@test.com"
 
