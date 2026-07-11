@@ -13,8 +13,19 @@ def _mock_session(people):
     s = MagicMock()
     s.__enter__ = MagicMock(return_value=s)
     s.__exit__ = MagicMock(return_value=False)
-    s.exec.return_value.all.return_value = people
-    s.exec.return_value.first.return_value = None
+
+    def execute(statement):
+        result = MagicMock()
+        query = str(statement)
+        result.all.return_value = (
+            []
+            if "proactive_surfaces" in query or "introduction_consents" in query
+            else people
+        )
+        result.first.return_value = None
+        return result
+
+    s.exec.side_effect = execute
     return s
 
 
@@ -183,8 +194,18 @@ def _rematch_session(recent, persons):
     s = MagicMock()
     s.__enter__ = MagicMock(return_value=s)
     s.__exit__ = MagicMock(return_value=False)
-    s.exec.return_value.all.return_value = recent
-    s.exec.return_value.first.return_value = None
+    def execute(statement):
+        result = MagicMock()
+        query = str(statement)
+        result.all.return_value = (
+            recent
+            if "memories" in query
+            else []
+        )
+        result.first.return_value = None
+        return result
+
+    s.exec.side_effect = execute
     s.get.side_effect = lambda _model, pid: persons.get(pid)
     return s
 
@@ -635,6 +656,36 @@ async def test_opportunities_scan_paces_one_candidate_per_person():
     assert mock_pe.defer.call_count == 1, (
         f"three qualifying pairs share persons; expected 1 paced defer, got {mock_pe.defer.call_count}"
     )
+
+
+@pytest.mark.asyncio
+async def test_opportunities_scan_rotates_recently_surfaced_pairs():
+    """A recent no-action surface is skipped so the next pair gets a turn."""
+    from thenetwork.worker.proactive import scan_for_opportunities
+
+    G = nx.Graph()
+    for leaf in ("a", "b", "c"):
+        G.add_edge(leaf, "hub")
+    people = [_person(p, f"{p}@test.com") for p in ("a", "b", "c", "hub")]
+
+    with (
+        patch("thenetwork.worker.proactive.build_graph", return_value=G),
+        patch(
+            "thenetwork.worker.proactive.get_session",
+            return_value=_mock_session(people),
+        ),
+        patch(
+            "thenetwork.worker.proactive.recently_surfaced_pairs",
+            return_value={("a", "b")},
+        ),
+        patch("thenetwork.worker.proactive.mark_pairs_surfaced") as mark_surfaced,
+        patch("thenetwork.worker.proactive.process_email") as mock_pe,
+    ):
+        await scan_for_opportunities.func(0)
+
+    mock_pe.defer.assert_called_once()
+    assert mock_pe.defer.call_args.kwargs["proactive_candidate_id"] == "c"
+    assert mark_surfaced.call_args.args[1] == {("a", "c")}
 
 
 @pytest.mark.asyncio

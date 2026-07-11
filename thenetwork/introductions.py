@@ -15,7 +15,7 @@ from typing import Callable
 from sqlmodel import col, select
 
 from thenetwork.audit import audit_event
-from thenetwork.db.models import IntroductionConsent, Person
+from thenetwork.db.models import IntroductionConsent, Person, ProactiveSurface
 from thenetwork.db.session import get_session
 from thenetwork.email.outbound import send_group_introduction, send_reply
 
@@ -99,6 +99,51 @@ def request_load(session, person_id: str, *, since: datetime) -> int:
         _outstanding_request_count(session, person_id),
         _recent_request_count(session, person_id, since=since),
     )
+
+
+def recently_surfaced_pairs(
+    session, *, since: datetime
+) -> set[tuple[str, str]]:
+    """Return opaque pairs already handed to a proactive agent recently."""
+    records = session.exec(
+        select(ProactiveSurface).where(col(ProactiveSurface.surfaced_at) >= since)
+    ).all()
+    return {
+        canonical_pair(record.person_a_id, record.person_b_id) for record in records
+    }
+
+
+def mark_pairs_surfaced(
+    session,
+    pairs: set[tuple[str, str]],
+    *,
+    surfaced_at: datetime | None = None,
+) -> None:
+    """Durably mark opaque pairs as having been surfaced to a proactive agent."""
+    if not pairs:
+        return
+
+    timestamp = surfaced_at or _utcnow()
+    for person_a_id, person_b_id in pairs:
+        low, high = canonical_pair(person_a_id, person_b_id)
+        record = session.exec(
+            select(ProactiveSurface).where(
+                ProactiveSurface.person_a_id == low,
+                ProactiveSurface.person_b_id == high,
+            )
+        ).first()
+        if record is None:
+            session.add(
+                ProactiveSurface(
+                    person_a_id=low,
+                    person_b_id=high,
+                    surfaced_at=timestamp,
+                )
+            )
+        else:
+            record.surfaced_at = timestamp
+            session.add(record)
+    session.commit()
 
 
 def propose_pair(

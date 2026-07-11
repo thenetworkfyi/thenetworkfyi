@@ -153,6 +153,7 @@ class Settings(BaseSettings):
     proactive_match_threshold: float = 0.6
     proactive_rematch_lookback_minutes: int = 65
     proactive_rematch_top_k: int = 5
+    proactive_surface_cooldown_seconds: int = 86_400
 
 
 _settings: Settings | None = None

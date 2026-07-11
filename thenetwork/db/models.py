@@ -145,3 +145,32 @@ class IntroductionConsent(SQLModel, table=True):
     declined_at: Optional[datetime] = Field(
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
     )
+
+
+class ProactiveSurface(SQLModel, table=True):
+    """Opaque pair record used to rotate proactive outreach candidates."""
+
+    __tablename__ = "proactive_surfaces"
+    __table_args__ = (
+        UniqueConstraint("person_a_id", "person_b_id", name="uq_proactive_surface_pair"),
+    )
+
+    id: str = Field(default_factory=_new_uuid, primary_key=True)
+    person_a_id: str = Field(
+        sa_column=Column(
+            Text(),
+            ForeignKey("people.id", ondelete="CASCADE"),
+            nullable=False,
+        )
+    )
+    person_b_id: str = Field(
+        sa_column=Column(
+            Text(),
+            ForeignKey("people.id", ondelete="CASCADE"),
+            nullable=False,
+        )
+    )
+    surfaced_at: datetime = Field(
+        default_factory=_utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False, index=True),
+    )
