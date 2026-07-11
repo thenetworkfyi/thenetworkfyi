@@ -191,7 +191,7 @@ async def test_send_outreach_resolves_address_server_side():
 async def test_double_intro_emails_both_parties():
     """The separate reply and outreach capabilities can email both parties."""
     from thenetwork.agent.tools import reply_to_sender, send_outreach
-    from unittest.mock import patch, MagicMock, AsyncMock, call
+    from unittest.mock import patch, MagicMock
 
     sent_to: list[str] = []
 
@@ -267,7 +267,7 @@ async def test_forget_rejects_multi_ref_memory():
 async def test_send_outreach_limited_once_run_cap_exhausted():
     """Once outbound_send_count reaches the per-run cap, sends stop."""
     from thenetwork.agent.tools import send_outreach
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import patch
 
     class FakeCtx:
         deps = AgentDeps(sender_email="alice@example.com", sender_user_id="user-alice")
@@ -303,7 +303,7 @@ async def test_escalate_sends_welcome_and_notifies_admin_for_unregistered_sender
     """First contact from an authenticated unknown sender: welcome + admin escalation."""
     from thenetwork.agent.tools import escalate
     from thenetwork.email.outbound import FIRST_CONTACT_WELCOME_REPLY
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import patch
 
     class FakeCtx:
         deps = AgentDeps(

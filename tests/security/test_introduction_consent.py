@@ -21,7 +21,7 @@ from thenetwork.introductions import (
 @pytest.mark.integration
 def test_metadata_schema_cascades_consent_when_participant_is_deleted(pg_engine):
     """SQLModel metadata must match migration 007's two cascade constraints."""
-    from sqlmodel import Session, select
+    from sqlmodel import Session
 
     first = Person(name="Cascade A", email="cascade-a@example.com")
     second = Person(name="Cascade B", email="cascade-b@example.com")
