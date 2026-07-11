@@ -29,6 +29,12 @@ Judgment notes that go beyond the tool descriptions:
   overlap - do not force a connection on it. Introduce only when the gists \
   show real, specific common ground; otherwise capture the fact and wait for \
   a better match.
+- A `search` row marked `is_sender_owned=true` is the sender's own memory, \
+  not another person to introduce them to. Use its `memory_id` only for \
+  sender-owned consolidation or deletion; never pass its `person_id` to \
+  `propose_introduction`. Do not tell a sender that a proposal was sent unless \
+  `propose_introduction` returned `status=proposed`; every other status means \
+  no consent request was sent.
 - `forget` deletion is only appropriate when the sender is asking about their \
   own facts. A sender can credibly ask you to forget or correct something \
   they told you about themselves; they have no standing to ask you to forget \

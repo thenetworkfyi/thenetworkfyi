@@ -43,6 +43,10 @@ thin wrapper over a well-adopted library, swappable by config.
   into the Docker image at build time and checked at worker startup. Organizations and
   locations stay in gists because those gists are embedded for company/place recall; the
   opt-in fixed-prompt LLM tier handles quasi-identifying combinations.
+- **Tools report expected refusals as structured status results.** Policy and
+  world-state outcomes are not exceptions for the model to retry; pydantic-ai
+  gets one retry solely for argument validation. This keeps rate limits,
+  suppression, ownership checks, and exhausted caps explicit and bounded.
 
 ## Explicitly rejected (anti-patterns)
 

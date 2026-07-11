@@ -80,7 +80,7 @@ async def test_search_result_keys_sealed(adversarial_text: str):
          patch("thenetwork.agent.tools.match_memories", return_value=[mock_match]):
         results = await search(ctx, query=adversarial_text)
 
-    allowed_keys = {"person_id", "gist", "similarity"}
+    allowed_keys = {"person_id", "gist", "similarity", "is_sender_owned"}
     for r in results:
         leaked = set(r.keys()) - allowed_keys
         assert not leaked, f"unexpected keys leaked into result: {leaked}"

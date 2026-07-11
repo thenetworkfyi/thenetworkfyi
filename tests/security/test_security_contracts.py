@@ -1048,7 +1048,7 @@ async def test_search_result_keys_sealed_for_other_people():
          patch("thenetwork.agent.tools.match_memories", return_value=[mock_match]):
         results = await search(ctx, query="ml engineer")
 
-    allowed_keys = {"person_id", "gist", "similarity"}
+    allowed_keys = {"person_id", "gist", "similarity", "is_sender_owned"}
     for r in results:
         leaked = set(r.keys()) - allowed_keys
         assert not leaked, f"unexpected keys leaked into search result: {leaked}"
@@ -1080,7 +1080,9 @@ async def test_search_includes_memory_id_only_for_sender_owned_results():
         results = await search(ctx, query="my stored facts")
 
     assert results[0]["memory_id"] == "self-memory"
+    assert results[0]["is_sender_owned"] is True
     assert "memory_id" not in results[1]
+    assert results[1]["is_sender_owned"] is False
 
 
 @pytest.mark.asyncio

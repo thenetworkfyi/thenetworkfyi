@@ -56,14 +56,16 @@ def build_agent(model: Any = None) -> Agent[AgentDeps, str]:
         output_type=str,
     )
 
-    agent.tool(remember)
-    agent.tool(forget)
-    agent.tool(search)
-    agent.tool(propose_introduction)
-    agent.tool(escalate)
-    agent.tool(reply_to_sender)
-    agent.tool(send_outreach)
-    agent.tool(register_person)
+    # One retry is exclusively for malformed tool arguments. World-state and
+    # policy outcomes are structured status results, never ModelRetry signals.
+    agent.tool(remember, retries=1)
+    agent.tool(forget, retries=1)
+    agent.tool(search, retries=1)
+    agent.tool(propose_introduction, retries=1)
+    agent.tool(escalate, retries=1)
+    agent.tool(reply_to_sender, retries=1)
+    agent.tool(send_outreach, retries=1)
+    agent.tool(register_person, retries=1)
 
     return agent
 
