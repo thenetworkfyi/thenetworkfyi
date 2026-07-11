@@ -8,6 +8,7 @@ import pytest
 from thenetwork.db.models import IntroductionConsent, Person
 from thenetwork.introductions import (
     CONSENT_ACKNOWLEDGMENT_REPLY,
+    CONSENT_ALREADY_DECLINED_REPLY,
     CONSENT_DECLINED_REPLY,
     CONSENT_CLARIFICATION_REPLY,
     ConsentReplyResult,
@@ -222,6 +223,36 @@ def test_punctuated_no_reply_creates_temporary_decline():
     assert session.proposal.status == "declined"
     assert session.proposal.declined_at is not None
     assert send.call_args.kwargs["body_text"] == CONSENT_DECLINED_REPLY
+
+
+@pytest.mark.parametrize("late_sender", ["alice", "bob"])
+def test_declined_pair_refuses_later_consent_without_lifting_cooldown(late_sender):
+    """Neither participant can turn a decline into a consent after the fact."""
+    declined_at = _utcnow()
+    session = FakeSession(
+        proposal=proposal(status="declined", declined_at=declined_at),
+        people=people(),
+    )
+
+    with (
+        patch("thenetwork.introductions.send_reply") as send,
+        patch("thenetwork.introductions.send_group_introduction") as group_send,
+    ):
+        result = process_consent_reply(
+            sender_person_id=late_sender,
+            sender_authenticated=True,
+            subject="Re: [intro:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa]",
+            body="YES",
+            session_factory=factory(session),
+        )
+
+    assert result.outcome == "declined"
+    assert session.proposal.status == "declined"
+    assert session.proposal.declined_at == declined_at
+    assert session.commits == 0
+    send.assert_called_once()
+    assert send.call_args.kwargs["body_text"] == CONSENT_ALREADY_DECLINED_REPLY
+    group_send.assert_not_called()
 
 
 def test_both_authenticated_consents_trigger_server_composed_group_email():
