@@ -261,6 +261,12 @@ async def forget(ctx: RunContext[AgentDeps], memory_id: str) -> dict[str, str]:
     To consolidate duplicates or replace a stale/contradictory fact, forget
     the superseded memory ID and `remember` the corrected fact - never try to
     mutate a memory in place (edit = forget + remember).
+
+    Strict sole-ref ownership: only a memory whose refs are exactly
+    `[sender_user_id]` may be forgotten. Any other memory - unowned (0 refs),
+    owned by someone else, or co-owned (2+ refs) - returns
+    `{"status": "forbidden", "reason": "not_sender_memory"}` and is not
+    deleted, regardless of how the request is phrased.
     """
     with audit_span("agent.tool", tool_name="forget"):
         with _get_session(ctx) as session:
