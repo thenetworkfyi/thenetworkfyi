@@ -43,7 +43,12 @@ from thenetwork.db.session import get_session
 from thenetwork.search.graph import build_graph, score_proximity
 from thenetwork.search.match import match_memories
 from thenetwork.settings import get_settings
-from thenetwork.introductions import pair_is_suppressed, request_load
+from thenetwork.introductions import (
+    mark_pairs_surfaced,
+    pair_is_suppressed,
+    recently_surfaced_pairs,
+    request_load,
+)
 from thenetwork.worker.tasks import app, process_email
 
 PROXIMITY_THRESHOLD = 0.3
@@ -90,7 +95,8 @@ async def scan_for_opportunities(timestamp: int) -> None:
         return
 
     s = get_settings()
-    since = datetime.now(timezone.utc) - timedelta(
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(
         seconds=s.introduction_request_window_seconds
     )
 
@@ -99,6 +105,10 @@ async def scan_for_opportunities(timestamp: int) -> None:
             select(Person).where(col(Person.id).in_(person_ids))
         ).all()
         email_by_id = {p.id: p.email for p in people}
+        surfaced_pairs = recently_surfaced_pairs(
+            session,
+            since=now - timedelta(seconds=s.proactive_surface_cooldown_seconds),
+        )
 
         load_cache: dict[str, int] = {}
 
@@ -119,6 +129,8 @@ async def scan_for_opportunities(timestamp: int) -> None:
                 if pair_is_suppressed(session, pid_a, pid_b):
                     continue
                 pair_key: tuple[str, str] = tuple(sorted((pid_a, pid_b)))  # type: ignore[assignment]
+                if pair_key in surfaced_pairs:
+                    continue
                 pair_load = max(load_for(pid_a), load_for(pid_b))
                 candidates.append(
                     (
@@ -139,7 +151,15 @@ async def scan_for_opportunities(timestamp: int) -> None:
                     )
                 )
 
-    _defer_proactive_jobs(_pace_one_per_person(candidates))
+        payloads = _pace_one_per_person(candidates)
+        selected_pairs = {
+            pair_key
+            for _load, _score, pair_key, payload in candidates
+            if payload in payloads
+        }
+        mark_pairs_surfaced(session, selected_pairs, surfaced_at=now)
+
+    _defer_proactive_jobs(payloads)
 
 
 @app.periodic(cron="30 * * * *", periodic_id="scan_for_matches")
@@ -167,7 +187,8 @@ async def scan_for_matches(timestamp: int) -> None:
       text and real addresses never enter it.
     """
     s = get_settings()
-    cutoff = datetime.now(timezone.utc) - timedelta(
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(
         minutes=s.proactive_rematch_lookback_minutes
     )
 
@@ -186,6 +207,10 @@ async def scan_for_matches(timestamp: int) -> None:
 
         graph = build_graph()
         seen: set[frozenset[str]] = set()
+        surfaced_pairs = recently_surfaced_pairs(
+            session,
+            since=now - timedelta(seconds=s.proactive_surface_cooldown_seconds),
+        )
         email_cache: dict[str, str | None] = {}
         load_cache: dict[str, int] = {}
         since = datetime.now(timezone.utc) - timedelta(
@@ -250,6 +275,8 @@ async def scan_for_matches(timestamp: int) -> None:
                         "or you are unsure, do nothing."
                     )
                     pair_key: tuple[str, str] = tuple(sorted(pair))  # type: ignore[assignment]
+                    if pair_key in surfaced_pairs:
+                        continue
                     pair_load = max(load_for(standing), load_for(arrival))
                     candidates.append(
                         (
@@ -267,4 +294,12 @@ async def scan_for_matches(timestamp: int) -> None:
                         )
                     )
 
-        _defer_proactive_jobs(_pace_one_per_person(candidates))
+        payloads = _pace_one_per_person(candidates)
+        selected_pairs = {
+            pair_key
+            for _load, _score, pair_key, payload in candidates
+            if payload in payloads
+        }
+        mark_pairs_surfaced(session, selected_pairs, surfaced_at=now)
+
+    _defer_proactive_jobs(payloads)

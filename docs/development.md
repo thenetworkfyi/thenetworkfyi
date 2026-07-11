@@ -242,6 +242,10 @@ Both scans pace their output: candidates are ordered deterministically (score
 descending, canonical pair id as tiebreak) and each person is scheduled for at most one
 new candidate per scan, so a dense cluster of similar members surfaces best-first over
 successive hours instead of as a combinatorial proposal burst.
+Pairs handed to either scan are also recorded by opaque ids in `proactive_surfaces`.
+They are not re-deferred for `proactive_surface_cooldown_seconds` (24 hours by default),
+even when the agent chose not to propose an introduction, so later scans rotate to the
+next eligible candidate.
 
 ## Sharp edges
 
