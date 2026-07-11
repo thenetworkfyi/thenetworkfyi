@@ -29,6 +29,10 @@ class AgentDeps:
     # Synthetic jobs emitted by proactive scans are agent prompts, not inbound
     # user messages. A no-op is an expected, auditable outcome for these runs.
     is_proactive: bool = False
+    # For proactive runs only: the opaque person id the scan surfaced as the
+    # counterpart for sender_user_id. propose_introduction must reject any
+    # other_person_id that doesn't match this when is_proactive is set.
+    proactive_candidate_id: str | None = None
     # Session factory: () -> contextmanager[Session]
     # Stored as a callable to avoid serialization issues
     session_factory: Callable | None = None

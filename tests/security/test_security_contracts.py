@@ -589,6 +589,88 @@ async def test_propose_introduction_defers_after_per_run_cap():
 
 
 @pytest.mark.asyncio
+async def test_propose_introduction_proactive_rejects_sender_as_target():
+    """A proactive run must reject the model choosing the sender's own id."""
+    ctx = FakeCtx(sender_authenticated=True)
+    ctx.deps.is_proactive = True
+    ctx.deps.proactive_candidate_id = "user-bob"
+
+    with patch("thenetwork.agent.tools.propose_pair") as propose:
+        result = await propose_introduction(
+            ctx,
+            other_person_id="user-alice",
+            sender_gist="builds storage systems",
+            other_gist="operates distributed databases",
+        )
+
+    assert result == {"status": "error", "reason": "self_introduction"}
+    propose.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_propose_introduction_proactive_rejects_unrelated_third_id():
+    """A proactive run must reject a target outside the scan-surfaced pair."""
+    ctx = FakeCtx(sender_authenticated=True)
+    ctx.deps.is_proactive = True
+    ctx.deps.proactive_candidate_id = "user-bob"
+
+    with patch("thenetwork.agent.tools.propose_pair") as propose:
+        result = await propose_introduction(
+            ctx,
+            other_person_id="user-carol",
+            sender_gist="builds storage systems",
+            other_gist="operates distributed databases",
+        )
+
+    assert result == {"status": "error", "reason": "outside_proactive_pair"}
+    propose.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_propose_introduction_proactive_allows_bound_candidate():
+    """The bound counterpart from the scan is still a valid target."""
+    ctx = FakeCtx(sender_authenticated=True)
+    ctx.deps.is_proactive = True
+    ctx.deps.proactive_candidate_id = "user-bob"
+
+    with patch(
+        "thenetwork.agent.tools.propose_pair",
+        return_value={"status": "proposed"},
+    ) as propose:
+        result = await propose_introduction(
+            ctx,
+            other_person_id="user-bob",
+            sender_gist="builds storage systems",
+            other_gist="operates distributed databases",
+        )
+
+    assert result == {"status": "proposed"}
+    propose.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_propose_introduction_non_proactive_unaffected_by_pair_binding():
+    """Ordinary inbound runs retain current pairwise behavior (no bound pair)."""
+    ctx = FakeCtx(sender_authenticated=True)
+    assert ctx.deps.is_proactive is False
+    assert ctx.deps.proactive_candidate_id is None
+
+    with patch(
+        "thenetwork.agent.tools.propose_pair",
+        return_value={"status": "proposed"},
+    ) as propose:
+        result = await propose_introduction(
+            ctx,
+            other_person_id="user-anyone",
+            sender_gist="builds storage systems",
+            other_gist="operates distributed databases",
+        )
+
+    assert result == {"status": "proposed"}
+    propose.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_register_person_rejects_already_registered_sender():
     """A sender who already has a person_id cannot re-register (or hijack another id)."""
     ctx = FakeCtx(sender_user_id="user-alice", sender_authenticated=True)
