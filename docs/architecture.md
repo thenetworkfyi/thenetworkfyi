@@ -116,8 +116,9 @@ mapping at write time. Semantic match over memories lives in `search/match.py`.
 
 SQLModel over psycopg 3 · Alembic (the `CREATE EXTENSION vector` lives in a migration) ·
 pgvector `Vector(1536)` HNSW cosine · pydantic-ai (multi-provider, chosen by config
-string) · provider-agnostic `embed_text` wrapper (`embed/`) · NetworkX · pydantic-settings ·
-imap-tools · BeautifulSoup (HTML-to-visible-text fallback for inbound bodies) · stdlib
-`EmailMessage`/`smtplib` · Procrastinate · `limits` · pytest +
-pydantic-evals. Vendor-agnosticism comes from pydantic-ai and the embedding wrapper being
-multi-provider, selected by `AGENT_MODEL` / `EMBED_MODEL` - no LiteLLM, no proxy glue.
+string) · OpenAI `embed_text` wrapper (`embed/`, fixed at 1536 dimensions) · NetworkX ·
+pydantic-settings · imap-tools · BeautifulSoup (HTML-to-visible-text fallback for inbound
+bodies) · stdlib `EmailMessage`/`smtplib` · Procrastinate · `limits` · pytest +
+pydantic-evals. Vendor-agnosticism comes from pydantic-ai, selected by `AGENT_MODEL` - no
+LiteLLM, no proxy glue. `EMBED_MODEL` is OpenAI-only and is validated against the
+`Vector(1536)` schema at startup.

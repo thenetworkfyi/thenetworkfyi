@@ -430,7 +430,9 @@ async def run_worker() -> None:
 def main() -> None:
     """Console entrypoint: run the long-lived worker (intake + processing + scans)."""
     import asyncio
+    from thenetwork.embed.embeddings import validate_embedding_configuration
 
+    validate_embedding_configuration()
     configure_audit_logging()
     assert_presidio_ready()
     asyncio.run(run_worker())
@@ -438,7 +440,9 @@ def main() -> None:
 
 def producer_main() -> None:
     """Console entrypoint: run a single IMAP poll cycle (for manual/cron use)."""
+    from thenetwork.embed.embeddings import validate_embedding_configuration
     from thenetwork.worker.producer import run_producer_cycle
 
+    validate_embedding_configuration()
     configure_audit_logging()
     print(run_producer_cycle())

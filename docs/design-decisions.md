@@ -70,6 +70,6 @@ understanding why it was dropped.
 - ❌ Regex-only sanitizer fallback when Presidio is unavailable → fail fast; a silent
   downgrade can produce cross-user gists with raw names.
 - ❌ LiteLLM / proxy glue → pydantic-ai native multi-provider.
-- ❌ `np.random.rand(1536)` placeholder embeddings → provider-agnostic embed wrapper.
+- ❌ `np.random.rand(1536)` placeholder embeddings → OpenAI embedding wrapper constrained to 1536 dimensions.
 - ❌ Bespoke rate limiting → `limits`.
 - ❌ Heavyweight guardrail frameworks (NeMo, Guardrails-AI) → architectural least-privilege + RFC 3834 + optional scanner.

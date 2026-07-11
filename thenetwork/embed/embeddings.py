@@ -1,8 +1,10 @@
-"""Embedding helpers backed by LlamaIndex.
+"""OpenAI embedding helpers backed by LlamaIndex.
 
-Provider is swappable via settings.embed_model - provider resolved from model name prefix.
-All batching and retry are delegated to LlamaIndex's built-in implementation.
+Memories are stored in pgvector ``Vector(1536)`` columns, so this module accepts
+only the OpenAI models that can produce 1536-dimensional embeddings. All batching
+and retry are delegated to LlamaIndex's built-in implementation.
 """
+
 from __future__ import annotations
 
 from llama_index.core.embeddings import BaseEmbedding
@@ -12,13 +14,40 @@ from thenetwork.settings import get_settings
 
 _client: BaseEmbedding | None = None
 
+EMBEDDING_DIMENSIONS = 1536
+_OPENAI_MODELS_WITH_CONFIGURABLE_DIMENSIONS = frozenset(
+    {"text-embedding-3-small", "text-embedding-3-large"}
+)
+_OPENAI_MODELS_WITH_NATIVE_1536_DIMENSIONS = frozenset({"text-embedding-ada-002"})
+
+
+def _unsupported_model_error(model: str) -> ValueError:
+    return ValueError(
+        f"Unsupported embed_model: {model!r}. The Network stores embeddings in "
+        f"Vector({EMBEDDING_DIMENSIONS}) and supports only OpenAI "
+        "text-embedding-3-small, text-embedding-3-large (configured to 1536 "
+        "dimensions), or text-embedding-ada-002 (native 1536 dimensions). "
+        "Using another provider or dimension requires a database migration."
+    )
+
+
+def validate_embedding_configuration(model: str | None = None) -> None:
+    """Fail at startup when ``embed_model`` cannot match the pgvector schema."""
+    configured_model = model if model is not None else get_settings().embed_model
+    if configured_model not in (
+        _OPENAI_MODELS_WITH_CONFIGURABLE_DIMENSIONS
+        | _OPENAI_MODELS_WITH_NATIVE_1536_DIMENSIONS
+    ):
+        raise _unsupported_model_error(configured_model)
+
 
 def _make_embed_client(model: str, api_key: str) -> BaseEmbedding:
-    if model.startswith("text-embedding"):
-        return OpenAIEmbedding(model=model, api_key=api_key)
-    raise ValueError(
-        f"Unsupported embed_model: {model!r}. Add provider support in _make_embed_client."
-    )
+    validate_embedding_configuration(model)
+    if model in _OPENAI_MODELS_WITH_CONFIGURABLE_DIMENSIONS:
+        return OpenAIEmbedding(
+            model=model, api_key=api_key, dimensions=EMBEDDING_DIMENSIONS
+        )
+    return OpenAIEmbedding(model=model, api_key=api_key)
 
 
 def _get_client() -> BaseEmbedding:

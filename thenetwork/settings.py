@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     small_agent_model: str
     agent_request_limit: int = 12
     agent_total_tokens_limit: int = 100_000
+    # Embeddings are OpenAI-only and must produce 1536 dimensions to match the
+    # pgvector schema. Validation runs at worker/producer startup.
     embed_model: str
 
     # Workload-specific API keys. Each model receives only its own credential,
