@@ -182,3 +182,112 @@ async def test_double_intro_emails_both_parties():
 
     assert "alice@example.com" in sent_to
     assert "bob@example.com" in sent_to
+
+
+# ---------------------------------------------------------------------------
+# forget: strict sole-ref ownership rejects co-owned (multi-ref) memories
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_forget_rejects_multi_ref_memory():
+    """A memory co-owned by two people must not be deletable by either sender."""
+    from thenetwork.agent.tools import forget
+    from unittest.mock import patch, MagicMock
+
+    fake_memory = MagicMock()
+    fake_memory.refs = ["user-alice", "user-bob"]
+
+    class FakeCtx:
+        deps = AgentDeps(sender_email="alice@example.com", sender_user_id="user-alice")
+
+    ctx = FakeCtx()
+
+    with patch("thenetwork.agent.tools.get_session") as mock_gs:
+        mock_session = MagicMock()
+        mock_session.__enter__ = MagicMock(return_value=mock_session)
+        mock_session.__exit__ = MagicMock(return_value=False)
+        mock_session.get.return_value = fake_memory
+        mock_gs.return_value = mock_session
+
+        result = await forget(ctx, memory_id="mem-shared")
+
+    assert result["status"] == "forbidden"
+    assert result["reason"] == "not_sender_memory"
+    mock_session.delete.assert_not_called()
+    mock_session.commit.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# send_outreach: exhausted per-run send cap short-circuits before any send
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_send_outreach_limited_once_run_cap_exhausted():
+    """Once dispatch_email_sent_count reaches the per-run cap, sends stop."""
+    from thenetwork.agent.tools import send_outreach
+    from unittest.mock import patch, MagicMock
+
+    class FakeCtx:
+        deps = AgentDeps(sender_email="alice@example.com", sender_user_id="user-alice")
+
+    ctx = FakeCtx()
+    ctx.deps.dispatch_email_sent_count = ctx.deps.settings.dispatch_max_sends_per_run
+
+    with patch("thenetwork.agent.tools.get_session") as mock_gs, \
+         patch("thenetwork.agent.tools.send_reply") as mock_send:
+        result = await send_outreach(
+            ctx,
+            recipient_user_id="user-bob",
+            subject="Hello",
+            body_text="Let's connect.",
+        )
+
+    assert result["status"] == "limited"
+    assert result["reason"] == "max_sends_per_run"
+    mock_send.assert_not_called()
+    mock_gs.assert_not_called()
+    # The cap check happens before any recipient lookup or send, so the
+    # sent-count side effect must not have advanced past the cap.
+    assert ctx.deps.dispatch_email_sent_count == ctx.deps.settings.dispatch_max_sends_per_run
+
+
+# ---------------------------------------------------------------------------
+# escalate: authenticated-but-unregistered sender gets the fixed welcome,
+# not a model-authored escalation reply, while admins still get notified
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_escalate_sends_welcome_and_notifies_admin_for_unregistered_sender():
+    """First contact from an authenticated unknown sender: welcome + admin escalation."""
+    from thenetwork.agent.tools import escalate
+    from thenetwork.email.outbound import FIRST_CONTACT_WELCOME_REPLY
+    from unittest.mock import patch, MagicMock
+
+    class FakeCtx:
+        deps = AgentDeps(
+            sender_email="stranger@example.com",
+            sender_user_id=None,
+            sender_authenticated=True,
+        )
+
+    ctx = FakeCtx()
+
+    with patch("thenetwork.agent.tools.send_reply") as mock_send, \
+         patch("thenetwork.agent.tools.notify_admins") as mock_notify, \
+         patch("thenetwork.agent.tools.get_session") as mock_gs:
+        result = await escalate(ctx, reason="unclear intent")
+
+    assert result["status"] == "welcomed_and_escalated"
+
+    mock_send.assert_called_once()
+    send_kwargs = mock_send.call_args.kwargs
+    assert send_kwargs["to_address"] == "stranger@example.com"
+    assert send_kwargs["body_text"] == FIRST_CONTACT_WELCOME_REPLY
+
+    mock_notify.assert_called_once()
+    notify_args = mock_notify.call_args.args
+    assert "stranger@example.com" in notify_args[1]
+    assert "unclear intent" in notify_args[2]
+
+    # No memory should be written for this fixed-reply path.
+    mock_gs.assert_not_called()
