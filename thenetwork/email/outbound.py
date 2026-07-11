@@ -199,7 +199,7 @@ def send_reply(
 ) -> None:
     """Send an email from the configured account.
 
-    Uses Auto-Submitted: auto-generated header (RFC 3834) so recipients'
+    Uses Auto-Submitted: auto-replied header (RFC 3834) so recipients'
     IMAP pollers skip our outbound replies and don't create a loop.
 
     The growth footer is appended here, at the mailer level, rather than by
