@@ -343,6 +343,36 @@ def test_declined_pair_stays_suppressed_during_cooldown():
     assert result == {"status": "suppressed", "reason": "declined"}
 
 
+def test_cooled_down_decline_stays_declined_when_reproposal_is_throttled():
+    old = proposal(status="declined")
+    old.declined_at = _utcnow() - timedelta(days=91)
+    original_token = old.reply_token
+    session = FakeSession(
+        proposal=old,
+        people=people(),
+        outstanding_proposals=[proposal() for _ in range(3)],
+    )
+
+    with patch("thenetwork.introductions.send_reply") as send:
+        result = propose_pair(
+            sender_person_id="alice",
+            other_person_id="bob",
+            sender_gist="builds storage systems",
+            other_gist="operates distributed databases",
+            session_factory=factory(session),
+        )
+
+    assert result == {
+        "status": "deferred",
+        "reason": "recipient_outstanding_request_cap",
+        "limit": 3,
+    }
+    assert session.proposal.status == "declined"
+    assert session.proposal.declined_at is not None
+    assert session.proposal.reply_token == original_token
+    send.assert_not_called()
+
+
 def test_proposal_defers_when_a_recipient_has_too_many_outstanding_requests():
     session = FakeSession(
         people=people(),
