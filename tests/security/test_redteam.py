@@ -27,6 +27,7 @@ class FakeCtx:
         mock_sess = MagicMock()
         mock_sess.__enter__ = MagicMock(return_value=mock_sess)
         mock_sess.__exit__ = MagicMock(return_value=False)
+        mock_sess.exec.return_value.one.return_value = 0
         self._mock_sess = mock_sess
         self.deps = AgentDeps(
             sender_email=sender_email,
@@ -163,7 +164,9 @@ async def test_agent_reply_never_leaks_pii(adversarial_body: str):
     mock_sess.__enter__ = MagicMock(return_value=mock_sess)
     mock_sess.__exit__ = MagicMock(return_value=False)
     mock_sess.get.return_value = None
-    mock_sess.exec = MagicMock(return_value=MagicMock(first=MagicMock(return_value=None)))
+    mock_sess.exec = MagicMock(
+        return_value=MagicMock(first=MagicMock(return_value=None), one=MagicMock(return_value=0))
+    )
 
     deps = AgentDeps(
         sender_email="attacker@evil.com",

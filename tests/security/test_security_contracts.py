@@ -59,6 +59,7 @@ class FakeCtx:
         mock_sess = MagicMock()
         mock_sess.__enter__ = MagicMock(return_value=mock_sess)
         mock_sess.__exit__ = MagicMock(return_value=False)
+        mock_sess.exec.return_value.one.return_value = 0
         self.deps = AgentDeps(
             settings=Settings(
                 agent_model="test:model",
@@ -907,8 +908,8 @@ async def test_remember_rejects_when_person_memory_ceiling_reached():
     from thenetwork.agent.tools import remember
 
     class FakeExecResult:
-        def all(self):
-            return [MagicMock()]
+        def one(self):
+            return 1
 
     ctx = FakeCtx()
     ctx.deps.settings.person_memory_limit = 1

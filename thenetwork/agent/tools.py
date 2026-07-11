@@ -17,6 +17,7 @@ from typing import Any
 
 from limits import parse, strategies
 from pydantic_ai import RunContext
+from sqlalchemy import func
 from sqlmodel import select
 
 from thenetwork.agent.deps import AgentDeps
@@ -128,10 +129,9 @@ def _hit_registration_quota(ctx: RunContext[AgentDeps]) -> bool:
 
 
 def _person_memory_count(session, person_id: str) -> int:
-    result = session.exec(
-        select(Memory).where(Memory.refs.contains([person_id]))
-    )
-    return len(result.all())
+    return session.exec(
+        select(func.count()).select_from(Memory).where(Memory.refs.contains([person_id]))
+    ).one()
 
 
 def _memory_ceiling_error(
