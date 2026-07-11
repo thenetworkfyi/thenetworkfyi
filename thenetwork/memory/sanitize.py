@@ -4,6 +4,7 @@ from functools import lru_cache
 
 from sqlmodel import Session
 
+from thenetwork.audit import audit_event
 from thenetwork.db.models import Memory
 
 # NER entity types redacted via Presidio, mapped to the same bracket-token
@@ -147,5 +148,6 @@ async def sanitize_memory_high_fidelity(memory: Memory, session: Session) -> str
         return sanitize_memory(memory, session)
     try:
         return await sanitize_memory_llm(memory, session)
-    except Exception:
+    except Exception as exc:
+        audit_event("sanitize.tier_downgrade", error_type=type(exc).__name__)
         return sanitize_memory(memory, session)

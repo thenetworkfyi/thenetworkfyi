@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -212,6 +212,8 @@ async def test_high_fidelity_sanitizer_falls_back_to_deterministic_strip_on_llm_
 
     mock_llm = AsyncMock(side_effect=fail_llm)
     monkeypatch.setattr(sanitize_mod, "sanitize_memory_llm", mock_llm)
+    mock_audit = MagicMock()
+    monkeypatch.setattr(sanitize_mod, "audit_event", mock_audit)
     fake_results = [
         _FakeRecognizerResult("PERSON", raw_text.index("Alice Smith"), raw_text.index("Alice Smith") + len("Alice Smith")),
         _FakeRecognizerResult(
@@ -239,6 +241,9 @@ async def test_high_fidelity_sanitizer_falls_back_to_deterministic_strip_on_llm_
     assert session.added == [memory]
     assert session.flushes == 1
     mock_llm.assert_awaited_once_with(memory, session)
+    mock_audit.assert_called_once_with(
+        "sanitize.tier_downgrade", error_type="RuntimeError"
+    )
 
 
 @pytest.mark.asyncio
