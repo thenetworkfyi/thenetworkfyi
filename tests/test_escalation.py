@@ -188,35 +188,46 @@ async def test_escalate_notification_includes_sender_and_reason():
 
 
 @pytest.mark.asyncio
-async def test_escalate_welcomes_authenticated_unknown_sender_without_escalating():
+async def test_escalate_welcomes_and_notifies_admins_for_authenticated_unknown_sender():
     from thenetwork.agent.tools import escalate
     from thenetwork.email.outbound import FIRST_CONTACT_WELCOME_REPLY
 
     with patch("thenetwork.agent.tools.embed_text", new=AsyncMock(return_value=[0.0] * 1536)) as mock_embed, \
          patch("thenetwork.agent.tools.get_session") as mock_get_session, \
          patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock) as mock_sanitize, \
+         patch("thenetwork.agent.tools.audit_span_completion") as mock_completion, \
          patch("thenetwork.agent.tools.notify_admins") as mock_notify, \
          patch("thenetwork.agent.tools.send_reply") as mock_send:
-        result = await escalate(
-            _ctx(
-                sender_email="new@example.com",
-                sender_authenticated=True,
-                inbound_subject="Question",
-            ),
-            reason="Ambiguous first contact",
+        ctx = _ctx(
+            sender_email="new@example.com",
+            sender_authenticated=True,
+            inbound_subject="Question",
+            admin_emails=["admin@example.com"],
         )
+        ctx.deps.trace_id = "trace-test-123"
+        result = await escalate(ctx, reason="Ambiguous first contact")
 
-    assert result == {"status": "welcomed"}
+    assert result == {"status": "welcomed_and_escalated"}
+    mock_completion.assert_called_once_with(tool_outcome="welcomed_and_escalated")
     mock_send.assert_called_once_with(
         to_address="new@example.com",
         subject="Re: Question",
         body_text=FIRST_CONTACT_WELCOME_REPLY,
         include_footer=False,
+        trace_id="trace-test-123",
     )
     mock_get_session.assert_not_called()
     mock_embed.assert_not_awaited()
     mock_sanitize.assert_not_awaited()
-    mock_notify.assert_not_called()
+    mock_notify.assert_called_once_with(
+        ctx.deps.settings,
+        "[The Network] Manual reply needed: new@example.com",
+        "Email from new@example.com was escalated for human review.\n\n"
+        "Reason: Ambiguous first contact\n\n"
+        "Trace ID: trace-test-123\n\n"
+        "Please reply to new@example.com manually.",
+        trace_id="trace-test-123",
+    )
 
 
 @pytest.mark.asyncio

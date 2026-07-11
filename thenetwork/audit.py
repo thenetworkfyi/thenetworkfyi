@@ -67,7 +67,7 @@ _SAFE_CATEGORIES = {
     "tool_outcome": frozenset({
         "created", "deleted", "error", "escalated", "exists", "forbidden",
         "limited", "not_found", "proposed", "sent", "success", "suppressed",
-        "welcomed",
+        "welcomed", "welcomed_and_escalated",
     }),
     "tool_reason": frozenset({
         "already_registered", "max_sends_per_run", "memory_text_too_long",
