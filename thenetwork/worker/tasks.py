@@ -8,7 +8,7 @@ from __future__ import annotations
 import base64
 
 import procrastinate
-from limits import parse, storage, strategies
+from limits import parse, strategies
 from sqlmodel import select
 
 from thenetwork.admin.auth import extract_body_text, extract_command, verify_admin_request

@@ -1268,7 +1268,6 @@ def test_auto_submitted_messages_are_skipped():
 def test_outbound_has_auto_submitted_header():
     """Outbound email must set Auto-Submitted: auto-replied to prevent re-ingestion."""
     from email.message import EmailMessage
-    import smtplib
 
     captured: list[EmailMessage] = []
 

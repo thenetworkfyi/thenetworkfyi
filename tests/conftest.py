@@ -25,7 +25,7 @@ for _key, _placeholder in (
     if _key not in os.environ and not _dotenv.get(_key):
         os.environ[_key] = _placeholder
 
-from thenetwork.db.models import Memory, Person
+from thenetwork.db.models import Person  # noqa: E402
 
 TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL",

@@ -696,7 +696,6 @@ def test_handle_admin_command_ban_canonicalizes_gmail_alias():
 
 @pytest.mark.asyncio
 async def test_process_email_drops_banned_email_without_reply():
-    import asyncio
     from thenetwork.worker.tasks import process_email
     from thenetwork.db.models import BannedEmail
 
