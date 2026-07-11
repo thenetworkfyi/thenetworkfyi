@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Column, DateTime, Text, UniqueConstraint
+from sqlalchemy import Column, DateTime, ForeignKey, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlmodel import Field, SQLModel
 
@@ -113,8 +113,16 @@ class IntroductionConsent(SQLModel, table=True):
     )
 
     id: str = Field(default_factory=_new_uuid, primary_key=True)
-    person_a_id: str = Field(index=True)
-    person_b_id: str = Field(index=True)
+    person_a_id: str = Field(
+        sa_column=Column(
+            Text(), ForeignKey("people.id", ondelete="CASCADE"), nullable=False, index=True
+        )
+    )
+    person_b_id: str = Field(
+        sa_column=Column(
+            Text(), ForeignKey("people.id", ondelete="CASCADE"), nullable=False, index=True
+        )
+    )
     reply_token: str = Field(default_factory=_new_uuid, unique=True, index=True)
     person_a_consented: bool = Field(default=False, nullable=False)
     person_b_consented: bool = Field(default=False, nullable=False)
