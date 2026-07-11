@@ -291,3 +291,202 @@ async def test_escalate_sends_welcome_and_notifies_admin_for_unregistered_sender
 
     # No memory should be written for this fixed-reply path.
     mock_gs.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Qualification turn: a broad domain plus stated uncertainty is unqualified
+# even when search surfaces a specific adjacent person - ask, remember the
+# asked-note, propose nothing.
+# ---------------------------------------------------------------------------
+
+def _tool_call_names(result) -> list[str]:
+    """Tool names in call order, extracted from the full agent message history."""
+    from pydantic_ai.messages import ToolCallPart
+
+    return [
+        part.tool_name
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, ToolCallPart)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_vague_intent_qualification_asks_question_and_no_proposal():
+    """A broad, self-described-uncertain domain gets one narrowing question and
+    an asked-note, not a proposal - even with an adjacent search match present."""
+    from unittest.mock import patch, MagicMock, AsyncMock
+    from pydantic_ai.models.function import FunctionModel, AgentInfo
+    from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, TextPart
+    from thenetwork.search.match import MemoryMatch
+
+    call_count = 0
+
+    async def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(
+                tool_name="search",
+                args={"query": "archival science and data management"},
+            )])
+        if call_count == 2:
+            return ModelResponse(parts=[ToolCallPart(
+                tool_name="remember",
+                args={
+                    "text": (
+                        "asked user-petra which specific connection would help beyond "
+                        "archival science and data management"
+                    ),
+                    "refs": ["user-petra"],
+                },
+            )])
+        if call_count == 3:
+            return ModelResponse(parts=[ToolCallPart(
+                tool_name="reply_to_sender",
+                args={
+                    "subject": "Re: Archival science and data management",
+                    "body_text": (
+                        "Could you say more about what kind of connection would help - "
+                        "a museum archive project, a data-management tool, something else?"
+                    ),
+                },
+            )])
+        return ModelResponse(parts=[TextPart(content="Asked for clarification, no proposal made.")])
+
+    agent = build_agent(model=FunctionModel(script))
+
+    adjacent_match = [
+        MemoryMatch(
+            memory_id="mem-elise-1",
+            person_id="user-elise",
+            gist="works on museum archive digitization",
+            similarity=0.62,
+        )
+    ]
+
+    mock_session = MagicMock()
+    mock_session.__enter__ = MagicMock(return_value=mock_session)
+    mock_session.__exit__ = MagicMock(return_value=False)
+
+    sent = []
+
+    def fake_send_reply(to_address, subject, body_text, body_html=None, **kwargs):
+        sent.append({"to": to_address, "subject": subject, "body": body_text})
+
+    async def fake_sanitize(memory, session):
+        return "asked about narrowing a broad interest"
+
+    with patch("thenetwork.agent.tools.get_session", return_value=mock_session), \
+         patch("thenetwork.agent.tools.send_reply", side_effect=fake_send_reply), \
+         patch("thenetwork.agent.tools.embed_text", new=AsyncMock(return_value=[0.0] * 1536)), \
+         patch("thenetwork.agent.tools.match_memories", return_value=adjacent_match), \
+         patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new=AsyncMock(side_effect=fake_sanitize)):
+        deps = AgentDeps(
+            sender_email="petra@example.com",
+            sender_user_id="user-petra",
+            sender_authenticated=True,
+        )
+        result = await agent.run(
+            "I'm interested in archival science and data management broadly, but "
+            "honestly I'm not sure yet what specific connection would actually help me.",
+            deps=deps,
+        )
+
+    tool_names = _tool_call_names(result)
+
+    assert "reply_to_sender" in tool_names
+    assert "remember" in tool_names
+    assert "propose_introduction" not in tool_names
+    assert len(sent) == 1
+    assert "?" in sent[0]["body"]
+
+
+# ---------------------------------------------------------------------------
+# Answer turn: the asked-note is forgotten and the specific interest is
+# captured before any match is considered.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_vague_intent_answer_forgets_asked_note_and_captures_interest():
+    """Once Petra names the specific interest, forget the asked-note and
+    remember the specific interest, in that order."""
+    from unittest.mock import patch, MagicMock, AsyncMock
+    from pydantic_ai.models.function import FunctionModel, AgentInfo
+    from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, TextPart
+
+    call_count = 0
+
+    async def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(
+                tool_name="search",
+                args={"query": "archival science and data management"},
+            )])
+        if call_count == 2:
+            return ModelResponse(parts=[ToolCallPart(
+                tool_name="forget",
+                args={"memory_id": "mem-asked-petra"},
+            )])
+        if call_count == 3:
+            return ModelResponse(parts=[ToolCallPart(
+                tool_name="remember",
+                args={
+                    "text": "interested in museum archive provenance research specifically",
+                    "refs": ["user-petra"],
+                },
+            )])
+        if call_count == 4:
+            return ModelResponse(parts=[ToolCallPart(
+                tool_name="reply_to_sender",
+                args={
+                    "subject": "Re: Archival science and data management",
+                    "body_text": (
+                        "Got it - provenance research is specific enough that I can "
+                        "watch for the right person."
+                    ),
+                },
+            )])
+        return ModelResponse(parts=[TextPart(content="Captured the specific interest.")])
+
+    agent = build_agent(model=FunctionModel(script))
+
+    asked_note = MagicMock()
+    asked_note.refs = ["user-petra"]
+
+    mock_session = MagicMock()
+    mock_session.__enter__ = MagicMock(return_value=mock_session)
+    mock_session.__exit__ = MagicMock(return_value=False)
+    mock_session.get.return_value = asked_note
+
+    sent = []
+
+    def fake_send_reply(to_address, subject, body_text, body_html=None, **kwargs):
+        sent.append({"to": to_address, "subject": subject, "body": body_text})
+
+    async def fake_sanitize(memory, session):
+        return "interested in museum archive provenance research"
+
+    with patch("thenetwork.agent.tools.get_session", return_value=mock_session), \
+         patch("thenetwork.agent.tools.send_reply", side_effect=fake_send_reply), \
+         patch("thenetwork.agent.tools.embed_text", new=AsyncMock(return_value=[0.0] * 1536)), \
+         patch("thenetwork.agent.tools.match_memories", return_value=[]), \
+         patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new=AsyncMock(side_effect=fake_sanitize)):
+        deps = AgentDeps(
+            sender_email="petra@example.com",
+            sender_user_id="user-petra",
+            sender_authenticated=True,
+        )
+        result = await agent.run(
+            "Museum archive provenance research specifically - that's what I'm after.",
+            deps=deps,
+        )
+
+    tool_names = _tool_call_names(result)
+
+    assert "forget" in tool_names
+    assert "remember" in tool_names
+    assert tool_names.index("forget") < tool_names.index("remember")
+    mock_session.delete.assert_called_once_with(asked_note)
