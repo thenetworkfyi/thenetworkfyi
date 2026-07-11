@@ -54,7 +54,7 @@ def _pair_record(session, person_a_id: str, person_b_id: str):
             IntroductionConsent.person_b_id == high,
         )
     ).first()
-    return record if isinstance(record, IntroductionConsent) else None
+    return record
 
 
 def pair_is_suppressed(session, person_a_id: str, person_b_id: str) -> bool:

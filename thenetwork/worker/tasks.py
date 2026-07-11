@@ -253,7 +253,7 @@ async def process_email(
             banned = session.get(
                 BannedEmail, normalize_rate_limit_identity(sender_email)
             )
-            if banned and isinstance(banned, BannedEmail):
+            if banned:
                 audit_event("worker.message_rejected", reason="banned")
                 return
 
