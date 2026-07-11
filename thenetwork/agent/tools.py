@@ -535,7 +535,7 @@ async def _send_email(
             })
 
         max_sends_per_run = _cap(s.dispatch_max_sends_per_run)
-        if ctx.deps.dispatch_email_sent_count >= max_sends_per_run:
+        if ctx.deps.outbound_send_count >= max_sends_per_run:
             return _tool_result(_limited("max_sends_per_run", max_sends_per_run))
 
         with _get_session(ctx) as session:
@@ -593,7 +593,7 @@ async def _send_email(
         if is_sender_reply:
             _consume_daily_dispatch_cap(sender_reply_cap_key, sender_reply_daily_cap)
 
-        ctx.deps.dispatch_email_sent_count += 1
+        ctx.deps.outbound_send_count += 1
         ctx.deps.server_side_send_count += 1
         return _tool_result({"status": "sent"})
 

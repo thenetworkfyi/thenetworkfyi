@@ -20,7 +20,7 @@ def test_load_run_metrics_counts_population_deltas(tmp_path):
         run,
         [
             {"event": "sim.process_email_started"},
-            {"event": "agent.dispatch_email.completed", "total_tokens": 20, "cost_usd": 0.01},
+            {"event": "introduction.sent", "total_tokens": 20, "cost_usd": 0.01},
             {"event": "sim.judge.transcript", "score": 7, "token_usage": 5, "cost_usd": 0.02},
             {"event": "sim.judge.transcript", "score": 9},
         ],
@@ -42,7 +42,7 @@ def test_compare_runs_renders_metric_table(tmp_path):
     _write_events(
         after,
         [
-            {"event": "agent.dispatch_email.completed", "total_tokens": 15, "cost_usd": 0.02},
+            {"event": "introduction.sent", "total_tokens": 15, "cost_usd": 0.02},
             {"event": "sim.judge.transcript", "score": 8},
         ],
     )
@@ -59,8 +59,21 @@ def test_compare_cli_prints_table(tmp_path, capsys):
     before = tmp_path / "before"
     after = tmp_path / "after"
     _write_events(before, [])
-    _write_events(after, [{"event": "agent.dispatch_email.completed"}])
+    _write_events(after, [{"event": "introduction.sent"}])
 
     main(["compare", str(before), str(after)])
 
     assert "| introductions | 0 | 1 | +1 |" in capsys.readouterr().out
+
+
+def test_load_run_metrics_does_not_count_outbound_email_as_introduction(tmp_path):
+    run = tmp_path / "run"
+    _write_events(
+        run,
+        [
+            {"event": "agent.dispatch_email.completed"},
+            {"event": "agent.tool.completed", "tool_name": "dispatch_email"},
+        ],
+    )
+
+    assert load_run_metrics(run).introductions == 0

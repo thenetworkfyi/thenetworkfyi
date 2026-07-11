@@ -547,7 +547,7 @@ async def test_run_recorder_does_not_multiply_or_drop_outcome_metrics(tmp_path):
 
     async def two_tool_calls(**_kwargs):
         return {
-            "tool_calls": ("remember", "dispatch_email"),
+            "tool_calls": ("remember", "send_outreach"),
             "total_tokens": 100,
             "cost_usd": 0.02,
         }
@@ -581,7 +581,7 @@ async def test_two_recorded_runs_produce_a_comparable_non_empty_delta(tmp_path):
 
     async def busy_process(**_kwargs):
         return {
-            "tool_calls": ("dispatch_email",),
+            "tool_calls": ("send_outreach",),
             "total_tokens": 120,
             "cost_usd": 0.01,
             "judge_score": 8,
@@ -601,7 +601,7 @@ async def test_two_recorded_runs_produce_a_comparable_non_empty_delta(tmp_path):
 
     deltas = compare_runs(before.run_dir, after.run_dir)
     delta_by_name = {delta.name: delta.delta for delta in deltas}
-    assert delta_by_name["introductions"] not in ("+0", "n/a")
+    assert delta_by_name["introductions"] == "+0"
     assert delta_by_name["judge_score"] not in ("n/a", "+0.00")
     assert delta_by_name["token_usage"] not in ("+0", "n/a")
     assert delta_by_name["cost_usd"] not in ("+0.0000", "n/a")

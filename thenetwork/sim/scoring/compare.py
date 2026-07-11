@@ -83,11 +83,7 @@ def _read_events(path: Path) -> list[dict[str, Any]]:
 
 def _is_intro_event(event: dict[str, Any]) -> bool:
     name = str(event.get("event", ""))
-    return (
-        "introduction" in name
-        or "dispatch_email" in name
-        or event.get("tool_name") == "dispatch_email"
-    )
+    return "introduction" in name
 
 
 def _is_judge_event(event: dict[str, Any]) -> bool:
