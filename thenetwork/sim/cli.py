@@ -1,4 +1,5 @@
 """Command line entrypoint for the simulation harness."""
+
 from __future__ import annotations
 
 import argparse
@@ -150,7 +151,9 @@ async def run_sim(
         if message_budget < 1:
             raise ValueError("message_budget must be at least 1")
         population = tuple(
-            replace(persona, config=replace(persona.config, message_budget=message_budget))
+            replace(
+                persona, config=replace(persona.config, message_budget=message_budget)
+            )
             for persona in population
         )
     configs = tuple(persona.config for persona in population)

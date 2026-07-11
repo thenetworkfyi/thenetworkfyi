@@ -1,4 +1,5 @@
 """pydantic-ai agent wiring: model selection, tool registration, run entrypoint."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -90,13 +91,16 @@ async def run_agent_for_email(
     The untrusted email body is passed as user-role message content - it is
     NEVER concatenated into the system prompt (role separation, THE SEAL).
     """
-    with audit_run(), audit_trace(trace_id), audit_sender(
-        optional_sender_identifier(sender_email)
-    ), audit_span(
-        "agent.run",
-        sender_known=sender_user_id is not None,
-        subject_chars=len(email_subject),
-        body_chars=len(email_body),
+    with (
+        audit_run(),
+        audit_trace(trace_id),
+        audit_sender(optional_sender_identifier(sender_email)),
+        audit_span(
+            "agent.run",
+            sender_known=sender_user_id is not None,
+            subject_chars=len(email_subject),
+            body_chars=len(email_body),
+        ),
     ):
         deps = AgentDeps(
             sender_email=sender_email,
@@ -172,7 +176,9 @@ async def run_agent_for_email(
             )
         has_undispatched_text = (
             result.output.strip()
-            and not {"reply_to_sender", "send_outreach", "escalate"}.intersection(tool_names)
+            and not {"reply_to_sender", "send_outreach", "escalate"}.intersection(
+                tool_names
+            )
             and deps.server_side_send_count == 0
         )
         if has_undispatched_text and deps.is_proactive:

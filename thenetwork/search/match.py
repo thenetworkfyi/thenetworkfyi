@@ -25,7 +25,7 @@ def match_memories(
     exclude_memory_id: str | None = None,
 ) -> list[MemoryMatch]:
     """Semantic search over person-referencing memories with a gist (SEAL-sanitized)."""
-    vec_literal = '[' + ','.join(str(v) for v in query_vec) + ']'
+    vec_literal = "[" + ",".join(str(v) for v in query_vec) + "]"
     sql = text("""
         WITH candidates AS (
             SELECT

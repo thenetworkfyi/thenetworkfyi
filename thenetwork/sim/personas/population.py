@@ -1,11 +1,16 @@
 """Authored persona population and schedule controls."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
 
 from thenetwork.sim.personas.persona import PersonaConfig
-from thenetwork.sim.scoring.scoring import MemoryExpectation, OutcomeCheck, ScenarioOutcome
+from thenetwork.sim.scoring.scoring import (
+    MemoryExpectation,
+    OutcomeCheck,
+    ScenarioOutcome,
+)
 
 
 RUTH_EMAIL = "ruth.sim@example.test"
@@ -57,7 +62,9 @@ class SimSchedule:
     interruptions: tuple[MechanicalInterruption, ...] = ()
 
     @classmethod
-    def from_population(cls, population: tuple[PopulationPersona, ...]) -> "SimSchedule":
+    def from_population(
+        cls, population: tuple[PopulationPersona, ...]
+    ) -> "SimSchedule":
         events: list[ScheduledEvent] = []
         interruptions: list[MechanicalInterruption] = []
         for persona in population:
@@ -65,7 +72,9 @@ class SimSchedule:
             interruptions.extend(persona.interruptions)
         return cls(events=tuple(events), interruptions=tuple(interruptions))
 
-    def events_for(self, persona: PersonaConfig, tick: int) -> tuple[ScheduledEvent, ...]:
+    def events_for(
+        self, persona: PersonaConfig, tick: int
+    ) -> tuple[ScheduledEvent, ...]:
         return tuple(
             event
             for event in self.events
@@ -96,8 +105,7 @@ def _has_pair_with_status(
 
 def _has_no_revealing_introduction(outcome: ScenarioOutcome, email: str) -> bool:
     return not any(
-        message.subject == _INTRODUCTION_SUBJECT
-        and email.lower() in message.recipients
+        message.subject == _INTRODUCTION_SUBJECT and email.lower() in message.recipients
         for message in outcome.mail_facts
     )
 
@@ -136,8 +144,7 @@ def _has_ines_clarification(outcome: ScenarioOutcome) -> bool:
 
 def _has_ines_canned_clarification(outcome: ScenarioOutcome) -> bool:
     return any(
-        INES_EMAIL in message.recipients
-        and _INES_CANNED_CLARIFICATION in message.body
+        INES_EMAIL in message.recipients and _INES_CANNED_CLARIFICATION in message.body
         for message in outcome.mail_facts
     )
 
@@ -236,7 +243,9 @@ def _omar_pair_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
 DEFAULT_OUTCOME_CHECKS = (
     OutcomeCheck(
         description="Ruth declines an introduction and the pair enters cooldown",
-        predicate=lambda outcome: _has_pair_with_status(outcome, RUTH_EMAIL, "declined"),
+        predicate=lambda outcome: _has_pair_with_status(
+            outcome, RUTH_EMAIL, "declined"
+        ),
         requires_real_process=True,
         requires_llm_personas=True,
         evidence=lambda outcome: _pair_summary(outcome, RUTH_EMAIL),
@@ -264,8 +273,9 @@ DEFAULT_OUTCOME_CHECKS = (
     ),
     OutcomeCheck(
         description="Vic remains within the structural memory cap",
-        predicate=lambda outcome: outcome.memory_counts.get(VIC_EMAIL, 0)
-        <= _VIC_MAX_MEMORIES,
+        predicate=lambda outcome: (
+            outcome.memory_counts.get(VIC_EMAIL, 0) <= _VIC_MAX_MEMORIES
+        ),
         requires_real_process=True,
         requires_llm_personas=True,
         evidence=_vic_memory_summary,
@@ -275,10 +285,10 @@ DEFAULT_OUTCOME_CHECKS = (
             "Vic has no more than six consent-pair rows; this is a structural "
             "bound, not an observation of suppressed proposals"
         ),
-        predicate=lambda outcome: sum(
-            _pair_involves(row, VIC_EMAIL) for row in outcome.consent_rows
-        )
-        <= _VIC_MAX_PAIR_ROWS,
+        predicate=lambda outcome: (
+            sum(_pair_involves(row, VIC_EMAIL) for row in outcome.consent_rows)
+            <= _VIC_MAX_PAIR_ROWS
+        ),
         requires_real_process=True,
         requires_llm_personas=True,
         evidence=_vic_pair_summary,
@@ -329,18 +339,70 @@ DEFAULT_EXPECTATIONS = (
 )
 
 
-def default_population(agent_address: str = "join@thenetwork.test") -> tuple[PopulationPersona, ...]:
+def default_population(
+    agent_address: str = "join@thenetwork.test",
+) -> tuple[PopulationPersona, ...]:
     rows = (
-        ("Priya Shah", "priya.sim@example.test", "Find applied ML infrastructure peers in manufacturing operations.", "I run ML platform work for factory operations and want peers with production scars."),
-        ("Samir Vale", "samir.sim@example.test", "Meet operators deploying ML systems in factory environments.", "I help deploy ML infrastructure on factory floors and want grounded operator feedback."),
-        ("Nora Chen", "nora.sim@example.test", "Find climate founders working on industrial heat reuse.", "I am exploring industrial heat reuse and want people who understand plant constraints."),
-        ("Mateo Ruiz", "mateo.sim@example.test", "Meet designers turning dense technical workflows into usable internal tools.", "I design internal tools for lab operations and want to compare notes on adoption."),
-        ("Lena Okafor", "lena.sim@example.test", "Find legal operators handling open-source AI procurement.", "I work on procurement and legal ops for open-source AI and want practical peers."),
-        ("Arun Mehta", "arun.sim@example.test", "Meet people building local-first collaboration software.", "I am building local-first collaboration tools and want others wrestling with sync."),
-        ("Elise Laurent", "elise.sim@example.test", "Find museum technologists working on provenance and digital archives.", "I work on digital archives and provenance systems for museums."),
-        ("Jon Bell", "jon.sim@example.test", "Meet founders who sell to municipal utilities.", "I sell software to municipal utilities and want to meet people with similar cycles."),
-        ("Mara Vidal", "mara.sim@example.test", "Find manufacturing consultants with strong privacy boundaries.", "I advise small factories and only want specific introductions with clear reasons."),
-        ("Theo Anders", "theo.sim@example.test", "Meet researchers studying simulated users and evaluation harnesses.", "I study simulated-user evaluation and want others building practical harnesses."),
+        (
+            "Priya Shah",
+            "priya.sim@example.test",
+            "Find applied ML infrastructure peers in manufacturing operations.",
+            "I run ML platform work for factory operations and want peers with production scars.",
+        ),
+        (
+            "Samir Vale",
+            "samir.sim@example.test",
+            "Meet operators deploying ML systems in factory environments.",
+            "I help deploy ML infrastructure on factory floors and want grounded operator feedback.",
+        ),
+        (
+            "Nora Chen",
+            "nora.sim@example.test",
+            "Find climate founders working on industrial heat reuse.",
+            "I am exploring industrial heat reuse and want people who understand plant constraints.",
+        ),
+        (
+            "Mateo Ruiz",
+            "mateo.sim@example.test",
+            "Meet designers turning dense technical workflows into usable internal tools.",
+            "I design internal tools for lab operations and want to compare notes on adoption.",
+        ),
+        (
+            "Lena Okafor",
+            "lena.sim@example.test",
+            "Find legal operators handling open-source AI procurement.",
+            "I work on procurement and legal ops for open-source AI and want practical peers.",
+        ),
+        (
+            "Arun Mehta",
+            "arun.sim@example.test",
+            "Meet people building local-first collaboration software.",
+            "I am building local-first collaboration tools and want others wrestling with sync.",
+        ),
+        (
+            "Elise Laurent",
+            "elise.sim@example.test",
+            "Find museum technologists working on provenance and digital archives.",
+            "I work on digital archives and provenance systems for museums.",
+        ),
+        (
+            "Jon Bell",
+            "jon.sim@example.test",
+            "Meet founders who sell to municipal utilities.",
+            "I sell software to municipal utilities and want to meet people with similar cycles.",
+        ),
+        (
+            "Mara Vidal",
+            "mara.sim@example.test",
+            "Find manufacturing consultants with strong privacy boundaries.",
+            "I advise small factories and only want specific introductions with clear reasons.",
+        ),
+        (
+            "Theo Anders",
+            "theo.sim@example.test",
+            "Meet researchers studying simulated users and evaluation harnesses.",
+            "I study simulated-user evaluation and want others building practical harnesses.",
+        ),
     )
     population = tuple(
         PopulationPersona(

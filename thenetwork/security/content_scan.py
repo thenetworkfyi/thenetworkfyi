@@ -3,6 +3,7 @@
 Enabled by settings.content_scan_enabled. When disabled, always passes.
 Uses LLM Guard PromptInjection scanner; NOT a primary defense.
 """
+
 from __future__ import annotations
 
 from thenetwork.settings import get_settings

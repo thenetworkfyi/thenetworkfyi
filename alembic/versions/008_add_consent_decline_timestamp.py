@@ -3,6 +3,7 @@
 Revision ID: 008
 Revises: 007
 """
+
 from typing import Sequence, Union
 
 import sqlalchemy as sa
@@ -15,7 +16,9 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column("introduction_consents", sa.Column("declined_at", sa.DateTime(timezone=True)))
+    op.add_column(
+        "introduction_consents", sa.Column("declined_at", sa.DateTime(timezone=True))
+    )
 
 
 def downgrade() -> None:

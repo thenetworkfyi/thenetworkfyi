@@ -30,6 +30,7 @@ cleared the relevance floor; it never lowers `PROXIMITY_THRESHOLD` or
 `proactive_match_threshold`, and the `introduction_max_*` caps are still the
 ones enforced (at proposal time) in `introductions.propose_pair`.
 """
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -110,8 +111,8 @@ async def scan_for_opportunities(timestamp: int) -> None:
         for i, pid_a in enumerate(person_ids):
             if pid_a not in email_by_id:
                 continue
-            scores = score_proximity(pid_a, person_ids[i + 1:], graph=G)
-            for pid_b in person_ids[i + 1:]:
+            scores = score_proximity(pid_a, person_ids[i + 1 :], graph=G)
+            for pid_b in person_ids[i + 1 :]:
                 score = scores[pid_b]
                 if score < PROXIMITY_THRESHOLD:
                     continue

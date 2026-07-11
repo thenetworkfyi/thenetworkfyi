@@ -12,6 +12,7 @@ Command grammar (all positional, space-separated in subject):
   forget <memory_id>        - delete one memory
   remember [refs:e1,e2]     - store body text as a new memory
 """
+
 from __future__ import annotations
 from sqlalchemy import text
 from sqlmodel import Session, select
@@ -68,8 +69,11 @@ async def _cmd_search(query: str) -> str:
     with get_session() as session:
         rows = session.execute(sql, {"vec": vec_literal}).fetchall()
     audit_event(
-        "database.action", action="search", record_type="memory",
-        outcome="found" if rows else "not_found", result_count=len(rows),
+        "database.action",
+        action="search",
+        record_type="memory",
+        outcome="found" if rows else "not_found",
+        result_count=len(rows),
     )
     if not rows:
         return "No memories found."
@@ -86,7 +90,12 @@ async def _cmd_show(ident: str) -> str:
     with get_session() as session:
         person = _resolve_person(session, ident)
         if not person:
-            audit_event("database.action", action="lookup", record_type="person", outcome="not_found")
+            audit_event(
+                "database.action",
+                action="lookup",
+                record_type="person",
+                outcome="not_found",
+            )
             return f"Person not found: {ident!r}"
         mems = session.exec(
             select(Memory).where(Memory.refs.contains([person.id]))
@@ -97,8 +106,11 @@ async def _cmd_show(ident: str) -> str:
             for memory in mems
         ]
     audit_event(
-        "database.action", action="lookup", record_type="person",
-        outcome="found", result_count=len(mems),
+        "database.action",
+        action="lookup",
+        record_type="person",
+        outcome="found",
+        result_count=len(mems),
     )
     if not mems:
         return f"No memories for {email} ({pid})"
@@ -113,11 +125,18 @@ async def _cmd_forget(memory_id: str) -> str:
     with get_session() as session:
         mem = session.get(Memory, memory_id)
         if not mem:
-            audit_event("database.action", action="delete", record_type="memory", outcome="not_found")
+            audit_event(
+                "database.action",
+                action="delete",
+                record_type="memory",
+                outcome="not_found",
+            )
             return f"Memory not found: {memory_id!r}"
         session.delete(mem)
         session.commit()
-    audit_event("database.action", action="delete", record_type="memory", outcome="success")
+    audit_event(
+        "database.action", action="delete", record_type="memory", outcome="success"
+    )
     return f"Deleted memory {memory_id}"
 
 
@@ -155,8 +174,11 @@ async def _cmd_remember(args: str, body_text: str) -> str:
         session.refresh(mem)
         mem_id = mem.id
     audit_event(
-        "database.action", action="insert", record_type="memory",
-        outcome="success", refs_count=len(refs),
+        "database.action",
+        action="insert",
+        record_type="memory",
+        outcome="success",
+        refs_count=len(refs),
     )
     return f"Stored memory {mem_id} (refs: {refs or 'none'})"
 
@@ -179,7 +201,9 @@ async def _cmd_ban(email: str) -> str:
         banned = BannedEmail(email=identity)
         session.add(banned)
         session.commit()
-    audit_event("database.action", action="ban", record_type="person", outcome="success")
+    audit_event(
+        "database.action", action="ban", record_type="person", outcome="success"
+    )
     return f"Banned email: {email}"
 
 
@@ -194,5 +218,7 @@ async def _cmd_unban(email: str) -> str:
             return f"Email {email} is not banned."
         session.delete(existing)
         session.commit()
-    audit_event("database.action", action="unban", record_type="person", outcome="success")
+    audit_event(
+        "database.action", action="unban", record_type="person", outcome="success"
+    )
     return f"Unbanned email: {email}"

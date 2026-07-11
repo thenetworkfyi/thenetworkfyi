@@ -6,6 +6,7 @@ functions only ever fetch/flag messages - never move, delete, expunge, or
 copy them out of INBOX - so a future change can't silently start archiving
 or deleting inbound mail.
 """
+
 from __future__ import annotations
 
 import json
@@ -222,7 +223,9 @@ def test_poll_unseen_treats_missing_display_name_as_none(fake_mailbox: _FakeMail
 
 def test_poll_unseen_strips_and_caps_display_name(fake_mailbox: _FakeMailBox):
     fake_mailbox.fetch.return_value = [
-        _fake_message(from_display_name="  " + "n" * (inbound.MAX_SENDER_NAME_CHARS + 10) + "  ")
+        _fake_message(
+            from_display_name="  " + "n" * (inbound.MAX_SENDER_NAME_CHARS + 10) + "  "
+        )
     ]
 
     messages = inbound.poll_unseen()
@@ -258,9 +261,7 @@ def test_poll_unseen_accepts_purelymail_auth_pass(
         ),
     )
     fake_mailbox.fetch.return_value = [
-        _fake_message(
-            headers={"authentication-results": ["purelymail.com; auth=pass"]}
-        )
+        _fake_message(headers={"authentication-results": ["purelymail.com; auth=pass"]})
     ]
 
     messages = inbound.poll_unseen()

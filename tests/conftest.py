@@ -1,4 +1,5 @@
 """Shared pytest fixtures: seeded people + memories."""
+
 from __future__ import annotations
 
 import os
@@ -38,9 +39,9 @@ def seeded_people():
     """In-memory Person objects for unit tests that don't need a DB."""
     return [
         Person(id=str(uuid.uuid4()), name="Alice", email="alice@test.com"),
-        Person(id=str(uuid.uuid4()), name="Bob",   email="bob@test.com"),
+        Person(id=str(uuid.uuid4()), name="Bob", email="bob@test.com"),
         Person(id=str(uuid.uuid4()), name="Carol", email="carol@test.com"),
-        Person(id=str(uuid.uuid4()), name="Dave",  email="dave@test.com"),
+        Person(id=str(uuid.uuid4()), name="Dave", email="dave@test.com"),
     ]
 
 
@@ -94,12 +95,12 @@ def seeded_db(pg_engine, monkeypatch):
         v[1] = dim1
         return v
 
-    alice_id    = str(uuid.uuid4())
-    bob_id      = str(uuid.uuid4())
-    carol_id    = str(uuid.uuid4())
-    dave_id     = str(uuid.uuid4())
+    alice_id = str(uuid.uuid4())
+    bob_id = str(uuid.uuid4())
+    carol_id = str(uuid.uuid4())
+    dave_id = str(uuid.uuid4())
     mem_alice_id = str(uuid.uuid4())
-    mem_bob_id   = str(uuid.uuid4())
+    mem_bob_id = str(uuid.uuid4())
     mem_carol_id = str(uuid.uuid4())
     mem_intro_id = str(uuid.uuid4())
 
@@ -109,60 +110,104 @@ def seeded_db(pg_engine, monkeypatch):
         autocommit=False,
         autoflush=False,
     )
-    monkeypatch.setattr(sess_mod, "_engine",       pg_engine)
+    monkeypatch.setattr(sess_mod, "_engine", pg_engine)
     monkeypatch.setattr(sess_mod, "_SessionLocal", test_factory)
 
     test_emails = ["alice@test.com", "bob@test.com", "carol@test.com", "dave@test.com"]
 
     with pg_engine.connect() as conn:
-        conn.execute(text("""
+        conn.execute(
+            text("""
             DELETE FROM memories
             WHERE refs && ARRAY(SELECT id FROM people WHERE email = ANY(:e))::text[]
-        """), {"e": test_emails})
-        conn.execute(text("DELETE FROM people WHERE email = ANY(:e)"), {"e": test_emails})
+        """),
+            {"e": test_emails},
+        )
+        conn.execute(
+            text("DELETE FROM people WHERE email = ANY(:e)"), {"e": test_emails}
+        )
         conn.commit()
 
     with pg_engine.connect() as conn:
-        conn.execute(text("""
+        conn.execute(
+            text("""
             INSERT INTO people (id, name, email) VALUES
               (:aid, 'Alice', 'alice@test.com'),
               (:bid, 'Bob',   'bob@test.com'),
               (:cid, 'Carol', 'carol@test.com'),
               (:did, 'Dave',  'dave@test.com')
-        """), {"aid": alice_id, "bid": bob_id, "cid": carol_id, "did": dave_id})
+        """),
+            {"aid": alice_id, "bid": bob_id, "cid": carol_id, "did": dave_id},
+        )
         conn.commit()
 
     mem_rows = [
-        (mem_alice_id, "Alice is an ML engineer",             (1.0, 0.0), [alice_id],           "ml engineer"),
-        (mem_bob_id,   "Bob writes systems software in Rust", (0.0, 1.0), [bob_id],             "systems programmer"),
-        (mem_carol_id, "Carol builds LLM products",           (0.9, 0.1), [carol_id],           "llm builder"),
-        (mem_intro_id, "Introduced Alice and Carol",          (1.0, 0.0), [alice_id, carol_id], "connected two ml people"),
+        (
+            mem_alice_id,
+            "Alice is an ML engineer",
+            (1.0, 0.0),
+            [alice_id],
+            "ml engineer",
+        ),
+        (
+            mem_bob_id,
+            "Bob writes systems software in Rust",
+            (0.0, 1.0),
+            [bob_id],
+            "systems programmer",
+        ),
+        (
+            mem_carol_id,
+            "Carol builds LLM products",
+            (0.9, 0.1),
+            [carol_id],
+            "llm builder",
+        ),
+        (
+            mem_intro_id,
+            "Introduced Alice and Carol",
+            (1.0, 0.0),
+            [alice_id, carol_id],
+            "connected two ml people",
+        ),
     ]
 
     with pg_engine.connect() as conn:
         for mem_id, mem_text, emb_dims, refs, gist in mem_rows:
             refs_sql = "ARRAY[" + ",".join(f"'{r}'" for r in refs) + "]::text[]"
-            conn.execute(text(f"""
+            conn.execute(
+                text(f"""
                 INSERT INTO memories (id, text, embedding, refs, gist, created_at)
                 VALUES (:mid, :txt, CAST(:emb AS vector), {refs_sql}, :gist, NOW())
-            """), {"mid": mem_id, "txt": mem_text, "emb": _vec_str(*emb_dims), "gist": gist})
+            """),
+                {
+                    "mid": mem_id,
+                    "txt": mem_text,
+                    "emb": _vec_str(*emb_dims),
+                    "gist": gist,
+                },
+            )
         conn.commit()
 
     yield {
-        "alice_id":    alice_id,
-        "bob_id":      bob_id,
-        "carol_id":    carol_id,
-        "dave_id":     dave_id,
+        "alice_id": alice_id,
+        "bob_id": bob_id,
+        "carol_id": carol_id,
+        "dave_id": dave_id,
         "mem_alice_id": mem_alice_id,
-        "mem_bob_id":   mem_bob_id,
+        "mem_bob_id": mem_bob_id,
         "mem_carol_id": mem_carol_id,
         "mem_intro_id": mem_intro_id,
-        "query_ml":    _vec(1.0, 0.0),
+        "query_ml": _vec(1.0, 0.0),
     }
 
     with pg_engine.connect() as conn:
-        conn.execute(text("DELETE FROM memories WHERE id = ANY(:ids)"),
-                     {"ids": [mem_alice_id, mem_bob_id, mem_carol_id, mem_intro_id]})
-        conn.execute(text("DELETE FROM people WHERE id = ANY(:ids)"),
-                     {"ids": [alice_id, bob_id, carol_id, dave_id]})
+        conn.execute(
+            text("DELETE FROM memories WHERE id = ANY(:ids)"),
+            {"ids": [mem_alice_id, mem_bob_id, mem_carol_id, mem_intro_id]},
+        )
+        conn.execute(
+            text("DELETE FROM people WHERE id = ANY(:ids)"),
+            {"ids": [alice_id, bob_id, carol_id, dave_id]},
+        )
         conn.commit()

@@ -3,6 +3,7 @@
 These are emergent-behavior assertions - no branching control flow in the agent.
 Tests use pydantic-ai FunctionModel for deterministic, offline runs.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -17,14 +18,13 @@ def _use_in_memory_dispatch_limiter():
     from thenetwork.agent import tools
 
     tools._dispatch_storage = storage.MemoryStorage()
-    tools._dispatch_limiter = strategies.FixedWindowRateLimiter(
-        tools._dispatch_storage
-    )
+    tools._dispatch_limiter = strategies.FixedWindowRateLimiter(tools._dispatch_storage)
 
 
 # ---------------------------------------------------------------------------
 # Onboarding archetype: new sender who hasn't been seen before
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_onboarding_registers_sender_then_remembers_under_sender_id():
@@ -41,18 +41,26 @@ async def test_onboarding_registers_sender_then_remembers_under_sender_id():
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            return ModelResponse(parts=[ToolCallPart(
-                tool_name="register_person",
-                args={"name": "Priya"},
-            )])
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="register_person",
+                        args={"name": "Priya"},
+                    )
+                ]
+            )
         if call_count == 2:
-            return ModelResponse(parts=[ToolCallPart(
-                tool_name="remember",
-                args={
-                    "text": "backend engineer looking to meet ML engineers",
-                    "refs": ["user-priya"],
-                },
-            )])
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="remember",
+                        args={
+                            "text": "backend engineer looking to meet ML engineers",
+                            "refs": ["user-priya"],
+                        },
+                    )
+                ]
+            )
         return ModelResponse(parts=[TextPart(content="Onboarding recorded.")])
 
     mock_session = MagicMock()
@@ -69,11 +77,19 @@ async def test_onboarding_registers_sender_then_remembers_under_sender_id():
     async def fake_sanitize(memory, session) -> str:
         return "backend engineer looking to meet ML engineers"
 
-    with patch("thenetwork.agent.tools.get_session", return_value=mock_session), \
-         patch("thenetwork.agent.tools._hit_registration_quota", return_value=True), \
-         patch("thenetwork.agent.tools.embed_text", new=AsyncMock(return_value=[0.0] * 1536)), \
-         patch("thenetwork.agent.tools.match_memories", return_value=[]), \
-         patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new=AsyncMock(side_effect=fake_sanitize)):
+    with (
+        patch("thenetwork.agent.tools.get_session", return_value=mock_session),
+        patch("thenetwork.agent.tools._hit_registration_quota", return_value=True),
+        patch(
+            "thenetwork.agent.tools.embed_text",
+            new=AsyncMock(return_value=[0.0] * 1536),
+        ),
+        patch("thenetwork.agent.tools.match_memories", return_value=[]),
+        patch(
+            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
+            new=AsyncMock(side_effect=fake_sanitize),
+        ),
+    ):
         deps = AgentDeps(
             sender_email="priya@example.com",
             sender_user_id=None,
@@ -98,6 +114,7 @@ async def test_onboarding_registers_sender_then_remembers_under_sender_id():
 # ---------------------------------------------------------------------------
 # Matchmaking archetype: sender expresses intent, expects matches
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_matchmaking_returns_opaque_ids_only():
@@ -128,9 +145,15 @@ async def test_matchmaking_returns_opaque_ids_only():
     mock_session.__enter__ = MagicMock(return_value=mock_session)
     mock_session.__exit__ = MagicMock(return_value=False)
 
-    with patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock, return_value=[0.0] * 1536), \
-         patch("thenetwork.agent.tools.get_session", return_value=mock_session), \
-         patch("thenetwork.agent.tools.match_memories", return_value=mock_results):
+    with (
+        patch(
+            "thenetwork.agent.tools.embed_text",
+            new_callable=AsyncMock,
+            return_value=[0.0] * 1536,
+        ),
+        patch("thenetwork.agent.tools.get_session", return_value=mock_session),
+        patch("thenetwork.agent.tools.match_memories", return_value=mock_results),
+    ):
         result = await search(ctx, query="looking for ML engineers")
 
     assert len(result) == 1
@@ -147,6 +170,7 @@ async def test_matchmaking_returns_opaque_ids_only():
 # Outreach email: capability tool, address resolved server-side
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_send_outreach_resolves_address_server_side():
     """send_outreach must look up the address by ID, never accept a raw address."""
@@ -161,8 +185,10 @@ async def test_send_outreach_resolves_address_server_side():
 
     ctx = FakeCtx()
 
-    with patch("thenetwork.agent.tools.get_session") as mock_get_session, \
-         patch("thenetwork.agent.tools.send_reply") as mock_send:
+    with (
+        patch("thenetwork.agent.tools.get_session") as mock_get_session,
+        patch("thenetwork.agent.tools.send_reply") as mock_send,
+    ):
         mock_session = MagicMock()
         mock_session.__enter__ = MagicMock(return_value=mock_session)
         mock_session.__exit__ = MagicMock(return_value=False)
@@ -186,6 +212,7 @@ async def test_send_outreach_resolves_address_server_side():
 # ---------------------------------------------------------------------------
 # Double-introduction: both parties emailed, no cross-disclosure
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_double_intro_emails_both_parties():
@@ -211,8 +238,13 @@ async def test_double_intro_emails_both_parties():
 
     ctx = FakeCtx()
 
-    with patch("thenetwork.agent.tools.get_session") as mock_gs, \
-         patch("thenetwork.agent.tools.send_reply", new=MagicMock(side_effect=fake_send_reply)):
+    with (
+        patch("thenetwork.agent.tools.get_session") as mock_gs,
+        patch(
+            "thenetwork.agent.tools.send_reply",
+            new=MagicMock(side_effect=fake_send_reply),
+        ),
+    ):
         mock_session = MagicMock()
         mock_session.__enter__ = MagicMock(return_value=mock_session)
         mock_session.__exit__ = MagicMock(return_value=False)
@@ -220,7 +252,9 @@ async def test_double_intro_emails_both_parties():
         mock_gs.return_value = mock_session
 
         await reply_to_sender(ctx, subject="Intro", body_text="Hi Alice.")
-        await send_outreach(ctx, recipient_user_id="user-bob", subject="Intro", body_text="Hi Bob.")
+        await send_outreach(
+            ctx, recipient_user_id="user-bob", subject="Intro", body_text="Hi Bob."
+        )
 
     assert "alice@example.com" in sent_to
     assert "bob@example.com" in sent_to
@@ -229,6 +263,7 @@ async def test_double_intro_emails_both_parties():
 # ---------------------------------------------------------------------------
 # forget: strict sole-ref ownership rejects co-owned (multi-ref) memories
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_forget_rejects_multi_ref_memory():
@@ -263,6 +298,7 @@ async def test_forget_rejects_multi_ref_memory():
 # send_outreach: exhausted per-run send cap short-circuits before any send
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_send_outreach_limited_once_run_cap_exhausted():
     """Once outbound_send_count reaches the per-run cap, sends stop."""
@@ -275,8 +311,10 @@ async def test_send_outreach_limited_once_run_cap_exhausted():
     ctx = FakeCtx()
     ctx.deps.outbound_send_count = ctx.deps.settings.dispatch_max_sends_per_run
 
-    with patch("thenetwork.agent.tools.get_session") as mock_gs, \
-         patch("thenetwork.agent.tools.send_reply") as mock_send:
+    with (
+        patch("thenetwork.agent.tools.get_session") as mock_gs,
+        patch("thenetwork.agent.tools.send_reply") as mock_send,
+    ):
         result = await send_outreach(
             ctx,
             recipient_user_id="user-bob",
@@ -298,6 +336,7 @@ async def test_send_outreach_limited_once_run_cap_exhausted():
 # not a model-authored escalation reply, while admins still get notified
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_escalate_sends_welcome_and_notifies_admin_for_unregistered_sender():
     """First contact from an authenticated unknown sender: welcome + admin escalation."""
@@ -314,9 +353,11 @@ async def test_escalate_sends_welcome_and_notifies_admin_for_unregistered_sender
 
     ctx = FakeCtx()
 
-    with patch("thenetwork.agent.tools.send_reply") as mock_send, \
-         patch("thenetwork.agent.tools.notify_admins") as mock_notify, \
-         patch("thenetwork.agent.tools.get_session") as mock_gs:
+    with (
+        patch("thenetwork.agent.tools.send_reply") as mock_send,
+        patch("thenetwork.agent.tools.notify_admins") as mock_notify,
+        patch("thenetwork.agent.tools.get_session") as mock_gs,
+    ):
         result = await escalate(ctx, reason="unclear intent")
 
     assert result["status"] == "welcomed_and_escalated"
@@ -340,6 +381,7 @@ async def test_escalate_sends_welcome_and_notifies_admin_for_unregistered_sender
 # even when search surfaces a specific adjacent person - ask, remember the
 # asked-note, propose nothing.
 # ---------------------------------------------------------------------------
+
 
 def _tool_call_names(result) -> list[str]:
     """Tool names in call order, extracted from the full agent message history."""
@@ -368,33 +410,47 @@ async def test_vague_intent_qualification_asks_question_and_no_proposal():
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            return ModelResponse(parts=[ToolCallPart(
-                tool_name="search",
-                args={"query": "archival science and data management"},
-            )])
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="search",
+                        args={"query": "archival science and data management"},
+                    )
+                ]
+            )
         if call_count == 2:
-            return ModelResponse(parts=[ToolCallPart(
-                tool_name="remember",
-                args={
-                    "text": (
-                        "asked user-petra which specific connection would help beyond "
-                        "archival science and data management"
-                    ),
-                    "refs": ["user-petra"],
-                },
-            )])
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="remember",
+                        args={
+                            "text": (
+                                "asked user-petra which specific connection would help beyond "
+                                "archival science and data management"
+                            ),
+                            "refs": ["user-petra"],
+                        },
+                    )
+                ]
+            )
         if call_count == 3:
-            return ModelResponse(parts=[ToolCallPart(
-                tool_name="reply_to_sender",
-                args={
-                    "subject": "Re: Archival science and data management",
-                    "body_text": (
-                        "Could you say more about what kind of connection would help - "
-                        "a museum archive project, a data-management tool, something else?"
-                    ),
-                },
-            )])
-        return ModelResponse(parts=[TextPart(content="Asked for clarification, no proposal made.")])
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="reply_to_sender",
+                        args={
+                            "subject": "Re: Archival science and data management",
+                            "body_text": (
+                                "Could you say more about what kind of connection would help - "
+                                "a museum archive project, a data-management tool, something else?"
+                            ),
+                        },
+                    )
+                ]
+            )
+        return ModelResponse(
+            parts=[TextPart(content="Asked for clarification, no proposal made.")]
+        )
 
     agent = build_agent(model=FunctionModel(script))
 
@@ -420,11 +476,19 @@ async def test_vague_intent_qualification_asks_question_and_no_proposal():
     async def fake_sanitize(memory, session):
         return "asked about narrowing a broad interest"
 
-    with patch("thenetwork.agent.tools.get_session", return_value=mock_session), \
-         patch("thenetwork.agent.tools.send_reply", side_effect=fake_send_reply), \
-         patch("thenetwork.agent.tools.embed_text", new=AsyncMock(return_value=[0.0] * 1536)), \
-         patch("thenetwork.agent.tools.match_memories", return_value=adjacent_match), \
-         patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new=AsyncMock(side_effect=fake_sanitize)):
+    with (
+        patch("thenetwork.agent.tools.get_session", return_value=mock_session),
+        patch("thenetwork.agent.tools.send_reply", side_effect=fake_send_reply),
+        patch(
+            "thenetwork.agent.tools.embed_text",
+            new=AsyncMock(return_value=[0.0] * 1536),
+        ),
+        patch("thenetwork.agent.tools.match_memories", return_value=adjacent_match),
+        patch(
+            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
+            new=AsyncMock(side_effect=fake_sanitize),
+        ),
+    ):
         deps = AgentDeps(
             sender_email="petra@example.com",
             sender_user_id="user-petra",
@@ -450,6 +514,7 @@ async def test_vague_intent_qualification_asks_question_and_no_proposal():
 # captured before any match is considered.
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_vague_intent_answer_forgets_asked_note_and_captures_interest():
     """Once Petra names the specific interest, forget the asked-note and
@@ -464,35 +529,53 @@ async def test_vague_intent_answer_forgets_asked_note_and_captures_interest():
         nonlocal call_count
         call_count += 1
         if call_count == 1:
-            return ModelResponse(parts=[ToolCallPart(
-                tool_name="search",
-                args={"query": "archival science and data management"},
-            )])
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="search",
+                        args={"query": "archival science and data management"},
+                    )
+                ]
+            )
         if call_count == 2:
-            return ModelResponse(parts=[ToolCallPart(
-                tool_name="forget",
-                args={"memory_id": "mem-asked-petra"},
-            )])
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="forget",
+                        args={"memory_id": "mem-asked-petra"},
+                    )
+                ]
+            )
         if call_count == 3:
-            return ModelResponse(parts=[ToolCallPart(
-                tool_name="remember",
-                args={
-                    "text": "interested in museum archive provenance research specifically",
-                    "refs": ["user-petra"],
-                },
-            )])
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="remember",
+                        args={
+                            "text": "interested in museum archive provenance research specifically",
+                            "refs": ["user-petra"],
+                        },
+                    )
+                ]
+            )
         if call_count == 4:
-            return ModelResponse(parts=[ToolCallPart(
-                tool_name="reply_to_sender",
-                args={
-                    "subject": "Re: Archival science and data management",
-                    "body_text": (
-                        "Got it - provenance research is specific enough that I can "
-                        "watch for the right person."
-                    ),
-                },
-            )])
-        return ModelResponse(parts=[TextPart(content="Captured the specific interest.")])
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="reply_to_sender",
+                        args={
+                            "subject": "Re: Archival science and data management",
+                            "body_text": (
+                                "Got it - provenance research is specific enough that I can "
+                                "watch for the right person."
+                            ),
+                        },
+                    )
+                ]
+            )
+        return ModelResponse(
+            parts=[TextPart(content="Captured the specific interest.")]
+        )
 
     agent = build_agent(model=FunctionModel(script))
 
@@ -513,11 +596,19 @@ async def test_vague_intent_answer_forgets_asked_note_and_captures_interest():
     async def fake_sanitize(memory, session):
         return "interested in museum archive provenance research"
 
-    with patch("thenetwork.agent.tools.get_session", return_value=mock_session), \
-         patch("thenetwork.agent.tools.send_reply", side_effect=fake_send_reply), \
-         patch("thenetwork.agent.tools.embed_text", new=AsyncMock(return_value=[0.0] * 1536)), \
-         patch("thenetwork.agent.tools.match_memories", return_value=[]), \
-         patch("thenetwork.agent.tools.sanitize_memory_high_fidelity", new=AsyncMock(side_effect=fake_sanitize)):
+    with (
+        patch("thenetwork.agent.tools.get_session", return_value=mock_session),
+        patch("thenetwork.agent.tools.send_reply", side_effect=fake_send_reply),
+        patch(
+            "thenetwork.agent.tools.embed_text",
+            new=AsyncMock(return_value=[0.0] * 1536),
+        ),
+        patch("thenetwork.agent.tools.match_memories", return_value=[]),
+        patch(
+            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
+            new=AsyncMock(side_effect=fake_sanitize),
+        ),
+    ):
         deps = AgentDeps(
             sender_email="petra@example.com",
             sender_user_id="user-petra",

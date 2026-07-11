@@ -335,9 +335,12 @@ def test_declined_pair_stays_suppressed_during_cooldown():
     session = FakeSession(proposal=recent, people=people())
 
     result = propose_pair(
-        sender_person_id="alice", other_person_id="bob",
-        sender_gist="builds storage systems", other_gist="operates distributed databases",
-        session_factory=factory(session), decline_cooldown_days=90,
+        sender_person_id="alice",
+        other_person_id="bob",
+        sender_gist="builds storage systems",
+        other_gist="operates distributed databases",
+        session_factory=factory(session),
+        decline_cooldown_days=90,
     )
 
     assert result == {"status": "suppressed", "reason": "declined"}
@@ -489,18 +492,20 @@ async def test_consent_reply_is_consumed_before_model_execution():
     session = FakeSession()
     session.exec = lambda _query: Result("alice")
 
-    with patch("thenetwork.worker.tasks.get_session", factory(session)), \
-         patch("thenetwork.worker.tasks.check_rate_limit", return_value=True), \
-         patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)), \
-         patch("thenetwork.worker.tasks.verify_admin_request", return_value=None), \
-         patch(
-             "thenetwork.worker.tasks.process_consent_reply",
-             return_value=ConsentReplyResult(handled=True, outcome="one_consented"),
-         ) as consent_handler, \
-         patch(
-             "thenetwork.worker.tasks.run_agent_for_email",
-             new_callable=AsyncMock,
-         ) as run_agent:
+    with (
+        patch("thenetwork.worker.tasks.get_session", factory(session)),
+        patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
+        patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)),
+        patch("thenetwork.worker.tasks.verify_admin_request", return_value=None),
+        patch(
+            "thenetwork.worker.tasks.process_consent_reply",
+            return_value=ConsentReplyResult(handled=True, outcome="one_consented"),
+        ) as consent_handler,
+        patch(
+            "thenetwork.worker.tasks.run_agent_for_email",
+            new_callable=AsyncMock,
+        ) as run_agent,
+    ):
         await process_email.func(
             sender_email="alice@example.com",
             sender_authenticated=True,

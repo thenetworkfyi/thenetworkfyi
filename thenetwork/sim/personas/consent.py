@@ -8,6 +8,7 @@ second line. This keeps simulated replies honest inputs for the production
 consent parser, which reads the decision from the first visible line and the
 token from the subject or a visible line.
 """
+
 from __future__ import annotations
 
 from email.message import EmailMessage

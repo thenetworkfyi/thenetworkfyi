@@ -5,6 +5,7 @@ pipeline. It verifies that a TinyPerson can be configured with action
 correction and can produce repeated email-shaped turns against a mocked
 Network agent before later tasks wire the real process_email path.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -81,34 +82,43 @@ def build_difficult_persona() -> TinyPersonLike:
 
     person = TinyPerson("Mara Vidal")
     person.define("age", 39)
-    person.define("occupation", {
-        "title": "Independent manufacturing consultant",
-        "organization": "self-employed",
-        "description": (
-            "You advise small factories on procurement and operations. You are "
-            "careful with privacy and skeptical of vague networking pitches."
-        ),
-    })
-    person.define("personality", {
-        "traits": [
-            "You are terse and direct.",
-            "You do not agree just to be polite.",
-            "You ask for specifics before trusting a new service.",
-            "You stop engaging when replies feel generic.",
-        ],
-    })
-    person.define("preferences", {
-        "interests": [
-            "Resilient supply chains",
-            "Industrial automation",
-            "Meeting operators with concrete field experience",
-        ],
-        "dislikes": [
-            "Warm introductions with no clear reason",
-            "Being pushed to reveal client names",
-            "Overly cheerful assistant copy",
-        ],
-    })
+    person.define(
+        "occupation",
+        {
+            "title": "Independent manufacturing consultant",
+            "organization": "self-employed",
+            "description": (
+                "You advise small factories on procurement and operations. You are "
+                "careful with privacy and skeptical of vague networking pitches."
+            ),
+        },
+    )
+    person.define(
+        "personality",
+        {
+            "traits": [
+                "You are terse and direct.",
+                "You do not agree just to be polite.",
+                "You ask for specifics before trusting a new service.",
+                "You stop engaging when replies feel generic.",
+            ],
+        },
+    )
+    person.define(
+        "preferences",
+        {
+            "interests": [
+                "Resilient supply chains",
+                "Industrial automation",
+                "Meeting operators with concrete field experience",
+            ],
+            "dislikes": [
+                "Warm introductions with no clear reason",
+                "Being pushed to reveal client names",
+                "Overly cheerful assistant copy",
+            ],
+        },
+    )
     return person
 
 
@@ -211,7 +221,9 @@ def run_spike(
             to_address=agent_address,
         )
         reply = mock_agent.reply(persona_msg, index)
-        transcript.append(SpikeTurn(index=index + 1, persona_email=persona_msg, agent_reply=reply))
+        transcript.append(
+            SpikeTurn(index=index + 1, persona_email=persona_msg, agent_reply=reply)
+        )
         stimulus = (
             "The Network replied by email:\n\n"
             f"{reply.get_content()}\n\n"
@@ -256,4 +268,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -1,4 +1,5 @@
 """Tick loop for simulation harness runs."""
+
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
@@ -78,12 +79,20 @@ class SimTickLoop:
         self.run_dir.mkdir(parents=True, exist_ok=True)
 
         results: list[TickResult] = []
-        with override_rate_limits(self.rate_limit_per_hour), capture_outbound(self.post_office):
+        with (
+            override_rate_limits(self.rate_limit_per_hour),
+            capture_outbound(self.post_office),
+        ):
             for tick in range(1, ticks + 1):
                 self._report(f"tick {tick}/{ticks}: started")
-                persona_messages = await self._run_persona_turns(tick, total_ticks=ticks)
+                persona_messages = await self._run_persona_turns(
+                    tick, total_ticks=ticks
+                )
                 proactive_jobs = 0
-                if self.proactive_every is not None and tick % self.proactive_every == 0:
+                if (
+                    self.proactive_every is not None
+                    and tick % self.proactive_every == 0
+                ):
                     proactive_jobs = await run_proactive_scans(
                         timestamp=tick,
                         process=self.process,
@@ -108,7 +117,9 @@ class SimTickLoop:
             if self.schedule.is_interrupted(adapter.config, tick):
                 continue
             replies = self.post_office.pop_all(adapter.config.email)
-            consent_threads = [reply for reply in replies if intro_token(reply) is not None]
+            consent_threads = [
+                reply for reply in replies if intro_token(reply) is not None
+            ]
             plain_replies = [reply for reply in replies if intro_token(reply) is None]
             active_thread = consent_threads[0] if consent_threads else None
             if len(consent_threads) > 1:
@@ -116,15 +127,19 @@ class SimTickLoop:
                 # is authored against its own thread and token on a later turn.
                 self.post_office.requeue(adapter.config.email, consent_threads[1:])
             turn_replies = (
-                [*plain_replies, active_thread] if active_thread is not None else list(replies)
+                [*plain_replies, active_thread]
+                if active_thread is not None
+                else list(replies)
             )
             reply_texts = tuple(
                 text
                 for text in (_extract_body(reply).strip() for reply in turn_replies)
                 if text
             )
-            reply_to = active_thread if active_thread is not None else (
-                replies[-1] if replies else None
+            reply_to = (
+                active_thread
+                if active_thread is not None
+                else (replies[-1] if replies else None)
             )
             thread_token = intro_token(reply_to) if reply_to is not None else None
             events = self.schedule.events_for(adapter.config, tick)

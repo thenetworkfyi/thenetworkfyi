@@ -1,4 +1,5 @@
 """Durable inbound email rate limiting via the `limits` library."""
+
 from __future__ import annotations
 
 from email.utils import parseaddr
@@ -117,10 +118,19 @@ def _get_limiter() -> tuple[strategies.FixedWindowRateLimiter, Storage]:
 # separator are provider-specific quirks, so they're scoped to the domains
 # that actually implement them rather than applied universally.
 _GMAIL_DOMAINS = frozenset({"gmail.com", "googlemail.com"})
-_HYPHEN_SUBADDRESS_DOMAINS = frozenset({
-    "yahoo.com", "yahoo.co.uk", "yahoo.ca", "yahoo.com.au", "yahoo.de", "yahoo.fr",
-    "ymail.com", "rocketmail.com", "aol.com",
-})
+_HYPHEN_SUBADDRESS_DOMAINS = frozenset(
+    {
+        "yahoo.com",
+        "yahoo.co.uk",
+        "yahoo.ca",
+        "yahoo.com.au",
+        "yahoo.de",
+        "yahoo.fr",
+        "ymail.com",
+        "rocketmail.com",
+        "aol.com",
+    }
+)
 
 
 def normalize_rate_limit_identity(sender_email: str) -> str:
@@ -155,7 +165,9 @@ def normalize_rate_limit_identity(sender_email: str) -> str:
 
 def _sender_key(sender_email: str, *, sender_authenticated: bool) -> str:
     identity = normalize_rate_limit_identity(sender_email)
-    prefix = "authenticated-sender" if sender_authenticated else "unauthenticated-sender"
+    prefix = (
+        "authenticated-sender" if sender_authenticated else "unauthenticated-sender"
+    )
     return f"{prefix}:{identity}"
 
 

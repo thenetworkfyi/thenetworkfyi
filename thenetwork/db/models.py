@@ -38,9 +38,7 @@ class Memory(SQLModel, table=True):
         default_factory=list,
         sa_column=Column(ARRAY(Text()), nullable=False, server_default="{}"),
     )
-    gist: Optional[str] = Field(
-        default=None, sa_column=Column(Text(), nullable=True)
-    )
+    gist: Optional[str] = Field(default=None, sa_column=Column(Text(), nullable=True))
     created_at: datetime = Field(
         default_factory=_utcnow,
         sa_column=Column(DateTime(timezone=True), nullable=False),
@@ -53,6 +51,7 @@ class AdminNonce(SQLModel, table=True):
     Rows are pruned by admin/auth.py whenever a request is checked; there is
     no separate cleanup job because admin traffic is low-volume by design.
     """
+
     __tablename__ = "admin_nonces"
 
     nonce: str = Field(primary_key=True)
@@ -69,7 +68,9 @@ class RateLimit(SQLModel, table=True):
 
     key: str = Field(primary_key=True)
     count: int = Field(nullable=False)
-    expires_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
+    expires_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False)
+    )
 
 
 class ProcessedMessage(SQLModel, table=True):
@@ -115,12 +116,18 @@ class IntroductionConsent(SQLModel, table=True):
     id: str = Field(default_factory=_new_uuid, primary_key=True)
     person_a_id: str = Field(
         sa_column=Column(
-            Text(), ForeignKey("people.id", ondelete="CASCADE"), nullable=False, index=True
+            Text(),
+            ForeignKey("people.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
         )
     )
     person_b_id: str = Field(
         sa_column=Column(
-            Text(), ForeignKey("people.id", ondelete="CASCADE"), nullable=False, index=True
+            Text(),
+            ForeignKey("people.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
         )
     )
     reply_token: str = Field(default_factory=_new_uuid, unique=True, index=True)

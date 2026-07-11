@@ -27,7 +27,9 @@ def _get_presidio_analyzer():
     try:
         from presidio_analyzer import AnalyzerEngine
     except ImportError as exc:
-        raise RuntimeError("presidio-analyzer is required for memory sanitization") from exc
+        raise RuntimeError(
+            "presidio-analyzer is required for memory sanitization"
+        ) from exc
     try:
         return AnalyzerEngine()
     except Exception as exc:

@@ -3,6 +3,7 @@
 The worker is Postgres-native (LISTEN/NOTIFY + SKIP LOCKED, no Redis/broker).
 Retries and backoff are Procrastinate's responsibility - no hand-rolled loops.
 """
+
 from __future__ import annotations
 
 import base64
@@ -11,7 +12,11 @@ import procrastinate
 from limits import parse, strategies
 from sqlmodel import select
 
-from thenetwork.admin.auth import extract_body_text, extract_command, verify_admin_request
+from thenetwork.admin.auth import (
+    extract_body_text,
+    extract_command,
+    verify_admin_request,
+)
 from thenetwork.admin.commands import handle_admin_command
 from thenetwork.agent.core import run_agent_for_email
 from thenetwork.audit import (
@@ -111,7 +116,9 @@ def _trace_kwargs(trace_id: str | None) -> dict[str, str]:
     return {"trace_id": trace_id} if trace_id else {}
 
 
-def _is_known_authenticated_sender(sender_email: str, sender_authenticated: bool) -> bool:
+def _is_known_authenticated_sender(
+    sender_email: str, sender_authenticated: bool
+) -> bool:
     if not sender_authenticated:
         return False
 
@@ -180,7 +187,10 @@ def _send_first_contact_welcome_reply(
 ) -> bool:
     if not sender_authenticated:
         return False
-    if _sender_id_for_authenticated_sender(sender_email, sender_authenticated) is not None:
+    if (
+        _sender_id_for_authenticated_sender(sender_email, sender_authenticated)
+        is not None
+    ):
         return False
     if not _hit_welcome_quota(sender_email):
         return False
@@ -205,7 +215,9 @@ _PROCESS_EMAIL_MAX_ATTEMPTS = 3
 
 
 @app.task(
-    retry=procrastinate.RetryStrategy(max_attempts=_PROCESS_EMAIL_MAX_ATTEMPTS, wait=60),
+    retry=procrastinate.RetryStrategy(
+        max_attempts=_PROCESS_EMAIL_MAX_ATTEMPTS, wait=60
+    ),
     pass_context=True,
 )
 async def process_email(
@@ -240,14 +252,17 @@ async def process_email(
     """
     subject = cap_subject(subject)
     original_body_chars = len(body)
-    with audit_run(), audit_trace(trace_id), audit_sender(
-        optional_sender_identifier(sender_email)
-    ), audit_span(
-        "worker.process_email",
-        sender_present=bool(sender_email),
-        subject_chars=len(subject),
-        body_chars=original_body_chars,
-        sender_authenticated=sender_authenticated,
+    with (
+        audit_run(),
+        audit_trace(trace_id),
+        audit_sender(optional_sender_identifier(sender_email)),
+        audit_span(
+            "worker.process_email",
+            sender_present=bool(sender_email),
+            subject_chars=len(subject),
+            body_chars=original_body_chars,
+            sender_authenticated=sender_authenticated,
+        ),
     ):
         with get_session() as session:
             banned = session.get(
@@ -404,7 +419,10 @@ async def process_email(
                 outcome="error",
                 error_type=type(exc).__name__,
             )
-            if context is not None and context.job.attempts >= _PROCESS_EMAIL_MAX_ATTEMPTS:
+            if (
+                context is not None
+                and context.job.attempts >= _PROCESS_EMAIL_MAX_ATTEMPTS
+            ):
                 notify_admins(
                     get_settings(),
                     "[The Network] Agent processing failed",

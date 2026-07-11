@@ -8,6 +8,7 @@ Message-ID already got a `process_email` job, so re-seeing it can't cause the
 agent to re-run, re-reply, or re-dispatch an introduction for the same
 physical email.
 """
+
 from __future__ import annotations
 
 from sqlalchemy import text

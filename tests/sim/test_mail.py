@@ -27,7 +27,10 @@ def test_post_office_captures_send_reply_at_smtp_seam():
     settings.growth_footer_enabled = True
     post_office = SimPostOffice()
 
-    with patch("thenetwork.email.outbound.get_settings", return_value=settings), capture_outbound(post_office):
+    with (
+        patch("thenetwork.email.outbound.get_settings", return_value=settings),
+        capture_outbound(post_office),
+    ):
         send_reply(
             to_address="Casey@Example.COM",
             subject="Intro",
@@ -101,7 +104,10 @@ def test_capture_outbound_can_stamp_agent_to_persona_headers(tmp_path):
         trace_id="trace-2",
     )
 
-    with patch("thenetwork.email.outbound.get_settings", return_value=settings), capture_outbound(post_office, meta):
+    with (
+        patch("thenetwork.email.outbound.get_settings", return_value=settings),
+        capture_outbound(post_office, meta),
+    ):
         send_reply(
             to_address="casey@example.com",
             subject="Intro",
@@ -179,7 +185,9 @@ async def test_deliver_inbound_extracts_html_when_plain_text_is_missing():
     message = EmailMessage()
     message["From"] = "sam@example.com"
     message["Subject"] = "Hello"
-    message.add_alternative("<html><body><p>Hello <b>there</b></p></body></html>", subtype="html")
+    message.add_alternative(
+        "<html><body><p>Hello <b>there</b></p></body></html>", subtype="html"
+    )
     process = AsyncMock()
 
     await deliver_inbound(message, process=process)

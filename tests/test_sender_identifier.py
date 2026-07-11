@@ -14,7 +14,9 @@ from thenetwork.settings import Settings
 
 
 def test_sender_identifier_is_stable_for_same_sender_and_secret():
-    first = sender_identifier(" Alice <Alice.Private+tag@Example.COM> ", secret="audit-secret")
+    first = sender_identifier(
+        " Alice <Alice.Private+tag@Example.COM> ", secret="audit-secret"
+    )
     second = sender_identifier("alice.private+tag@example.com", secret="audit-secret")
 
     assert first == second

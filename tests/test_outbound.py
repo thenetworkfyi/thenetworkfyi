@@ -1,4 +1,5 @@
 """Unit tests for the post-send IMAP Sent-folder append (thenetwork/email/outbound.py)."""
+
 from __future__ import annotations
 
 import json
@@ -12,7 +13,11 @@ from thenetwork.audit import LOGGER_NAME
 
 
 def _events(caplog) -> list[dict]:
-    return [json.loads(record.message) for record in caplog.records if record.name == LOGGER_NAME]
+    return [
+        json.loads(record.message)
+        for record in caplog.records
+        if record.name == LOGGER_NAME
+    ]
 
 
 def _mock_settings(**overrides):
@@ -55,10 +60,17 @@ def test_append_called_on_success():
 
     mock_mailbox, mb_instance = _mock_mailbox_success()
 
-    with patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()), \
-         patch("smtplib.SMTP", return_value=_mock_smtp()), \
-         patch("thenetwork.email.outbound.MailBox", mock_mailbox):
-        send_reply(to_address="bob@example.com", subject="Hi", body_text="Hello", include_footer=False)
+    with (
+        patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()),
+        patch("smtplib.SMTP", return_value=_mock_smtp()),
+        patch("thenetwork.email.outbound.MailBox", mock_mailbox),
+    ):
+        send_reply(
+            to_address="bob@example.com",
+            subject="Hi",
+            body_text="Hello",
+            include_footer=False,
+        )
 
     mb_instance.append.assert_called_once()
 
@@ -71,9 +83,11 @@ def test_group_introduction_addresses_both_consented_people():
     smtp_instance.send_message.side_effect = lambda msg: captured.append(msg)
     mock_mailbox, _ = _mock_mailbox_success()
 
-    with patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()), \
-         patch("smtplib.SMTP", return_value=smtp_instance), \
-         patch("thenetwork.email.outbound.MailBox", mock_mailbox):
+    with (
+        patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()),
+        patch("smtplib.SMTP", return_value=smtp_instance),
+        patch("thenetwork.email.outbound.MailBox", mock_mailbox),
+    ):
         send_group_introduction(
             person_a_name="Alice",
             person_a_email="alice@example.com",
@@ -97,9 +111,11 @@ def test_group_introduction_audits_actual_body_length(caplog):
     caplog.set_level(logging.INFO, logger=LOGGER_NAME)
     mock_mailbox, _ = _mock_mailbox_success()
 
-    with patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()), \
-         patch("smtplib.SMTP", return_value=_mock_smtp()), \
-         patch("thenetwork.email.outbound.MailBox", mock_mailbox):
+    with (
+        patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()),
+        patch("smtplib.SMTP", return_value=_mock_smtp()),
+        patch("thenetwork.email.outbound.MailBox", mock_mailbox),
+    ):
         send_group_introduction(
             person_a_name="Alice",
             person_a_email="alice@example.com",
@@ -113,7 +129,8 @@ def test_group_introduction_audits_actual_body_length(caplog):
         "on this message so you can take it from here."
     )
     smtp_events = [
-        event for event in _events(caplog)
+        event
+        for event in _events(caplog)
         if event["event"] in {"email.smtp_send.started", "email.smtp_send.completed"}
     ]
     assert len(smtp_events) == 2
@@ -126,10 +143,20 @@ def test_append_uses_configured_folder_name():
 
     mock_mailbox, mb_instance = _mock_mailbox_success()
 
-    with patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings(imap_sent_folder="MyCustomSent")), \
-         patch("smtplib.SMTP", return_value=_mock_smtp()), \
-         patch("thenetwork.email.outbound.MailBox", mock_mailbox):
-        send_reply(to_address="bob@example.com", subject="Hi", body_text="Hello", include_footer=False)
+    with (
+        patch(
+            "thenetwork.email.outbound.get_settings",
+            return_value=_mock_settings(imap_sent_folder="MyCustomSent"),
+        ),
+        patch("smtplib.SMTP", return_value=_mock_smtp()),
+        patch("thenetwork.email.outbound.MailBox", mock_mailbox),
+    ):
+        send_reply(
+            to_address="bob@example.com",
+            subject="Hi",
+            body_text="Hello",
+            include_footer=False,
+        )
 
     args, kwargs = mb_instance.append.call_args
     folder = args[1] if len(args) > 1 else kwargs.get("folder")
@@ -142,10 +169,17 @@ def test_append_sets_seen_flag():
 
     mock_mailbox, mb_instance = _mock_mailbox_success()
 
-    with patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()), \
-         patch("smtplib.SMTP", return_value=_mock_smtp()), \
-         patch("thenetwork.email.outbound.MailBox", mock_mailbox):
-        send_reply(to_address="bob@example.com", subject="Hi", body_text="Hello", include_footer=False)
+    with (
+        patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()),
+        patch("smtplib.SMTP", return_value=_mock_smtp()),
+        patch("thenetwork.email.outbound.MailBox", mock_mailbox),
+    ):
+        send_reply(
+            to_address="bob@example.com",
+            subject="Hi",
+            body_text="Hello",
+            include_footer=False,
+        )
 
     _, kwargs = mb_instance.append.call_args
     assert kwargs.get("flag_set") == [MailMessageFlags.SEEN]
@@ -161,10 +195,17 @@ def test_append_receives_exact_composed_message():
 
     mock_mailbox, mb_instance = _mock_mailbox_success()
 
-    with patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()), \
-         patch("smtplib.SMTP", return_value=smtp_instance), \
-         patch("thenetwork.email.outbound.MailBox", mock_mailbox):
-        send_reply(to_address="bob@example.com", subject="Hi", body_text="Hello", include_footer=False)
+    with (
+        patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()),
+        patch("smtplib.SMTP", return_value=smtp_instance),
+        patch("thenetwork.email.outbound.MailBox", mock_mailbox),
+    ):
+        send_reply(
+            to_address="bob@example.com",
+            subject="Hi",
+            body_text="Hello",
+            include_footer=False,
+        )
 
     args, _ = mb_instance.append.call_args
     appended_bytes = args[0]
@@ -184,10 +225,17 @@ def test_send_reply_sets_date_and_message_id_headers():
 
     mock_mailbox, mb_instance = _mock_mailbox_success()
 
-    with patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()), \
-         patch("smtplib.SMTP", return_value=smtp_instance), \
-         patch("thenetwork.email.outbound.MailBox", mock_mailbox):
-        send_reply(to_address="bob@example.com", subject="Hi", body_text="Hello", include_footer=False)
+    with (
+        patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()),
+        patch("smtplib.SMTP", return_value=smtp_instance),
+        patch("thenetwork.email.outbound.MailBox", mock_mailbox),
+    ):
+        send_reply(
+            to_address="bob@example.com",
+            subject="Hi",
+            body_text="Hello",
+            include_footer=False,
+        )
 
     sent_msg = captured[0]
     assert sent_msg["Date"] is not None
@@ -215,9 +263,11 @@ def test_send_reply_appends_plain_text_quoted_trail():
 
     mock_mailbox, _mb_instance = _mock_mailbox_success()
 
-    with patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()), \
-         patch("smtplib.SMTP", return_value=smtp_instance), \
-         patch("thenetwork.email.outbound.MailBox", mock_mailbox):
+    with (
+        patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()),
+        patch("smtplib.SMTP", return_value=smtp_instance),
+        patch("thenetwork.email.outbound.MailBox", mock_mailbox),
+    ):
         send_reply(
             to_address="bob@example.com",
             subject="Hi",
@@ -250,9 +300,11 @@ def test_send_reply_escapes_html_quoted_trail():
 
     mock_mailbox, _mb_instance = _mock_mailbox_success()
 
-    with patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()), \
-         patch("smtplib.SMTP", return_value=smtp_instance), \
-         patch("thenetwork.email.outbound.MailBox", mock_mailbox):
+    with (
+        patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()),
+        patch("smtplib.SMTP", return_value=smtp_instance),
+        patch("thenetwork.email.outbound.MailBox", mock_mailbox),
+    ):
         send_reply(
             to_address="bob@example.com",
             subject="Hi",
@@ -276,9 +328,11 @@ def test_send_reply_plain_text_only_quote_stays_singlepart():
 
     mock_mailbox, _mb_instance = _mock_mailbox_success()
 
-    with patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()), \
-         patch("smtplib.SMTP", return_value=smtp_instance), \
-         patch("thenetwork.email.outbound.MailBox", mock_mailbox):
+    with (
+        patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()),
+        patch("smtplib.SMTP", return_value=smtp_instance),
+        patch("thenetwork.email.outbound.MailBox", mock_mailbox),
+    ):
         send_reply(
             to_address="bob@example.com",
             subject="Hi",
@@ -301,12 +355,14 @@ def test_send_reply_places_growth_footer_before_quoted_trail():
 
     mock_mailbox, _mb_instance = _mock_mailbox_success()
 
-    with patch(
-        "thenetwork.email.outbound.get_settings",
-        return_value=_mock_settings(growth_footer_enabled=True),
-    ), \
-         patch("smtplib.SMTP", return_value=smtp_instance), \
-         patch("thenetwork.email.outbound.MailBox", mock_mailbox):
+    with (
+        patch(
+            "thenetwork.email.outbound.get_settings",
+            return_value=_mock_settings(growth_footer_enabled=True),
+        ),
+        patch("smtplib.SMTP", return_value=smtp_instance),
+        patch("thenetwork.email.outbound.MailBox", mock_mailbox),
+    ):
         send_reply(
             to_address="bob@example.com",
             subject="Hi",
@@ -329,11 +385,18 @@ def test_append_failure_does_not_propagate():
     mock_mailbox = MagicMock()
     mock_mailbox.return_value.login.side_effect = OSError("connection refused")
 
-    with patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()), \
-         patch("smtplib.SMTP", return_value=_mock_smtp()), \
-         patch("thenetwork.email.outbound.MailBox", mock_mailbox):
+    with (
+        patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()),
+        patch("smtplib.SMTP", return_value=_mock_smtp()),
+        patch("thenetwork.email.outbound.MailBox", mock_mailbox),
+    ):
         # Must not raise.
-        send_reply(to_address="bob@example.com", subject="Hi", body_text="Hello", include_footer=False)
+        send_reply(
+            to_address="bob@example.com",
+            subject="Hi",
+            body_text="Hello",
+            include_footer=False,
+        )
 
 
 def test_append_failure_is_audit_logged_as_error(caplog):
@@ -345,13 +408,22 @@ def test_append_failure_is_audit_logged_as_error(caplog):
     mock_mailbox = MagicMock()
     mock_mailbox.return_value.login.side_effect = OSError("connection refused")
 
-    with patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()), \
-         patch("smtplib.SMTP", return_value=_mock_smtp()), \
-         patch("thenetwork.email.outbound.MailBox", mock_mailbox):
-        send_reply(to_address="bob@example.com", subject="Hi", body_text="Hello", include_footer=False)
+    with (
+        patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()),
+        patch("smtplib.SMTP", return_value=_mock_smtp()),
+        patch("thenetwork.email.outbound.MailBox", mock_mailbox),
+    ):
+        send_reply(
+            to_address="bob@example.com",
+            subject="Hi",
+            body_text="Hello",
+            include_footer=False,
+        )
 
     events = _events(caplog)
-    append_events = [e for e in events if e.get("event") == "email.imap_append.completed"]
+    append_events = [
+        e for e in events if e.get("event") == "email.imap_append.completed"
+    ]
     assert len(append_events) == 1
     assert append_events[0]["outcome"] == "error"
     assert append_events[0]["error_type"] == "OSError"
@@ -371,13 +443,22 @@ def test_append_success_is_audit_logged(caplog):
 
     mock_mailbox, _mb_instance = _mock_mailbox_success()
 
-    with patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()), \
-         patch("smtplib.SMTP", return_value=_mock_smtp()), \
-         patch("thenetwork.email.outbound.MailBox", mock_mailbox):
-        send_reply(to_address="bob@example.com", subject="Hi", body_text="Hello", include_footer=False)
+    with (
+        patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()),
+        patch("smtplib.SMTP", return_value=_mock_smtp()),
+        patch("thenetwork.email.outbound.MailBox", mock_mailbox),
+    ):
+        send_reply(
+            to_address="bob@example.com",
+            subject="Hi",
+            body_text="Hello",
+            include_footer=False,
+        )
 
     events = _events(caplog)
-    append_events = [e for e in events if e.get("event") == "email.imap_append.completed"]
+    append_events = [
+        e for e in events if e.get("event") == "email.imap_append.completed"
+    ]
     assert len(append_events) == 1
     assert append_events[0]["outcome"] == "success"
 
@@ -394,9 +475,11 @@ def test_send_reply_audits_trace_id_through_smtp_and_imap_append(caplog):
 
     mock_mailbox, _mb_instance = _mock_mailbox_success()
 
-    with patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()), \
-         patch("smtplib.SMTP", return_value=_mock_smtp()), \
-         patch("thenetwork.email.outbound.MailBox", mock_mailbox):
+    with (
+        patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()),
+        patch("smtplib.SMTP", return_value=_mock_smtp()),
+        patch("thenetwork.email.outbound.MailBox", mock_mailbox),
+    ):
         send_reply(
             to_address="bob@example.com",
             subject="Hi",
@@ -407,8 +490,10 @@ def test_send_reply_audits_trace_id_through_smtp_and_imap_append(caplog):
 
     events = _events(caplog)
     correlated = [
-        event for event in events
-        if event["event"] in {
+        event
+        for event in events
+        if event["event"]
+        in {
             "email.smtp_send.started",
             "email.smtp_send.completed",
             "email.imap_append.completed",

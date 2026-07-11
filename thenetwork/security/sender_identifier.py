@@ -1,4 +1,5 @@
 """Non-reversible sender identifiers for audit correlation."""
+
 from __future__ import annotations
 
 import base64

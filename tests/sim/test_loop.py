@@ -10,7 +10,11 @@ import pytest
 from thenetwork.db.models import IntroductionConsent, Person
 from thenetwork.introductions import process_consent_reply
 from thenetwork.settings import get_settings
-from thenetwork.sim.run.loop import SimTickLoop, override_rate_limits, run_proactive_scans
+from thenetwork.sim.run.loop import (
+    SimTickLoop,
+    override_rate_limits,
+    run_proactive_scans,
+)
 from thenetwork.sim.personas.persona import PersonaConfig, TinyPersonEmailAdapter
 from thenetwork.worker import proactive
 
@@ -189,9 +193,10 @@ async def test_tick_loop_captures_replies_without_touching_real_smtp(tmp_path):
         proactive_every=None,
     )
 
-    with patch("thenetwork.email.outbound.get_settings", return_value=settings), patch(
-        "thenetwork.email.outbound.smtplib.SMTP"
-    ) as real_smtp:
+    with (
+        patch("thenetwork.email.outbound.get_settings", return_value=settings),
+        patch("thenetwork.email.outbound.smtplib.SMTP") as real_smtp,
+    ):
         result = await loop.run(ticks=1)
 
     real_smtp.assert_not_called()
@@ -235,7 +240,9 @@ async def test_persona_turn_drains_post_office_reply_into_next_stimulus(tmp_path
     assert result.persona_messages == 2
     assert len(person.stimuli) == 2
     assert "Meet Sam" not in person.stimuli[0]
-    assert "Meet Sam, they share your interest in ML infrastructure." in person.stimuli[1]
+    assert (
+        "Meet Sam, they share your interest in ML infrastructure." in person.stimuli[1]
+    )
 
 
 @pytest.mark.asyncio
@@ -249,7 +256,9 @@ async def test_tokened_persona_reply_round_trips_through_consent_processing(tmp_
     request = EmailMessage()
     request["From"] = "join@example.test"
     request["To"] = "alice@example.test"
-    request["Subject"] = "Possible introduction [intro:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa]"
+    request["Subject"] = (
+        "Possible introduction [intro:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa]"
+    )
     request["Message-ID"] = "<proposal@example.test>"
     request.set_content("A possible match came up. Reply YES to opt in.")
     loop.post_office.deliver(request)
@@ -331,9 +340,15 @@ async def test_bundled_consent_tokens_are_answered_one_thread_per_turn(tmp_path)
     bundled = f"Yes\n[intro:{TOKEN_A}]\n[intro:{TOKEN_B}]"
     adapter = _adapter("Priya", "priya@example.test", [bundled, bundled], budget=2)
     process = AsyncMock()
-    loop = SimTickLoop([adapter], run_dir=tmp_path, process=process, proactive_every=None)
-    loop.post_office.deliver(_consent_request("priya@example.test", TOKEN_A, "<req-a@example.test>"))
-    loop.post_office.deliver(_consent_request("priya@example.test", TOKEN_B, "<req-b@example.test>"))
+    loop = SimTickLoop(
+        [adapter], run_dir=tmp_path, process=process, proactive_every=None
+    )
+    loop.post_office.deliver(
+        _consent_request("priya@example.test", TOKEN_A, "<req-a@example.test>")
+    )
+    loop.post_office.deliver(
+        _consent_request("priya@example.test", TOKEN_B, "<req-b@example.test>")
+    )
 
     result = await loop.run(ticks=2)
 
@@ -350,10 +365,16 @@ async def test_bundled_consent_tokens_are_answered_one_thread_per_turn(tmp_path)
 @pytest.mark.asyncio
 async def test_wrong_thread_token_is_rebound_to_the_answered_thread(tmp_path):
     """Ruth/Omar defect: a decision reply pasting a token from another thread."""
-    adapter = _adapter("Ruth", "ruth@example.test", [f"No\n[intro:{TOKEN_B}]"], budget=1)
+    adapter = _adapter(
+        "Ruth", "ruth@example.test", [f"No\n[intro:{TOKEN_B}]"], budget=1
+    )
     process = AsyncMock()
-    loop = SimTickLoop([adapter], run_dir=tmp_path, process=process, proactive_every=None)
-    loop.post_office.deliver(_consent_request("ruth@example.test", TOKEN_A, "<req-a@example.test>"))
+    loop = SimTickLoop(
+        [adapter], run_dir=tmp_path, process=process, proactive_every=None
+    )
+    loop.post_office.deliver(
+        _consent_request("ruth@example.test", TOKEN_A, "<req-a@example.test>")
+    )
 
     await loop.run(ticks=1)
 
@@ -364,13 +385,21 @@ async def test_wrong_thread_token_is_rebound_to_the_answered_thread(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_clarifying_question_keeps_thread_token_without_fabricated_decision(tmp_path):
+async def test_clarifying_question_keeps_thread_token_without_fabricated_decision(
+    tmp_path,
+):
     """Ines-style reply: a question, not a decision, must pass through unchanged."""
-    question = f"Before deciding, could you say what this person works on?\n[intro:{TOKEN_A}]"
+    question = (
+        f"Before deciding, could you say what this person works on?\n[intro:{TOKEN_A}]"
+    )
     adapter = _adapter("Ines", "ines@example.test", [question], budget=1)
     process = AsyncMock()
-    loop = SimTickLoop([adapter], run_dir=tmp_path, process=process, proactive_every=None)
-    loop.post_office.deliver(_consent_request("ines@example.test", TOKEN_A, "<req-a@example.test>"))
+    loop = SimTickLoop(
+        [adapter], run_dir=tmp_path, process=process, proactive_every=None
+    )
+    loop.post_office.deliver(
+        _consent_request("ines@example.test", TOKEN_A, "<req-a@example.test>")
+    )
 
     await loop.run(ticks=1)
 
@@ -381,9 +410,13 @@ async def test_clarifying_question_keeps_thread_token_without_fabricated_decisio
 
 @pytest.mark.asyncio
 async def test_stray_token_is_stripped_when_no_consent_thread_is_pending(tmp_path):
-    adapter = _adapter("Omar", "omar@example.test", [f"Thanks.\n[intro:{TOKEN_B}]"], budget=1)
+    adapter = _adapter(
+        "Omar", "omar@example.test", [f"Thanks.\n[intro:{TOKEN_B}]"], budget=1
+    )
     process = AsyncMock()
-    loop = SimTickLoop([adapter], run_dir=tmp_path, process=process, proactive_every=None)
+    loop = SimTickLoop(
+        [adapter], run_dir=tmp_path, process=process, proactive_every=None
+    )
     plain = EmailMessage()
     plain["From"] = "join@example.test"
     plain["To"] = "omar@example.test"

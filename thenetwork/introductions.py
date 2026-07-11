@@ -3,6 +3,7 @@
 The model may propose a pair, but only this module records authenticated consent
 and sends the identity-revealing group email.
 """
+
 from __future__ import annotations
 
 import re
@@ -126,7 +127,8 @@ def propose_pair(
             if (
                 existing.status == "declined"
                 and existing.declined_at is not None
-                and existing.declined_at <= _utcnow() - timedelta(days=decline_cooldown_days)
+                and existing.declined_at
+                <= _utcnow() - timedelta(days=decline_cooldown_days)
             ):
                 proposal = existing
             else:
@@ -134,10 +136,7 @@ def propose_pair(
         else:
             proposal = None
 
-        if (
-            max_requests_per_person_in_window > 0
-            and request_window_seconds > 0
-        ):
+        if max_requests_per_person_in_window > 0 and request_window_seconds > 0:
             since = _utcnow() - timedelta(seconds=request_window_seconds)
             for person_id in (low, high):
                 if (
@@ -228,7 +227,9 @@ def _reply_action(body: str) -> str | None:
     match = _ACTION_RE.fullmatch(visible[0])
     if match is None:
         return None
-    return {"yes": "consent", "no": "decline", "revoke": "revoke"}[match.group("action").lower()]
+    return {"yes": "consent", "no": "decline", "revoke": "revoke"}[
+        match.group("action").lower()
+    ]
 
 
 def _visible_reply_lines(body: str) -> list[str]:
@@ -353,8 +354,10 @@ def process_consent_reply(
             session.commit()
             state = "declined"
             _send_fixed_reply(
-                to_address=sender.email, subject=subject,
-                body_text=CONSENT_DECLINED_REPLY, trace_id=trace_id,
+                to_address=sender.email,
+                subject=subject,
+                body_text=CONSENT_DECLINED_REPLY,
+                trace_id=trace_id,
             )
         elif proposal.status == "introduced":
             return ConsentReplyResult(handled=True, outcome="introduced")

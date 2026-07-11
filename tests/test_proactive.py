@@ -1,4 +1,5 @@
 """Unit tests for thenetwork.worker.proactive."""
+
 from __future__ import annotations
 
 from uuid import UUID
@@ -34,23 +35,40 @@ async def test_scan_enqueues_high_proximity_pair():
     G.add_edge("alice", "dave")
     G.add_edge("bob", "dave")
 
-    people = [_person("alice", "alice@test.com"), _person("bob", "bob@test.com"), _person("dave", "dave@test.com")]
+    people = [
+        _person("alice", "alice@test.com"),
+        _person("bob", "bob@test.com"),
+        _person("dave", "dave@test.com"),
+    ]
 
-    with patch("thenetwork.worker.proactive.build_graph", return_value=G), \
-         patch("thenetwork.worker.proactive.get_session", return_value=_mock_session(people)), \
-         patch("thenetwork.worker.proactive.process_email") as mock_pe:
+    with (
+        patch("thenetwork.worker.proactive.build_graph", return_value=G),
+        patch(
+            "thenetwork.worker.proactive.get_session",
+            return_value=_mock_session(people),
+        ),
+        patch("thenetwork.worker.proactive.process_email") as mock_pe,
+    ):
         await scan_for_opportunities.func(0)
 
-    assert mock_pe.defer.called, "process_email.defer must be called for a high-proximity pair"
+    assert mock_pe.defer.called, (
+        "process_email.defer must be called for a high-proximity pair"
+    )
     sender_emails = {c.kwargs["sender_email"] for c in mock_pe.defer.call_args_list}
     assert "alice@test.com" in sender_emails
-    assert all(call.kwargs["sender_authenticated"] for call in mock_pe.defer.call_args_list)
+    assert all(
+        call.kwargs["sender_authenticated"] for call in mock_pe.defer.call_args_list
+    )
     trace_ids = [call.kwargs["trace_id"] for call in mock_pe.defer.call_args_list]
     assert len(trace_ids) == len(set(trace_ids))
     assert all(str(UUID(trace_id, version=4)) == trace_id for trace_id in trace_ids)
     # the bound counterpart is the surfaced high-proximity pair's other id, and
     # never the effective sender's own id (propose_introduction pairing binding)
-    call = next(c for c in mock_pe.defer.call_args_list if c.kwargs["sender_email"] == "alice@test.com")
+    call = next(
+        c
+        for c in mock_pe.defer.call_args_list
+        if c.kwargs["sender_email"] == "alice@test.com"
+    )
     assert call.kwargs["proactive_candidate_id"] == "bob"
 
 
@@ -64,9 +82,14 @@ async def test_scan_skips_low_proximity_pairs():
 
     people = [_person("alice", "alice@test.com"), _person("bob", "bob@test.com")]
 
-    with patch("thenetwork.worker.proactive.build_graph", return_value=G), \
-         patch("thenetwork.worker.proactive.get_session", return_value=_mock_session(people)), \
-         patch("thenetwork.worker.proactive.process_email") as mock_pe:
+    with (
+        patch("thenetwork.worker.proactive.build_graph", return_value=G),
+        patch(
+            "thenetwork.worker.proactive.get_session",
+            return_value=_mock_session(people),
+        ),
+        patch("thenetwork.worker.proactive.process_email") as mock_pe,
+    ):
         await scan_for_opportunities.func(0)
 
     assert not mock_pe.defer.called, "Jaccard=0 pair must not be deferred"
@@ -82,14 +105,25 @@ async def test_scan_deduplicates_pairs():
     G.add_edge("alice", "dave")
     G.add_edge("bob", "dave")
 
-    people = [_person("alice", "alice@test.com"), _person("bob", "bob@test.com"), _person("dave", "dave@test.com")]
+    people = [
+        _person("alice", "alice@test.com"),
+        _person("bob", "bob@test.com"),
+        _person("dave", "dave@test.com"),
+    ]
 
-    with patch("thenetwork.worker.proactive.build_graph", return_value=G), \
-         patch("thenetwork.worker.proactive.get_session", return_value=_mock_session(people)), \
-         patch("thenetwork.worker.proactive.process_email") as mock_pe:
+    with (
+        patch("thenetwork.worker.proactive.build_graph", return_value=G),
+        patch(
+            "thenetwork.worker.proactive.get_session",
+            return_value=_mock_session(people),
+        ),
+        patch("thenetwork.worker.proactive.process_email") as mock_pe,
+    ):
         await scan_for_opportunities.func(0)
 
-    assert mock_pe.defer.call_count == 1, f"expected 1 defer call, got {mock_pe.defer.call_count}"
+    assert mock_pe.defer.call_count == 1, (
+        f"expected 1 defer call, got {mock_pe.defer.call_count}"
+    )
 
 
 @pytest.mark.asyncio
@@ -100,9 +134,11 @@ async def test_scan_early_returns_on_empty_graph():
     G = nx.Graph()
     G.add_node("alice")
 
-    with patch("thenetwork.worker.proactive.build_graph", return_value=G), \
-         patch("thenetwork.worker.proactive.get_session") as mock_gs, \
-         patch("thenetwork.worker.proactive.process_email") as mock_pe:
+    with (
+        patch("thenetwork.worker.proactive.build_graph", return_value=G),
+        patch("thenetwork.worker.proactive.get_session") as mock_gs,
+        patch("thenetwork.worker.proactive.process_email") as mock_pe,
+    ):
         await scan_for_opportunities.func(0)
 
     mock_gs.assert_not_called()
@@ -119,9 +155,10 @@ async def test_scan_reads_person_emails_before_real_session_closes(seeded_db):
     graph.add_edge(seeded_db["alice_id"], seeded_db["dave_id"])
     graph.add_edge(seeded_db["bob_id"], seeded_db["dave_id"])
 
-    with patch("thenetwork.worker.proactive.build_graph", return_value=graph), patch(
-        "thenetwork.worker.proactive.process_email"
-    ) as mock_process:
+    with (
+        patch("thenetwork.worker.proactive.build_graph", return_value=graph),
+        patch("thenetwork.worker.proactive.process_email") as mock_process,
+    ):
         await scan_for_opportunities.func(0)
 
     mock_process.defer.assert_called_once()
@@ -129,6 +166,7 @@ async def test_scan_reads_person_emails_before_real_session_closes(seeded_db):
 
 
 # --- scan_for_matches (semantic rematch) -----------------------------------
+
 
 def _memory(mid, refs, gist):
     m = MagicMock()
@@ -159,13 +197,20 @@ async def test_rematch_enqueues_new_match_against_standing_note():
     from thenetwork.worker.proactive import scan_for_matches
 
     recent = [_memory("n1", ["Q"], "just started looking for a rust cofounder")]
-    matches = [MemoryMatch("m1", "P", "building a rust startup, wants a cofounder", 0.72)]
+    matches = [
+        MemoryMatch("m1", "P", "building a rust startup, wants a cofounder", 0.72)
+    ]
     persons = {"P": _person("P", "p@test.com"), "Q": _person("Q", "q@test.com")}
 
-    with patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()), \
-         patch("thenetwork.worker.proactive.get_session", return_value=_rematch_session(recent, persons)), \
-         patch("thenetwork.worker.proactive.match_memories", return_value=matches), \
-         patch("thenetwork.worker.proactive.process_email") as mock_pe:
+    with (
+        patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()),
+        patch(
+            "thenetwork.worker.proactive.get_session",
+            return_value=_rematch_session(recent, persons),
+        ),
+        patch("thenetwork.worker.proactive.match_memories", return_value=matches),
+        patch("thenetwork.worker.proactive.process_email") as mock_pe,
+    ):
         await scan_for_matches.func(0)
 
     assert mock_pe.defer.call_count == 1
@@ -191,13 +236,20 @@ async def test_rematch_job_reaches_agent_through_real_worker_handoff():
     from thenetwork.worker.tasks import process_email
 
     recent = [_memory("n1", ["Q"], "just started looking for a rust cofounder")]
-    matches = [MemoryMatch("m1", "P", "building a rust startup, wants a cofounder", 0.72)]
+    matches = [
+        MemoryMatch("m1", "P", "building a rust startup, wants a cofounder", 0.72)
+    ]
     persons = {"P": _person("P", "p@test.com"), "Q": _person("Q", "q@test.com")}
 
-    with patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()), \
-         patch("thenetwork.worker.proactive.get_session", return_value=_rematch_session(recent, persons)), \
-         patch("thenetwork.worker.proactive.match_memories", return_value=matches), \
-         patch("thenetwork.worker.proactive.process_email") as deferred:
+    with (
+        patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()),
+        patch(
+            "thenetwork.worker.proactive.get_session",
+            return_value=_rematch_session(recent, persons),
+        ),
+        patch("thenetwork.worker.proactive.match_memories", return_value=matches),
+        patch("thenetwork.worker.proactive.process_email") as deferred,
+    ):
         await scan_for_matches.func(0)
 
     job = deferred.defer.call_args.kwargs
@@ -207,12 +259,19 @@ async def test_rematch_job_reaches_agent_through_real_worker_handoff():
     worker_session.get.return_value = None
     worker_session.exec.return_value.first.return_value = None
 
-    with patch("thenetwork.worker.tasks.get_session", return_value=worker_session), \
-         patch("thenetwork.worker.tasks.check_rate_limit", return_value=True) as check_rate_limit, \
-         patch("thenetwork.worker.tasks.scan_content", return_value=(True, "ok")), \
-         patch("thenetwork.worker.tasks.verify_admin_request", return_value=None), \
-         patch("thenetwork.worker.tasks.process_consent_reply", return_value=ConsentReplyResult(handled=False)), \
-         patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()) as run_agent:
+    with (
+        patch("thenetwork.worker.tasks.get_session", return_value=worker_session),
+        patch(
+            "thenetwork.worker.tasks.check_rate_limit", return_value=True
+        ) as check_rate_limit,
+        patch("thenetwork.worker.tasks.scan_content", return_value=(True, "ok")),
+        patch("thenetwork.worker.tasks.verify_admin_request", return_value=None),
+        patch(
+            "thenetwork.worker.tasks.process_consent_reply",
+            return_value=ConsentReplyResult(handled=False),
+        ),
+        patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()) as run_agent,
+    ):
         await process_email.func(**job)
 
     run_agent.assert_awaited_once()
@@ -239,10 +298,15 @@ async def test_rematch_skips_already_connected_pair():
     G = nx.Graph()
     G.add_edge("P", "Q")  # already introduced
 
-    with patch("thenetwork.worker.proactive.build_graph", return_value=G), \
-         patch("thenetwork.worker.proactive.get_session", return_value=_rematch_session(recent, persons)), \
-         patch("thenetwork.worker.proactive.match_memories", return_value=matches), \
-         patch("thenetwork.worker.proactive.process_email") as mock_pe:
+    with (
+        patch("thenetwork.worker.proactive.build_graph", return_value=G),
+        patch(
+            "thenetwork.worker.proactive.get_session",
+            return_value=_rematch_session(recent, persons),
+        ),
+        patch("thenetwork.worker.proactive.match_memories", return_value=matches),
+        patch("thenetwork.worker.proactive.process_email") as mock_pe,
+    ):
         await scan_for_matches.func(0)
 
     assert not mock_pe.defer.called
@@ -259,10 +323,15 @@ async def test_rematch_skips_self_match():
     matches = [MemoryMatch("m0", "Q", "wants a rust cofounder", 0.99)]
     persons = {"Q": _person("Q", "q@test.com")}
 
-    with patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()), \
-         patch("thenetwork.worker.proactive.get_session", return_value=_rematch_session(recent, persons)), \
-         patch("thenetwork.worker.proactive.match_memories", return_value=matches), \
-         patch("thenetwork.worker.proactive.process_email") as mock_pe:
+    with (
+        patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()),
+        patch(
+            "thenetwork.worker.proactive.get_session",
+            return_value=_rematch_session(recent, persons),
+        ),
+        patch("thenetwork.worker.proactive.match_memories", return_value=matches),
+        patch("thenetwork.worker.proactive.process_email") as mock_pe,
+    ):
         await scan_for_matches.func(0)
 
     assert not mock_pe.defer.called
@@ -273,10 +342,15 @@ async def test_rematch_early_returns_when_no_recent_memories():
     """No memories in the lookback window → return before building the graph."""
     from thenetwork.worker.proactive import scan_for_matches
 
-    with patch("thenetwork.worker.proactive.build_graph") as mock_bg, \
-         patch("thenetwork.worker.proactive.get_session", return_value=_rematch_session([], {})), \
-         patch("thenetwork.worker.proactive.match_memories") as mock_mm, \
-         patch("thenetwork.worker.proactive.process_email") as mock_pe:
+    with (
+        patch("thenetwork.worker.proactive.build_graph") as mock_bg,
+        patch(
+            "thenetwork.worker.proactive.get_session",
+            return_value=_rematch_session([], {}),
+        ),
+        patch("thenetwork.worker.proactive.match_memories") as mock_mm,
+        patch("thenetwork.worker.proactive.process_email") as mock_pe,
+    ):
         await scan_for_matches.func(0)
 
     mock_bg.assert_not_called()
@@ -299,10 +373,15 @@ async def test_rematch_trigger_body_carries_no_raw_pii():
     q.name = "Quentin Raw-Name"
     persons = {"P": p, "Q": q}
 
-    with patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()), \
-         patch("thenetwork.worker.proactive.get_session", return_value=_rematch_session(recent, persons)), \
-         patch("thenetwork.worker.proactive.match_memories", return_value=matches), \
-         patch("thenetwork.worker.proactive.process_email") as mock_pe:
+    with (
+        patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()),
+        patch(
+            "thenetwork.worker.proactive.get_session",
+            return_value=_rematch_session(recent, persons),
+        ),
+        patch("thenetwork.worker.proactive.match_memories", return_value=matches),
+        patch("thenetwork.worker.proactive.process_email") as mock_pe,
+    ):
         await scan_for_matches.func(0)
 
     body = mock_pe.defer.call_args.kwargs["body"]
@@ -312,6 +391,7 @@ async def test_rematch_trigger_body_carries_no_raw_pii():
 
 
 # --- pacing + relevance gate ------------------------------------------------
+
 
 def _engaged_ids(defer_calls):
     """Person ids named in each deferred trigger body ("Person <id>: ...")."""
@@ -345,10 +425,17 @@ async def test_rematch_gate_rejects_thin_overlap_keeps_specific_match():
         "priya": _person("priya", "priya@test.com"),
     }
 
-    with patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()), \
-         patch("thenetwork.worker.proactive.get_session", return_value=_rematch_session(recent, persons)), \
-         patch("thenetwork.worker.proactive.match_memories", side_effect=per_call_matches), \
-         patch("thenetwork.worker.proactive.process_email") as mock_pe:
+    with (
+        patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()),
+        patch(
+            "thenetwork.worker.proactive.get_session",
+            return_value=_rematch_session(recent, persons),
+        ),
+        patch(
+            "thenetwork.worker.proactive.match_memories", side_effect=per_call_matches
+        ),
+        patch("thenetwork.worker.proactive.process_email") as mock_pe,
+    ):
         await scan_for_matches.func(0)
 
     assert mock_pe.defer.call_count == 1, "only the specific match may surface"
@@ -376,10 +463,17 @@ async def test_rematch_schedules_at_most_one_candidate_per_person():
     ]
     persons = {p: _person(p, f"{p.lower()}@test.com") for p in ("A", "B", "C")}
 
-    with patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()), \
-         patch("thenetwork.worker.proactive.get_session", return_value=_rematch_session(recent, persons)), \
-         patch("thenetwork.worker.proactive.match_memories", side_effect=per_call_matches), \
-         patch("thenetwork.worker.proactive.process_email") as mock_pe:
+    with (
+        patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()),
+        patch(
+            "thenetwork.worker.proactive.get_session",
+            return_value=_rematch_session(recent, persons),
+        ),
+        patch(
+            "thenetwork.worker.proactive.match_memories", side_effect=per_call_matches
+        ),
+        patch("thenetwork.worker.proactive.process_email") as mock_pe,
+    ):
         await scan_for_matches.func(0)
 
     assert mock_pe.defer.call_count == 1, "B may be scheduled only once per scan"
@@ -395,9 +489,7 @@ async def test_rematch_manufacturing_cluster_does_not_burst():
     from thenetwork.worker.proactive import scan_for_matches
 
     members = ["P1", "P2", "P3", "P4"]
-    recent = [
-        _memory(f"m{p}", [p], f"{p} does ml for manufacturing") for p in members
-    ]
+    recent = [_memory(f"m{p}", [p], f"{p} does ml for manufacturing") for p in members]
     per_call_matches = [
         [
             MemoryMatch(f"s{other}", other, f"{other} does ml for manufacturing", 0.7)
@@ -408,17 +500,28 @@ async def test_rematch_manufacturing_cluster_does_not_burst():
     ]
     persons = {p: _person(p, f"{p.lower()}@test.com") for p in members}
 
-    with patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()), \
-         patch("thenetwork.worker.proactive.get_session", return_value=_rematch_session(recent, persons)), \
-         patch("thenetwork.worker.proactive.match_memories", side_effect=per_call_matches), \
-         patch("thenetwork.worker.proactive.process_email") as mock_pe:
+    with (
+        patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()),
+        patch(
+            "thenetwork.worker.proactive.get_session",
+            return_value=_rematch_session(recent, persons),
+        ),
+        patch(
+            "thenetwork.worker.proactive.match_memories", side_effect=per_call_matches
+        ),
+        patch("thenetwork.worker.proactive.process_email") as mock_pe,
+    ):
         await scan_for_matches.func(0)
 
     assert mock_pe.defer.call_count <= 2, (
         f"expected at most 2 paced pairs for 4 people, got {mock_pe.defer.call_count}"
     )
-    engaged = [pid for pair in _engaged_ids(mock_pe.defer.call_args_list) for pid in pair]
-    assert len(engaged) == len(set(engaged)), "a person may appear in at most one pair per scan"
+    engaged = [
+        pid for pair in _engaged_ids(mock_pe.defer.call_args_list) for pid in pair
+    ]
+    assert len(engaged) == len(set(engaged)), (
+        "a person may appear in at most one pair per scan"
+    )
 
 
 @pytest.mark.asyncio
@@ -431,11 +534,16 @@ async def test_rematch_preserves_pair_suppression():
     matches = [MemoryMatch("m1", "P", "rust founder", 0.9)]
     persons = {"P": _person("P", "p@test.com"), "Q": _person("Q", "q@test.com")}
 
-    with patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()), \
-         patch("thenetwork.worker.proactive.get_session", return_value=_rematch_session(recent, persons)), \
-         patch("thenetwork.worker.proactive.match_memories", return_value=matches), \
-         patch("thenetwork.worker.proactive.pair_is_suppressed", return_value=True), \
-         patch("thenetwork.worker.proactive.process_email") as mock_pe:
+    with (
+        patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()),
+        patch(
+            "thenetwork.worker.proactive.get_session",
+            return_value=_rematch_session(recent, persons),
+        ),
+        patch("thenetwork.worker.proactive.match_memories", return_value=matches),
+        patch("thenetwork.worker.proactive.pair_is_suppressed", return_value=True),
+        patch("thenetwork.worker.proactive.process_email") as mock_pe,
+    ):
         await scan_for_matches.func(0)
 
     assert not mock_pe.defer.called
@@ -453,7 +561,9 @@ async def test_rematch_prioritizes_zero_load_candidate_over_saturated_peers():
     from thenetwork.worker.proactive import scan_for_matches
 
     recent = [
-        _memory("arrival", ["newcomer"], "ml infrastructure operator, seeking collaborators")
+        _memory(
+            "arrival", ["newcomer"], "ml infrastructure operator, seeking collaborators"
+        )
     ]
     saturated = ["s1", "s2", "s3", "s4"]
     per_call_matches = [
@@ -474,11 +584,20 @@ async def test_rematch_prioritizes_zero_load_candidate_over_saturated_peers():
     def fake_request_load(_session, person_id, *, since):
         return 0 if person_id in ("newcomer", "omar") else 3
 
-    with patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()), \
-         patch("thenetwork.worker.proactive.get_session", return_value=_rematch_session(recent, persons)), \
-         patch("thenetwork.worker.proactive.match_memories", side_effect=per_call_matches), \
-         patch("thenetwork.worker.proactive.request_load", side_effect=fake_request_load), \
-         patch("thenetwork.worker.proactive.process_email") as mock_pe:
+    with (
+        patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()),
+        patch(
+            "thenetwork.worker.proactive.get_session",
+            return_value=_rematch_session(recent, persons),
+        ),
+        patch(
+            "thenetwork.worker.proactive.match_memories", side_effect=per_call_matches
+        ),
+        patch(
+            "thenetwork.worker.proactive.request_load", side_effect=fake_request_load
+        ),
+        patch("thenetwork.worker.proactive.process_email") as mock_pe,
+    ):
         await scan_for_matches.func(0)
 
     assert mock_pe.defer.call_count == 1, (
@@ -503,9 +622,14 @@ async def test_opportunities_scan_paces_one_candidate_per_person():
 
     people = [_person(p, f"{p}@test.com") for p in ("a", "b", "c", "hub")]
 
-    with patch("thenetwork.worker.proactive.build_graph", return_value=G), \
-         patch("thenetwork.worker.proactive.get_session", return_value=_mock_session(people)), \
-         patch("thenetwork.worker.proactive.process_email") as mock_pe:
+    with (
+        patch("thenetwork.worker.proactive.build_graph", return_value=G),
+        patch(
+            "thenetwork.worker.proactive.get_session",
+            return_value=_mock_session(people),
+        ),
+        patch("thenetwork.worker.proactive.process_email") as mock_pe,
+    ):
         await scan_for_opportunities.func(0)
 
     assert mock_pe.defer.call_count == 1, (
@@ -524,10 +648,15 @@ async def test_opportunities_scan_skips_suppressed_pairs():
 
     people = [_person(p, f"{p}@test.com") for p in ("alice", "bob", "dave")]
 
-    with patch("thenetwork.worker.proactive.build_graph", return_value=G), \
-         patch("thenetwork.worker.proactive.get_session", return_value=_mock_session(people)), \
-         patch("thenetwork.worker.proactive.pair_is_suppressed", return_value=True), \
-         patch("thenetwork.worker.proactive.process_email") as mock_pe:
+    with (
+        patch("thenetwork.worker.proactive.build_graph", return_value=G),
+        patch(
+            "thenetwork.worker.proactive.get_session",
+            return_value=_mock_session(people),
+        ),
+        patch("thenetwork.worker.proactive.pair_is_suppressed", return_value=True),
+        patch("thenetwork.worker.proactive.process_email") as mock_pe,
+    ):
         await scan_for_opportunities.func(0)
 
     assert not mock_pe.defer.called

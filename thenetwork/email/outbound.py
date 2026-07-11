@@ -1,4 +1,5 @@
 """SMTP outbound using stdlib email.message.EmailMessage + smtplib over STARTTLS."""
+
 from __future__ import annotations
 
 from html import escape
@@ -45,7 +46,7 @@ def _growth_footer_text(account: str) -> str:
 
 def _growth_footer_html(account: str) -> str:
     return (
-        "<p style=\"color:#888;font-size:12px\">"
+        '<p style="color:#888;font-size:12px">'
         f"The Network. Reply anytime. Know someone who should be on this? Forward this along "
         f"&mdash; they can join by emailing {account} directly."
         "</p>"
@@ -54,8 +55,9 @@ def _growth_footer_html(account: str) -> str:
 
 def _quoted_body_lines(body_text: str) -> tuple[list[str], bool]:
     body = body_text.replace("\r\n", "\n").replace("\r", "\n")
-    body = "\n".join(line for line in body.splitlines()
-                     if not line.lstrip().startswith(">"))
+    body = "\n".join(
+        line for line in body.splitlines() if not line.lstrip().startswith(">")
+    )
     truncated = len(body) > MAX_QUOTED_TRAIL_CHARS
     if truncated:
         body = body[:MAX_QUOTED_TRAIL_CHARS].rstrip()
@@ -79,8 +81,7 @@ def _quoted_trail_html(body_text: str, quoted_date: str | None = None) -> str:
     if truncated:
         body_lines.append("[quoted text truncated]")
     date = escape(quoted_date or "an earlier message")
-    quote = "<br>\n".join(
-        escape(line) if line else "<br>" for line in body_lines)
+    quote = "<br>\n".join(escape(line) if line else "<br>" for line in body_lines)
     return f"\n\n<p>On {date}, you wrote:</p><blockquote>{quote}</blockquote>"
 
 
@@ -97,9 +98,12 @@ def _append_to_sent(msg: EmailMessage, trace_id: str | None = None) -> None:
         s = get_settings()
         started = monotonic()
         try:
-            with MailBox(s.imap_host, s.imap_port).login(s.imap_account, s.imap_password) as mb:
-                mb.append(msg.as_bytes(), s.imap_sent_folder,
-                          flag_set=[MailMessageFlags.SEEN])
+            with MailBox(s.imap_host, s.imap_port).login(
+                s.imap_account, s.imap_password
+            ) as mb:
+                mb.append(
+                    msg.as_bytes(), s.imap_sent_folder, flag_set=[MailMessageFlags.SEEN]
+                )
         except Exception as exc:
             audit_event(
                 "email.imap_append.completed",
@@ -208,12 +212,15 @@ def send_reply(
     internal/ops mail (admin replies, escalation notices) that isn't a
     user-facing growth surface.
     """
-    with audit_trace(trace_id), audit_span(
-        "email.smtp_send",
-        recipient_id_present=bool(to_address),
-        subject_chars=len(subject),
-        body_chars=len(body_text),
-        html_present=body_html is not None,
+    with (
+        audit_trace(trace_id),
+        audit_span(
+            "email.smtp_send",
+            recipient_id_present=bool(to_address),
+            subject_chars=len(subject),
+            body_chars=len(body_text),
+            html_present=body_html is not None,
+        ),
     ):
         s = get_settings()
 
@@ -225,11 +232,11 @@ def send_reply(
                 body_html = body_html + _growth_footer_html(s.imap_account)
 
         if quoted_body_text:
-            body_text = body_text + \
-                _quoted_trail_text(quoted_body_text, quoted_date)
+            body_text = body_text + _quoted_trail_text(quoted_body_text, quoted_date)
             if body_html:
-                body_html = body_html + \
-                    _quoted_trail_html(quoted_body_text, quoted_date)
+                body_html = body_html + _quoted_trail_html(
+                    quoted_body_text, quoted_date
+                )
 
         msg = EmailMessage()
         msg["From"] = s.email_from
@@ -272,12 +279,15 @@ def send_group_introduction(
         "You both opted in to this introduction. Your addresses are included "
         "on this message so you can take it from here."
     )
-    with audit_trace(trace_id), audit_span(
-        "email.smtp_send",
-        recipient_id_present=True,
-        subject_chars=len("Your introduction"),
-        body_chars=len(body),
-        html_present=False,
+    with (
+        audit_trace(trace_id),
+        audit_span(
+            "email.smtp_send",
+            recipient_id_present=True,
+            subject_chars=len("Your introduction"),
+            body_chars=len(body),
+            html_present=False,
+        ),
     ):
         settings = get_settings()
         msg = EmailMessage()

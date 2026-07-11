@@ -19,8 +19,12 @@ def test_worker_main_checks_presidio_before_run_loop(monkeypatch):
         "validate_embedding_configuration",
         lambda: events.append("embedding_validation"),
     )
-    monkeypatch.setattr(tasks, "configure_audit_logging", lambda: events.append("audit"))
-    monkeypatch.setattr(tasks, "assert_presidio_ready", lambda: events.append("presidio"))
+    monkeypatch.setattr(
+        tasks, "configure_audit_logging", lambda: events.append("audit")
+    )
+    monkeypatch.setattr(
+        tasks, "assert_presidio_ready", lambda: events.append("presidio")
+    )
     monkeypatch.setattr(tasks, "run_worker", fake_run_worker)
 
     tasks.main()

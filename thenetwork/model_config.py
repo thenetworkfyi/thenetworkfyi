@@ -1,4 +1,5 @@
 """Model construction with workload-specific credentials."""
+
 from __future__ import annotations
 
 from typing import Any

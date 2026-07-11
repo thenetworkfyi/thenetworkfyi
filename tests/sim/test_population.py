@@ -116,7 +116,9 @@ def test_default_population_has_authored_personas_and_schedule():
         for persona in original
     )
     assert all(persona.config.message_budget == 3 for persona in original)
-    assert all(persona.config.agent_address == "join@example.test" for persona in original)
+    assert all(
+        persona.config.agent_address == "join@example.test" for persona in original
+    )
     assert original[2].scheduled_events[0].text == (
         "You just accepted a pilot with a cement plant in Lisbon."
     )
@@ -146,47 +148,71 @@ def test_default_population_has_authored_personas_and_schedule():
     assert additions["Ruth Calder"].opening_body == (
         "I run ML platforms for factory operations and only want highly relevant connections."
     )
-    assert "Do not use the words yes, no, or revoke" in additions["Ines Duarte"].config.goal
+    assert (
+        "Do not use the words yes, no, or revoke"
+        in additions["Ines Duarte"].config.goal
+    )
     assert "first line of 'Yes'" in additions["Ines Duarte"].config.goal
     assert additions["Ines Duarte"].config.stop_condition.endswith(
         "without getting a real answer."
     )
     assert additions["Ines Duarte"].config.message_budget == 5
-    assert "robotics, biotech, fintech, climate, logistics, gaming, legal tech" in additions[
-        "Vic Marsh"
-    ].config.goal
+    assert (
+        "robotics, biotech, fintech, climate, logistics, gaming, legal tech"
+        in additions["Vic Marsh"].config.goal
+    )
     assert additions["Vic Marsh"].config.stop_condition == (
         "Never stop before your message budget runs out."
     )
     assert additions["Vic Marsh"].config.message_budget == 6
-    assert "real name, email address, employer, or location" in additions["Dana Roe"].config.goal
-    assert additions["Dana Roe"].config.stop_condition == "Stop after your message budget runs out."
+    assert (
+        "real name, email address, employer, or location"
+        in additions["Dana Roe"].config.goal
+    )
+    assert (
+        additions["Dana Roe"].config.stop_condition
+        == "Stop after your message budget runs out."
+    )
     assert additions["Dana Roe"].config.message_budget == 5
     assert "after that never send another email" in additions["Omar Feld"].config.goal
     assert additions["Omar Feld"].config.stop_condition == (
         "Stop permanently after you have consented once."
     )
     assert additions["Omar Feld"].config.message_budget == 3
-    assert "when it does, tell The Network plainly and redirect" in additions[
-        "Nadia Reyes"
-    ].config.goal
+    assert (
+        "when it does, tell The Network plainly and redirect"
+        in additions["Nadia Reyes"].config.goal
+    )
     assert additions["Nadia Reyes"].config.message_budget == 5
-    assert "vague interest in archival science and data management" in additions[
-        "Petra Lindqvist"
-    ].config.goal
-    assert "only reveal your specific interest" in additions["Petra Lindqvist"].config.goal
-    assert "provenance systems for museum archives" in additions["Petra Lindqvist"].config.goal
+    assert (
+        "vague interest in archival science and data management"
+        in additions["Petra Lindqvist"].config.goal
+    )
+    assert (
+        "only reveal your specific interest" in additions["Petra Lindqvist"].config.goal
+    )
+    assert (
+        "provenance systems for museum archives"
+        in additions["Petra Lindqvist"].config.goal
+    )
     assert additions["Petra Lindqvist"].config.message_budget == 5
     assert additions["Petra Lindqvist"].opening_body == (
         "I am interested in archival science and data management, but I am still "
         "figuring out what kind of connection would be useful."
     )
-    assert all(persona.config.agent_address == "join@example.test" for persona in additions.values())
+    assert all(
+        persona.config.agent_address == "join@example.test"
+        for persona in additions.values()
+    )
 
     schedule = SimSchedule.from_population(population)
     assert any(event.kind == "intervention" for event in schedule.events)
-    assert any(interruption.kind == "silence" for interruption in schedule.interruptions)
-    assert any(interruption.kind == "dormancy" for interruption in schedule.interruptions)
+    assert any(
+        interruption.kind == "silence" for interruption in schedule.interruptions
+    )
+    assert any(
+        interruption.kind == "dormancy" for interruption in schedule.interruptions
+    )
     assert additions["Nadia Reyes"].scheduled_events == (
         type(additions["Nadia Reyes"].scheduled_events[0])(
             tick=3,
@@ -204,7 +230,9 @@ def test_default_population_has_authored_personas_and_schedule():
 @pytest.mark.asyncio
 async def test_tick_loop_skips_mechanical_interruptions(tmp_path):
     population = default_population(agent_address="join@example.test")
-    mara = next(persona for persona in population if persona.config.name == "Mara Vidal")
+    mara = next(
+        persona for persona in population if persona.config.name == "Mara Vidal"
+    )
     person = RecordingTinyPerson("Mara is back.")
     adapter = TinyPersonEmailAdapter(person, mara.config)
 
@@ -246,7 +274,9 @@ async def test_tick_loop_includes_scheduled_events_in_prompt(tmp_path):
 async def test_petra_qualification_turn_precedes_specific_interest_memory(tmp_path):
     """A vague networking request gets a question before any introduction proposal."""
     population = default_population(agent_address="join@example.test")
-    petra = next(persona for persona in population if persona.config.email == PETRA_EMAIL)
+    petra = next(
+        persona for persona in population if persona.config.email == PETRA_EMAIL
+    )
     person = QualifyingPetra()
     memories: list[Memory] = []
     first_turn_bodies: list[str] = []
