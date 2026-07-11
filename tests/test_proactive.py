@@ -13,6 +13,7 @@ def _mock_session(people):
     s.__enter__ = MagicMock(return_value=s)
     s.__exit__ = MagicMock(return_value=False)
     s.exec.return_value.all.return_value = people
+    s.exec.return_value.first.return_value = None
     return s
 
 
@@ -145,6 +146,7 @@ def _rematch_session(recent, persons):
     s.__enter__ = MagicMock(return_value=s)
     s.__exit__ = MagicMock(return_value=False)
     s.exec.return_value.all.return_value = recent
+    s.exec.return_value.first.return_value = None
     s.get.side_effect = lambda _model, pid: persons.get(pid)
     return s
 
@@ -202,6 +204,7 @@ async def test_rematch_job_reaches_agent_through_real_worker_handoff():
     worker_session = MagicMock()
     worker_session.__enter__ = MagicMock(return_value=worker_session)
     worker_session.__exit__ = MagicMock(return_value=False)
+    worker_session.get.return_value = None
     worker_session.exec.return_value.first.return_value = None
 
     with patch("thenetwork.worker.tasks.get_session", return_value=worker_session), \

@@ -25,6 +25,7 @@ def _mock_sender_lookup(sender_id: str | None) -> MagicMock:
     mock_session = MagicMock()
     mock_session.__enter__ = MagicMock(return_value=mock_session)
     mock_session.__exit__ = MagicMock(return_value=False)
+    mock_session.get.return_value = None
     mock_session.exec.return_value.first.return_value = sender_id
     return mock_session
 
@@ -1042,6 +1043,7 @@ async def test_worker_caps_subject_and_body_before_agent():
         mock_session = MagicMock()
         mock_session.__enter__ = MagicMock(return_value=mock_session)
         mock_session.__exit__ = MagicMock(return_value=False)
+        mock_session.get.return_value = None
         mock_session.exec.return_value.first.return_value = None
         mock_get_session.return_value = mock_session
         await process_email.func(

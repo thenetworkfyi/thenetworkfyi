@@ -297,6 +297,7 @@ async def test_proactive_graph_trigger_never_sets_quote_inputs():
     session.__enter__ = MagicMock(return_value=session)
     session.__exit__ = MagicMock(return_value=False)
     session.exec.return_value.all.return_value = people
+    session.exec.return_value.first.return_value = None
 
     with patch("thenetwork.worker.proactive.build_graph", return_value=graph), \
          patch("thenetwork.worker.proactive.get_session", return_value=session), \
@@ -324,6 +325,7 @@ async def test_proactive_semantic_trigger_never_sets_quote_inputs():
     session.__enter__ = MagicMock(return_value=session)
     session.__exit__ = MagicMock(return_value=False)
     session.exec.return_value.all.return_value = [recent]
+    session.exec.return_value.first.return_value = None
     session.get.return_value = standing_person
     matches = [MemoryMatch("older", "standing", "standing gist", 0.9)]
 
