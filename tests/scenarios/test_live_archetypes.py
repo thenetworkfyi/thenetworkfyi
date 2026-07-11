@@ -60,7 +60,7 @@ class EmailScenario:
     known_people: dict[str, str] = field(default_factory=dict)  # id -> email
     memory_refs: dict[str, list[str]] = field(default_factory=dict)
     search_results: list[MemoryMatch] = field(default_factory=list)
-    dispatch_email_sent_count: int = 0
+    outbound_send_count: int = 0
 
 
 @dataclass
@@ -137,7 +137,7 @@ async def run_scenario(inputs: EmailScenario) -> RunOutcome:
             sender_user_id=inputs.sender_user_id,
             sender_authenticated=inputs.sender_authenticated,
             inbound_subject=inputs.subject,
-            dispatch_email_sent_count=inputs.dispatch_email_sent_count,
+            outbound_send_count=inputs.outbound_send_count,
         )
         user_message = f"Subject: {inputs.subject}\n\n{inputs.body}"
         result = await agent.run(user_message, deps=deps)
@@ -551,7 +551,7 @@ exhausted_reply_cap_case = Case(
         sender_email="omar@example.com",
         sender_user_id="user-omar",
         sender_authenticated=True,
-        dispatch_email_sent_count=get_settings().dispatch_max_sends_per_run,
+        outbound_send_count=get_settings().dispatch_max_sends_per_run,
     ),
     evaluators=(
         DidNotDispatchEmail(),

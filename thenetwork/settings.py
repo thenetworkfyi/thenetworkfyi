@@ -92,6 +92,8 @@ class Settings(BaseSettings):
     sender_identifier_secret: str = ""
 
     # Outbound send caps. Enforced inside the email capabilities, not by prompt.
+    # The dispatch_* names predate the reply_to_sender/send_outreach tool split
+    # and stay unchanged because they are deployment-facing env var names.
     dispatch_max_sends_per_run: int = 6
     dispatch_recipient_daily_cap: int = 6
     dispatch_sender_reply_daily_cap: int = 6

@@ -51,7 +51,7 @@ def _poll_and_enqueue() -> int:
                     # reset after the fact (mail client, sync bug, manual
                     # recovery). Re-enqueuing would re-run the agent against an
                     # already-handled email, risking duplicate replies, memories,
-                    # or dispatch_email sends. Just re-mark seen and move on.
+                    # or outbound sends. Just re-mark seen and move on.
                     audit_event(
                         "intake.message_duplicate_skipped",
                         sender_present=bool(msg.sender),

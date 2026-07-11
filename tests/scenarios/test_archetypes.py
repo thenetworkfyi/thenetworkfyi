@@ -223,7 +223,7 @@ async def test_forget_rejects_multi_ref_memory():
 
 @pytest.mark.asyncio
 async def test_send_outreach_limited_once_run_cap_exhausted():
-    """Once dispatch_email_sent_count reaches the per-run cap, sends stop."""
+    """Once outbound_send_count reaches the per-run cap, sends stop."""
     from thenetwork.agent.tools import send_outreach
     from unittest.mock import patch, MagicMock
 
@@ -231,7 +231,7 @@ async def test_send_outreach_limited_once_run_cap_exhausted():
         deps = AgentDeps(sender_email="alice@example.com", sender_user_id="user-alice")
 
     ctx = FakeCtx()
-    ctx.deps.dispatch_email_sent_count = ctx.deps.settings.dispatch_max_sends_per_run
+    ctx.deps.outbound_send_count = ctx.deps.settings.dispatch_max_sends_per_run
 
     with patch("thenetwork.agent.tools.get_session") as mock_gs, \
          patch("thenetwork.agent.tools.send_reply") as mock_send:
@@ -248,7 +248,7 @@ async def test_send_outreach_limited_once_run_cap_exhausted():
     mock_gs.assert_not_called()
     # The cap check happens before any recipient lookup or send, so the
     # sent-count side effect must not have advanced past the cap.
-    assert ctx.deps.dispatch_email_sent_count == ctx.deps.settings.dispatch_max_sends_per_run
+    assert ctx.deps.outbound_send_count == ctx.deps.settings.dispatch_max_sends_per_run
 
 
 # ---------------------------------------------------------------------------
