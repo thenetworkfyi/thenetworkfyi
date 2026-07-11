@@ -227,8 +227,8 @@ def _omar_consent_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
 
 DEFAULT_OUTCOME_CHECKS = (
     OutcomeCheck(
-        description="Ruth declines an introduction and the pair is revoked",
-        predicate=lambda outcome: _has_pair_with_status(outcome, RUTH_EMAIL, "revoked"),
+        description="Ruth declines an introduction and the pair enters cooldown",
+        predicate=lambda outcome: _has_pair_with_status(outcome, RUTH_EMAIL, "declined"),
         requires_real_process=True,
         requires_llm_personas=True,
         evidence=lambda outcome: _pair_summary(outcome, RUTH_EMAIL),
