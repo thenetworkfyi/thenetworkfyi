@@ -155,7 +155,7 @@ def _default_outcome() -> ScenarioOutcome:
             IntroductionRevealAuthorization(
                 person_a_email="ruth.sim@example.test",
                 person_b_email="peer@example.test",
-                status="revoked",
+                status="declined",
             ),
             IntroductionRevealAuthorization(
                 person_a_email="omar.sim@example.test",
