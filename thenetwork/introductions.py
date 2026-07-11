@@ -35,6 +35,9 @@ CONSENT_CLARIFICATION_REPLY = (
 )
 CONSENT_ACKNOWLEDGMENT_REPLY = "Noted — waiting on the other party."
 CONSENT_DECLINED_REPLY = "Noted — this introduction will not go ahead."
+CONSENT_ALREADY_DECLINED_REPLY = (
+    "This introduction has already been declined and will not go ahead."
+)
 
 
 def _utcnow() -> datetime:
@@ -383,6 +386,15 @@ def process_consent_reply(
             return ConsentReplyResult(handled=True, outcome="clarification_sent")
 
         if proposal.status == "revoked":
+            return ConsentReplyResult(handled=True, outcome=proposal.status)
+
+        if proposal.status == "declined":
+            _send_fixed_reply(
+                to_address=sender.email,
+                subject=subject,
+                body_text=CONSENT_ALREADY_DECLINED_REPLY,
+                trace_id=trace_id,
+            )
             return ConsentReplyResult(handled=True, outcome=proposal.status)
 
         if action == "revoke":
