@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+from datetime import timedelta
 from functools import partial
 from unittest.mock import AsyncMock, patch
 
@@ -7,11 +8,13 @@ import pytest
 from thenetwork.db.models import IntroductionConsent, Person
 from thenetwork.introductions import (
     CONSENT_ACKNOWLEDGMENT_REPLY,
+    CONSENT_DECLINED_REPLY,
     CONSENT_CLARIFICATION_REPLY,
     ConsentReplyResult,
     _reply_action,
     process_consent_reply,
     propose_pair,
+    _utcnow,
 )
 
 
@@ -158,10 +161,10 @@ def test_tolerant_yes_reply_consents_without_revealing_identity(body):
     ("body", "expected"),
     [
         ("YES", "consent"),
-        ("NO", "revoke"),
+        ("NO", "decline"),
         ("REVOKE", "revoke"),
         ("Yes, please", "consent"),
-        ("no thanks.", "revoke"),
+        ("no thanks.", "decline"),
     ],
 )
 def test_reply_action_accepts_only_short_decisions(body, expected):
@@ -203,7 +206,7 @@ def test_tokened_prose_reply_gets_clarification_without_revoking_pair():
     assert send.call_args.kwargs["body_text"] == CONSENT_CLARIFICATION_REPLY
 
 
-def test_punctuated_no_reply_revokes():
+def test_punctuated_no_reply_creates_temporary_decline():
     session = FakeSession(proposal=proposal(), people=people())
 
     with patch("thenetwork.introductions.send_reply") as send:
@@ -215,9 +218,10 @@ def test_punctuated_no_reply_revokes():
             session_factory=factory(session),
         )
 
-    assert result.outcome == "revoked"
-    assert session.proposal.status == "revoked"
-    send.assert_not_called()
+    assert result.outcome == "declined"
+    assert session.proposal.status == "declined"
+    assert session.proposal.declined_at is not None
+    assert send.call_args.kwargs["body_text"] == CONSENT_DECLINED_REPLY
 
 
 def test_both_authenticated_consents_trigger_server_composed_group_email():
@@ -300,6 +304,43 @@ def test_existing_declined_pair_cannot_be_reproposed():
 
     assert result == {"status": "suppressed", "reason": "revoked"}
     send.assert_not_called()
+
+
+def test_declined_pair_is_reproposed_after_cooldown():
+    old = proposal(status="declined")
+    old.declined_at = _utcnow() - timedelta(days=91)
+    original_token = old.reply_token
+    session = FakeSession(proposal=old, people=people())
+
+    with patch("thenetwork.introductions.send_reply") as send:
+        result = propose_pair(
+            sender_person_id="alice",
+            other_person_id="bob",
+            sender_gist="builds storage systems",
+            other_gist="operates distributed databases",
+            session_factory=factory(session),
+            decline_cooldown_days=90,
+        )
+
+    assert result == {"status": "proposed"}
+    assert session.proposal.status == "proposed"
+    assert session.proposal.declined_at is None
+    assert session.proposal.reply_token != original_token
+    assert send.call_count == 2
+
+
+def test_declined_pair_stays_suppressed_during_cooldown():
+    recent = proposal(status="declined")
+    recent.declined_at = _utcnow() - timedelta(days=89)
+    session = FakeSession(proposal=recent, people=people())
+
+    result = propose_pair(
+        sender_person_id="alice", other_person_id="bob",
+        sender_gist="builds storage systems", other_gist="operates distributed databases",
+        session_factory=factory(session), decline_cooldown_days=90,
+    )
+
+    assert result == {"status": "suppressed", "reason": "declined"}
 
 
 def test_proposal_defers_when_a_recipient_has_too_many_outstanding_requests():

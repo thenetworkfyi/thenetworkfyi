@@ -56,7 +56,7 @@ _SAFE_FIELDS = frozenset({
 _SAFE_TOKEN = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
 _SAFE_CATEGORIES = {
     "action": frozenset({
-        "ban", "clarify", "consent", "delete", "insert", "lookup", "propose", "revoke",
+        "ban", "clarify", "consent", "decline", "delete", "insert", "lookup", "propose", "revoke",
         "search", "unban",
     }),
     "outcome": frozenset({
@@ -83,7 +83,7 @@ _SAFE_CATEGORIES = {
         "unauthenticated_unknown_sender", "banned",
     }),
     "record_type": frozenset({"introduction_consent", "memory", "person"}),
-    "consent_state": frozenset({"introduced", "one_consented", "proposed", "revoked"}),
+    "consent_state": frozenset({"declined", "introduced", "one_consented", "proposed", "revoked"}),
     "tool_name": frozenset({
         "escalate", "forget", "propose_introduction", "reply_to_sender",
         "register_person", "remember", "search",

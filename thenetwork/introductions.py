@@ -6,6 +6,7 @@ and sends the identity-revealing group email.
 from __future__ import annotations
 
 import re
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Callable
@@ -32,6 +33,7 @@ CONSENT_CLARIFICATION_REPLY = (
     "NO to decline, or REVOKE to withdraw consent."
 )
 CONSENT_ACKNOWLEDGMENT_REPLY = "Noted — waiting on the other party."
+CONSENT_DECLINED_REPLY = "Noted — this introduction will not go ahead."
 
 
 def _utcnow() -> datetime:
@@ -95,6 +97,7 @@ def propose_pair(
     max_outstanding_requests_per_person: int = 3,
     max_requests_per_person_in_window: int = 3,
     request_window_seconds: int = 86_400,
+    decline_cooldown_days: int = 90,
 ) -> dict[str, str | int]:
     """Create one proposal and send fixed, anonymous consent requests."""
     if not sender_person_id or not other_person_id:
@@ -106,7 +109,25 @@ def propose_pair(
     with session_factory() as session:
         existing = _pair_record(session, low, high)
         if existing is not None:
-            return {"status": "suppressed", "reason": existing.status}
+            if (
+                existing.status == "declined"
+                and existing.declined_at is not None
+                and existing.declined_at <= _utcnow() - timedelta(days=decline_cooldown_days)
+            ):
+                existing.status = "proposed"
+                existing.person_a_consented = False
+                existing.person_b_consented = False
+                existing.declined_at = None
+                existing.reply_token = str(uuid.uuid4())
+                existing.updated_at = _utcnow()
+                session.add(existing)
+                session.commit()
+                session.refresh(existing)
+                proposal = existing
+            else:
+                return {"status": "suppressed", "reason": existing.status}
+        else:
+            proposal = None
 
         if (
             max_requests_per_person_in_window > 0
@@ -141,10 +162,11 @@ def propose_pair(
         if sender is None or other is None:
             return {"status": "error", "reason": "person_not_found"}
 
-        proposal = IntroductionConsent(person_a_id=low, person_b_id=high)
-        session.add(proposal)
-        session.commit()
-        session.refresh(proposal)
+        if proposal is None:
+            proposal = IntroductionConsent(person_a_id=low, person_b_id=high)
+            session.add(proposal)
+            session.commit()
+            session.refresh(proposal)
 
         subject = f"Possible introduction [intro:{proposal.reply_token}]"
         token = f"[intro:{proposal.reply_token}]"
@@ -191,7 +213,7 @@ def _reply_action(body: str) -> str | None:
     match = _ACTION_RE.fullmatch(visible[0])
     if match is None:
         return None
-    return "consent" if match.group("action").lower() == "yes" else "revoke"
+    return {"yes": "consent", "no": "decline", "revoke": "revoke"}[match.group("action").lower()]
 
 
 def _visible_reply_lines(body: str) -> list[str]:
@@ -308,6 +330,17 @@ def process_consent_reply(
             session.add(proposal)
             session.commit()
             state = "revoked"
+        elif action == "decline":
+            proposal.status = "declined"
+            proposal.declined_at = _utcnow()
+            proposal.updated_at = _utcnow()
+            session.add(proposal)
+            session.commit()
+            state = "declined"
+            _send_fixed_reply(
+                to_address=sender.email, subject=subject,
+                body_text=CONSENT_DECLINED_REPLY, trace_id=trace_id,
+            )
         elif proposal.status == "introduced":
             return ConsentReplyResult(handled=True, outcome="introduced")
         else:

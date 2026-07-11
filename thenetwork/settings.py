@@ -96,6 +96,7 @@ class Settings(BaseSettings):
     dispatch_recipient_daily_cap: int = 6
     dispatch_sender_reply_daily_cap: int = 6
     registration_limit_per_day: int = 50
+    consent_decline_cooldown_days: int = 90
 
     # Tool abuse bounds. Set a value to 0 or lower to disable that specific
     # guard in controlled development environments.

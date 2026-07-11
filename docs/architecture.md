@@ -77,7 +77,7 @@ is required; `thenetwork-producer` is just a manual one-shot poll for cron/debug
 **`introduction_consents`** - security state for identity-revealing introductions:
 - one row per unordered person pair
 - server-written consent flags and state (`proposed`, `one_consented`,
-  `introduced`, or `revoked`)
+  `introduced`, `declined` (temporary cooldown), or `revoked` (permanent)
 - opaque reply token used to associate authenticated inbound replies with a pair
 
 This table is security/capability state, not a domain schema over memories. The model

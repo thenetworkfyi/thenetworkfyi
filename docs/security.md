@@ -37,8 +37,9 @@ prompt-injection exfiltrate it, so the privacy boundary cannot be "withhold a co
    record consent or compose the revealing message. A random reply token associates an
    explicit `YES`, `NO`, or `REVOKE` reply with the pair; the worker accepts it only from
    an authenticated participant before model execution. After both participants consent,
-   server code resolves both identities and sends the fixed group email. Revoked pairs
-   remain structurally suppressed.
+   server code resolves both identities and sends the fixed group email. `NO` records a
+   temporary declined state (90-day configurable cooldown); `REVOKE` is permanent and
+   revoked pairs remain structurally suppressed.
 7. **Role separation.** Untrusted inbound body is user-role message content, never in the
    system prompt (`agent/core.py`).
 8. **Mail-loop prevention (RFC 3834).** Inbound carrying `Auto-Submitted` /
