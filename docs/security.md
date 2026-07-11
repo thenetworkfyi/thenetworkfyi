@@ -44,13 +44,16 @@ prompt-injection exfiltrate it, so the privacy boundary cannot be "withhold a co
 8. **Mail-loop prevention (RFC 3834).** Inbound carrying `Auto-Submitted` /
    `Precedence: bulk|list` / `List-*` is skipped; all outbound sets
    `Auto-Submitted: auto-replied`.
-9. **Rate limiting / anti-DoS.** Per-sender quota via `limits` with Postgres-backed
+9. **Rate limiting / anti-DoS.** Per-sender quota plus registration, outbound-recipient,
+   outbound sender-reply, and first-contact welcome quotas use `limits` with Postgres-backed
    state so counters survive restarts. Keys are normalized and split by
    authentication state: authenticated senders use the normal bucket, while
    unauthenticated `From:` headers use a smaller unauthenticated bucket that cannot
    consume the matching real user's quota. A separate global emails-processed-per-hour
    bucket caps total LLM spend and fails closed if the rate-limit store is unavailable;
-   bounded Procrastinate worker concurrency remains an additional ceiling.
+   bounded Procrastinate worker concurrency remains an additional ceiling. Outbound
+   quota checks occur before SMTP and are consumed after a successful send, leaving a
+   bounded cross-worker check-versus-consume race rather than charging failed sends.
 10. **Audit correlation without PII.** Per-message `trace_id` values are minted as
    opaque UUIDv4-style tokens at IMAP intake and threaded through the Procrastinate
    job, worker, agent run, outbound SMTP send, and IMAP Sent append. Sender-level

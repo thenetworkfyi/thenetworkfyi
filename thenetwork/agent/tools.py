@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from limits import parse, storage, strategies
+from limits import parse, strategies
 from pydantic_ai import RunContext
 from sqlmodel import select
 
@@ -27,6 +27,7 @@ from thenetwork.email.outbound import (
     send_reply,
 )
 from thenetwork.memory.sanitize import sanitize_memory_high_fidelity
+from thenetwork.security.rate_limit import PostgresFixedWindowStorage
 from thenetwork.introductions import propose_pair
 from thenetwork.search.match import MemoryMatch, match_memories
 
@@ -35,10 +36,10 @@ MAX_CONSOLIDATION_CANDIDATES = 3
 # occupy several rows; over-fetch before deduping by memory_id so a run of
 # duplicate rows doesn't crowd out a genuinely distinct candidate.
 _CONSOLIDATION_QUERY_LIMIT = MAX_CONSOLIDATION_CANDIDATES * 4
-_dispatch_limiter: strategies.MovingWindowRateLimiter | None = None
-_dispatch_storage: storage.Storage | None = None
-_registration_limiter: strategies.MovingWindowRateLimiter | None = None
-_registration_storage: storage.Storage | None = None
+_dispatch_limiter: strategies.FixedWindowRateLimiter | None = None
+_dispatch_storage: PostgresFixedWindowStorage | None = None
+_registration_limiter: strategies.FixedWindowRateLimiter | None = None
+_registration_storage: PostgresFixedWindowStorage | None = None
 
 
 class _SanitizationFailed(Exception):
@@ -50,11 +51,11 @@ def _get_session(ctx: RunContext[AgentDeps]):
     return sf() if sf is not None else get_session()
 
 
-def _get_dispatch_limiter() -> tuple[strategies.MovingWindowRateLimiter, object]:
+def _get_dispatch_limiter() -> tuple[strategies.FixedWindowRateLimiter, object]:
     global _dispatch_limiter, _dispatch_storage
     if _dispatch_limiter is None:
-        _dispatch_storage = storage.MemoryStorage()
-        _dispatch_limiter = strategies.MovingWindowRateLimiter(_dispatch_storage)
+        _dispatch_storage = PostgresFixedWindowStorage()
+        _dispatch_limiter = strategies.FixedWindowRateLimiter(_dispatch_storage)
     return _dispatch_limiter, _dispatch_storage
 
 
@@ -85,7 +86,12 @@ def _check_daily_dispatch_cap(key: str, limit: int) -> bool:
     if limit <= 0:
         return False
     limiter, _ = _get_dispatch_limiter()
-    return limiter.test(parse(f"{limit}/day"), key)
+    # The check/consume split avoids charging failed SMTP sends. It is a
+    # bounded race across workers: the atomic consume is still durable.
+    try:
+        return limiter.test(parse(f"{limit}/day"), key)
+    except Exception:
+        return False
 
 
 def _consume_daily_dispatch_cap(key: str, limit: int) -> None:
@@ -97,11 +103,11 @@ def _consume_daily_dispatch_cap(key: str, limit: int) -> None:
     limiter.hit(parse(f"{limit}/day"), key)
 
 
-def _get_registration_limiter() -> tuple[strategies.MovingWindowRateLimiter, object]:
+def _get_registration_limiter() -> tuple[strategies.FixedWindowRateLimiter, object]:
     global _registration_limiter, _registration_storage
     if _registration_limiter is None:
-        _registration_storage = storage.MemoryStorage()
-        _registration_limiter = strategies.MovingWindowRateLimiter(_registration_storage)
+        _registration_storage = PostgresFixedWindowStorage()
+        _registration_limiter = strategies.FixedWindowRateLimiter(_registration_storage)
     return _registration_limiter, _registration_storage
 
 
@@ -110,7 +116,10 @@ def _hit_registration_quota(ctx: RunContext[AgentDeps]) -> bool:
     if limit_per_day <= 0:
         return True
     limiter, _ = _get_registration_limiter()
-    return limiter.hit(parse(f"{limit_per_day}/day"), "registrations:global")
+    try:
+        return limiter.hit(parse(f"{limit_per_day}/day"), "registrations:global")
+    except Exception:
+        return False
 
 
 def _person_memory_count(session, person_id: str) -> int:

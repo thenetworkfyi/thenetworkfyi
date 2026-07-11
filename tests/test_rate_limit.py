@@ -27,6 +27,14 @@ class HealthyStorage:
         return True
 
 
+class UnavailableLimiter:
+    def test(self, limit, key: str) -> bool:
+        raise RuntimeError("rate-limit storage unavailable")
+
+    def hit(self, limit, key: str) -> bool:
+        raise RuntimeError("rate-limit storage unavailable")
+
+
 def _settings(**overrides):
     defaults = {
         "rate_limit_per_hour": 10,
@@ -168,3 +176,45 @@ def test_postgres_rate_limit_state_survives_limiter_rebuild(pg_engine, monkeypat
     finally:
         rate_limit._limiter = None
         rate_limit._storage = None
+
+
+def test_outbound_registration_and_welcome_quotas_fail_closed_when_storage_is_unavailable():
+    from thenetwork.agent import tools
+    from thenetwork.worker import tasks
+
+    with patch.object(tools, "_get_dispatch_limiter", return_value=(UnavailableLimiter(), None)), \
+         patch.object(tools, "_get_registration_limiter", return_value=(UnavailableLimiter(), None)), \
+         patch.object(tasks, "_get_welcome_limiter", return_value=(UnavailableLimiter(), None)):
+        assert not tools._check_daily_dispatch_cap("dispatch:test", 1)
+        assert not tools._hit_registration_quota(
+            SimpleNamespace(deps=SimpleNamespace(settings=SimpleNamespace(registration_limit_per_day=1)))
+        )
+        assert not tasks._hit_welcome_quota("person@example.com")
+
+
+@pytest.mark.integration
+def test_outbound_registration_and_welcome_limiters_use_durable_storage(pg_engine, monkeypatch):
+    """All non-inbound quotas share Postgres state across limiter recreation."""
+    import thenetwork.db.session as sess_mod
+    from thenetwork.agent import tools
+    from thenetwork.worker import tasks
+
+    monkeypatch.setattr(sess_mod, "_engine", pg_engine)
+    with pg_engine.begin() as conn:
+        conn.execute(text("DELETE FROM rate_limits"))
+
+    limit = __import__("limits").parse("1/day")
+    cases = [
+        (tools, "_dispatch_limiter", "_dispatch_storage", tools._get_dispatch_limiter, "test:dispatch"),
+        (tools, "_registration_limiter", "_registration_storage", tools._get_registration_limiter, "test:registration"),
+        (tasks, "_welcome_limiter", "_welcome_storage", tasks._get_welcome_limiter, "test:welcome"),
+    ]
+    for module, limiter_attr, storage_attr, factory, key in cases:
+        setattr(module, limiter_attr, None)
+        setattr(module, storage_attr, None)
+        limiter, _ = factory()
+        assert limiter.hit(limit, key)
+        setattr(module, limiter_attr, None)
+        setattr(module, storage_attr, None)
+        rebuilt, _ = factory()
+        assert not rebuilt.test(limit, key)
