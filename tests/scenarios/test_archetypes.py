@@ -6,10 +6,22 @@ Tests use pydantic-ai FunctionModel / TestModel for deterministic, offline runs.
 from __future__ import annotations
 
 import pytest
+from limits import storage, strategies
 from pydantic_ai.models.test import TestModel
 
 from thenetwork.agent.core import build_agent
 from thenetwork.agent.deps import AgentDeps
+
+
+@pytest.fixture(autouse=True)
+def _use_in_memory_dispatch_limiter():
+    """Keep capability scenarios independent of durable production quota state."""
+    from thenetwork.agent import tools
+
+    tools._dispatch_storage = storage.MemoryStorage()
+    tools._dispatch_limiter = strategies.FixedWindowRateLimiter(
+        tools._dispatch_storage
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -136,12 +148,9 @@ async def test_send_outreach_resolves_address_server_side():
 @pytest.mark.asyncio
 async def test_double_intro_emails_both_parties():
     """The separate reply and outreach capabilities can email both parties."""
-    from thenetwork.agent import tools
     from thenetwork.agent.tools import reply_to_sender, send_outreach
     from unittest.mock import patch, MagicMock, AsyncMock, call
 
-    tools._dispatch_limiter = None
-    tools._dispatch_storage = None
     sent_to: list[str] = []
 
     def fake_send_reply(to_address, subject, body_text, body_html=None, **kwargs):
