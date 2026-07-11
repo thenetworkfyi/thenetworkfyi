@@ -959,7 +959,7 @@ async def test_remember_returns_empty_consolidation_candidates():
 
 @pytest.mark.asyncio
 async def test_remember_returns_sealed_duplicate_consolidation_candidates():
-    """Consolidation candidates expose only memory IDs, gists, and scores."""
+    """Consolidation candidates expose only memory IDs, gists, and similarities."""
     from thenetwork.agent.tools import remember
 
     ctx = FakeCtx()
@@ -1020,11 +1020,11 @@ async def test_remember_returns_sealed_duplicate_consolidation_candidates():
         "old-memory-2",
         "old-memory-3",
     ]
-    assert candidates[0]["score"] == 0.982
+    assert candidates[0]["similarity"] == 0.982
     for candidate in candidates:
-        assert set(candidate) == {"memory_id", "gist", "score"}
+        assert set(candidate) == {"memory_id", "gist", "similarity"}
         assert "person_id" not in candidate
-        assert "similarity" not in candidate
+        assert "score" not in candidate
         assert "text" not in candidate
         assert "name" not in candidate
         assert "email" not in candidate
