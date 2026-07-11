@@ -357,6 +357,7 @@ def test_process_email_routes_admin_to_handler():
     mock_session = MagicMock()
     mock_session.__enter__ = MagicMock(return_value=mock_session)
     mock_session.__exit__ = MagicMock(return_value=False)
+    mock_session.get.return_value = None
     mock_session.exec.return_value.first.return_value = None
 
     with patch("thenetwork.worker.tasks.check_rate_limit", return_value=True), \
@@ -401,6 +402,7 @@ def test_process_email_authenticated_non_admin_goes_to_agent():
         mock_session = MagicMock()
         mock_session.__enter__ = MagicMock(return_value=mock_session)
         mock_session.__exit__ = MagicMock(return_value=False)
+        mock_session.get.return_value = None
         mock_session.exec.return_value.first.return_value = None
         mock_gs.return_value = mock_session
         asyncio.run(process_email.func(
@@ -430,6 +432,7 @@ def test_process_email_drops_unauthenticated_unknown_sender_before_agent():
         mock_session = MagicMock()
         mock_session.__enter__ = MagicMock(return_value=mock_session)
         mock_session.__exit__ = MagicMock(return_value=False)
+        mock_session.get.return_value = None
         mock_session.exec.return_value.first.return_value = None
         mock_gs.return_value = mock_session
         asyncio.run(process_email.func(
@@ -462,6 +465,7 @@ def test_process_email_dev_auth_bypass_still_goes_to_agent():
         mock_session = MagicMock()
         mock_session.__enter__ = MagicMock(return_value=mock_session)
         mock_session.__exit__ = MagicMock(return_value=False)
+        mock_session.get.return_value = None
         mock_session.exec.return_value.first.return_value = None
         mock_gs.return_value = mock_session
         asyncio.run(process_email.func(
