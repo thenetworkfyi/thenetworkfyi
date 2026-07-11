@@ -5,6 +5,11 @@ Security contracts (THE SEAL) are structurally enforced here:
 - reply_to_sender: sender identity resolved server-side, never model-selected
 - send_outreach: opaque recipient_user_id, address resolved server-side
 - Role separation: untrusted body arrives as user-role, never touches system prompt
+
+Tool result policy: expected world-state and policy outcomes return a dict with
+``status`` rather than raising to the model. ``error`` means correct arguments
+once or escalate; ``limited``, ``deferred``, ``forbidden``, and ``suppressed``
+are final for this run. Pydantic AI gets one retry only for argument validation.
 """
 from __future__ import annotations
 
@@ -332,8 +337,9 @@ async def search(
                 "person_id": m.person_id,
                 "gist": m.gist,
                 "similarity": round(m.similarity, 3),
+                "is_sender_owned": m.person_id == ctx.deps.sender_user_id,
             }
-            if m.person_id == ctx.deps.sender_user_id:
+            if result["is_sender_owned"]:
                 result["memory_id"] = m.memory_id
             results.append(result)
         audit_span_completion(tool_outcome="success")
