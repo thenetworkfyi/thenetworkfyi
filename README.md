@@ -177,7 +177,7 @@ The red-team suite (`tests/security/`) proves it: adversarial emails must produc
 | Migrations | Alembic (`CREATE EXTENSION vector` runs idempotently in a migration) |
 | Vector store | pgvector - `Vector(1536)`, HNSW cosine |
 | Agent | pydantic-ai (native multi-provider; provider chosen by config string) |
-| Embeddings | provider-agnostic `embed_text` wrapper |
+| Embeddings | OpenAI text embeddings, fixed at 1536 dimensions |
 | Graph proximity | NetworkX |
 | Settings | pydantic-settings (`BaseSettings`, env / `.env`) |
 | IMAP | imap-tools |
@@ -186,9 +186,11 @@ The red-team suite (`tests/security/`) proves it: adversarial emails must produc
 | Rate limiting | `limits` |
 | Tests | pytest + pydantic-evals |
 
-Vendor-agnosticism comes from pydantic-ai and the embedding wrapper both being
-multi-provider, selected by the `AGENT_MODEL` / `EMBED_MODEL` config strings - no
-LiteLLM, no proxy glue.
+Vendor-agnosticism comes from pydantic-ai, selected by the `AGENT_MODEL` config
+string - no LiteLLM, no proxy glue. Embeddings use OpenAI only: `EMBED_MODEL` must
+be `text-embedding-3-small`, `text-embedding-3-large` (each requested at 1536
+dimensions), or legacy `text-embedding-ada-002` (native 1536 dimensions), matching
+the database's `Vector(1536)` column.
 
 ---
 
@@ -215,7 +217,7 @@ POSTGRES_PASSWORD=network   # literal password; Settings.database_url percent-en
 # LLM - provider is chosen by the model string prefix
 AGENT_MODEL=anthropic:claude-sonnet-5
 SMALL_AGENT_MODEL=anthropic:claude-haiku-4-5
-EMBED_MODEL=text-embedding-3-small
+EMBED_MODEL=text-embedding-3-small  # OpenAI, 1536 dimensions
 AGENT_API_KEY=
 SMALL_AGENT_API_KEY=
 EMBED_API_KEY=
@@ -341,7 +343,7 @@ thenetwork/
   agent/      pydantic-ai agent: core wiring, tools, prompts, deps
   db/         SQLModel models + session
   email/      IMAP inbound polling, SMTP outbound
-  embed/      provider-agnostic embedding wrapper
+  embed/      OpenAI embedding wrapper (1536 dimensions)
   memory/     the SEAL: sanitize (gist) + seal (self/other gate)
   search/     semantic match over memories + NetworkX graph projection
   security/   rate limiting + optional content scan
