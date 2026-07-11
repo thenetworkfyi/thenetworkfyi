@@ -361,7 +361,15 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
                 ),
             )
             audit_event("agent.first_contact_welcome_sent")
-            return _tool_result({"status": "welcomed"})
+            subject = f"[The Network] Manual reply needed: {sender}"
+            body = (
+                f"Email from {sender} was escalated for human review.\n\n"
+                f"Reason: {reason}\n\n"
+                f"Trace ID: {ctx.deps.trace_id or 'unavailable'}\n\n"
+                f"Please reply to {sender} manually."
+            )
+            notify_admins(s, subject, body, trace_id=ctx.deps.trace_id)
+            return _tool_result({"status": "welcomed_and_escalated"})
 
         refs = [ctx.deps.sender_user_id] if ctx.deps.sender_user_id else []
 
