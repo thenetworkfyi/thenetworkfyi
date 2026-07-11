@@ -123,13 +123,17 @@ prompt-injection exfiltrate it, so the privacy boundary cannot be "withhold a
 column." Instead:
 
 1. **Two-layer memory for person-referencing chunks.** Each carries a **raw form**
-   (retrievable only for that person's own requests) and a **sanitized gist**
-   (PII-stripped) that is the only thing cross-user search may return.
+   (the durable substrate, read only by the sanitizer and the PGP-verified admin
+   channel) and a **sanitized gist** (PII-stripped) that is the only form any
+   search may return.
 2. **Cross-user retrieval and the LLM only ever touch the gist + opaque ids.** A
    hijacked model has no identifying text to leak. Real addresses never enter LLM
    context - the mailer resolves them server-side.
-3. **Self/other gate** (`thenetwork/memory/seal.py`): sole-ref-is-sender → raw
-   text; otherwise → gist only.
+3. **The search projection is the chokepoint** (`thenetwork/search/match.py`):
+   `match_memories` selects only `gist` + opaque ids in the SQL projection itself -
+   raw `text` never enters the result set, for any requester (including the
+   memory's own subject), so there is no runtime self/other branch a hijacked
+   model could steer toward raw text.
 4. **The sanitizer is a separate, narrowly-scoped step**
    (`thenetwork/memory/sanitize.py`) - mandatory Presidio redaction of names, email
    addresses, and phone numbers while keeping organizations and locations for search
