@@ -35,12 +35,11 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
-import networkx as nx
 from sqlmodel import col, select
 
 from thenetwork.db.models import Memory, Person
 from thenetwork.db.session import get_session
-from thenetwork.search.graph import build_graph
+from thenetwork.search.graph import build_graph, score_proximity
 from thenetwork.search.match import match_memories
 from thenetwork.settings import get_settings
 from thenetwork.introductions import pair_is_suppressed, request_load
@@ -111,9 +110,9 @@ async def scan_for_opportunities(timestamp: int) -> None:
         for i, pid_a in enumerate(person_ids):
             if pid_a not in email_by_id:
                 continue
+            scores = score_proximity(pid_a, person_ids[i + 1:], graph=G)
             for pid_b in person_ids[i + 1:]:
-                jac = list(nx.jaccard_coefficient(G, [(pid_a, pid_b)]))
-                score = jac[0][2] if jac else 0.0
+                score = scores[pid_b]
                 if score < PROXIMITY_THRESHOLD:
                     continue
                 if pair_is_suppressed(session, pid_a, pid_b):

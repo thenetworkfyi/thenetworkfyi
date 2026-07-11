@@ -50,15 +50,16 @@ def build_graph() -> nx.Graph:
 
 
 def score_proximity(
-    requester_id: str, candidate_ids: list[str]
+    requester_id: str, candidate_ids: list[str], graph: nx.Graph | None = None
 ) -> dict[str, float]:
     """Return a proximity score [0, 1] for each candidate relative to requester.
 
     Score = Jaccard coefficient on shared graph neighbours. Returns 0 when
     requester is not in the graph. Proximity scoring is deferred until the
-    graph is dense enough to be meaningful.
+    graph is dense enough to be meaningful. Pass `graph` to score against an
+    already-built projection instead of rebuilding it per call.
     """
-    G = build_graph()
+    G = build_graph() if graph is None else graph
     if requester_id not in G:
         return {cid: 0.0 for cid in candidate_ids}
     scores: dict[str, float] = {}
