@@ -406,7 +406,22 @@ def _recording_process(process, events: EventsLog):
             subject=kwargs.get("subject"),
             trace_id=trace_id,
         )
-        outcome = await process(**kwargs)
+        try:
+            outcome = await process(**kwargs)
+        except Exception as exc:
+            # Production has Procrastinate's job-retry loop around this same
+            # call (see worker/tasks.py's process_email try/except); the sim
+            # invokes the task function directly with no such wrapper. Without
+            # this, one bad model response aborts the whole multi-tick run
+            # instead of just failing the one turn, unlike production.
+            events.write(
+                "sim.process_email_failed",
+                sender_email=kwargs.get("sender_email"),
+                trace_id=trace_id,
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
+            return
         events.write(
             "sim.process_email_completed",
             sender_email=kwargs.get("sender_email"),
