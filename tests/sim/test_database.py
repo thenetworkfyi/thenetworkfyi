@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import os
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -105,3 +106,59 @@ def test_provision_sim_database_keep_retains_database(monkeypatch):
 
     assert admin_engine.statements == ['CREATE DATABASE "sim_keep123"']
     assert admin_engine.disposed is True
+
+
+def test_provision_sim_database_dumps_before_cleanup(monkeypatch, tmp_path):
+    admin_engine = FakeAdminEngine()
+    dump = Mock()
+    monkeypatch.setattr(
+        sim_database, "create_engine", lambda *_args, **_kwargs: admin_engine
+    )
+    monkeypatch.setattr(sim_database, "_upgrade_database", lambda: None)
+    monkeypatch.setattr(sim_database, "_dump_database", dump)
+    dump_path = tmp_path / "database.dump"
+
+    def assert_dump_happens_before_drop(*_args) -> None:
+        assert admin_engine.statements == ['CREATE DATABASE "sim_dump123"']
+
+    dump.side_effect = assert_dump_happens_before_drop
+
+    with sim_database.provision_sim_database(
+        "sim_dump123", dump_path=lambda: dump_path
+    ):
+        pass
+
+    dump.assert_called_once_with("sim_dump123", dump_path)
+    assert admin_engine.statements == [
+        'CREATE DATABASE "sim_dump123"',
+        'DROP DATABASE "sim_dump123" WITH (FORCE)',
+    ]
+
+
+def test_dump_database_uses_custom_format_and_password_environment(
+    monkeypatch, tmp_path
+):
+    run = Mock()
+    monkeypatch.setattr(sim_database.subprocess, "run", run)
+    destination = tmp_path / "run" / "database.dump"
+
+    sim_database._dump_database("sim_dump123", destination)
+
+    assert destination.parent.is_dir()
+    command = run.call_args.args[0]
+    assert command == [
+        "pg_dump",
+        "--format=custom",
+        "--file",
+        str(destination),
+        "--host",
+        get_settings().postgres_host,
+        "--port",
+        str(get_settings().postgres_port),
+        "--username",
+        get_settings().postgres_user,
+        "sim_dump123",
+    ]
+    assert run.call_args.kwargs["check"] is True
+    assert run.call_args.kwargs["env"]["PGPASSWORD"] == get_settings().postgres_password
+    assert run.call_args.kwargs["env"].get("PATH") == os.environ.get("PATH")
