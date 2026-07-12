@@ -181,8 +181,12 @@ clarification, consent, and dormancy behaviors are unchanged.
 For a user-run end-to-end evaluation against a local pgvector PostgreSQL instance:
 
 ```bash
-uv run sim run --real-process --llm-personas --ticks 6 --message-budget 6
+uv run sim run --real-process --llm-personas --ticks 6 --message-budget 6 --proactive-every 1
 ```
+
+`--proactive-every` defaults to `0` (disabled). Omitting it means the hourly proactive
+scans never fire during the run, so dormant-user outcomes that depend on them (e.g. Omar
+Feld's rematch) will not be exercised.
 
 Use [simulation-review.md](simulation-review.md) to conduct either an isolated run review or
 a comparison with a compatible baseline, interpret the artifacts and score tiers, inspect
