@@ -684,6 +684,10 @@ async def test_propose_introduction_proactive_rejects_sender_as_target():
     assert result["status"] == "error"
     assert result["reason"] == "self_introduction"
     assert "no consent request was sent" in result["note"]
+    # regression: the refusal carries a machine-actionable correction so the
+    # model can retry once with the counterpart instead of stalling the pair
+    assert "Retry once" in result["hint"]
+    assert result["expected_other_person_id"] == "user-bob"
     propose.assert_not_called()
 
 
@@ -705,6 +709,7 @@ async def test_propose_introduction_proactive_rejects_unrelated_third_id():
     assert result["status"] == "error"
     assert result["reason"] == "outside_proactive_pair"
     assert "no consent request was sent" in result["note"]
+    assert result["expected_other_person_id"] == "user-bob"
     propose.assert_not_called()
 
 
