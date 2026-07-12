@@ -791,6 +791,7 @@ async def propose_introduction(
                 ctx.deps.settings.introduction_request_window_seconds
             ),
             decline_cooldown_days=ctx.deps.settings.consent_decline_cooldown_days,
+            queue_on_cap=ctx.deps.is_proactive,
         )
         if result.get("status") == "proposed":
             ctx.deps.server_side_send_count += 2
