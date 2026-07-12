@@ -215,11 +215,14 @@ def propose_pair(
                     }
 
         if max_outstanding_requests_per_person > 0:
-            for person_id, counterpart_id in ((low, high), (high, low)):
+            # Unlike the window cap below, this one is never exempted by a fresh
+            # counterpart's lack of consent history: it bounds simultaneously
+            # *open* (unresolved) requests, which is what actually piles up in a
+            # recipient's inbox as unrelated fresh proposers each get a pass.
+            for person_id in (low, high):
                 if (
                     _outstanding_request_count(session, person_id)
                     >= max_outstanding_requests_per_person
-                    and _has_consent_history(session, counterpart_id)
                 ):
                     return {
                         "status": "deferred",
