@@ -526,6 +526,39 @@ def test_fresh_participant_first_proposal_is_not_deferred_by_a_saturated_counter
     assert send.call_count == 2
 
 
+def test_fresh_participant_is_still_deferred_by_a_saturated_counterparts_outstanding_cap():
+    """Unlike the window cap above, a fresh proposer must NOT bypass a
+    counterpart's saturated outstanding-request cap: those are simultaneously
+    open, unresolved requests, and a stream of unrelated fresh proposers each
+    getting a pass is exactly what piles up in the recipient's inbox."""
+    session = FakeSession(
+        people={
+            "omar": Person(id="omar", name="Omar", email="omar@example.com"),
+            "priya": Person(id="priya", name="Priya", email="priya@example.com"),
+        },
+        outstanding_proposals=[
+            proposal(person_a_id="priya", person_b_id=f"near-duplicate-{number}")
+            for number in range(3)
+        ],
+    )
+
+    with patch("thenetwork.introductions.send_reply") as send:
+        result = propose_pair(
+            sender_person_id="omar",
+            other_person_id="priya",
+            sender_gist="builds storage systems",
+            other_gist="operates distributed databases",
+            session_factory=factory(session),
+        )
+
+    assert result == {
+        "status": "deferred",
+        "reason": "recipient_outstanding_request_cap",
+        "limit": 3,
+    }
+    send.assert_not_called()
+
+
 def test_proposal_notifications_contain_only_supplied_gists_not_identity_data():
     session = FakeSession(people=people())
 
