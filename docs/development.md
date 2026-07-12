@@ -71,6 +71,9 @@ under `alembic/versions/`.
 
 - `pytest -m "not integration"` is what CI runs - no DB available, so any DB-backed test
   must be marked `integration` (marker declared in `pyproject.toml`).
+- `pytest -m "integration and not live_model"` runs the database-backed integration
+  tests without running scenarios that call a real model. Use `pytest -m live_model`
+  only for deliberate, credentialed live-model runs.
 - `tests/conftest.py` fixtures:
   - `seeded_people` - in-memory `Person` objects, no DB.
   - `pg_engine` (session-scoped) - connects to `TEST_DATABASE_URL` (default
@@ -118,19 +121,9 @@ POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=5432 \
 ```
 
 The printed run directory contains `events.jsonl`, `audit.jsonl`, `all-mail.mbox`, and
-`transcript.md`. Inside a fresh dev-loop Incus box, install and initialize PostgreSQL
-entirely in the box before running the same command:
-
-```bash
-sudo apt-get update
-sudo apt-get install -y postgresql postgresql-contrib postgresql-16-pgvector
-sudo -u postgres psql -c "CREATE ROLE network LOGIN PASSWORD 'network' CREATEDB"
-sudo -u postgres psql template1 -c "CREATE EXTENSION vector"
-sudo -u postgres createdb -O network network_db
-POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=5432 \
-  POSTGRES_USER=network POSTGRES_PASSWORD=network POSTGRES_DB=network_db \
-  uv run sim intro-flow --runs-dir runs/intro-flow
-```
+`transcript.md`. On teardown, the run provisions a disposable database, migrates it, and
+(`thenetwork/sim/run/database.py`) shells out to whatever `pg_dump` is first on `PATH` to
+dump it into the run directory before dropping it.
 
 ### Population situations
 
