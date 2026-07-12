@@ -33,6 +33,7 @@ from thenetwork.sim.run.recorder import (
     Clock,
     EventsLog,
     SimRunArtifacts,
+    _record_delivered_message,
     create_run_artifacts,
 )
 from thenetwork.sim.scoring.scoring import (
@@ -106,7 +107,10 @@ async def _record_intro_flow(
     artifacts = create_run_artifacts(runs_dir, clock=clock)
     artifacts.run_dir.mkdir(parents=True, exist_ok=False)
     events = EventsLog(artifacts.events_path)
-    post_office = SimPostOffice(mbox_path=artifacts.mbox_path)
+    post_office = SimPostOffice(
+        mbox_path=artifacts.mbox_path,
+        on_deliver=_record_delivered_message(events),
+    )
     alice, bob = _seed_personas()
 
     artifacts.config_path.write_text(

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -299,6 +299,136 @@ async def test_real_process_runs_capture_isolated_traceable_audit_logs(
     assert first.audit_path.read_text() != ""
     assert second.audit_path.read_text() != ""
     assert capsys.readouterr().err == ""
+
+
+@pytest.mark.asyncio
+async def test_run_recorder_logs_complete_inbound_and_outbound_messages(tmp_path):
+    from thenetwork.email.outbound import send_reply
+
+    persona = PersonaConfig(
+        name="Alice",
+        email="alice@example.test",
+        goal="Find a collaborator.",
+        stop_condition="A connection is made.",
+        agent_address="join@example.test",
+    )
+    settings = MagicMock(
+        smtp_host="smtp.example.test",
+        smtp_port=587,
+        smtp_account="agent@example.test",
+        smtp_password="secret",
+        email_from="agent@example.test",
+        imap_account="join@example.test",
+        growth_footer_enabled=False,
+    )
+
+    async def reply(**kwargs):
+        send_reply(
+            to_address=kwargs["sender_email"],
+            subject="A possible connection",
+            body_text="Here is why you may fit.",
+        )
+
+    with patch("thenetwork.email.outbound.get_settings", return_value=settings):
+        artifacts = await SimRunRecorder(runs_dir=tmp_path).run(
+            (TinyPersonEmailAdapter(ScriptedTinyPerson("Inbound details."), persona),),
+            SimRunConfig(
+                scenario="message-log",
+                ticks=1,
+                proactive_every=None,
+                personas=(persona,),
+            ),
+            process=reply,
+        )
+
+    deliveries = [
+        json.loads(line)
+        for line in artifacts.events_path.read_text().splitlines()
+        if json.loads(line)["event"] == "sim.message_delivered"
+    ]
+
+    assert [delivery["direction"] for delivery in deliveries] == [
+        "persona->agent",
+        "agent->persona",
+    ]
+    assert [(delivery["subject"], delivery["body"]) for delivery in deliveries] == [
+        ("Simulation tick 1", "Inbound details.\n"),
+        ("A possible connection", "Here is why you may fit.\n"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_real_process_run_logs_each_deferred_proactive_trigger(tmp_path):
+    persona = PersonaConfig(
+        name="Alice",
+        email="alice@example.test",
+        goal="Find a collaborator.",
+        stop_condition="A connection is made.",
+        agent_address="join@example.test",
+    )
+
+    async def opportunity_scan(_timestamp: int) -> None:
+        from thenetwork.worker import proactive
+
+        proactive.process_email.defer(
+            sender_email="alice@example.test",
+            subject="[Proactive] Potential connection",
+            body="[System trigger] Opaque candidate id: person-2.",
+            trace_id="opportunity-trace",
+        )
+
+    async def match_scan(_timestamp: int) -> None:
+        from thenetwork.worker import proactive
+
+        proactive.process_email.defer(
+            sender_email="alice@example.test",
+            subject="[Proactive] New matching signal",
+            body="[System match] Person person-1: sanitized gist.",
+            trace_id="match-trace",
+        )
+
+    with (
+        patch("thenetwork.sim.run.recorder.process_email.func", new=AsyncMock()),
+        patch(
+            "thenetwork.sim.run.loop.proactive.scan_for_opportunities",
+            new=opportunity_scan,
+        ),
+        patch(
+            "thenetwork.sim.run.loop.proactive.scan_for_matches",
+            new=match_scan,
+        ),
+    ):
+        artifacts = await SimRunRecorder(runs_dir=tmp_path).run(
+            (TinyPersonEmailAdapter(ScriptedTinyPerson("Inbound details."), persona),),
+            SimRunConfig(
+                scenario="proactive-trigger-log",
+                ticks=1,
+                proactive_every=1,
+                personas=(persona,),
+                mock_process=False,
+            ),
+        )
+
+    triggers = [
+        json.loads(line)
+        for line in artifacts.events_path.read_text().splitlines()
+        if json.loads(line)["event"] == "sim.proactive_job_deferred"
+    ]
+
+    assert triggers == [
+        {
+            "body": "[System trigger] Opaque candidate id: person-2.",
+            "event": "sim.proactive_job_deferred",
+            "subject": "[Proactive] Potential connection",
+            "trace_id": "opportunity-trace",
+        },
+        {
+            "body": "[System match] Person person-1: sanitized gist.",
+            "event": "sim.proactive_job_deferred",
+            "subject": "[Proactive] New matching signal",
+            "trace_id": "match-trace",
+        },
+    ]
 
 
 @pytest.mark.asyncio
