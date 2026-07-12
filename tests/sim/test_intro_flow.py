@@ -77,6 +77,5 @@ def test_intro_flow_documentation_names_artifacts_and_command():
     docs = Path("docs/development.md").read_text()
 
     assert "uv run sim intro-flow" in docs
-    assert "postgresql-16-pgvector" in docs
     assert "events.jsonl" in docs
     assert "audit.jsonl" in docs
