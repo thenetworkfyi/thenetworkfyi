@@ -3853,6 +3853,7 @@ dependencies = [
     { name = "spacy" },
     { name = "sqlmodel" },
     { name = "structlog" },
+    { name = "tenacity" },
 ]
 
 [package.optional-dependencies]
@@ -3894,6 +3895,7 @@ requires-dist = [
     { name = "spacy", specifier = ">=3.7" },
     { name = "sqlmodel", specifier = ">=0.0.21" },
     { name = "structlog", specifier = ">=24.1" },
+    { name = "tenacity", specifier = ">=9.0" },
 ]
 provides-extras = ["content-scan", "dev"]
 
