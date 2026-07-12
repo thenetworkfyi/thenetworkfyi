@@ -316,7 +316,10 @@ async def test_propose_introduction_audits_run_proposal_cap_deferred(caplog):
         ctx, other_person_id="bob-id", sender_gist="a gist", other_gist="b gist"
     )
 
-    assert result == {"status": "deferred", "reason": "run_proposal_cap", "limit": 1}
+    assert result["status"] == "deferred"
+    assert result["reason"] == "run_proposal_cap"
+    assert result["limit"] == 1
+    assert "no consent request was sent" in result["note"]
     events = _events(caplog)
     completed = _tool_completed_event(events, "propose_introduction")
     assert completed["tool_outcome"] == "deferred"
