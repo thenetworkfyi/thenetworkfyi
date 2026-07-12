@@ -2,9 +2,17 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
+import httpx
 from pydantic_ai import Agent
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_random_exponential,
+)
 
 from thenetwork.sim.personas.persona import PersonaConfig
 
@@ -74,8 +82,17 @@ class LLMTinyPerson:
     def listen_and_act(self, stimulus: str, *args: Any, **kwargs: Any) -> Any:
         raise RuntimeError("LLMTinyPerson is async-only; use alisten_and_act")
 
+    @retry(
+        retry=retry_if_exception_type((json.JSONDecodeError, httpx.HTTPError)),
+        stop=stop_after_attempt(3),
+        wait=wait_random_exponential(multiplier=1, max=10),
+        reraise=True,
+    )
+    async def _run_agent(self, stimulus: str) -> Any:
+        return await self._agent.run(stimulus, message_history=self._history)
+
     async def alisten_and_act(self, stimulus: str) -> dict[str, str]:
-        result = await self._agent.run(stimulus, message_history=self._history)
+        result = await self._run_agent(stimulus)
         self._history = result.all_messages()
         text = result.output.strip()
         if _is_pass_sentinel(text):

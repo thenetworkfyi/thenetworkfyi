@@ -28,6 +28,7 @@ dependencies = [
     "pydantic-evals>=0.0.14",
     "presidio-analyzer>=2.2",
     "spacy>=3.7",
+    "tenacity>=9.0",
 ]
 
 [project.optional-dependencies]
