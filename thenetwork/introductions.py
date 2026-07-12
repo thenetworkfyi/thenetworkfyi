@@ -104,22 +104,6 @@ def request_load(session, person_id: str, *, since: datetime) -> int:
     )
 
 
-def _has_consent_history(session, person_id: str) -> bool:
-    """Whether a person has ever been party to any introduction-consent row.
-
-    Distinguishes a genuinely fresh participant (first-ever proposal) from one
-    who simply hasn't requested recently, so a saturated counterpart's
-    window/outstanding cap does not block a first proposal on their behalf.
-    """
-    record = session.exec(
-        select(IntroductionConsent).where(
-            (IntroductionConsent.person_a_id == person_id)
-            | (IntroductionConsent.person_b_id == person_id)
-        )
-    ).first()
-    return record is not None
-
-
 def recently_surfaced_pairs(
     session, *, since: datetime
 ) -> set[tuple[str, str]]:
@@ -201,12 +185,16 @@ def propose_pair(
             proposal = None
 
         if max_requests_per_person_in_window > 0 and request_window_seconds > 0:
+            # Unconditional: this bounds a recipient's own inbound volume within
+            # the window regardless of counterpart freshness. A per-counterpart
+            # freshness exemption here would let a stream of distinct
+            # never-before-consented proposers each get a pass against the same
+            # saturated recipient, defeating the cap entirely.
             since = _utcnow() - timedelta(seconds=request_window_seconds)
-            for person_id, counterpart_id in ((low, high), (high, low)):
+            for person_id in (low, high):
                 if (
                     _recent_request_count(session, person_id, since=since)
                     >= max_requests_per_person_in_window
-                    and _has_consent_history(session, counterpart_id)
                 ):
                     return {
                         "status": "deferred",
@@ -215,10 +203,8 @@ def propose_pair(
                     }
 
         if max_outstanding_requests_per_person > 0:
-            # Unlike the window cap below, this one is never exempted by a fresh
-            # counterpart's lack of consent history: it bounds simultaneously
-            # *open* (unresolved) requests, which is what actually piles up in a
-            # recipient's inbox as unrelated fresh proposers each get a pass.
+            # Same reasoning: bounds simultaneously *open* (unresolved) requests
+            # unconditionally, regardless of counterpart freshness.
             for person_id in (low, high):
                 if (
                     _outstanding_request_count(session, person_id)
