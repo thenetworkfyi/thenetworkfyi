@@ -1,3 +1,4 @@
+import re
 from contextlib import contextmanager
 from datetime import timedelta
 from functools import partial
@@ -69,11 +70,31 @@ class FakeSession:
         self.recent_proposals = recent_proposals or []
 
     def exec(self, query):
-        rendered = str(query)
-        if "created_at >=" in rendered:
-            return Result(None, self.recent_proposals)
+        rendered = str(query.compile(compile_kwargs={"literal_binds": True}))
+        match = re.search(r"person_a_id = '([^']+)'", rendered)
+        person_id = match.group(1) if match else None
         if "status IN" in rendered:
-            return Result(None, self.outstanding_proposals)
+            rows = [
+                r
+                for r in self.outstanding_proposals
+                if person_id in (r.person_a_id, r.person_b_id)
+            ]
+            return Result(None, rows)
+        if "created_at >=" in rendered:
+            rows = [
+                r
+                for r in self.recent_proposals
+                if person_id in (r.person_a_id, r.person_b_id)
+            ]
+            return Result(None, rows)
+        if " OR " in rendered:
+            history = list(self.recent_proposals) + list(self.outstanding_proposals)
+            if self.proposal is not None:
+                history.append(self.proposal)
+            rows = [
+                r for r in history if person_id in (r.person_a_id, r.person_b_id)
+            ]
+            return Result(rows[0] if rows else None, rows)
         return Result(self.proposal, self.outstanding_proposals)
 
     def get(self, _model, person_id):
@@ -440,6 +461,13 @@ def test_proposal_defers_when_a_recipient_reached_the_windowed_request_cap():
                 status="introduced",
             )
             for number in range(3)
+        ]
+        + [
+            proposal(
+                person_a_id="bob",
+                person_b_id="someone-else",
+                status="introduced",
+            )
         ],
     )
 
@@ -461,6 +489,41 @@ def test_proposal_defers_when_a_recipient_reached_the_windowed_request_cap():
         "limit": 3,
     }
     send.assert_not_called()
+
+
+def test_fresh_participant_first_proposal_is_not_deferred_by_a_saturated_counterparts_window_cap():
+    """Reproduces the starvation case: the counterpart's window is saturated by
+    unrelated prior activity, but the other person has never been party to any
+    introduction-consent row, so their first proposal must go through."""
+    session = FakeSession(
+        people={
+            "omar": Person(id="omar", name="Omar", email="omar@example.com"),
+            "priya": Person(id="priya", name="Priya", email="priya@example.com"),
+        },
+        recent_proposals=[
+            proposal(
+                person_a_id="priya",
+                person_b_id=f"near-duplicate-{number}",
+                status="introduced",
+            )
+            for number in range(3)
+        ],
+    )
+
+    with patch("thenetwork.introductions.send_reply") as send:
+        result = propose_pair(
+            sender_person_id="priya",
+            other_person_id="omar",
+            sender_gist="builds storage systems",
+            other_gist="operates distributed databases",
+            session_factory=factory(session),
+            max_outstanding_requests_per_person=0,
+            max_requests_per_person_in_window=3,
+            request_window_seconds=3_600,
+        )
+
+    assert result == {"status": "proposed"}
+    assert send.call_count == 2
 
 
 def test_proposal_notifications_contain_only_supplied_gists_not_identity_data():

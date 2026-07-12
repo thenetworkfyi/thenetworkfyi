@@ -104,6 +104,22 @@ def request_load(session, person_id: str, *, since: datetime) -> int:
     )
 
 
+def _has_consent_history(session, person_id: str) -> bool:
+    """Whether a person has ever been party to any introduction-consent row.
+
+    Distinguishes a genuinely fresh participant (first-ever proposal) from one
+    who simply hasn't requested recently, so a saturated counterpart's
+    window/outstanding cap does not block a first proposal on their behalf.
+    """
+    record = session.exec(
+        select(IntroductionConsent).where(
+            (IntroductionConsent.person_a_id == person_id)
+            | (IntroductionConsent.person_b_id == person_id)
+        )
+    ).first()
+    return record is not None
+
+
 def recently_surfaced_pairs(
     session, *, since: datetime
 ) -> set[tuple[str, str]]:
@@ -186,10 +202,11 @@ def propose_pair(
 
         if max_requests_per_person_in_window > 0 and request_window_seconds > 0:
             since = _utcnow() - timedelta(seconds=request_window_seconds)
-            for person_id in (low, high):
+            for person_id, counterpart_id in ((low, high), (high, low)):
                 if (
                     _recent_request_count(session, person_id, since=since)
                     >= max_requests_per_person_in_window
+                    and _has_consent_history(session, counterpart_id)
                 ):
                     return {
                         "status": "deferred",
@@ -198,10 +215,11 @@ def propose_pair(
                     }
 
         if max_outstanding_requests_per_person > 0:
-            for person_id in (low, high):
+            for person_id, counterpart_id in ((low, high), (high, low)):
                 if (
                     _outstanding_request_count(session, person_id)
                     >= max_outstanding_requests_per_person
+                    and _has_consent_history(session, counterpart_id)
                 ):
                     return {
                         "status": "deferred",
