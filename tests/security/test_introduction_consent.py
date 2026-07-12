@@ -491,10 +491,12 @@ def test_proposal_defers_when_a_recipient_reached_the_windowed_request_cap():
     send.assert_not_called()
 
 
-def test_fresh_participant_first_proposal_is_not_deferred_by_a_saturated_counterparts_window_cap():
-    """Reproduces the starvation case: the counterpart's window is saturated by
-    unrelated prior activity, but the other person has never been party to any
-    introduction-consent row, so their first proposal must go through."""
+def test_fresh_counterpart_is_still_deferred_by_a_saturated_recipients_window_cap():
+    """A saturated recipient's own inbound volume is bounded unconditionally: a
+    fresh counterpart who has never been party to any introduction-consent row
+    must not exempt the recipient's window cap, or a stream of distinct
+    never-before-consented proposers could bypass it indefinitely against the
+    same recipient."""
     session = FakeSession(
         people={
             "omar": Person(id="omar", name="Omar", email="omar@example.com"),
@@ -522,8 +524,12 @@ def test_fresh_participant_first_proposal_is_not_deferred_by_a_saturated_counter
             request_window_seconds=3_600,
         )
 
-    assert result == {"status": "proposed"}
-    assert send.call_count == 2
+    assert result == {
+        "status": "deferred",
+        "reason": "recipient_consent_request_cap",
+        "limit": 3,
+    }
+    send.assert_not_called()
 
 
 def test_fresh_participant_is_still_deferred_by_a_saturated_counterparts_outstanding_cap():
