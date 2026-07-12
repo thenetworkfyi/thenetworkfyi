@@ -116,6 +116,11 @@ class Settings(BaseSettings):
     introduction_max_outstanding_requests_per_person: int = 3
     introduction_max_requests_per_person_in_window: int = 3
     introduction_request_window_seconds: int = 86_400
+    # Proactive-only: candidates for one recipient are batched into a single
+    # digest email instead of one consent-request pair at a time (see
+    # introductions.queue_intro_candidate/flush_pending_digests). A hard
+    # ceiling of 4 is enforced in code regardless of this value.
+    introduction_digest_size: int = 3
 
     # Admin channel: allowlisted senders + PGP/MIME-signed request (see admin/auth.py)
     admin_emails: list[str] = []
