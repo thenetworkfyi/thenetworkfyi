@@ -184,5 +184,13 @@ async def run_sim(
 
     if database_name is None:
         return await record()
-    with provision_sim_database(database_name, keep=keep_db):
-        return await record()
+    artifacts = None
+    with provision_sim_database(
+        database_name,
+        keep=keep_db,
+        dump_path=lambda: (
+            None if artifacts is None else artifacts.run_dir / "database.dump"
+        ),
+    ):
+        artifacts = await record()
+    return artifacts

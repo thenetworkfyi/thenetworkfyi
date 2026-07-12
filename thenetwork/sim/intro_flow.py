@@ -79,13 +79,21 @@ async def run_intro_flow_sim(
 ) -> SimRunArtifacts:
     """Run the full introduction lifecycle without an LLM or external mail service."""
     database_name = new_sim_database_name()
-    with provision_sim_database(database_name, keep=keep_db):
-        return await _record_intro_flow(
+    artifacts = None
+    with provision_sim_database(
+        database_name,
+        keep=keep_db,
+        dump_path=lambda: (
+            None if artifacts is None else artifacts.run_dir / "database.dump"
+        ),
+    ):
+        artifacts = await _record_intro_flow(
             runs_dir=runs_dir,
             database_name=database_name,
             progress=progress,
             clock=clock,
         )
+    return artifacts
 
 
 async def _record_intro_flow(

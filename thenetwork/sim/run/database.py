@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
+from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
@@ -28,7 +31,12 @@ def new_sim_database_name() -> str:
 
 
 @contextmanager
-def provision_sim_database(database_name: str, *, keep: bool = False):
+def provision_sim_database(
+    database_name: str,
+    *,
+    keep: bool = False,
+    dump_path: Callable[[], Path | None] | None = None,
+):
     """Create, migrate, select, and eventually drop a simulation database."""
     if (
         _DATABASE_NAME_PATTERN.fullmatch(database_name) is None
@@ -82,12 +90,42 @@ def provision_sim_database(database_name: str, *, keep: bool = False):
     finally:
         try:
             if created and not keep:
-                with admin_engine.connect() as connection:
-                    connection.execute(
-                        text(f"DROP DATABASE {quoted_name} WITH (FORCE)")
-                    )
+                try:
+                    if dump_path is not None:
+                        destination = dump_path()
+                        if destination is not None:
+                            _dump_database(database_name, destination)
+                finally:
+                    with admin_engine.connect() as connection:
+                        connection.execute(
+                            text(f"DROP DATABASE {quoted_name} WITH (FORCE)")
+                        )
         finally:
             admin_engine.dispose()
+
+
+def _dump_database(database_name: str, destination: Path) -> None:
+    """Write a portable custom-format dump of a disposable simulation database."""
+    settings = get_settings()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    environment = os.environ | {"PGPASSWORD": settings.postgres_password}
+    subprocess.run(
+        [
+            "pg_dump",
+            "--format=custom",
+            "--file",
+            str(destination),
+            "--host",
+            settings.postgres_host,
+            "--port",
+            str(settings.postgres_port),
+            "--username",
+            settings.postgres_user,
+            database_name,
+        ],
+        check=True,
+        env=environment,
+    )
 
 
 def _project_root() -> Path:
