@@ -143,7 +143,12 @@ async def test_real_process_run_uses_and_records_per_run_database(tmp_path):
         )
 
     assert artifacts is expected
-    provision.assert_called_once_with(database_name, keep=True)
+    provision.assert_called_once()
+    assert provision.call_args.args == (database_name,)
+    assert provision.call_args.kwargs["keep"] is True
+    assert (
+        provision.call_args.kwargs["dump_path"]() == expected.run_dir / "database.dump"
+    )
     recorded_config = record.await_args.args[1]
     assert recorded_config.mock_process is False
     assert recorded_config.database_name == database_name
