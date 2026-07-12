@@ -81,6 +81,12 @@ async def test_scan_enqueues_high_proximity_pair():
         if c.kwargs["sender_email"] == "alice@test.com"
     )
     assert call.kwargs["proactive_candidate_id"] == "bob"
+    # the trigger body labels who the agent acts for and which id to pass,
+    # so the model does not guess and hand back the sender's own id
+    body = call.kwargs["body"]
+    assert "acting for person alice" in body
+    assert "other_person_id=bob" in body
+    assert "never the id of the person you are acting for" in body
 
 
 @pytest.mark.asyncio
@@ -194,14 +200,11 @@ def _rematch_session(recent, persons):
     s = MagicMock()
     s.__enter__ = MagicMock(return_value=s)
     s.__exit__ = MagicMock(return_value=False)
+
     def execute(statement):
         result = MagicMock()
         query = str(statement)
-        result.all.return_value = (
-            recent
-            if "memories" in query
-            else []
-        )
+        result.all.return_value = recent if "memories" in query else []
         result.first.return_value = None
         return result
 
@@ -246,6 +249,11 @@ async def test_rematch_enqueues_new_match_against_standing_note():
     # the bound counterpart is the newly-arrived person (Q), not the dormant
     # standing-note owner (P) who is the effective sender
     assert kwargs["proactive_candidate_id"] == "Q"
+    # the body labels the recipient's role and names the counterpart id to
+    # pass, so the model does not offer the sender's own id back
+    assert "acting for person P" in kwargs["body"]
+    assert "other_person_id=Q" in kwargs["body"]
+    assert "never pass their id" in kwargs["body"]
 
 
 @pytest.mark.asyncio

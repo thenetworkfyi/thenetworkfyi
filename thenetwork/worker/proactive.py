@@ -96,9 +96,7 @@ async def scan_for_opportunities(timestamp: int) -> None:
 
     s = get_settings()
     now = datetime.now(timezone.utc)
-    since = now - timedelta(
-        seconds=s.introduction_request_window_seconds
-    )
+    since = now - timedelta(seconds=s.introduction_request_window_seconds)
 
     with get_session() as session:
         people = session.exec(
@@ -141,8 +139,14 @@ async def scan_for_opportunities(timestamp: int) -> None:
                             "sender_email": email_by_id[pid_a],
                             "subject": "[Proactive] Potential connection",
                             "body": (
-                                f"[System trigger] You have a high-proximity match "
-                                f"(score={score:.2f}). Consider reaching out."
+                                f"[System trigger] You are acting for person "
+                                f"{pid_a}, who has a high-proximity match "
+                                f"(score={score:.2f}) with person {pid_b}. "
+                                f"Consider reaching out. If you propose an "
+                                f"introduction, pass other_person_id={pid_b} "
+                                f"(the counterpart) - never the id of the "
+                                f"person you are acting for; their side of "
+                                f"the pair is derived server-side."
                             ),
                             "sender_authenticated": True,
                             "is_proactive": True,
@@ -188,9 +192,7 @@ async def scan_for_matches(timestamp: int) -> None:
     """
     s = get_settings()
     now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(
-        minutes=s.proactive_rematch_lookback_minutes
-    )
+    cutoff = now - timedelta(minutes=s.proactive_rematch_lookback_minutes)
 
     with get_session() as session:
         recent = session.exec(
@@ -269,10 +271,14 @@ async def scan_for_matches(timestamp: int) -> None:
                         f"(similarity={m.similarity:.2f}).\n\n"
                         f"Person {standing}: {m.gist}\n"
                         f"Person {arrival}: {arrival_mem.gist}\n\n"
-                        "If these two share specific, real common ground, "
-                        "propose an introduction with `propose_introduction`, "
-                        "using only what the gists support. If the overlap is thin "
-                        "or you are unsure, do nothing."
+                        f"You are acting for person {standing}, the recipient "
+                        "of this trigger. Their side of the pair is derived "
+                        "server-side, so never pass their id to "
+                        "`propose_introduction`. If these two share specific, "
+                        "real common ground, propose an introduction with "
+                        f"`propose_introduction` and other_person_id={arrival} "
+                        "(the counterpart), using only what the gists support. "
+                        "If the overlap is thin or you are unsure, do nothing."
                     )
                     pair_key: tuple[str, str] = tuple(sorted(pair))  # type: ignore[assignment]
                     if pair_key in surfaced_pairs:
