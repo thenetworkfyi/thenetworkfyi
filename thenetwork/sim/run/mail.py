@@ -24,6 +24,7 @@ from thenetwork.worker.tasks import process_email
 
 
 ProcessEmailCallable = Callable[..., Awaitable[None]]
+SimMessageObserver = Callable[[EmailMessage, "SimMessageMeta | None"], None]
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,7 @@ class SimPostOffice:
     """In-memory mailbox keyed by normalized recipient address."""
 
     mbox_path: Path | None = None
+    on_deliver: SimMessageObserver | None = None
     _messages: dict[str, list[EmailMessage]] = field(
         default_factory=lambda: defaultdict(list)
     )
@@ -51,6 +53,8 @@ class SimPostOffice:
         message = deepcopy(message)
         if meta is not None:
             _stamp_sim_headers(message, meta)
+        if self.on_deliver is not None:
+            self.on_deliver(message, meta)
         self._append_to_mbox(message)
         recipients = _recipient_addresses(message)
         if not recipients:

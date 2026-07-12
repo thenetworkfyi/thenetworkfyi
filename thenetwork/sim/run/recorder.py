@@ -20,7 +20,11 @@ from thenetwork.db.models import IntroductionConsent, Memory, Person
 from thenetwork.db.session import get_session
 from thenetwork.security.sender_identifier import optional_sender_identifier
 from thenetwork.sim.run.loop import ProgressCallable, SimTickLoop
-from thenetwork.sim.run.mail import _extract_body, render_transcript
+from thenetwork.sim.run.mail import (
+    SimMessageMeta,
+    _extract_body,
+    render_transcript,
+)
 from thenetwork.sim.personas.persona import PersonaConfig, TinyPersonEmailAdapter
 from thenetwork.sim.personas.population import SimSchedule
 from thenetwork.sim.scoring.scoring import (
@@ -161,6 +165,7 @@ class SimRunRecorder:
                 proactive_every=config.proactive_every,
                 schedule=schedule,
                 progress=progress,
+                on_delivery=_record_delivered_message(events),
             )
             result = await loop.run(ticks=config.ticks)
             for tick in result.ticks:
@@ -395,6 +400,23 @@ def _mock_process(events: EventsLog):
         )
 
     return process
+
+
+def _record_delivered_message(events: EventsLog):
+    """Write complete synthetic mail only to a simulation run's event log."""
+
+    def record(message, meta: SimMessageMeta | None) -> None:
+        events.write(
+            "sim.message_delivered",
+            body=_extract_body(message),
+            direction=meta.direction if meta is not None else "agent->persona",
+            persona=meta.persona if meta is not None else None,
+            subject=message.get("Subject", ""),
+            tick=meta.tick if meta is not None else None,
+            trace_id=meta.trace_id if meta is not None else None,
+        )
+
+    return record
 
 
 def _recording_process(process, events: EventsLog):

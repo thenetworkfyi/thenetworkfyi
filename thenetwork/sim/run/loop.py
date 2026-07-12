@@ -13,6 +13,7 @@ from thenetwork.settings import get_settings
 from thenetwork.sim.personas.consent import intro_token, make_reply_thread_faithful
 from thenetwork.sim.run.mail import (
     ProcessEmailCallable,
+    SimMessageObserver,
     SimPostOffice,
     _extract_body,
     capture_outbound,
@@ -61,6 +62,7 @@ class SimTickLoop:
         rate_limit_per_hour: int = 10_000,
         schedule: SimSchedule | None = None,
         progress: ProgressCallable | None = None,
+        on_delivery: SimMessageObserver | None = None,
     ) -> None:
         if proactive_every is not None and proactive_every < 1:
             raise ValueError("proactive_every must be at least 1")
@@ -71,7 +73,9 @@ class SimTickLoop:
         self.rate_limit_per_hour = rate_limit_per_hour
         self.schedule = schedule or SimSchedule()
         self.progress = progress
-        self.post_office = SimPostOffice(mbox_path=run_dir / "all-mail.mbox")
+        self.post_office = SimPostOffice(
+            mbox_path=run_dir / "all-mail.mbox", on_deliver=on_delivery
+        )
 
     async def run(self, *, ticks: int) -> SimLoopResult:
         if ticks < 1:
