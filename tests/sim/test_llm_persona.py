@@ -1,3 +1,5 @@
+import pytest
+
 from pydantic_ai.models.test import TestModel
 
 from thenetwork.sim.personas.llm_persona import LLMTinyPerson, _PERSONA_PROMPT
@@ -54,14 +56,30 @@ async def test_llm_persona_writes_email_body_from_model_output():
     assert adapter.messages_sent == 1
 
 
-async def test_llm_persona_pass_sentinel_skips_send_and_preserves_budget():
-    person = LLMTinyPerson(_config(), TestModel(custom_output_text="PASS"))
+@pytest.mark.parametrize(
+    "output",
+    ["PASS", "PASS.", "PASSLKPASS", "PASSCousin, please introduce us."],
+)
+async def test_llm_persona_pass_sentinel_skips_send_and_preserves_budget(output: str):
+    person = LLMTinyPerson(_config(), TestModel(custom_output_text=output))
     adapter = TinyPersonEmailAdapter(person, _config())
 
     msg = await adapter.anext_email("Tick 2. Anything new?", tick=2)
 
     assert msg is None
     assert adapter.messages_sent == 0
+
+
+async def test_llm_persona_delivers_email_that_mentions_pass_mid_sentence():
+    body = "Could you pass this along to the team?"
+    person = LLMTinyPerson(_config(), TestModel(custom_output_text=body))
+    adapter = TinyPersonEmailAdapter(person, _config())
+
+    msg = await adapter.anext_email("Tick 2. Anything new?", tick=2)
+
+    assert msg is not None
+    assert msg.get_content().strip() == body
+    assert adapter.messages_sent == 1
 
 
 async def test_llm_persona_keeps_history_across_ticks():

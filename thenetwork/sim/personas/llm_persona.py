@@ -41,6 +41,12 @@ tick, reply with exactly {pass_sentinel} and nothing else.
 """
 
 
+def _is_pass_sentinel(text: str) -> bool:
+    """Recognize malformed sentinel replies without suppressing normal email text."""
+    first_line = text.split("\n", maxsplit=1)[0].strip()
+    return first_line.upper().startswith(PASS_SENTINEL)
+
+
 class LLMTinyPerson:
     """A conversational persona backed by a pydantic-ai agent.
 
@@ -72,6 +78,6 @@ class LLMTinyPerson:
         result = await self._agent.run(stimulus, message_history=self._history)
         self._history = result.all_messages()
         text = result.output.strip()
-        if text.strip(".! ").upper() == PASS_SENTINEL:
+        if _is_pass_sentinel(text):
             return {"content": ""}
         return {"content": text}
