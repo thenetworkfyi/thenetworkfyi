@@ -104,9 +104,7 @@ def request_load(session, person_id: str, *, since: datetime) -> int:
     )
 
 
-def recently_surfaced_pairs(
-    session, *, since: datetime
-) -> set[tuple[str, str]]:
+def recently_surfaced_pairs(session, *, since: datetime) -> set[tuple[str, str]]:
     """Return opaque pairs already handed to a proactive agent recently."""
     records = session.exec(
         select(ProactiveSurface).where(col(ProactiveSurface.surfaced_at) >= since)
@@ -296,6 +294,23 @@ def _visible_reply_lines(body: str) -> list[str]:
     ]
 
 
+def _reply_remainder(body: str) -> str:
+    """Sender-authored reply text beyond the decision line and consent tokens.
+
+    This is what the consent path would otherwise discard: visible lines minus
+    the matched decision word (if any) and any `[intro:...]` tokens.
+    """
+    lines = _visible_reply_lines(body)
+    if lines and _ACTION_RE.fullmatch(lines[0]):
+        lines = lines[1:]
+    kept = []
+    for line in lines:
+        stripped = _TOKEN_RE.sub("", line).strip()
+        if stripped:
+            kept.append(stripped)
+    return "\n".join(kept)
+
+
 def _reply_token(subject: str, body: str) -> str | None:
     """Find a consent token in the subject or a visible reply line."""
     match = _TOKEN_RE.search(subject)
@@ -328,6 +343,11 @@ def _send_fixed_reply(
 class ConsentReplyResult:
     handled: bool
     outcome: str | None = None
+    # Authenticated-participant reply text beyond the decision and token, so
+    # the worker can hand it to an agent run instead of discarding it. Always
+    # empty on rejected outcomes: only text from a verified participant in the
+    # pair may travel onward.
+    remainder: str = ""
 
 
 def process_consent_reply(
@@ -376,6 +396,8 @@ def process_consent_reply(
         if sender is None:
             raise RuntimeError("introduction participant no longer exists")
 
+        remainder = _reply_remainder(body)
+
         if action is None:
             _send_fixed_reply(
                 to_address=sender.email,
@@ -390,10 +412,14 @@ def process_consent_reply(
                 outcome="success",
                 consent_state=proposal.status,
             )
-            return ConsentReplyResult(handled=True, outcome="clarification_sent")
+            return ConsentReplyResult(
+                handled=True, outcome="clarification_sent", remainder=remainder
+            )
 
         if proposal.status == "revoked":
-            return ConsentReplyResult(handled=True, outcome=proposal.status)
+            return ConsentReplyResult(
+                handled=True, outcome=proposal.status, remainder=remainder
+            )
 
         if proposal.status == "declined":
             _send_fixed_reply(
@@ -402,7 +428,9 @@ def process_consent_reply(
                 body_text=CONSENT_ALREADY_DECLINED_REPLY,
                 trace_id=trace_id,
             )
-            return ConsentReplyResult(handled=True, outcome=proposal.status)
+            return ConsentReplyResult(
+                handled=True, outcome=proposal.status, remainder=remainder
+            )
 
         if action == "revoke":
             proposal.status = "revoked"
@@ -424,7 +452,9 @@ def process_consent_reply(
                 trace_id=trace_id,
             )
         elif proposal.status == "introduced":
-            return ConsentReplyResult(handled=True, outcome="introduced")
+            return ConsentReplyResult(
+                handled=True, outcome="introduced", remainder=remainder
+            )
         else:
             if sender_person_id == proposal.person_a_id:
                 proposal.person_a_consented = True
@@ -464,4 +494,4 @@ def process_consent_reply(
         outcome="success",
         consent_state=state,
     )
-    return ConsentReplyResult(handled=True, outcome=state)
+    return ConsentReplyResult(handled=True, outcome=state, remainder=remainder)

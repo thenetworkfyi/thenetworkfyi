@@ -211,6 +211,26 @@ def _send_first_contact_welcome_reply(
     return True
 
 
+def _consent_remainder_body(remainder: str, outcome: str | None) -> str:
+    """Frame consent-reply text the server path would otherwise discard.
+
+    The consent decision itself was already recorded and acknowledged with a
+    fixed reply before any model ran; only the sender's own additional text is
+    forwarded, so the agent can remember it or answer it without re-acting on
+    the consent decision.
+    """
+    return (
+        "[System note] This message was a reply to an introduction consent "
+        f"request. The server already recorded the decision (outcome: {outcome}) "
+        "and sent any fixed acknowledgment, so do not act on the consent "
+        "decision or acknowledge it again. The sender's reply also carried "
+        "their own additional text below - treat it as a normal inbound "
+        "message from them: remember new facts, answer a genuine question "
+        "briefly, or do nothing.\n\n"
+        f"{remainder}"
+    )
+
+
 _PROCESS_EMAIL_MAX_ATTEMPTS = 3
 
 
@@ -383,8 +403,16 @@ async def process_email(
             body=body,
             trace_id=trace_id,
         )
+        email_body = body
         if consent_result.handled:
-            return
+            # The decision is fully consumed; forward only an authenticated
+            # participant's own leftover text (never rejected-path content)
+            # so a substantive aside still reaches the agent.
+            if not consent_result.remainder or sender_user_id is None:
+                return
+            email_body = _consent_remainder_body(
+                consent_result.remainder, consent_result.outcome
+            )
 
         if not sender_authenticated and sender_user_id is None:
             audit_event(
@@ -398,7 +426,7 @@ async def process_email(
             "sender_user_id": sender_user_id,
             "sender_authenticated": sender_authenticated,
             "email_subject": subject,
-            "email_body": body,
+            "email_body": email_body,
             "sender_display_name": sender_display_name,
             "is_proactive": is_proactive,
         }
