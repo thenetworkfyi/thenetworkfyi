@@ -185,6 +185,11 @@ def propose_pair(
             proposal = None
 
         if max_requests_per_person_in_window > 0 and request_window_seconds > 0:
+            # Unconditional: this bounds a recipient's own inbound volume within
+            # the window regardless of counterpart freshness. A per-counterpart
+            # freshness exemption here would let a stream of distinct
+            # never-before-consented proposers each get a pass against the same
+            # saturated recipient, defeating the cap entirely.
             since = _utcnow() - timedelta(seconds=request_window_seconds)
             for person_id in (low, high):
                 if (
@@ -198,6 +203,8 @@ def propose_pair(
                     }
 
         if max_outstanding_requests_per_person > 0:
+            # Same reasoning: bounds simultaneously *open* (unresolved) requests
+            # unconditionally, regardless of counterpart freshness.
             for person_id in (low, high):
                 if (
                     _outstanding_request_count(session, person_id)

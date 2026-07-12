@@ -84,6 +84,28 @@ def _tool_result(result: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _introduction_result(result: dict[str, Any]) -> dict[str, Any]:
+    """Wrap a `propose_introduction` outcome for `_tool_result`.
+
+    Every status but `proposed` reads like a pending action if you only see
+    the tool name ("propose_introduction" ran, so *something* must have gone
+    out). Attach an explicit note so a reply-writing model doesn't need to
+    infer "no request was sent" from the status vocabulary alone.
+    """
+    if result.get("status") == "proposed":
+        return _tool_result(result)
+    return _tool_result(
+        {
+            **result,
+            "note": (
+                "no consent request was sent to either person for this call - "
+                "do not tell the sender an introduction request went out or "
+                "that opt-in requests will arrive"
+            ),
+        }
+    )
+
+
 def _trace_kwargs(trace_id: str | None) -> dict[str, str]:
     return {"trace_id": trace_id} if trace_id else {}
 
@@ -706,14 +728,14 @@ async def propose_introduction(
     """
     with audit_span("agent.tool", tool_name="propose_introduction"):
         if not ctx.deps.sender_authenticated or ctx.deps.sender_user_id is None:
-            return _tool_result(
+            return _introduction_result(
                 {
                     "status": "error",
                     "reason": "sender_not_authenticated",
                 }
             )
         if other_person_id == ctx.deps.sender_user_id:
-            return _tool_result(
+            return _introduction_result(
                 {
                     "status": "error",
                     "reason": "self_introduction",
@@ -723,7 +745,7 @@ async def propose_introduction(
             not ctx.deps.proactive_candidate_id
             or other_person_id != ctx.deps.proactive_candidate_id
         ):
-            return _tool_result(
+            return _introduction_result(
                 {
                     "status": "error",
                     "reason": "outside_proactive_pair",
@@ -734,7 +756,7 @@ async def propose_introduction(
             proposal_limit > 0
             and ctx.deps.introduction_proposal_count >= proposal_limit
         ):
-            return _tool_result(
+            return _introduction_result(
                 {
                     "status": "deferred",
                     "reason": "run_proposal_cap",
@@ -762,4 +784,4 @@ async def propose_introduction(
         if result.get("status") == "proposed":
             ctx.deps.server_side_send_count += 2
             ctx.deps.introduction_proposal_count += 1
-        return _tool_result(result)
+        return _introduction_result(result)
