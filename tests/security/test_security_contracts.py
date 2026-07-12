@@ -612,7 +612,9 @@ async def test_propose_introduction_rejects_invalid_target_without_raising(
         other_gist="operates distributed databases",
     )
 
-    assert result == {"status": "error", "reason": reason}
+    assert result["status"] == "error"
+    assert result["reason"] == reason
+    assert "no consent request was sent" in result["note"]
     ctx._mock_sess.get.assert_not_called()
 
 
@@ -679,7 +681,9 @@ async def test_propose_introduction_proactive_rejects_sender_as_target():
             other_gist="operates distributed databases",
         )
 
-    assert result == {"status": "error", "reason": "self_introduction"}
+    assert result["status"] == "error"
+    assert result["reason"] == "self_introduction"
+    assert "no consent request was sent" in result["note"]
     propose.assert_not_called()
 
 
@@ -698,7 +702,9 @@ async def test_propose_introduction_proactive_rejects_unrelated_third_id():
             other_gist="operates distributed databases",
         )
 
-    assert result == {"status": "error", "reason": "outside_proactive_pair"}
+    assert result["status"] == "error"
+    assert result["reason"] == "outside_proactive_pair"
+    assert "no consent request was sent" in result["note"]
     propose.assert_not_called()
 
 

@@ -304,6 +304,77 @@ async def test_register_person_audits_created_return_path(caplog):
 
 
 @pytest.mark.asyncio
+async def test_propose_introduction_audits_run_proposal_cap_deferred(caplog):
+    from thenetwork.agent.tools import propose_introduction
+
+    ctx, _ = _tool_ctx(sender_user_id="alice-id")
+    ctx.deps.settings.introduction_max_proposals_per_run = 1
+    ctx.deps.introduction_proposal_count = 1
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    result = await propose_introduction(
+        ctx, other_person_id="bob-id", sender_gist="a gist", other_gist="b gist"
+    )
+
+    assert result["status"] == "deferred"
+    assert result["reason"] == "run_proposal_cap"
+    assert result["limit"] == 1
+    assert "no consent request was sent" in result["note"]
+    events = _events(caplog)
+    completed = _tool_completed_event(events, "propose_introduction")
+    assert completed["tool_outcome"] == "deferred"
+    assert completed["tool_reason"] == "run_proposal_cap"
+
+
+@pytest.mark.asyncio
+async def test_propose_introduction_audits_recipient_cap_deferred(caplog):
+    from thenetwork.agent.tools import propose_introduction
+
+    ctx, _ = _tool_ctx(sender_user_id="alice-id")
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    with patch(
+        "thenetwork.agent.tools.propose_pair",
+        return_value={
+            "status": "deferred",
+            "reason": "recipient_consent_request_cap",
+            "limit": 3,
+        },
+    ):
+        result = await propose_introduction(
+            ctx, other_person_id="bob-id", sender_gist="a gist", other_gist="b gist"
+        )
+
+    assert result["status"] == "deferred"
+    events = _events(caplog)
+    completed = _tool_completed_event(events, "propose_introduction")
+    assert completed["tool_outcome"] == "deferred"
+    assert completed["tool_reason"] == "recipient_consent_request_cap"
+
+
+@pytest.mark.asyncio
+async def test_propose_introduction_audits_suppressed_consent_state(caplog):
+    from thenetwork.agent.tools import propose_introduction
+
+    ctx, _ = _tool_ctx(sender_user_id="alice-id")
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    with patch(
+        "thenetwork.agent.tools.propose_pair",
+        return_value={"status": "suppressed", "reason": "one_consented"},
+    ):
+        result = await propose_introduction(
+            ctx, other_person_id="bob-id", sender_gist="a gist", other_gist="b gist"
+        )
+
+    assert result["status"] == "suppressed"
+    events = _events(caplog)
+    completed = _tool_completed_event(events, "propose_introduction")
+    assert completed["tool_outcome"] == "suppressed"
+    assert completed["tool_reason"] == "one_consented"
+
+
+@pytest.mark.asyncio
 async def test_agent_run_applies_configured_usage_limits():
     from thenetwork.agent.core import run_agent_for_email
 

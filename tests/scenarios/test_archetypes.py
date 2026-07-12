@@ -625,3 +625,110 @@ async def test_vague_intent_answer_forgets_asked_note_and_captures_interest():
     assert "remember" in tool_names
     assert tool_names.index("forget") < tool_names.index("remember")
     mock_session.delete.assert_called_once_with(asked_note)
+
+
+# ---------------------------------------------------------------------------
+# propose_introduction: a non-proposed result must carry an explicit note so
+# a reply-writing model cannot mistake "tool ran" for "a request went out".
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_suppressed_introduction_result_carries_no_send_note():
+    """A suppressed propose_introduction result must tell the model plainly
+    that no consent request was sent, independent of any reply it later writes."""
+    from unittest.mock import patch, MagicMock
+    from pydantic_ai.models.function import FunctionModel, AgentInfo
+    from pydantic_ai.messages import (
+        ModelMessage,
+        ModelResponse,
+        ToolCallPart,
+        ToolReturnPart,
+        TextPart,
+    )
+
+    call_count = 0
+
+    async def script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="propose_introduction",
+                        args={
+                            "other_person_id": "user-dana",
+                            "sender_gist": "backend engineer interested in ML",
+                            "other_gist": "ML engineer interested in backend systems",
+                        },
+                    )
+                ]
+            )
+        if call_count == 2:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="reply_to_sender",
+                        args={
+                            "subject": "Re: looking for an ML engineer",
+                            "body_text": (
+                                "Nothing that qualified to send this time - I'll keep "
+                                "this in mind."
+                            ),
+                        },
+                    )
+                ]
+            )
+        return ModelResponse(parts=[TextPart(content="No proposal sent this run.")])
+
+    agent = build_agent(model=FunctionModel(script))
+
+    fake_profile = MagicMock()
+    fake_profile.email = "jordan@example.com"
+
+    mock_session = MagicMock()
+    mock_session.__enter__ = MagicMock(return_value=mock_session)
+    mock_session.__exit__ = MagicMock(return_value=False)
+    mock_session.get.return_value = fake_profile
+
+    sent = []
+
+    def fake_send_reply(to_address, subject, body_text, body_html=None, **kwargs):
+        sent.append({"to": to_address, "subject": subject, "body": body_text})
+
+    with (
+        patch("thenetwork.agent.tools.get_session", return_value=mock_session),
+        patch("thenetwork.agent.tools.send_reply", side_effect=fake_send_reply),
+        patch(
+            "thenetwork.agent.tools.propose_pair",
+            return_value={"status": "suppressed", "reason": "declined"},
+        ),
+    ):
+        deps = AgentDeps(
+            sender_email="jordan@example.com",
+            sender_user_id="user-jordan",
+            sender_authenticated=True,
+        )
+        result = await agent.run(
+            "Any luck finding me an ML engineer to talk to?",
+            deps=deps,
+        )
+
+    tool_names = _tool_call_names(result)
+    assert "propose_introduction" in tool_names
+    assert "reply_to_sender" in tool_names
+
+    intro_returns = [
+        part.content
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == "propose_introduction"
+    ]
+    assert len(intro_returns) == 1
+    assert intro_returns[0]["status"] == "suppressed"
+    assert "no consent request was sent" in intro_returns[0]["note"]
+
+    assert len(sent) == 1
+    assert "reached out" not in sent[0]["body"].lower()
+    assert "expect" not in sent[0]["body"].lower()
