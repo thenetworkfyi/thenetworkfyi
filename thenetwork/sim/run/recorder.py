@@ -166,6 +166,7 @@ class SimRunRecorder:
                 schedule=schedule,
                 progress=progress,
                 on_delivery=_record_delivered_message(events),
+                on_proactive_trigger=_record_proactive_trigger(events),
             )
             result = await loop.run(ticks=config.ticks)
             for tick in result.ticks:
@@ -414,6 +415,20 @@ def _record_delivered_message(events: EventsLog):
             subject=message.get("Subject", ""),
             tick=meta.tick if meta is not None else None,
             trace_id=meta.trace_id if meta is not None else None,
+        )
+
+    return record
+
+
+def _record_proactive_trigger(events: EventsLog):
+    """Record the complete SEAL-safe synthetic trigger for a sim-only job."""
+
+    def record(job: dict[str, Any]) -> None:
+        events.write(
+            "sim.proactive_job_deferred",
+            body=job.get("body"),
+            subject=job.get("subject"),
+            trace_id=job.get("trace_id"),
         )
 
     return record

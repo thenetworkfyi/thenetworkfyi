@@ -26,6 +26,7 @@ from thenetwork.worker import proactive
 
 ScanCallable = Callable[[int], Awaitable[None]]
 ProgressCallable = Callable[[str], None]
+ProactiveTriggerObserver = Callable[[dict[str, Any]], None]
 
 
 @dataclass(frozen=True)
@@ -63,6 +64,7 @@ class SimTickLoop:
         schedule: SimSchedule | None = None,
         progress: ProgressCallable | None = None,
         on_delivery: SimMessageObserver | None = None,
+        on_proactive_trigger: ProactiveTriggerObserver | None = None,
     ) -> None:
         if proactive_every is not None and proactive_every < 1:
             raise ValueError("proactive_every must be at least 1")
@@ -73,6 +75,7 @@ class SimTickLoop:
         self.rate_limit_per_hour = rate_limit_per_hour
         self.schedule = schedule or SimSchedule()
         self.progress = progress
+        self.on_proactive_trigger = on_proactive_trigger
         self.post_office = SimPostOffice(
             mbox_path=run_dir / "all-mail.mbox", on_deliver=on_delivery
         )
@@ -100,6 +103,7 @@ class SimTickLoop:
                     proactive_jobs = await run_proactive_scans(
                         timestamp=tick,
                         process=self.process,
+                        on_defer=self.on_proactive_trigger,
                     )
                 results.append(
                     TickResult(
@@ -181,12 +185,15 @@ async def run_proactive_scans(
     timestamp: int,
     process: ProcessEmailCallable | None = None,
     scans: Sequence[Any] | None = None,
+    on_defer: ProactiveTriggerObserver | None = None,
 ) -> int:
     """Run proactive scans and execute their deferred jobs in-loop."""
     captured: list[dict[str, Any]] = []
 
     def capture_defer(**kwargs: Any) -> None:
         captured.append(kwargs)
+        if on_defer is not None:
+            on_defer(kwargs)
 
     scan_tasks = scans or (
         proactive.scan_for_opportunities,
