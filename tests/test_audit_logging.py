@@ -561,7 +561,10 @@ async def test_agent_trace_logs_structure_but_never_content(caplog):
     fake_agent = SimpleNamespace(run=AsyncMock(return_value=fake_result))
     caplog.set_level(logging.INFO, logger=LOGGER_NAME)
 
-    with patch("thenetwork.agent.core.build_agent", return_value=fake_agent):
+    with (
+        patch("thenetwork.agent.core.build_agent", return_value=fake_agent),
+        patch("thenetwork.agent.core.notify_admins"),
+    ):
         result = await run_agent_for_email(
             sender_email=secrets["sender"],
             sender_user_id="opaque-person-id",
@@ -640,7 +643,9 @@ def test_model_response_audit_logs_redacted_complete_parts(caplog, monkeypatch):
     assert raw_name not in serialized
     assert raw_email not in serialized
     assert "example.test" not in serialized
-    response = next(event for event in _events(caplog) if event["event"] == "agent.model_response")
+    response = next(
+        event for event in _events(caplog) if event["event"] == "agent.model_response"
+    )
     parts = response["response"]["parts"]
     assert [part["part_kind"] for part in parts] == ["text", "thinking", "tool-call"]
 
@@ -659,6 +664,7 @@ async def test_agent_run_audits_trace_id_on_lifecycle_events(caplog):
 
     with (
         patch("thenetwork.agent.core.build_agent", return_value=fake_agent),
+        patch("thenetwork.agent.core.notify_admins"),
         patch(
             "thenetwork.security.sender_identifier.get_settings",
             return_value=SimpleNamespace(sender_identifier_secret="audit-secret"),
