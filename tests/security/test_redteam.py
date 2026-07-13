@@ -227,6 +227,7 @@ async def test_agent_reply_never_leaks_pii(adversarial_body: str):
             "thenetwork.agent.tools.sanitize_memory_high_fidelity",
             new=AsyncMock(side_effect=fake_sanitize),
         ),
+        patch("thenetwork.agent.tools.notify_admins"),
     ):
         result = await agent.run(adversarial_body, deps=deps)
 

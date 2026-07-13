@@ -242,7 +242,8 @@ async def _record_intro_flow(
         )
         outbound_after = _mbox_message_count(artifacts.raw_mbox_path)
         blocked = (
-            reproposal == {"status": "suppressed", "reason": "revoked"}
+            reproposal.get("status") == "suppressed"
+            and reproposal.get("reason") == "revoked"
             and outbound_after == outbound_before
         )
         events.write(
