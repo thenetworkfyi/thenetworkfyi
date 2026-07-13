@@ -153,7 +153,10 @@ async def run_agent_for_email(
             )
             notify_admins(settings, subject, body, trace_id=trace_id)
             return ""
-        audit_model_trace(result)
+        audit_model_trace(
+            result,
+            pseudonym_secret=getattr(settings, "response_log_redaction_secret", None),
+        )
         tool_names = {
             tool_name
             for message in result.all_messages()

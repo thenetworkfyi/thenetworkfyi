@@ -94,6 +94,10 @@ class Settings(BaseSettings):
     # dictionary lookup can reverse it.
     sender_identifier_secret: str = ""
 
+    # Optional HMAC key for stable pseudonyms in redacted model-response audit
+    # records. Leaving it unset preserves redaction while disabling correlation.
+    response_log_redaction_secret: str = ""
+
     # Outbound send caps. Enforced inside the email capabilities, not by prompt.
     # The dispatch_* names predate the reply_to_sender/send_outreach tool split
     # and stay unchanged because they are deployment-facing env var names.
