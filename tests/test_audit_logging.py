@@ -588,6 +588,63 @@ async def test_agent_trace_logs_structure_but_never_content(caplog):
     assert trace["tool_names"] == ["search"]
 
 
+def test_model_response_audit_logs_redacted_complete_parts(caplog, monkeypatch):
+    from pydantic_ai.messages import ModelResponse, TextPart, ThinkingPart, ToolCallPart
+
+    from thenetwork import audit
+
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    class Analyzer:
+        def analyze(self, *, text, language):
+            matches = []
+            for value, entity_type in (
+                ("Alice Example", "PERSON"),
+                ("alice@example.test", "EMAIL_ADDRESS"),
+            ):
+                start = text.find(value)
+                if start >= 0:
+                    matches.append(
+                        SimpleNamespace(
+                            start=start,
+                            end=start + len(value),
+                            entity_type=entity_type,
+                        )
+                    )
+            return matches
+
+    monkeypatch.setattr(
+        "thenetwork.security.log_redaction._get_log_analyzer",
+        Analyzer,
+    )
+    raw_name = "Alice Example"
+    raw_email = "alice@example.test"
+    result = SimpleNamespace(
+        all_messages=lambda: [
+            ModelResponse(
+                parts=[
+                    TextPart(content=f"Reply to {raw_name}"),
+                    ThinkingPart(content=f"Contact {raw_email}"),
+                    ToolCallPart(
+                        tool_name="search",
+                        args={"query": f"{raw_name} https://example.test/path"},
+                    ),
+                ]
+            )
+        ]
+    )
+
+    audit.audit_model_trace(result, pseudonym_secret="test-key")
+
+    serialized = "\n".join(record.message for record in caplog.records)
+    assert raw_name not in serialized
+    assert raw_email not in serialized
+    assert "example.test" not in serialized
+    response = next(event for event in _events(caplog) if event["event"] == "agent.model_response")
+    parts = response["response"]["parts"]
+    assert [part["part_kind"] for part in parts] == ["text", "thinking", "tool-call"]
+
+
 @pytest.mark.asyncio
 async def test_agent_run_audits_trace_id_on_lifecycle_events(caplog):
     from thenetwork.agent.core import run_agent_for_email

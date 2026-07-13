@@ -5,6 +5,7 @@ import logging
 import re
 from contextlib import contextmanager
 from contextvars import ContextVar
+from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from time import monotonic
@@ -12,6 +13,8 @@ from typing import Iterator
 from uuid import uuid4
 
 import structlog
+
+from thenetwork.security.log_redaction import redact_structured_log
 
 LOGGER_NAME = "thenetwork.audit"
 _run_id: ContextVar[str | None] = ContextVar("thenetwork_audit_run_id", default=None)
@@ -33,11 +36,24 @@ def _iso_timestamp(logger: object, method_name: str, event_dict: dict) -> dict:
     return event_dict
 
 
+def _redact_foreign_log_event(
+    logger: object, method_name: str, event_dict: dict
+) -> dict:
+    """Redact untrusted library log messages but preserve audited metadata."""
+    if event_dict.get("logger") == LOGGER_NAME:
+        return event_dict
+    return redact_structured_log(event_dict)
+
+
 # Shared by both chains below so audit events and third-party logs (e.g.
 # Procrastinate's job-lifecycle logging) end up in the same JSON shape.
 _SHARED_PROCESSORS = [
     structlog.stdlib.add_log_level,
     structlog.stdlib.add_logger_name,
+    # Provider and library errors may include a rejected model response in the
+    # record message. Redact the event dict before it reaches any stderr/JSONL
+    # sink, including the foreign-stdlib logging bridge below.
+    _redact_foreign_log_event,
     _iso_timestamp,
 ]
 _JSON_RENDERER = structlog.processors.JSONRenderer(
@@ -228,6 +244,9 @@ def configure_audit_logging() -> None:
     # Procrastinate's job start/finish/retry/failure logs are worth surfacing
     # at INFO rather than vanishing under root's default WARNING threshold.
     logging.getLogger("procrastinate").setLevel(logging.INFO)
+    # Initializing Presidio can emit recognizer warnings; keep them from
+    # recursively entering the foreign-log redactor while it is starting.
+    logging.getLogger("presidio-analyzer").setLevel(logging.ERROR)
 
 
 @contextmanager
@@ -389,7 +408,22 @@ def audit_span(event: str, **fields: object) -> Iterator[None]:
         _span_completion_fields.reset(token)
 
 
-def audit_model_trace(result: object) -> None:
+def _model_response_payload(message: object) -> object:
+    """Serialize one model response without ever falling back to repr()."""
+    try:
+        if is_dataclass(message) and not isinstance(message, type):
+            return asdict(message)
+        model_dump = getattr(message, "model_dump", None)
+        if callable(model_dump):
+            return model_dump(mode="json")
+    except Exception:
+        pass
+    return {"parts": "[redaction-unavailable]"}
+
+
+def audit_model_trace(
+    result: object, *, pseudonym_secret: str | bytes | None = None
+) -> None:
     all_messages = getattr(result, "all_messages", None)
     messages = all_messages() if callable(all_messages) else []
     part_kinds: list[str] = []
@@ -406,3 +440,15 @@ def audit_model_trace(result: object) -> None:
         part_kinds=part_kinds,
         tool_names=tool_names,
     )
+    for message in messages:
+        if getattr(message, "kind", None) != "response":
+            continue
+        payload = _audit_payload({"message_count": 1})
+        _logger.info(
+            "agent.model_response",
+            **payload,
+            response=redact_structured_log(
+                _model_response_payload(message),
+                pseudonym_secret=pseudonym_secret,
+            ),
+        )
