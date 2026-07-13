@@ -60,6 +60,51 @@ deployment error, not a silent downgrade. The Docker image downloads `en_core_we
 build time; for local worker runs outside Docker, install the same model with
 `uv run python -m spacy download en_core_web_lg`.
 
+## Response-log redaction
+
+The audit stream records structural lifecycle events and redacted
+`agent.model_response` records. A response record retains its JSON shape and part types for
+debugging, but it must never contain raw model text, tool arguments, or provider error text.
+The same fail-closed redactor is applied to foreign library/provider log records before they
+reach stderr or a JSONL audit sink.
+
+The redactor uses Presidio's broad English recognizers (including people, email addresses,
+phone numbers, locations, organizations, and credential-like values recognized by the
+installed registry) plus application-specific recognizers for:
+
+- email addresses;
+- introduction and digest tokens;
+- URLs;
+- `api_key`, password, secret, and common provider-key forms; and
+- UUIDs and prefixed application identifiers such as `user_...`, `request_...`, and
+  `trace_...`.
+
+Presidio is not a reason to treat a diagnostic artifact as safe input to another system. The
+response serializer never falls back to `repr()`. If Presidio, serialization, or a recognizer
+call fails, every affected string is replaced with `[redaction-unavailable]`; the record's safe
+structure is retained where possible.
+
+Set `RESPONSE_LOG_REDACTION_SECRET` to a long, random, server-side value when operators need
+to correlate repeated URLs, tokens, secrets, or application identifiers across redacted
+records. It produces HMAC-based `log_v1_...` pseudonyms. Keep the key outside the repository,
+restrict it to the worker identity, and rotate it deliberately: rotation breaks cross-key
+correlation but does not reveal prior values. Leaving it unset still redacts data, but uses
+non-correlatable type placeholders. Do not reuse `SENDER_IDENTIFIER_SECRET`, and do not use a
+plain hash of a value.
+
+Redaction controls this application's output only. Model and observability providers may retain
+prompts, responses, request metadata, or error telemetry under their own terms. Before enabling
+any provider, configure its retention/training controls and data-processing agreement, use a
+least-privileged project key, and limit access to the provider project and the application's log
+sink. Treat provider-side telemetry as a separate data store in the privacy review and incident
+response plan.
+
+Audit and redacted run artifacts require the same restricted access as production logs. This
+repository does not impose a retention job: operators must configure their log platform to delete
+redacted audit logs after the approved operational window (30 days is the default policy unless
+a shorter legal/security requirement applies). Delete simulation run directories after review.
+Never upload them to issue trackers, chat, or external evaluators by default.
+
 ## Migrations
 
 Alembic. The `vector` extension is created idempotently inside a migration, so
@@ -120,10 +165,19 @@ POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=5432 \
   uv run sim intro-flow --runs-dir runs/intro-flow
 ```
 
-The printed run directory contains `events.jsonl`, `audit.jsonl`, `all-mail.mbox`, and
-`transcript.md`. On teardown, the run provisions a disposable database, migrates it, and
+The printed run directory contains publishable, redacted `events.jsonl`, `audit.jsonl`,
+`all-mail.mbox`, and `transcript.md`. The recorder keeps the exact mbox and optional database
+dump required for deterministic scoring beneath `private/`, created with owner-only permissions.
+Those raw files are not normal log artifacts: do not open them for ordinary review, upload them,
+or treat them as safe for an LLM. Delete `private/` immediately after a completed score/review
+unless an approved incident or reproducibility procedure requires it; then delete the entire run
+directory on the simulation retention schedule (seven days by default). On teardown, the run
+provisions a disposable database, migrates it, and
 (`thenetwork/sim/run/database.py`) shells out to whatever `pg_dump` is first on `PATH` to
-dump it into the run directory before dropping it.
+write the private dump before dropping the database.
+
+The compose stack uses `pgvector/pgvector:pg17`; use the corresponding local PostgreSQL and
+`pg_dump` major version for a simulation database.
 
 ### Population situations
 
