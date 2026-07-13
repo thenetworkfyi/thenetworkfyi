@@ -4,9 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+import os
 from pathlib import Path
 
-from thenetwork.sim.run.mail import SimPostOffice, deliver_inbound, render_transcript
+from thenetwork.sim.run.mail import (
+    SimPostOffice,
+    deliver_inbound,
+    publish_redacted_mbox,
+    render_transcript,
+)
 from thenetwork.sim.personas.persona import PersonaConfig, TinyPersonEmailAdapter
 
 
@@ -32,7 +38,11 @@ class StrongMatchScenario:
             raise ValueError("strong-match scenario requires exactly two personas")
         self.adapters = tuple(adapters)
         self.run_dir = run_dir
-        self.post_office = SimPostOffice(mbox_path=run_dir / "all-mail.mbox")
+        self.private_dir = run_dir / "private"
+        self.private_dir.mkdir(parents=True, exist_ok=True)
+        os.chmod(self.private_dir, 0o700)
+        self.raw_mbox_path = self.private_dir / "all-mail.mbox"
+        self.post_office = SimPostOffice(mbox_path=self.raw_mbox_path)
 
     async def run(self, *, process=None) -> StrongMatchResult:
         self.run_dir.mkdir(parents=True, exist_ok=True)
@@ -55,11 +65,13 @@ class StrongMatchScenario:
             sent += 1
 
         transcript_path = self.run_dir / "transcript.md"
-        transcript = render_transcript(self.run_dir / "all-mail.mbox", transcript_path)
+        mbox_path = self.run_dir / "all-mail.mbox"
+        publish_redacted_mbox(self.raw_mbox_path, mbox_path)
+        transcript = render_transcript(mbox_path, transcript_path)
         return StrongMatchResult(
             post_office=self.post_office,
             transcript=transcript,
-            mbox_path=self.run_dir / "all-mail.mbox",
+            mbox_path=mbox_path,
             transcript_path=transcript_path,
             persona_message_count=sent,
         )

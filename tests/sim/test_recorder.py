@@ -12,6 +12,7 @@ import pytest
 
 from thenetwork.audit import audit_event
 from thenetwork.db.models import IntroductionConsent, Memory, Person
+from thenetwork.security import log_redaction
 from thenetwork.sim.cli import main, run_sim
 from thenetwork.sim.scoring.compare import compare_runs, load_run_metrics
 from thenetwork.sim.run.mail import SimPostOffice
@@ -36,6 +37,16 @@ class ScriptedTinyPerson:
 
     def listen_and_act(self, _stimulus: str):
         return {"content": self.body}
+
+
+class AliceAnalyzer:
+    def analyze(self, *, text, language):
+        start = text.find("Alice")
+        return (
+            [SimpleNamespace(start=start, end=start + 5, entity_type="PERSON")]
+            if start >= 0
+            else []
+        )
 
 
 @pytest.mark.asyncio
@@ -68,13 +79,91 @@ async def test_run_recorder_writes_config_mbox_transcript_and_events(tmp_path):
     config = json.loads(artifacts.config_path.read_text())
     assert config["scenario"] == "strong-match"
     assert len(config["personas"]) == 2
-    assert "body 1" in artifacts.transcript_path.read_text()
+    assert "body 1" not in artifacts.transcript_path.read_text()
+    assert "body 1" in artifacts.raw_mbox_path.read_text()
+    assert artifacts.private_dir.stat().st_mode & 0o777 == 0o700
     events = [
         json.loads(line) for line in artifacts.events_path.read_text().splitlines()
     ]
     assert events[0]["event"] == "sim.run_started"
     assert any(event["event"] == "sim.tick_completed" for event in events)
     assert events[-1]["event"] == "sim.run_completed"
+
+
+@pytest.mark.asyncio
+async def test_public_simulation_artifacts_redact_content_and_keep_raw_mail_private(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(log_redaction, "_get_log_analyzer", lambda: AliceAnalyzer())
+    persona = PersonaConfig(
+        name="Alice",
+        email="alice@example.test",
+        goal="Alice uses https://example.test/path with api_key=sk_abcdefghijklmnopq",
+        stop_condition="Wait for a match.",
+        agent_address="join@example.test",
+    )
+    artifacts = await SimRunRecorder(runs_dir=tmp_path).run(
+        (TinyPersonEmailAdapter(ScriptedTinyPerson(persona.goal), persona),),
+        SimRunConfig(
+            scenario="redaction",
+            ticks=1,
+            proactive_every=None,
+            personas=(persona,),
+        ),
+    )
+
+    public_artifacts = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            artifacts.config_path,
+            artifacts.events_path,
+            artifacts.mbox_path,
+            artifacts.transcript_path,
+        )
+    )
+    for sensitive in (
+        "Alice",
+        "alice@example.test",
+        "https://example.test/path",
+        "sk_abcdefghijklmnopq",
+    ):
+        assert sensitive not in public_artifacts
+        assert sensitive in artifacts.raw_mbox_path.read_text(encoding="utf-8")
+    assert artifacts.private_dir.stat().st_mode & 0o777 == 0o700
+
+
+@pytest.mark.asyncio
+async def test_simulation_exception_text_is_redacted(tmp_path, monkeypatch):
+    monkeypatch.setattr(log_redaction, "_get_log_analyzer", lambda: AliceAnalyzer())
+    persona = PersonaConfig(
+        name="Alice",
+        email="alice@example.test",
+        goal="Find a collaborator.",
+        stop_condition="Wait for a match.",
+        agent_address="join@example.test",
+    )
+
+    async def failing_process(**_kwargs):
+        raise RuntimeError(
+            "Alice exposed https://example.test/path with api_key=sk_abcdefghijklmnopq"
+        )
+
+    artifacts = await SimRunRecorder(runs_dir=tmp_path).run(
+        (TinyPersonEmailAdapter(ScriptedTinyPerson("Hello"), persona),),
+        SimRunConfig(
+            scenario="redaction-error",
+            ticks=1,
+            proactive_every=None,
+            personas=(persona,),
+        ),
+        process=failing_process,
+    )
+
+    events = artifacts.events_path.read_text(encoding="utf-8")
+    assert '"error_type": "RuntimeError"' in events
+    assert "Alice" not in events
+    assert "https://example.test/path" not in events
+    assert "sk_abcdefghijklmnopq" not in events
 
 
 @pytest.mark.asyncio
@@ -115,7 +204,10 @@ async def test_sim_run_persona_cap_remains_backward_compatible(tmp_path):
 
 @pytest.mark.asyncio
 async def test_real_process_run_uses_and_records_per_run_database(tmp_path):
-    expected = SimpleNamespace(run_dir=tmp_path / "run")
+    expected = SimpleNamespace(
+        run_dir=tmp_path / "run",
+        raw_database_dump_path=tmp_path / "run" / "private" / "database.dump",
+    )
     database_name = "sim_0123456789abcdef"
 
     with (
@@ -146,9 +238,7 @@ async def test_real_process_run_uses_and_records_per_run_database(tmp_path):
     provision.assert_called_once()
     assert provision.call_args.args == (database_name,)
     assert provision.call_args.kwargs["keep"] is True
-    assert (
-        provision.call_args.kwargs["dump_path"]() == expected.run_dir / "database.dump"
-    )
+    assert provision.call_args.kwargs["dump_path"]() == expected.raw_database_dump_path
     recorded_config = record.await_args.args[1]
     assert recorded_config.mock_process is False
     assert recorded_config.database_name == database_name
@@ -295,7 +385,7 @@ async def test_real_process_runs_capture_isolated_traceable_audit_logs(
         ]
         assert len(audit_events) == 1
         assert audit_events[0]["event"] == "agent.tool.completed"
-        assert audit_events[0]["trace_id"] == process_events[0]["trace_id"]
+        assert process_events[0]["trace_id"] == "[application_identifier]"
     assert first.audit_path.read_text() != ""
     assert second.audit_path.read_text() != ""
     assert capsys.readouterr().err == ""
@@ -499,13 +589,17 @@ def test_outcome_assembly_reads_fixture_mail_audit_and_database_state(tmp_path):
         transcript_path=tmp_path / "transcript.md",
         events_path=tmp_path / "events.jsonl",
         audit_path=tmp_path / "audit.jsonl",
+        private_dir=tmp_path / "private",
+        raw_mbox_path=tmp_path / "private" / "all-mail.mbox",
+        raw_database_dump_path=tmp_path / "private" / "database.dump",
     )
     message = EmailMessage()
     message["From"] = "join@example.test"
     message["To"] = "nadia.sim@example.test"
     message["Subject"] = "A note"
     message.set_content("Bakery supply co-op update")
-    SimPostOffice(mbox_path=artifacts.mbox_path).deliver(message)
+    artifacts.private_dir.mkdir()
+    SimPostOffice(mbox_path=artifacts.raw_mbox_path).deliver(message)
     artifacts.audit_path.write_text(
         json.dumps({"event": "introduction.consent_transition", "action": "clarify"})
         + "\n",

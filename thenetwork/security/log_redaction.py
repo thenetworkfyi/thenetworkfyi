@@ -28,6 +28,10 @@ _FAIL_CLOSED = "[redaction-unavailable]"
 # when a test double or a future Presidio model does not return them.
 _CUSTOM_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     (
+        "EMAIL_ADDRESS",
+        re.compile(r"(?<![\w.+-])[\w.+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?![\w.-])"),
+    ),
+    (
         "INTRO_TOKEN",
         re.compile(r"\[(?:intro|digest):[0-9a-f]{8}-[0-9a-f-]{27,}\]", re.I),
     ),
@@ -76,12 +80,20 @@ def _pattern_recognizers() -> list[object]:
     try:
         from presidio_analyzer import Pattern, PatternRecognizer
     except ImportError as exc:  # pragma: no cover - exercised via initializer
-        raise LogRedactionError("presidio-analyzer is required for log redaction") from exc
+        raise LogRedactionError(
+            "presidio-analyzer is required for log redaction"
+        ) from exc
 
     return [
         PatternRecognizer(
             supported_entity=entity_type,
-            patterns=[Pattern(name=f"thenetwork_{entity_type.lower()}", regex=pattern.pattern, score=0.9)],
+            patterns=[
+                Pattern(
+                    name=f"thenetwork_{entity_type.lower()}",
+                    regex=pattern.pattern,
+                    score=0.9,
+                )
+            ],
         )
         for entity_type, pattern in _CUSTOM_PATTERNS
     ]
@@ -93,7 +105,9 @@ def _get_log_analyzer() -> object:
     try:
         from presidio_analyzer import AnalyzerEngine
     except ImportError as exc:
-        raise LogRedactionError("presidio-analyzer is required for log redaction") from exc
+        raise LogRedactionError(
+            "presidio-analyzer is required for log redaction"
+        ) from exc
 
     try:
         analyzer = AnalyzerEngine()
@@ -117,10 +131,15 @@ def _pseudonym(value: str, entity_type: str, secret: str | bytes | None) -> str:
     key = secret.encode("utf-8") if isinstance(secret, str) else secret
     digest = hmac.digest(
         key,
-        _PSEUDONYM_CONTEXT + entity_type.encode("ascii") + b"\0" + value.encode("utf-8"),
+        _PSEUDONYM_CONTEXT
+        + entity_type.encode("ascii")
+        + b"\0"
+        + value.encode("utf-8"),
         hashlib.sha256,
     )
-    token = base64.urlsafe_b64encode(digest[:_PSEUDONYM_BYTES]).decode("ascii").rstrip("=")
+    token = (
+        base64.urlsafe_b64encode(digest[:_PSEUDONYM_BYTES]).decode("ascii").rstrip("=")
+    )
     return f"[{entity_type.lower()}:log_v1_{token}]"
 
 
@@ -144,7 +163,10 @@ def _spans(text: str, analyzer: object) -> list[tuple[int, int, str]]:
         if 0 <= start < end <= len(text):
             found.append((start, end, str(result.entity_type).upper()))
     for entity_type, pattern in _CUSTOM_PATTERNS:
-        found.extend((match.start(), match.end(), entity_type) for match in pattern.finditer(text))
+        found.extend(
+            (match.start(), match.end(), entity_type)
+            for match in pattern.finditer(text)
+        )
     return found
 
 
@@ -205,7 +227,7 @@ def _fail_closed(value: Any) -> Any:
 
 def _redact_value(value: Any, pseudonym_secret: str | bytes | None) -> Any:
     if isinstance(value, str):
-        return redact_text(value, pseudonym_secret=pseudonym_secret)
+        return redact_text(str(value), pseudonym_secret=pseudonym_secret)
     if isinstance(value, Mapping):
         return {
             redact_text(str(key), pseudonym_secret=pseudonym_secret): _redact_value(
@@ -239,3 +261,42 @@ def redact_structured_log(
         return _redact_value(value, pseudonym_secret)
     except Exception:
         return _fail_closed(value)
+
+
+def redact_structured_values(
+    value: Any, *, pseudonym_secret: str | bytes | None = None
+) -> Any:
+    """Redact values in a schema-controlled artifact while retaining its keys.
+
+    Simulation artifacts have fixed, application-owned keys that are useful to
+    scorers and reviewers. Their values remain untrusted persona or model
+    content, so this deliberately differs from ``redact_structured_log``.
+    """
+    try:
+        return _redact_values_preserving_keys(value, pseudonym_secret)
+    except Exception:
+        return _fail_closed(value)
+
+
+def _redact_values_preserving_keys(
+    value: Any, pseudonym_secret: str | bytes | None
+) -> Any:
+    if isinstance(value, str):
+        return redact_text(str(value), pseudonym_secret=pseudonym_secret)
+    if isinstance(value, Mapping):
+        return {
+            str(key): _redact_values_preserving_keys(item, pseudonym_secret)
+            for key, item in value.items()
+        }
+    if isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
+        return [
+            _redact_values_preserving_keys(item, pseudonym_secret) for item in value
+        ]
+    if is_dataclass(value) and not isinstance(value, type):
+        return _redact_values_preserving_keys(asdict(value), pseudonym_secret)
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        return _redact_values_preserving_keys(model_dump(mode="json"), pseudonym_secret)
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return _FAIL_CLOSED
