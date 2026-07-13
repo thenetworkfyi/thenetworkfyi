@@ -189,7 +189,7 @@ async def run_sim(
         database_name,
         keep=keep_db,
         dump_path=lambda: (
-            None if artifacts is None else artifacts.run_dir / "database.dump"
+            None if artifacts is None else artifacts.raw_database_dump_path
         ),
     ):
         artifacts = await record()

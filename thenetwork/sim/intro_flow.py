@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import mailbox
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -35,6 +34,8 @@ from thenetwork.sim.run.recorder import (
     SimRunArtifacts,
     _record_delivered_message,
     create_run_artifacts,
+    prepare_private_artifacts,
+    write_redacted_json,
 )
 from thenetwork.sim.scoring.scoring import (
     IntroductionRevealAuthorization,
@@ -85,7 +86,7 @@ async def run_intro_flow_sim(
         database_name,
         keep=keep_db,
         dump_path=lambda: (
-            None if artifacts is None else artifacts.run_dir / "database.dump"
+            None if artifacts is None else artifacts.raw_database_dump_path
         ),
     ):
         artifacts = await _record_intro_flow(
@@ -106,35 +107,31 @@ async def _record_intro_flow(
 ) -> SimRunArtifacts:
     artifacts = create_run_artifacts(runs_dir, clock=clock)
     artifacts.run_dir.mkdir(parents=True, exist_ok=False)
+    prepare_private_artifacts(artifacts)
     events = EventsLog(artifacts.events_path)
     post_office = SimPostOffice(
-        mbox_path=artifacts.mbox_path,
+        mbox_path=artifacts.raw_mbox_path,
         on_deliver=_record_delivered_message(events),
     )
     alice, bob = _seed_personas()
 
-    artifacts.config_path.write_text(
-        json.dumps(
-            {
-                "database_name": database_name,
-                "personas": [
-                    {
-                        "email": persona.email,
-                        "goal": persona.goal,
-                        "message_budget": persona.message_budget,
-                        "name": persona.name,
-                        "stop_condition": persona.stop_condition,
-                    }
-                    for persona in INTRO_FLOW_PERSONAS
-                ],
-                "process_mode": "real",
-                "scenario": "intro-flow",
-            },
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n",
-        encoding="utf-8",
+    write_redacted_json(
+        artifacts.config_path,
+        {
+            "database_name": database_name,
+            "personas": [
+                {
+                    "email": persona.email,
+                    "goal": persona.goal,
+                    "message_budget": persona.message_budget,
+                    "name": persona.name,
+                    "stop_condition": persona.stop_condition,
+                }
+                for persona in INTRO_FLOW_PERSONAS
+            ],
+            "process_mode": "real",
+            "scenario": "intro-flow",
+        },
     )
     events.write("sim.run_started", scenario="intro-flow")
 
@@ -189,7 +186,7 @@ async def _record_intro_flow(
             events.write("sim.introduction_state", status=_consent_status())
 
         tier1 = score_seal_mbox(
-            artifacts.mbox_path,
+            artifacts.raw_mbox_path,
             (PersonaPII.from_config(persona) for persona in INTRO_FLOW_PERSONAS),
             (
                 IntroductionRevealAuthorization(
@@ -229,7 +226,7 @@ async def _record_intro_flow(
         if final_status != "revoked":
             raise RuntimeError(f"expected revoked introduction, got {final_status}")
 
-        outbound_before = _mbox_message_count(artifacts.mbox_path)
+        outbound_before = _mbox_message_count(artifacts.raw_mbox_path)
         reproposal = await propose_introduction(
             SimpleNamespace(
                 deps=AgentDeps(
@@ -243,7 +240,7 @@ async def _record_intro_flow(
             sender_gist=_ALICE_GIST,
             other_gist=_BOB_GIST,
         )
-        outbound_after = _mbox_message_count(artifacts.mbox_path)
+        outbound_after = _mbox_message_count(artifacts.raw_mbox_path)
         blocked = (
             reproposal == {"status": "suppressed", "reason": "revoked"}
             and outbound_after == outbound_before
@@ -257,6 +254,9 @@ async def _record_intro_flow(
         if not blocked:
             raise RuntimeError(f"revoked pair was facilitated again: {reproposal}")
 
+    from thenetwork.sim.run.mail import publish_redacted_mbox
+
+    publish_redacted_mbox(artifacts.raw_mbox_path, artifacts.mbox_path)
     render_transcript(artifacts.mbox_path, artifacts.transcript_path)
     events.write(
         "sim.run_completed",

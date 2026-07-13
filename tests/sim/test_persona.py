@@ -99,7 +99,10 @@ async def test_strong_match_scenario_replays_two_personas_to_process_email(tmp_p
     assert process.await_count == 2
     assert result.mbox_path.exists()
     assert result.transcript_path.exists()
-    assert "Priya Shah" in result.transcript
-    assert "Samir Vale" in result.transcript
-    assert "I need ML infra help in factories." in result.transcript
-    assert "I deploy ML infra for factories." in result.transcript
+    assert "Priya Shah" not in result.transcript
+    assert "Samir Vale" not in result.transcript
+    assert "I need ML infra help in factories." not in result.transcript
+    assert "I deploy ML infra for factories." not in result.transcript
+    raw_messages = result.post_office.messages_for("join@example.test")
+    assert raw_messages[0].get_content().strip() == "I need ML infra help in factories."
+    assert raw_messages[1].get_content().strip() == "I deploy ML infra for factories."

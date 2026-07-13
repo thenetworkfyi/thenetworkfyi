@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import mailbox
+import os
 from collections import Counter
 from collections.abc import Callable, Iterable
 from contextlib import nullcontext
@@ -19,6 +20,7 @@ from sqlmodel import select
 from thenetwork.db.models import IntroductionConsent, Memory, Person
 from thenetwork.db.session import get_session
 from thenetwork.security.sender_identifier import optional_sender_identifier
+from thenetwork.security.log_redaction import redact_structured_values
 from thenetwork.sim.run.loop import ProgressCallable, SimTickLoop
 from thenetwork.sim.run.mail import (
     SimMessageMeta,
@@ -68,6 +70,9 @@ class SimRunArtifacts:
     transcript_path: Path
     events_path: Path
     audit_path: Path
+    private_dir: Path
+    raw_mbox_path: Path
+    raw_database_dump_path: Path
 
 
 def create_run_artifacts(
@@ -90,6 +95,23 @@ def create_run_artifacts(
         transcript_path=run_dir / "transcript.md",
         events_path=run_dir / "events.jsonl",
         audit_path=run_dir / "audit.jsonl",
+        private_dir=run_dir / "private",
+        raw_mbox_path=run_dir / "private" / "all-mail.mbox",
+        raw_database_dump_path=run_dir / "private" / "database.dump",
+    )
+
+
+def prepare_private_artifacts(artifacts: SimRunArtifacts) -> None:
+    """Create the owner-only area for raw inputs retained solely for scoring."""
+    artifacts.private_dir.mkdir(parents=True, exist_ok=True)
+    os.chmod(artifacts.private_dir, 0o700)
+
+
+def write_redacted_json(path: Path, value: Any) -> None:
+    """Write a normal simulation artifact only after fail-closed redaction."""
+    path.write_text(
+        json.dumps(redact_structured_values(value), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
     )
 
 
@@ -99,7 +121,8 @@ class EventsLog:
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def write(self, event: str, **fields: Any) -> None:
-        payload = {"event": event, **fields}
+        redacted_fields = redact_structured_values(fields)
+        payload = {"event": event, **redacted_fields}
         with self.path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(payload, sort_keys=True) + "\n")
 
@@ -129,6 +152,7 @@ class SimRunRecorder:
         artifacts = create_run_artifacts(self.runs_dir, clock=self.clock)
         run_dir = artifacts.run_dir
         run_dir.mkdir(parents=True, exist_ok=False)
+        prepare_private_artifacts(artifacts)
         events = EventsLog(artifacts.events_path)
 
         if process is not None:
@@ -147,12 +171,8 @@ class SimRunRecorder:
             else nullcontext()
         )
         with audit_log:
-            artifacts.config_path.write_text(
-                json.dumps(
-                    _config_payload(config, process_mode), indent=2, sort_keys=True
-                )
-                + "\n",
-                encoding="utf-8",
+            write_redacted_json(
+                artifacts.config_path, _config_payload(config, process_mode)
             )
             events.write(
                 "sim.run_started", scenario=config.scenario, ticks=config.ticks
@@ -167,6 +187,7 @@ class SimRunRecorder:
                 progress=progress,
                 on_delivery=_record_delivered_message(events),
                 on_proactive_trigger=_record_proactive_trigger(events),
+                mbox_path=artifacts.raw_mbox_path,
             )
             result = await loop.run(ticks=config.ticks)
             for tick in result.ticks:
@@ -176,8 +197,6 @@ class SimRunRecorder:
                     persona_messages=tick.persona_messages,
                     proactive_jobs=tick.proactive_jobs,
                 )
-            render_transcript(artifacts.mbox_path, artifacts.transcript_path)
-
             personas_pii = tuple(
                 PersonaPII.from_config(persona) for persona in config.personas
             )
@@ -190,7 +209,7 @@ class SimRunRecorder:
                 persona_emails=(persona.email for persona in config.personas),
             )
             tier1 = score_seal_mbox(
-                artifacts.mbox_path,
+                artifacts.raw_mbox_path,
                 personas_pii,
                 tuple(
                     row for row in outcome.consent_rows if row.status == "introduced"
@@ -202,7 +221,7 @@ class SimRunRecorder:
                 findings=[asdict(finding) for finding in tier1.findings],
             )
             quality = score_response_quality(
-                artifacts.mbox_path,
+                artifacts.raw_mbox_path,
                 thresholds=config.quality_thresholds,
             )
             events.write(
@@ -238,6 +257,10 @@ class SimRunRecorder:
                 persona_messages=result.persona_messages,
                 proactive_jobs=result.proactive_jobs,
             )
+            from thenetwork.sim.run.mail import publish_redacted_mbox
+
+            publish_redacted_mbox(artifacts.raw_mbox_path, artifacts.mbox_path)
+            render_transcript(artifacts.mbox_path, artifacts.transcript_path)
         return artifacts
 
 
@@ -300,7 +323,7 @@ def _assemble_scenario_outcome(
                 for email in persona_emails
                 if (sender_id := optional_sender_identifier(email)) is not None
             },
-            mail_facts=_mail_facts(artifacts.mbox_path),
+            mail_facts=_mail_facts(artifacts.raw_mbox_path),
             memory_counts=memory_counts,
         ),
         outcome_memories,

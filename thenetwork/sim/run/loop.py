@@ -65,6 +65,7 @@ class SimTickLoop:
         progress: ProgressCallable | None = None,
         on_delivery: SimMessageObserver | None = None,
         on_proactive_trigger: ProactiveTriggerObserver | None = None,
+        mbox_path: Path | None = None,
     ) -> None:
         if proactive_every is not None and proactive_every < 1:
             raise ValueError("proactive_every must be at least 1")
@@ -77,7 +78,7 @@ class SimTickLoop:
         self.progress = progress
         self.on_proactive_trigger = on_proactive_trigger
         self.post_office = SimPostOffice(
-            mbox_path=run_dir / "all-mail.mbox", on_deliver=on_delivery
+            mbox_path=mbox_path or run_dir / "all-mail.mbox", on_deliver=on_delivery
         )
 
     async def run(self, *, ticks: int) -> SimLoopResult:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import mailbox
+import os
 from collections import defaultdict
 from collections.abc import Awaitable, Callable, Iterable, Iterator
 from contextlib import contextmanager
@@ -20,6 +21,7 @@ from bs4 import BeautifulSoup
 
 from thenetwork.email.inbound import cap_body, cap_sender_name, cap_subject
 from thenetwork.email.threading import clean_message_id, clean_references
+from thenetwork.security.log_redaction import redact_structured_log
 from thenetwork.worker.tasks import process_email
 
 
@@ -98,6 +100,58 @@ class SimPostOffice:
         finally:
             box.unlock()
             box.close()
+
+
+def publish_redacted_mbox(raw_mbox_path: Path, public_mbox_path: Path) -> None:
+    """Copy a private simulation mbox to its redacted, publishable counterpart."""
+    raw_box = mailbox.mbox(raw_mbox_path)
+    public_mbox_path.parent.mkdir(parents=True, exist_ok=True)
+    public_box = mailbox.mbox(public_mbox_path, create=True)
+    try:
+        public_box.lock()
+        public_box.clear()
+        for message in raw_box:
+            redacted = deepcopy(message)
+            _redact_message(redacted)
+            public_box.add(redacted)
+        public_box.flush()
+    finally:
+        public_box.unlock()
+        public_box.close()
+        raw_box.close()
+    os.chmod(public_mbox_path, 0o600)
+
+
+def _redact_message(message: EmailMessage) -> None:
+    sensitive_headers = {
+        "bcc",
+        "cc",
+        "from",
+        "reply-to",
+        "subject",
+        "to",
+        "x-sim-persona",
+        "x-sim-trace-id",
+    }
+    for name, value in tuple(message.items()):
+        if name.lower() in sensitive_headers:
+            message.replace_header(name, str(redact_structured_log(value)))
+    for part in message.walk():
+        if part.is_multipart() or part.get_content_maintype() != "text":
+            continue
+        try:
+            content = part.get_content()
+        except Exception:
+            part.set_payload("[redaction-unavailable]")
+            continue
+        redacted = redact_structured_log(content)
+        if not isinstance(redacted, str):
+            redacted = "[redaction-unavailable]"
+        part.set_content(
+            redacted,
+            subtype=part.get_content_subtype(),
+            charset=part.get_content_charset() or "utf-8",
+        )
 
 
 class _PostOfficeSMTP:
