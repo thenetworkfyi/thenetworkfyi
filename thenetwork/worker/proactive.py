@@ -29,6 +29,12 @@ keep re-selecting already-engaged people while a strong, unengaged match waits
 cleared the relevance floor; it never lowers `PROXIMITY_THRESHOLD` or
 `proactive_match_threshold`, and the `introduction_max_*` caps are still the
 ones enforced (at proposal time) in `introductions.propose_pair`.
+
+A third periodic task, `flush_intro_digests`, does not identify anything - it
+batches whatever `propose_pair` has queued (`queue_on_cap`) because a
+recipient's own cap was already reached, so a backlog of otherwise-dropped
+candidates reaches them as one digest email instead of several trickled
+consent requests or silent drops. See `introductions.flush_pending_digests`.
 """
 
 from __future__ import annotations
@@ -44,6 +50,7 @@ from thenetwork.search.graph import build_graph, score_proximity
 from thenetwork.search.match import match_memories
 from thenetwork.settings import get_settings
 from thenetwork.introductions import (
+    flush_pending_digests,
     mark_pairs_surfaced,
     pair_is_suppressed,
     recently_surfaced_pairs,
@@ -96,9 +103,7 @@ async def scan_for_opportunities(timestamp: int) -> None:
 
     s = get_settings()
     now = datetime.now(timezone.utc)
-    since = now - timedelta(
-        seconds=s.introduction_request_window_seconds
-    )
+    since = now - timedelta(seconds=s.introduction_request_window_seconds)
 
     with get_session() as session:
         people = session.exec(
@@ -141,8 +146,14 @@ async def scan_for_opportunities(timestamp: int) -> None:
                             "sender_email": email_by_id[pid_a],
                             "subject": "[Proactive] Potential connection",
                             "body": (
-                                f"[System trigger] You have a high-proximity match "
-                                f"(score={score:.2f}). Consider reaching out."
+                                f"[System trigger] You are acting for person "
+                                f"{pid_a}, who has a high-proximity match "
+                                f"(score={score:.2f}) with person {pid_b}. "
+                                f"Consider reaching out. If you propose an "
+                                f"introduction, pass other_person_id={pid_b} "
+                                f"(the counterpart) - never the id of the "
+                                f"person you are acting for; their side of "
+                                f"the pair is derived server-side."
                             ),
                             "sender_authenticated": True,
                             "is_proactive": True,
@@ -160,6 +171,20 @@ async def scan_for_opportunities(timestamp: int) -> None:
         mark_pairs_surfaced(session, selected_pairs, surfaced_at=now)
 
     _defer_proactive_jobs(payloads)
+
+
+@app.periodic(cron="15,45 * * * *", periodic_id="flush_intro_digests")
+@app.task()
+async def flush_intro_digests(timestamp: int) -> None:
+    """Batch each recipient's capped-over proactive candidates into one digest.
+
+    `propose_pair` queues a proactively-sourced candidate here instead of
+    dropping it when the recipient is already at their outstanding- or
+    window-request cap (`queue_on_cap`, see `introductions.propose_pair`).
+    This periodic flush is what turns that backlog into the single digest
+    email described in `introductions.flush_pending_digests`.
+    """
+    flush_pending_digests()
 
 
 @app.periodic(cron="30 * * * *", periodic_id="scan_for_matches")
@@ -188,9 +213,7 @@ async def scan_for_matches(timestamp: int) -> None:
     """
     s = get_settings()
     now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(
-        minutes=s.proactive_rematch_lookback_minutes
-    )
+    cutoff = now - timedelta(minutes=s.proactive_rematch_lookback_minutes)
 
     with get_session() as session:
         recent = session.exec(
@@ -269,10 +292,14 @@ async def scan_for_matches(timestamp: int) -> None:
                         f"(similarity={m.similarity:.2f}).\n\n"
                         f"Person {standing}: {m.gist}\n"
                         f"Person {arrival}: {arrival_mem.gist}\n\n"
-                        "If these two share specific, real common ground, "
-                        "propose an introduction with `propose_introduction`, "
-                        "using only what the gists support. If the overlap is thin "
-                        "or you are unsure, do nothing."
+                        f"You are acting for person {standing}, the recipient "
+                        "of this trigger. Their side of the pair is derived "
+                        "server-side, so never pass their id to "
+                        "`propose_introduction`. If these two share specific, "
+                        "real common ground, propose an introduction with "
+                        f"`propose_introduction` and other_person_id={arrival} "
+                        "(the counterpart), using only what the gists support. "
+                        "If the overlap is thin or you are unsure, do nothing."
                     )
                     pair_key: tuple[str, str] = tuple(sorted(pair))  # type: ignore[assignment]
                     if pair_key in surfaced_pairs:

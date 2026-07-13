@@ -735,22 +735,33 @@ async def propose_introduction(
                 }
             )
         if other_person_id == ctx.deps.sender_user_id:
-            return _introduction_result(
-                {
-                    "status": "error",
-                    "reason": "self_introduction",
-                }
-            )
+            refusal: dict[str, Any] = {
+                "status": "error",
+                "reason": "self_introduction",
+                "hint": (
+                    "other_person_id was the id of the person you are acting "
+                    "for; their side of the pair is derived server-side. "
+                    "Retry once with the other person's opaque id."
+                ),
+            }
+            if ctx.deps.is_proactive and ctx.deps.proactive_candidate_id:
+                refusal["expected_other_person_id"] = ctx.deps.proactive_candidate_id
+            return _introduction_result(refusal)
         if ctx.deps.is_proactive and (
             not ctx.deps.proactive_candidate_id
             or other_person_id != ctx.deps.proactive_candidate_id
         ):
-            return _introduction_result(
-                {
-                    "status": "error",
-                    "reason": "outside_proactive_pair",
-                }
-            )
+            refusal = {
+                "status": "error",
+                "reason": "outside_proactive_pair",
+            }
+            if ctx.deps.proactive_candidate_id:
+                refusal["hint"] = (
+                    "this proactive run may only propose the surfaced "
+                    "counterpart. Retry once with the expected id."
+                )
+                refusal["expected_other_person_id"] = ctx.deps.proactive_candidate_id
+            return _introduction_result(refusal)
         proposal_limit = ctx.deps.settings.introduction_max_proposals_per_run
         if (
             proposal_limit > 0
@@ -780,6 +791,7 @@ async def propose_introduction(
                 ctx.deps.settings.introduction_request_window_seconds
             ),
             decline_cooldown_days=ctx.deps.settings.consent_decline_cooldown_days,
+            queue_on_cap=ctx.deps.is_proactive,
         )
         if result.get("status") == "proposed":
             ctx.deps.server_side_send_count += 2
