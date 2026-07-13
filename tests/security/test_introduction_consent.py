@@ -91,9 +91,7 @@ class FakeSession:
             history = list(self.recent_proposals) + list(self.outstanding_proposals)
             if self.proposal is not None:
                 history.append(self.proposal)
-            rows = [
-                r for r in history if person_id in (r.person_a_id, r.person_b_id)
-            ]
+            rows = [r for r in history if person_id in (r.person_a_id, r.person_b_id)]
             return Result(rows[0] if rows else None, rows)
         return Result(self.proposal, self.outstanding_proposals)
 
@@ -683,6 +681,146 @@ async def test_unparseable_tokened_reply_gets_clarification_before_model():
             body="Sounds interesting.",
         )
 
-    run_agent.assert_not_awaited()
+    # The fixed clarification still goes out server-side before any model
+    # runs; the sender's own prose then reaches the agent as a framed
+    # remainder so the question is not simply discarded.
     send.assert_called_once()
     assert send.call_args.kwargs["body_text"] == CONSENT_CLARIFICATION_REPLY
+    run_agent.assert_awaited_once()
+    forwarded = run_agent.await_args.kwargs["email_body"]
+    assert forwarded.startswith("[System note]")
+    assert "Sounds interesting." in forwarded
+
+
+def test_decision_and_token_only_reply_has_no_remainder():
+    session = FakeSession(proposal=proposal(), people=people())
+
+    with patch("thenetwork.introductions.send_reply"):
+        result = process_consent_reply(
+            sender_person_id="alice",
+            sender_authenticated=True,
+            subject="Re: An unrelated conversation",
+            body="YES\n\n[intro:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa]\n",
+            session_factory=factory(session),
+        )
+
+    assert result.outcome == "one_consented"
+    assert result.remainder == ""
+
+
+def test_substantive_yes_reply_carries_remainder_without_tokens():
+    session = FakeSession(proposal=proposal(), people=people())
+
+    with patch("thenetwork.introductions.send_reply"):
+        result = process_consent_reply(
+            sender_person_id="alice",
+            sender_authenticated=True,
+            subject="Re: An unrelated conversation",
+            body=(
+                "YES\n"
+                "[intro:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa]\n"
+                "Also, my real interest is provenance research "
+                "for museum archives.\n"
+                "> quoted proposal text with a name in it"
+            ),
+            session_factory=factory(session),
+        )
+
+    assert result.outcome == "one_consented"
+    assert result.remainder == (
+        "Also, my real interest is provenance research for museum archives."
+    )
+    assert "[intro:" not in result.remainder
+
+
+def test_clarification_reply_carries_question_as_remainder():
+    session = FakeSession(proposal=proposal(), people=people())
+
+    with patch("thenetwork.introductions.send_reply") as send:
+        result = process_consent_reply(
+            sender_person_id="alice",
+            sender_authenticated=True,
+            subject="Re: [intro:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa]",
+            body="Before I decide, why was this introduction chosen for me?",
+            session_factory=factory(session),
+        )
+
+    assert result.outcome == "clarification_sent"
+    assert send.call_args.kwargs["body_text"] == CONSENT_CLARIFICATION_REPLY
+    assert result.remainder == (
+        "Before I decide, why was this introduction chosen for me?"
+    )
+
+
+@pytest.mark.parametrize(
+    ("sender_person_id", "sender_authenticated"),
+    [
+        ("alice", False),
+        (None, True),
+        ("mallory", True),
+    ],
+)
+def test_rejected_replies_carry_no_remainder(sender_person_id, sender_authenticated):
+    session = FakeSession(proposal=proposal(), people=people())
+
+    result = process_consent_reply(
+        sender_person_id=sender_person_id,
+        sender_authenticated=sender_authenticated,
+        subject="Re: [intro:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa]",
+        body="YES\nHere is some attacker-controlled text.",
+        session_factory=factory(session),
+    )
+
+    assert result.outcome == "rejected"
+    assert result.remainder == ""
+
+
+async def test_consent_remainder_reaches_agent_after_server_handling():
+    from thenetwork.worker.tasks import process_email
+
+    worker_session = FakeSession()
+    worker_session.exec = lambda _query: Result("alice")
+    consent_session = FakeSession(proposal=proposal(), people=people())
+    real_handler = partial(
+        process_consent_reply,
+        session_factory=factory(consent_session),
+    )
+
+    with (
+        patch("thenetwork.worker.tasks.get_session", factory(worker_session)),
+        patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
+        patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)),
+        patch("thenetwork.worker.tasks.verify_admin_request", return_value=None),
+        patch(
+            "thenetwork.worker.tasks.process_consent_reply",
+            side_effect=real_handler,
+        ),
+        patch("thenetwork.introductions.send_reply") as send,
+        patch(
+            "thenetwork.worker.tasks.run_agent_for_email",
+            new_callable=AsyncMock,
+        ) as run_agent,
+    ):
+        await process_email.func(
+            sender_email="alice@example.com",
+            sender_authenticated=True,
+            subject="Re: [intro:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa]",
+            body=(
+                "YES\n\n"
+                "Also, my real interest is provenance research "
+                "for museum archives."
+            ),
+        )
+
+    # The consent transition and fixed acknowledgment stay server-side.
+    assert consent_session.proposal.person_a_consented
+    send.assert_called_once()
+    assert send.call_args.kwargs["body_text"] == CONSENT_ACKNOWLEDGMENT_REPLY
+    # Only the framed leftover text reaches the agent, never the token.
+    run_agent.assert_awaited_once()
+    forwarded = run_agent.await_args.kwargs["email_body"]
+    assert forwarded.startswith("[System note]")
+    assert "outcome: one_consented" in forwarded
+    assert "provenance research" in forwarded
+    assert "[intro:" not in forwarded
+    assert "YES" not in forwarded

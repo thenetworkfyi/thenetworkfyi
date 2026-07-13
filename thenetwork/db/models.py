@@ -152,7 +152,9 @@ class ProactiveSurface(SQLModel, table=True):
 
     __tablename__ = "proactive_surfaces"
     __table_args__ = (
-        UniqueConstraint("person_a_id", "person_b_id", name="uq_proactive_surface_pair"),
+        UniqueConstraint(
+            "person_a_id", "person_b_id", name="uq_proactive_surface_pair"
+        ),
     )
 
     id: str = Field(default_factory=_new_uuid, primary_key=True)
@@ -173,4 +175,46 @@ class ProactiveSurface(SQLModel, table=True):
     surfaced_at: datetime = Field(
         default_factory=_utcnow,
         sa_column=Column(DateTime(timezone=True), nullable=False, index=True),
+    )
+
+
+class PendingIntroCandidate(SQLModel, table=True):
+    """Server-owned queue of proactive introduction candidates awaiting a digest send."""
+
+    __tablename__ = "pending_intro_candidates"
+    __table_args__ = (
+        UniqueConstraint(
+            "recipient_person_id", "candidate_person_id", name="uq_pending_intro_pair"
+        ),
+    )
+
+    id: str = Field(default_factory=_new_uuid, primary_key=True)
+    recipient_person_id: str = Field(
+        sa_column=Column(
+            Text(),
+            ForeignKey("people.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        )
+    )
+    candidate_person_id: str = Field(
+        sa_column=Column(
+            Text(),
+            ForeignKey("people.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        )
+    )
+    candidate_gist: str = Field(sa_column=Column(Text(), nullable=False))
+    recipient_gist: str = Field(sa_column=Column(Text(), nullable=False))
+    digest_token: Optional[str] = Field(default=None, index=True)
+    label: Optional[str] = Field(default=None)
+    status: str = Field(default="queued", nullable=False, index=True)
+    created_at: datetime = Field(
+        default_factory=_utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    updated_at: datetime = Field(
+        default_factory=_utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
     )

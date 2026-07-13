@@ -15,9 +15,15 @@ from typing import Callable
 from sqlmodel import col, select
 
 from thenetwork.audit import audit_event
-from thenetwork.db.models import IntroductionConsent, Person, ProactiveSurface
+from thenetwork.db.models import (
+    IntroductionConsent,
+    PendingIntroCandidate,
+    Person,
+    ProactiveSurface,
+)
 from thenetwork.db.session import get_session
 from thenetwork.email.outbound import send_group_introduction, send_reply
+from thenetwork.settings import get_settings
 
 _TOKEN_RE = re.compile(
     r"\[intro:(?P<token>[0-9a-f]{8}-[0-9a-f-]{27,})\]",
@@ -37,6 +43,28 @@ CONSENT_ACKNOWLEDGMENT_REPLY = "Noted — waiting on the other party."
 CONSENT_DECLINED_REPLY = "Noted — this introduction will not go ahead."
 CONSENT_ALREADY_DECLINED_REPLY = (
     "This introduction has already been declined and will not go ahead."
+)
+
+_DIGEST_LABELS = ("A", "B", "C", "D")
+_DIGEST_MAX_SIZE = 4
+_DIGEST_TOKEN_RE = re.compile(
+    r"\[digest:(?P<token>[0-9a-f]{8}-[0-9a-f-]{27,})\]",
+    re.IGNORECASE,
+)
+_DIGEST_SELECTION_RE = re.compile(
+    r"^\s*(?:[\"'([{]\s*)?"
+    r"(?P<body>none|[a-d](?:\s*(?:,|and|&)\s*[a-d])*)"
+    r"(?:\s*,?\s*(?:please|thanks?|thank\s+you))?"
+    r"\s*[.!?;:)\]}'\"]*\s*$",
+    re.IGNORECASE,
+)
+DIGEST_CLARIFICATION_REPLY = (
+    "I could not determine your selection. Reply with the letter(s) of the "
+    'candidates you would like to pursue (e.g. "A" or "A, C"), or NONE.'
+)
+DIGEST_NONE_SELECTED_REPLY = "Noted — no introductions will be sent from this digest."
+DIGEST_ALREADY_RESOLVED_REPLY = (
+    "This digest has already been resolved and no longer accepts a selection."
 )
 
 
@@ -104,9 +132,7 @@ def request_load(session, person_id: str, *, since: datetime) -> int:
     )
 
 
-def recently_surfaced_pairs(
-    session, *, since: datetime
-) -> set[tuple[str, str]]:
+def recently_surfaced_pairs(session, *, since: datetime) -> set[tuple[str, str]]:
     """Return opaque pairs already handed to a proactive agent recently."""
     records = session.exec(
         select(ProactiveSurface).where(col(ProactiveSurface.surfaced_at) >= since)
@@ -161,8 +187,14 @@ def propose_pair(
     max_requests_per_person_in_window: int = 3,
     request_window_seconds: int = 86_400,
     decline_cooldown_days: int = 90,
+    queue_on_cap: bool = False,
 ) -> dict[str, str | int]:
-    """Create one proposal and send fixed, anonymous consent requests."""
+    """Create one proposal and send fixed, anonymous consent requests.
+
+    `queue_on_cap` (proactive callers only): when a per-person request cap
+    would otherwise silently drop this candidate, queue it for a digest
+    instead - see `queue_intro_candidate`/`flush_pending_digests`.
+    """
     if not sender_person_id or not other_person_id:
         return {"status": "error", "reason": "invalid_person_id"}
     if sender_person_id == other_person_id:
@@ -196,6 +228,15 @@ def propose_pair(
                     _recent_request_count(session, person_id, since=since)
                     >= max_requests_per_person_in_window
                 ):
+                    if queue_on_cap:
+                        _queue_capped_candidate(
+                            capped_person_id=person_id,
+                            sender_person_id=sender_person_id,
+                            sender_gist=sender_gist,
+                            other_person_id=other_person_id,
+                            other_gist=other_gist,
+                            session_factory=session_factory,
+                        )
                     return {
                         "status": "deferred",
                         "reason": "recipient_consent_request_cap",
@@ -210,6 +251,15 @@ def propose_pair(
                     _outstanding_request_count(session, person_id)
                     >= max_outstanding_requests_per_person
                 ):
+                    if queue_on_cap:
+                        _queue_capped_candidate(
+                            capped_person_id=person_id,
+                            sender_person_id=sender_person_id,
+                            sender_gist=sender_gist,
+                            other_person_id=other_person_id,
+                            other_gist=other_gist,
+                            session_factory=session_factory,
+                        )
                     return {
                         "status": "deferred",
                         "reason": "recipient_outstanding_request_cap",
@@ -275,6 +325,166 @@ def propose_pair(
     return {"status": "proposed"}
 
 
+def queue_intro_candidate(
+    *,
+    recipient_person_id: str,
+    candidate_person_id: str,
+    recipient_gist: str,
+    candidate_gist: str,
+    session_factory: Callable = get_session,
+) -> dict[str, str]:
+    """Queue a candidate for batched digest delivery instead of an immediate request.
+
+    Used when a proactively-sourced proposal cannot send its own consent
+    request right away because the recipient is already at their outstanding-
+    or window-request cap (`propose_pair`'s `queue_on_cap`). Rather than drop
+    the candidate, it is held here until `flush_pending_digests` batches it
+    with any other queued candidates for the same recipient into one digest
+    email.
+    """
+    if not recipient_person_id or not candidate_person_id:
+        return {"status": "error", "reason": "invalid_person_id"}
+    if recipient_person_id == candidate_person_id:
+        return {"status": "error", "reason": "self_introduction"}
+
+    with session_factory() as session:
+        if pair_is_suppressed(session, recipient_person_id, candidate_person_id):
+            return {"status": "suppressed"}
+
+        existing = session.exec(
+            select(PendingIntroCandidate).where(
+                PendingIntroCandidate.recipient_person_id == recipient_person_id,
+                PendingIntroCandidate.candidate_person_id == candidate_person_id,
+            )
+        ).first()
+        if existing is not None:
+            return {"status": "already_queued", "candidate_status": existing.status}
+
+        row = PendingIntroCandidate(
+            recipient_person_id=recipient_person_id,
+            candidate_person_id=candidate_person_id,
+            recipient_gist=recipient_gist,
+            candidate_gist=candidate_gist,
+            status="queued",
+        )
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+        candidate_id = row.id
+
+    audit_event(
+        "introduction.digest_transition",
+        action="queue",
+        record_type="pending_intro_candidate",
+        outcome="success",
+        consent_state="queued",
+    )
+    return {"status": "queued", "candidate_id": candidate_id}
+
+
+def _queue_capped_candidate(
+    *,
+    capped_person_id: str,
+    sender_person_id: str,
+    sender_gist: str,
+    other_person_id: str,
+    other_gist: str,
+    session_factory: Callable,
+) -> None:
+    """Queue whichever side of a capped proposal hit its request limit."""
+    if capped_person_id == sender_person_id:
+        recipient_gist, candidate_id, candidate_gist = (
+            sender_gist,
+            other_person_id,
+            other_gist,
+        )
+    else:
+        recipient_gist, candidate_id, candidate_gist = (
+            other_gist,
+            sender_person_id,
+            sender_gist,
+        )
+    queue_intro_candidate(
+        recipient_person_id=capped_person_id,
+        candidate_person_id=candidate_id,
+        recipient_gist=recipient_gist,
+        candidate_gist=candidate_gist,
+        session_factory=session_factory,
+    )
+
+
+def flush_pending_digests(
+    *,
+    session_factory: Callable = get_session,
+    trace_id: str | None = None,
+) -> dict[str, int]:
+    """Batch each recipient's queued candidates into one digest email.
+
+    Every recipient with at least one `queued` `PendingIntroCandidate` row
+    gets exactly one digest listing up to `introduction_digest_size` (capped
+    at `_DIGEST_MAX_SIZE`) candidates, oldest first; any further queued
+    candidates for that recipient wait for the next flush. The digest body
+    carries only gists and opaque A/B/C/D labels (SEAL-safe) - no names, no
+    addresses, no raw memory text.
+    """
+    s = get_settings()
+    cap = max(1, min(s.introduction_digest_size, _DIGEST_MAX_SIZE))
+    sent = 0
+
+    with session_factory() as session:
+        queued = session.exec(
+            select(PendingIntroCandidate)
+            .where(PendingIntroCandidate.status == "queued")
+            .order_by(col(PendingIntroCandidate.created_at).asc())
+        ).all()
+
+        by_recipient: dict[str, list[PendingIntroCandidate]] = {}
+        for row in queued:
+            by_recipient.setdefault(row.recipient_person_id, []).append(row)
+
+        for recipient_id, rows in by_recipient.items():
+            batch = rows[:cap]
+            recipient = session.get(Person, recipient_id)
+            if recipient is None:
+                continue
+
+            token = str(uuid.uuid4())
+            lines = []
+            for row, label in zip(batch, _DIGEST_LABELS):
+                lines.append(f"{label}. {row.candidate_gist}")
+                row.status = "digested"
+                row.digest_token = token
+                row.label = label
+                row.updated_at = _utcnow()
+                session.add(row)
+            session.commit()
+
+            body = (
+                "A few possible matches came up:\n\n"
+                + "\n\n".join(lines)
+                + "\n\nNo names or contact details have been shared. Reply with "
+                'the letter(s) of the ones you would like to pursue (e.g. "A" '
+                'or "A, C"), or NONE. If you reply from another thread, '
+                f"include this token in your reply: [digest:{token}]"
+            )
+            send_reply(
+                to_address=recipient.email,
+                subject=f"Possible introductions [digest:{token}]",
+                body_text=body,
+                trace_id=trace_id,
+            )
+            sent += 1
+
+    audit_event(
+        "introduction.digest_transition",
+        action="flush",
+        record_type="pending_intro_candidate",
+        outcome="success",
+        consent_state="digested",
+    )
+    return {"digests_sent": sent}
+
+
 def _reply_action(body: str) -> str | None:
     visible = _visible_reply_lines(body)
     if not visible:
@@ -294,6 +504,23 @@ def _visible_reply_lines(body: str) -> list[str]:
         for line in body.replace("\r", "").splitlines()
         if line.strip() and not line.lstrip().startswith(">")
     ]
+
+
+def _reply_remainder(body: str) -> str:
+    """Sender-authored reply text beyond the decision line and consent tokens.
+
+    This is what the consent path would otherwise discard: visible lines minus
+    the matched decision word (if any) and any `[intro:...]` tokens.
+    """
+    lines = _visible_reply_lines(body)
+    if lines and _ACTION_RE.fullmatch(lines[0]):
+        lines = lines[1:]
+    kept = []
+    for line in lines:
+        stripped = _TOKEN_RE.sub("", line).strip()
+        if stripped:
+            kept.append(stripped)
+    return "\n".join(kept)
 
 
 def _reply_token(subject: str, body: str) -> str | None:
@@ -328,6 +555,11 @@ def _send_fixed_reply(
 class ConsentReplyResult:
     handled: bool
     outcome: str | None = None
+    # Authenticated-participant reply text beyond the decision and token, so
+    # the worker can hand it to an agent run instead of discarding it. Always
+    # empty on rejected outcomes: only text from a verified participant in the
+    # pair may travel onward.
+    remainder: str = ""
 
 
 def process_consent_reply(
@@ -376,6 +608,8 @@ def process_consent_reply(
         if sender is None:
             raise RuntimeError("introduction participant no longer exists")
 
+        remainder = _reply_remainder(body)
+
         if action is None:
             _send_fixed_reply(
                 to_address=sender.email,
@@ -390,10 +624,14 @@ def process_consent_reply(
                 outcome="success",
                 consent_state=proposal.status,
             )
-            return ConsentReplyResult(handled=True, outcome="clarification_sent")
+            return ConsentReplyResult(
+                handled=True, outcome="clarification_sent", remainder=remainder
+            )
 
         if proposal.status == "revoked":
-            return ConsentReplyResult(handled=True, outcome=proposal.status)
+            return ConsentReplyResult(
+                handled=True, outcome=proposal.status, remainder=remainder
+            )
 
         if proposal.status == "declined":
             _send_fixed_reply(
@@ -402,7 +640,9 @@ def process_consent_reply(
                 body_text=CONSENT_ALREADY_DECLINED_REPLY,
                 trace_id=trace_id,
             )
-            return ConsentReplyResult(handled=True, outcome=proposal.status)
+            return ConsentReplyResult(
+                handled=True, outcome=proposal.status, remainder=remainder
+            )
 
         if action == "revoke":
             proposal.status = "revoked"
@@ -424,7 +664,9 @@ def process_consent_reply(
                 trace_id=trace_id,
             )
         elif proposal.status == "introduced":
-            return ConsentReplyResult(handled=True, outcome="introduced")
+            return ConsentReplyResult(
+                handled=True, outcome="introduced", remainder=remainder
+            )
         else:
             if sender_person_id == proposal.person_a_id:
                 proposal.person_a_consented = True
@@ -464,4 +706,184 @@ def process_consent_reply(
         outcome="success",
         consent_state=state,
     )
-    return ConsentReplyResult(handled=True, outcome=state)
+    return ConsentReplyResult(handled=True, outcome=state, remainder=remainder)
+
+
+def _digest_reply_token(subject: str, body: str) -> str | None:
+    """Find a digest token in the subject or a visible reply line."""
+    match = _DIGEST_TOKEN_RE.search(subject)
+    if match is not None:
+        return match.group("token")
+    for line in _visible_reply_lines(body):
+        match = _DIGEST_TOKEN_RE.search(line)
+        if match is not None:
+            return match.group("token")
+    return None
+
+
+def _digest_selection(body: str) -> set[str] | None:
+    """Parse the recipient's letter selection (or NONE) from a digest reply."""
+    visible = _visible_reply_lines(body)
+    if not visible:
+        return None
+    match = _DIGEST_SELECTION_RE.fullmatch(visible[0])
+    if match is None:
+        return None
+    text = match.group("body").lower()
+    if text == "none":
+        return set()
+    return {letter.upper() for letter in re.findall(r"\b[a-d]\b", text)}
+
+
+@dataclass(frozen=True)
+class DigestReplyResult:
+    handled: bool
+    outcome: str | None = None
+    remainder: str = ""
+
+
+def process_digest_reply(
+    *,
+    sender_person_id: str | None,
+    sender_authenticated: bool,
+    subject: str,
+    body: str,
+    session_factory: Callable = get_session,
+    trace_id: str | None = None,
+) -> DigestReplyResult:
+    """Consume a tokened digest selection reply before it reaches the model.
+
+    Selected candidates get a normal `[intro:...]` consent request via
+    `propose_pair` (server-side, no agent involvement - the selection itself
+    is a deterministic reply, not a judgment call).
+    """
+    token = _digest_reply_token(subject, body)
+    if token is None:
+        return DigestReplyResult(handled=False)
+
+    selection = _digest_selection(body)
+    if not sender_authenticated or sender_person_id is None:
+        audit_event(
+            "introduction.digest_transition",
+            action="select" if selection is not None else "clarify",
+            record_type="pending_intro_candidate",
+            outcome="rejected_unauthenticated",
+        )
+        return DigestReplyResult(handled=True, outcome="rejected")
+
+    with session_factory() as session:
+        all_rows = session.exec(
+            select(PendingIntroCandidate)
+            .where(PendingIntroCandidate.digest_token == token)
+            .with_for_update()
+        ).all()
+
+        if not all_rows or all_rows[0].recipient_person_id != sender_person_id:
+            audit_event(
+                "introduction.digest_transition",
+                action="select" if selection is not None else "clarify",
+                record_type="pending_intro_candidate",
+                outcome="rejected_forbidden",
+            )
+            return DigestReplyResult(handled=True, outcome="rejected")
+
+        recipient = session.get(Person, sender_person_id)
+        if recipient is None:
+            raise RuntimeError("digest recipient no longer exists")
+
+        remainder = _reply_remainder(body)
+        rows = [row for row in all_rows if row.status == "digested"]
+
+        if not rows:
+            _send_fixed_reply(
+                to_address=recipient.email,
+                subject=subject,
+                body_text=DIGEST_ALREADY_RESOLVED_REPLY,
+                trace_id=trace_id,
+            )
+            return DigestReplyResult(
+                handled=True, outcome="already_resolved", remainder=remainder
+            )
+
+        if selection is None:
+            _send_fixed_reply(
+                to_address=recipient.email,
+                subject=subject,
+                body_text=DIGEST_CLARIFICATION_REPLY,
+                trace_id=trace_id,
+            )
+            audit_event(
+                "introduction.digest_transition",
+                action="clarify",
+                record_type="pending_intro_candidate",
+                outcome="success",
+                consent_state="digested",
+            )
+            return DigestReplyResult(
+                handled=True, outcome="clarification_sent", remainder=remainder
+            )
+
+        by_label = {row.label: row for row in rows}
+        chosen_rows = [by_label[label] for label in selection if label in by_label]
+
+        for row in rows:
+            row.status = "selected" if row in chosen_rows else "not_selected"
+            row.updated_at = _utcnow()
+            session.add(row)
+        session.commit()
+
+        if not chosen_rows:
+            _send_fixed_reply(
+                to_address=recipient.email,
+                subject=subject,
+                body_text=DIGEST_NONE_SELECTED_REPLY,
+                trace_id=trace_id,
+            )
+            audit_event(
+                "introduction.digest_transition",
+                action="select",
+                record_type="pending_intro_candidate",
+                outcome="success",
+                consent_state="not_selected",
+            )
+            return DigestReplyResult(
+                handled=True, outcome="none_selected", remainder=remainder
+            )
+
+        chosen_payload = [
+            {
+                "recipient_person_id": row.recipient_person_id,
+                "candidate_person_id": row.candidate_person_id,
+                "recipient_gist": row.recipient_gist,
+                "candidate_gist": row.candidate_gist,
+            }
+            for row in chosen_rows
+        ]
+
+    s = get_settings()
+    for payload in chosen_payload:
+        propose_pair(
+            sender_person_id=payload["recipient_person_id"],
+            other_person_id=payload["candidate_person_id"],
+            sender_gist=payload["recipient_gist"],
+            other_gist=payload["candidate_gist"],
+            session_factory=session_factory,
+            trace_id=trace_id,
+            max_outstanding_requests_per_person=(
+                s.introduction_max_outstanding_requests_per_person
+            ),
+            max_requests_per_person_in_window=(
+                s.introduction_max_requests_per_person_in_window
+            ),
+            request_window_seconds=s.introduction_request_window_seconds,
+            decline_cooldown_days=s.consent_decline_cooldown_days,
+        )
+
+    audit_event(
+        "introduction.digest_transition",
+        action="select",
+        record_type="pending_intro_candidate",
+        outcome="success",
+        consent_state="selected",
+    )
+    return DigestReplyResult(handled=True, outcome="selected", remainder=remainder)
