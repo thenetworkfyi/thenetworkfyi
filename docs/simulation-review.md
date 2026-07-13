@@ -88,9 +88,13 @@ Review artifacts in this order:
 3. `audit.jsonl` is the privacy-safe structural trace of the production processing path. Use
    it for tool completions, consent transitions, errors, and trace correlation. It exists only
    for real-process runs.
-4. `all-mail.mbox` is authoritative for delivered message order, headers, recipients,
-   threading, and bodies.
-5. `transcript.md` is a derived, human-readable rendering of the mbox. Its `Message N`
+4. `all-mail.mbox` and `transcript.md` are redacted, publishable views. They preserve
+   message order and debugging structure, but they are not a source of raw identity or
+   conversation content.
+5. `private/all-mail.mbox` is the exact mail input used by deterministic scorers. It is
+   owner-only, is not a normal review artifact, and must never be uploaded or supplied to an
+   LLM. Access it only under an approved incident or reproducibility procedure, then delete it.
+6. `transcript.md` is a derived, human-readable rendering of the redacted mbox. Its `Message N`
    headings use the same one-based indices cited by mail score findings.
 
 Real-process databases are disposable unless the run used `--keep-db`. Tier 2 and outcome
@@ -151,8 +155,8 @@ awk -v n="$MESSAGE" '
 ' "$RUN/transcript.md"
 ```
 
-When present, use the transcript's `Trace-Id` to correlate a message with processing and tool
-activity:
+When a non-redacted trace ID is available from the privacy-safe audit trail, use it to correlate
+processing and tool activity. Do not try to reverse a redacted transcript or event value:
 
 ```bash
 TRACE_ID=replace-with-trace-id

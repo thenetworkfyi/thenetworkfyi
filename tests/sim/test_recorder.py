@@ -15,7 +15,7 @@ from thenetwork.db.models import IntroductionConsent, Memory, Person
 from thenetwork.security import log_redaction
 from thenetwork.sim.cli import main, run_sim
 from thenetwork.sim.scoring.compare import compare_runs, load_run_metrics
-from thenetwork.sim.run.mail import SimPostOffice
+from thenetwork.sim.run.mail import SimPostOffice, publish_redacted_mbox
 from thenetwork.sim.personas.persona import PersonaConfig, TinyPersonEmailAdapter
 from thenetwork.sim.personas.population import DEFAULT_OUTCOME_CHECKS
 from thenetwork.sim.run.recorder import (
@@ -130,6 +130,44 @@ async def test_public_simulation_artifacts_redact_content_and_keep_raw_mail_priv
         assert sensitive not in public_artifacts
         assert sensitive in artifacts.raw_mbox_path.read_text(encoding="utf-8")
     assert artifacts.private_dir.stat().st_mode & 0o777 == 0o700
+
+
+def test_public_simulation_mbox_redacts_untrusted_headers_and_envelope(tmp_path):
+    raw_mbox_path = tmp_path / "private" / "all-mail.mbox"
+    public_mbox_path = tmp_path / "all-mail.mbox"
+    message = EmailMessage()
+    message["From"] = "Alice <alice@example.test>"
+    message["To"] = "join@example.test"
+    message["Message-ID"] = "<request_123456-alice@example.test>"
+    message["In-Reply-To"] = "<trace_123456-alice@example.test>"
+    message["References"] = "<request_123456-alice@example.test>"
+    message["X-Client-Secret"] = "api_key=sk_abcdefghijklmnopq"
+    message["X-Custom"] = "https://example.test/alice@example.test"
+    message.set_content("Safe body")
+    message.add_attachment(
+        b"alice@example.test",
+        maintype="application",
+        subtype="octet-stream",
+        filename="alice@example.test",
+    )
+    message.set_param("name", "alice@example.test", header="Content-Type")
+    SimPostOffice(mbox_path=raw_mbox_path).deliver(message)
+
+    publish_redacted_mbox(raw_mbox_path, public_mbox_path)
+
+    public_artifact = public_mbox_path.read_text(encoding="utf-8")
+    for sensitive in (
+        "alice@example.test",
+        "request_123456",
+        "trace_123456",
+        "sk_abcdefghijklmnopq",
+        "https://example.test/alice@example.test",
+        "Safe body",
+    ):
+        assert sensitive not in public_artifact
+    assert "From MAILER-DAEMON" in public_artifact
+    assert "X-Client-Secret:" in public_artifact
+    assert "[redacted-text chars=10]" in public_artifact
 
 
 @pytest.mark.asyncio
