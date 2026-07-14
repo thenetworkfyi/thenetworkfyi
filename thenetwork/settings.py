@@ -1,4 +1,5 @@
 from pydantic import computed_field
+from pydantic_ai.settings import ThinkingLevel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import URL
 
@@ -37,6 +38,9 @@ class Settings(BaseSettings):
     # deployment, so a missing env var fails at startup instead of silently
     # running against a fallback vendor/model.
     agent_model: str
+    # Optional provider-agnostic reasoning effort for the main agent. Set to
+    # None to leave the model's default thinking behavior unchanged.
+    agent_thinking_level: ThinkingLevel | None = "medium"
     # Cheaper/smaller-model tier for subtasks that don't need the main agent
     # model (currently: the sanitize_memory_llm gist pass, see memory/sanitize.py).
     small_agent_model: str

@@ -6,6 +6,7 @@ from typing import Any
 
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
 
 from thenetwork.agent.deps import AgentDeps
@@ -51,11 +52,18 @@ def build_agent(model: Any = None) -> Agent[AgentDeps, str]:
         settings = settings or get_settings()
         model = model_with_api_key(model, settings.agent_api_key)
 
+    thinking_level = settings.agent_thinking_level if settings is not None else None
+
     agent: Agent[AgentDeps, str] = Agent(
         model=model,
         system_prompt=SYSTEM_PROMPT,
         deps_type=AgentDeps,
         output_type=str,
+        model_settings=(
+            ModelSettings(thinking=thinking_level)
+            if thinking_level is not None
+            else None
+        ),
     )
 
     # One retry is exclusively for malformed tool arguments. World-state and
