@@ -25,7 +25,9 @@ def upgrade() -> None:
         sa.Column("surfaced_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(["person_a_id"], ["people.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["person_b_id"], ["people.id"], ondelete="CASCADE"),
-        sa.UniqueConstraint("person_a_id", "person_b_id", name="uq_proactive_surface_pair"),
+        sa.UniqueConstraint(
+            "person_a_id", "person_b_id", name="uq_proactive_surface_pair"
+        ),
     )
     op.create_index(
         "ix_proactive_surfaces_surfaced_at", "proactive_surfaces", ["surfaced_at"]
