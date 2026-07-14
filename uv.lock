@@ -3882,7 +3882,7 @@ requires-dist = [
     { name = "presidio-analyzer", specifier = ">=2.2" },
     { name = "procrastinate", extras = ["sqlalchemy"], specifier = ">=2.9" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
-    { name = "pydantic-ai", specifier = ">=0.0.14" },
+    { name = "pydantic-ai", specifier = ">=2.6.0" },
     { name = "pydantic-evals", specifier = ">=0.0.14" },
     { name = "pydantic-evals", marker = "extra == 'dev'", specifier = ">=0.0.14" },
     { name = "pydantic-settings", specifier = ">=2.5" },
