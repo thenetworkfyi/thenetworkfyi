@@ -250,6 +250,9 @@ uv pip install -e .
 # uv pip install -e ".[content-scan]"
 ```
 
+The required `en_core_web_lg` spaCy model is installed with the project; no
+separate model download is needed.
+
 ### 3. Start Postgres and apply migrations
 
 ```bash
