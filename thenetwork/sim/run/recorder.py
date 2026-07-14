@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import mailbox
 import os
+import subprocess
 from collections import Counter
 from collections.abc import Callable, Iterable
 from contextlib import nullcontext
@@ -264,9 +265,37 @@ class SimRunRecorder:
         return artifacts
 
 
+def _project_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+def _git_provenance() -> dict[str, Any]:
+    """Capture the launching checkout's commit sha and dirty-tree state."""
+    root = _project_root()
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        return {"commit": None, "dirty": None}
+    return {"commit": commit, "dirty": bool(status.strip())}
+
+
 def _config_payload(config: SimRunConfig, process_mode: str) -> dict[str, Any]:
     return {
         "scenario": config.scenario,
+        "git": _git_provenance(),
         "ticks": config.ticks,
         "proactive_every": config.proactive_every,
         "personas": [asdict(persona) for persona in config.personas],
