@@ -456,6 +456,22 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
         return _tool_result({"status": "escalated", "memory_id": memory_id})
 
 
+async def no_action(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
+    """Declare that this email genuinely warrants no reply, outreach, or memory.
+
+    Use for spam, automated mail, or content with no genuine human ask - not
+    for a real person's question or request, even one outside what you do
+    (answer that with `reply_to_sender` or use `escalate` if you cannot
+    determine a safe response). Calling this tool is how "do nothing" is
+    recorded; do not leave a run silent by simply not calling any tool, since
+    that is indistinguishable from having forgotten to act. This is a no-op:
+    it does not notify anyone and is not itself a form of human review - use
+    `escalate` when you are unsure rather than calling this to end the run.
+    """
+    with audit_span("agent.tool", tool_name="no_action"):
+        return _tool_result({"status": "no_action"})
+
+
 async def register_person(
     ctx: RunContext[AgentDeps],
     name: str,

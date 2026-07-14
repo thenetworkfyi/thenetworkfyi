@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 address; a pydantic-ai agent reads each message, decides what (if anything) to do, and
 acts: capture a fact, surface an event, introduce two people, or do nothing. There is
 no networking schema and no scenario script - all behavior is *emergent* from a system
-prompt plus eight tools over a store of freeform **memories**. Runs as a single
+prompt plus nine tools over a store of freeform **memories**. Runs as a single
 long-lived worker on one VPS against Postgres (pgvector). No inbound network access.
 
 The README has the full prose; the docs below are the working details. The one rule that
