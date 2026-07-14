@@ -14,8 +14,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential libpq5 gnupg \
     && rm -rf /var/lib/apt/lists/*
 
-# Install dependencies and the spaCy model before copying app code, so changes
-# under thenetwork/ do not invalidate the large model download layer.
+# Install dependencies before copying app code, so changes under thenetwork/
+# do not invalidate the model-install layer.
 COPY pyproject.toml README.md ./
 RUN python - <<'PY' > /tmp/project-requirements.txt
 import tomllib
@@ -28,8 +28,7 @@ for dependency in pyproject["build-system"]["requires"]:
 for dependency in pyproject["project"]["dependencies"]:
     print(dependency)
 PY
-RUN pip install -r /tmp/project-requirements.txt \
-    && python -m spacy download en_core_web_lg
+RUN pip install -r /tmp/project-requirements.txt
 COPY thenetwork ./thenetwork
 RUN pip install --no-deps --no-build-isolation .
 
