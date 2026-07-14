@@ -50,17 +50,18 @@ budgets, or quality thresholds can explain a behavioral delta and must be called
 configuration difference is relevant to the result, find a compatible baseline or switch to
 an isolated review and report that no direct comparison is available.
 
-The artifacts currently do not record the Git commit or whether the tree was dirty. Record
-both when launching a run:
+`config.json` records the launching checkout's Git commit and whether the tree was dirty at
+launch, under the `git` key:
 
 ```bash
-git rev-parse HEAD
-git status --short
+jq '.git' "$RUN/config.json"
+# {"commit": "<sha>", "dirty": <true|false>}
 ```
 
-If that was not done, establish provenance from external run notes or the launching terminal.
-Do not infer the tested commit solely from directory or commit timestamps; report provenance
-as unknown if it cannot be established.
+A `commit` of `null` means the run started outside a Git checkout or `git` was unavailable;
+treat provenance as unknown in that case rather than guessing from directory or commit
+timestamps. For runs recorded before this field existed, fall back to external run notes or
+the launching terminal to establish provenance.
 
 ## Confirm the run completed
 
@@ -271,8 +272,8 @@ instead of averaging incompatible runs or declaring success from one sample.
 - Review mode: `<isolated or comparative>`
 - Run: `<path>`
 - Baseline: `<path or not used>`
-- Tested commit: `<sha or unknown>`
-- Working tree at launch: `<clean, dirty, or unknown>`
+- Tested commit: `<config.json .git.commit, or unknown>`
+- Working tree at launch: `<clean, dirty, or unknown, from config.json .git.dirty>`
 - Configuration differences: `<none, list, or not applicable>`
 
 ## Automated findings

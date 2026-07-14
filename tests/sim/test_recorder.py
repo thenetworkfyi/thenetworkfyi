@@ -777,6 +777,68 @@ def test_database_outcome_state_materializes_values_before_session_closes():
     }
 
 
+def _fake_git_run(commit: str, porcelain: str):
+    def fake_run(args, **_kwargs):
+        if args[:2] == ["git", "rev-parse"]:
+            return SimpleNamespace(stdout=f"{commit}\n")
+        if args[:2] == ["git", "status"]:
+            return SimpleNamespace(stdout=porcelain)
+        raise AssertionError(f"unexpected git invocation: {args}")
+
+    return fake_run
+
+
+def test_config_payload_records_clean_git_commit():
+    config = SimRunConfig(
+        scenario="provenance",
+        ticks=1,
+        proactive_every=None,
+        personas=(),
+    )
+
+    with patch(
+        "thenetwork.sim.run.recorder.subprocess.run",
+        side_effect=_fake_git_run("abc123", ""),
+    ):
+        payload = _config_payload(config, "mock")
+
+    assert payload["git"] == {"commit": "abc123", "dirty": False}
+
+
+def test_config_payload_records_dirty_tree():
+    config = SimRunConfig(
+        scenario="provenance",
+        ticks=1,
+        proactive_every=None,
+        personas=(),
+    )
+
+    with patch(
+        "thenetwork.sim.run.recorder.subprocess.run",
+        side_effect=_fake_git_run("abc123", " M thenetwork/sim/run/recorder.py\n"),
+    ):
+        payload = _config_payload(config, "mock")
+
+    assert payload["git"] == {"commit": "abc123", "dirty": True}
+
+
+def test_config_payload_git_provenance_fails_closed_to_none_when_git_unavailable():
+    config = SimRunConfig(
+        scenario="provenance",
+        ticks=1,
+        proactive_every=None,
+        personas=(),
+    )
+
+    with patch(
+        "thenetwork.sim.run.recorder.subprocess.run",
+        side_effect=FileNotFoundError("git not found"),
+    ):
+        payload = _config_payload(config, "mock")
+
+    assert payload["git"] == {"commit": None, "dirty": None}
+
+
 def test_config_payload_keeps_outcome_check_metadata_without_predicates():
     config = SimRunConfig(
         scenario="metadata",
