@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic_ai.exceptions import ModelHTTPError
 
 from thenetwork.audit import audit_event
 from thenetwork.db.models import IntroductionConsent, Memory, Person
@@ -19,12 +20,14 @@ from thenetwork.sim.run.mail import SimPostOffice, publish_redacted_mbox
 from thenetwork.sim.personas.persona import PersonaConfig, TinyPersonEmailAdapter
 from thenetwork.sim.personas.population import DEFAULT_OUTCOME_CHECKS
 from thenetwork.sim.run.recorder import (
+    EventsLog,
     SimRunArtifacts,
     SimRunConfig,
     SimRunRecorder,
     _assemble_scenario_outcome,
     _config_payload,
     _database_outcome_state,
+    _recording_process,
 )
 from thenetwork.sim.scenarios import default_strong_match_configs
 from thenetwork.sim.scoring.scoring import IntroductionRevealAuthorization, OutcomeCheck
@@ -779,6 +782,81 @@ def test_database_outcome_state_materializes_values_before_session_closes():
         "nadia-id": "nadia.sim@example.test",
         "peer-id": "peer@example.test",
     }
+
+
+@pytest.mark.asyncio
+async def test_recording_process_retries_transient_model_http_error_then_succeeds(
+    tmp_path,
+):
+    events = EventsLog(tmp_path / "events.jsonl")
+    calls = []
+
+    async def flaky_process(**kwargs):
+        calls.append(kwargs)
+        if len(calls) < 3:
+            raise ModelHTTPError(status_code=503, model_name="test-model")
+        return {"tool_calls": (), "total_tokens": 0, "cost_usd": 0.0}
+
+    wrapped = _recording_process(flaky_process, events)
+    await wrapped(sender_email="alice@example.test", trace_id="trace-1")
+
+    assert len(calls) == 3
+    logged = [
+        json.loads(line)
+        for line in (tmp_path / "events.jsonl").read_text().splitlines()
+    ]
+    event_names = [entry["event"] for entry in logged]
+    assert event_names.count("sim.process_email_retrying") == 2
+    assert "sim.process_email_failed" not in event_names
+    assert "sim.process_email_completed" in event_names
+
+
+@pytest.mark.asyncio
+async def test_recording_process_stops_after_max_attempts_and_records_failure(
+    tmp_path,
+):
+    events = EventsLog(tmp_path / "events.jsonl")
+    calls = []
+
+    async def always_fails(**kwargs):
+        calls.append(kwargs)
+        raise ModelHTTPError(status_code=504, model_name="test-model")
+
+    wrapped = _recording_process(always_fails, events)
+    await wrapped(sender_email="alice@example.test", trace_id="trace-1")
+
+    assert len(calls) == 3
+    logged = [
+        json.loads(line)
+        for line in (tmp_path / "events.jsonl").read_text().splitlines()
+    ]
+    failed = [entry for entry in logged if entry["event"] == "sim.process_email_failed"]
+    assert len(failed) == 1
+    assert failed[0]["attempts"] == 3
+
+
+@pytest.mark.asyncio
+async def test_recording_process_does_not_retry_non_transient_model_http_error(
+    tmp_path,
+):
+    events = EventsLog(tmp_path / "events.jsonl")
+    calls = []
+
+    async def bad_request(**kwargs):
+        calls.append(kwargs)
+        raise ModelHTTPError(status_code=400, model_name="test-model")
+
+    wrapped = _recording_process(bad_request, events)
+    await wrapped(sender_email="alice@example.test", trace_id="trace-1")
+
+    assert len(calls) == 1
+    logged = [
+        json.loads(line)
+        for line in (tmp_path / "events.jsonl").read_text().splitlines()
+    ]
+    failed = [entry for entry in logged if entry["event"] == "sim.process_email_failed"]
+    assert len(failed) == 1
+    assert failed[0]["attempts"] == 1
 
 
 def test_config_payload_keeps_outcome_check_metadata_without_predicates():

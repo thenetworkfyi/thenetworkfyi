@@ -14,6 +14,8 @@ from email.utils import getaddresses
 from pathlib import Path
 from typing import Any
 
+from pydantic_ai.exceptions import ModelHTTPError
+
 from thenetwork.audit import audit_jsonl_file
 from sqlmodel import select
 
@@ -458,6 +460,24 @@ def _record_proactive_trigger(events: EventsLog):
     return record
 
 
+# Mirrors production's Procrastinate max_attempts=3 (worker/tasks.py); the sim
+# invokes the task function directly with no job-retry wrapper.
+_PROCESS_EMAIL_MAX_ATTEMPTS = 3
+_TRANSIENT_MODEL_HTTP_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+
+
+def _is_transient_model_error(exc: Exception) -> bool:
+    """A retryable provider failure: rate limiting or a server-side error.
+
+    A non-5xx/429 ModelHTTPError (e.g. 400) is a client error that will not
+    succeed on retry, so it is not treated as transient.
+    """
+    return (
+        isinstance(exc, ModelHTTPError)
+        and exc.status_code in _TRANSIENT_MODEL_HTTP_STATUS_CODES
+    )
+
+
 def _recording_process(process, events: EventsLog):
     async def wrapped(**kwargs: Any) -> None:
         trace_id = kwargs.get("trace_id")
@@ -467,22 +487,38 @@ def _recording_process(process, events: EventsLog):
             subject=kwargs.get("subject"),
             trace_id=trace_id,
         )
-        try:
-            outcome = await process(**kwargs)
-        except Exception as exc:
-            # Production has Procrastinate's job-retry loop around this same
-            # call (see worker/tasks.py's process_email try/except); the sim
-            # invokes the task function directly with no such wrapper. Without
-            # this, one bad model response aborts the whole multi-tick run
-            # instead of just failing the one turn, unlike production.
-            events.write(
-                "sim.process_email_failed",
-                sender_email=kwargs.get("sender_email"),
-                trace_id=trace_id,
-                error_type=type(exc).__name__,
-                error=str(exc),
-            )
-            return
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                outcome = await process(**kwargs)
+            except Exception as exc:
+                # Production has Procrastinate's job-retry loop around this same
+                # call (see worker/tasks.py's process_email try/except). Without
+                # this, one bad model response aborts the whole multi-tick run
+                # instead of just failing the one turn, unlike production.
+                if (
+                    _is_transient_model_error(exc)
+                    and attempt < _PROCESS_EMAIL_MAX_ATTEMPTS
+                ):
+                    events.write(
+                        "sim.process_email_retrying",
+                        sender_email=kwargs.get("sender_email"),
+                        trace_id=trace_id,
+                        attempt=attempt,
+                        error_type=type(exc).__name__,
+                    )
+                    continue
+                events.write(
+                    "sim.process_email_failed",
+                    sender_email=kwargs.get("sender_email"),
+                    trace_id=trace_id,
+                    attempts=attempt,
+                    error_type=type(exc).__name__,
+                    error=str(exc),
+                )
+                return
+            break
         events.write(
             "sim.process_email_completed",
             sender_email=kwargs.get("sender_email"),
