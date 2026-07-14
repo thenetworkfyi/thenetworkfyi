@@ -99,7 +99,7 @@ exists because some memory references both, edge weight comes from count/recency
 memories. NetworkX does multi-hop proximity math; the LLM does the language→reference
 mapping at write time. Semantic match over memories lives in `search/match.py`.
 
-## Agent surface - eight tools (`agent/tools.py`)
+## Agent surface - nine tools (`agent/tools.py`)
 
 | tool | description |
 |---|---|
@@ -111,6 +111,7 @@ mapping at write time. Semantic match over memories lives in `search/match.py`.
 | `propose_introduction(other_person_id, sender_gist, other_gist)` | creates a pairwise proposal and sends fixed anonymous opt-in requests; authenticated replies are handled server-side before the model runs |
 | `register_person(name)` | onboard an authenticated sender on first contact; self-registration only, with the address supplied from the verified inbound sender - the id it returns is what later `remember` calls key off |
 | `escalate(reason)` | flag this email for human review and notify `admin_emails`; no auto-reply is sent for true escalations. For authenticated unknown senders, it sends the fixed first-contact welcome instead of escalating. The fallback when no safe, useful action is clear (e.g. an unauthenticated first contact) |
+| `no_action(reason)` | record that no reply, outreach, or memory is warranted (spam, automated mail, no genuine ask); a no-op that notifies no one - the explicit way to end a run without dispatching anything, so a deliberate no-op is distinguishable from a dropped response |
 
 ## Stack
 

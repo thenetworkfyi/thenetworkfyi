@@ -890,6 +890,39 @@ async def test_reply_tool_call_prevents_undispatched_escalation():
 
 
 @pytest.mark.asyncio
+async def test_no_action_tool_call_prevents_undispatched_escalation():
+    from thenetwork.agent.core import run_agent_for_email
+
+    fake_result = SimpleNamespace(
+        output="No action was needed.",
+        all_messages=lambda: [
+            SimpleNamespace(
+                parts=[
+                    SimpleNamespace(
+                        part_kind="tool-call",
+                        tool_name="no_action",
+                    )
+                ]
+            )
+        ],
+    )
+    fake_agent = SimpleNamespace(run=AsyncMock(return_value=fake_result))
+
+    with (
+        patch("thenetwork.agent.core.build_agent", return_value=fake_agent),
+        patch("thenetwork.agent.core.notify_admins") as notify_admins,
+    ):
+        await run_agent_for_email(
+            sender_email="mike@mkly.io",
+            sender_user_id="person-mike",
+            email_subject="Thanks",
+            email_body="No new info here.",
+        )
+
+    notify_admins.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_tool_and_database_events_do_not_log_arguments(caplog):
     from thenetwork.agent.deps import AgentDeps
     from thenetwork.agent.tools import search

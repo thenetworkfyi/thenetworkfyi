@@ -13,6 +13,7 @@ from thenetwork.agent.prompts import SYSTEM_PROMPT
 from thenetwork.agent.tools import (
     escalate,
     forget,
+    no_action,
     propose_introduction,
     register_person,
     remember,
@@ -67,6 +68,7 @@ def build_agent(model: Any = None) -> Agent[AgentDeps, str]:
     agent.tool(reply_to_sender, retries=1)
     agent.tool(send_outreach, retries=1)
     agent.tool(register_person, retries=1)
+    agent.tool(no_action, retries=1)
 
     return agent
 
@@ -179,9 +181,12 @@ async def run_agent_for_email(
             )
         has_undispatched_text = (
             result.output.strip()
-            and not {"reply_to_sender", "send_outreach", "escalate"}.intersection(
-                tool_names
-            )
+            and not {
+                "reply_to_sender",
+                "send_outreach",
+                "escalate",
+                "no_action",
+            }.intersection(tool_names)
             and deps.server_side_send_count == 0
         )
         if has_undispatched_text and deps.is_proactive:
