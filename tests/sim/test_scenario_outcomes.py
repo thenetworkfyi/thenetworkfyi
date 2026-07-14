@@ -175,6 +175,7 @@ def _default_outcome() -> ScenarioOutcome:
                 "event": "introduction.consent_transition",
                 "action": "clarify",
                 "outcome": "success",
+                "sender_id_hash": "snd_v1_ines",
             },
             {
                 "event": "introduction.consent_transition",
@@ -184,7 +185,10 @@ def _default_outcome() -> ScenarioOutcome:
                 "sender_id_hash": "snd_v1_omar",
             },
         ),
-        sender_id_hashes={"omar.sim@example.test": "snd_v1_omar"},
+        sender_id_hashes={
+            "omar.sim@example.test": "snd_v1_omar",
+            "ines.sim@example.test": "snd_v1_ines",
+        },
         mail_facts=(
             MailFacts(
                 sender="join@example.test",
@@ -338,6 +342,75 @@ def test_default_outcome_checks_have_failure_fixtures(
 
     assert score.passed is False
     assert score.findings[0].passed is False
+
+
+def test_ines_clarification_check_ignores_other_personas_clarify_events():
+    outcome = replace(
+        _default_outcome(),
+        audit_events=(
+            {
+                "event": "introduction.consent_transition",
+                "action": "clarify",
+                "outcome": "success",
+                "sender_id_hash": "snd_v1_vic",
+            },
+        ),
+    )
+
+    score = score_scenario_outcomes(
+        outcome,
+        (DEFAULT_OUTCOME_CHECKS[2],),
+        real_process=True,
+        llm_personas=True,
+    )
+
+    assert score.passed is False
+    assert score.findings[0].evidence == {"clarify_events": []}
+
+
+def test_ines_clarification_check_ignores_unscoped_clarify_events():
+    outcome = replace(
+        _default_outcome(),
+        audit_events=(
+            {
+                "event": "introduction.consent_transition",
+                "action": "clarify",
+                "outcome": "success",
+            },
+        ),
+        sender_id_hashes={"omar.sim@example.test": "snd_v1_omar"},
+    )
+
+    score = score_scenario_outcomes(
+        outcome,
+        (DEFAULT_OUTCOME_CHECKS[2],),
+        real_process=True,
+        llm_personas=True,
+    )
+
+    assert score.passed is False
+    assert score.findings[0].evidence == {"clarify_events": []}
+
+
+def test_ines_clarification_check_passes_for_her_own_clarify_event():
+    score = score_scenario_outcomes(
+        _default_outcome(),
+        (DEFAULT_OUTCOME_CHECKS[2],),
+        real_process=True,
+        llm_personas=True,
+    )
+
+    assert score.passed is True
+    assert score.findings[0].evidence == {
+        "clarify_events": [
+            {
+                "event": "introduction.consent_transition",
+                "action": "clarify",
+                "outcome": "success",
+                "sender_id_hash": "snd_v1_ines",
+            }
+        ]
+    }
 
 
 def test_omar_outcome_uses_his_audited_action_not_final_pair_status():

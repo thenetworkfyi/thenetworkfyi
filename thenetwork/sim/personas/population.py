@@ -133,12 +133,22 @@ def _has_no_premature_revealing_introduction(
     return True
 
 
+def _ines_clarify_events(outcome: ScenarioOutcome) -> list[dict[str, Any]]:
+    sender_id_hash = outcome.sender_id_hashes.get(INES_EMAIL)
+    if sender_id_hash is None:
+        return []
+    return [
+        dict(event)
+        for event in outcome.audit_events
+        if event.get("event") == "introduction.consent_transition"
+        and event.get("action") == "clarify"
+        and event.get("sender_id_hash") == sender_id_hash
+    ]
+
+
 def _has_ines_clarification(outcome: ScenarioOutcome) -> bool:
     return any(
-        event.get("event") == "introduction.consent_transition"
-        and event.get("action") == "clarify"
-        and event.get("outcome") == "success"
-        for event in outcome.audit_events
+        event.get("outcome") == "success" for event in _ines_clarify_events(outcome)
     )
 
 
@@ -171,14 +181,7 @@ def _reveal_summary(outcome: ScenarioOutcome, email: str) -> dict[str, Any]:
 
 
 def _clarify_audit_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
-    return {
-        "clarify_events": [
-            dict(event)
-            for event in outcome.audit_events
-            if event.get("event") == "introduction.consent_transition"
-            and event.get("action") == "clarify"
-        ]
-    }
+    return {"clarify_events": _ines_clarify_events(outcome)}
 
 
 def _ines_reply_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
