@@ -14,9 +14,7 @@ class FakeAnalyzer:
 
 
 def test_redacts_nested_strings_broad_pii_and_custom_sensitive_values(monkeypatch):
-    analyzer = FakeAnalyzer(
-        [SimpleNamespace(start=0, end=10, entity_type="PERSON")]
-    )
+    analyzer = FakeAnalyzer([SimpleNamespace(start=0, end=10, entity_type="PERSON")])
     monkeypatch.setattr(log_redaction, "_get_log_analyzer", lambda: analyzer)
     raw = {
         "content": "Alice Chen used https://example.test/a?x=1 with api_key=sk_abcdefghijklmnopq",
