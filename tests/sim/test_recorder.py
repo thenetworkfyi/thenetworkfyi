@@ -316,11 +316,11 @@ def test_sim_run_cli_streams_progress_to_stderr_and_only_path_to_stdout(
         "tick 1/2: started",
         "tick 1/2: Priya Shah: process_email started",
         "tick 1/2: Priya Shah: process_email completed",
-        "tick 1/2: completed (1 persona messages, 0 proactive jobs)",
+        "tick 1/2: completed (1 persona messages, 0 proactive jobs, 0 digest emails)",
         "tick 2/2: started",
         "tick 2/2: Priya Shah: process_email started",
         "tick 2/2: Priya Shah: process_email completed",
-        "tick 2/2: completed (1 persona messages, 0 proactive jobs)",
+        "tick 2/2: completed (1 persona messages, 0 proactive jobs, 0 digest emails)",
     ]
 
 
@@ -524,6 +524,10 @@ async def test_real_process_run_logs_each_deferred_proactive_trigger(tmp_path):
         patch(
             "thenetwork.sim.run.loop.proactive.scan_for_matches",
             new=match_scan,
+        ),
+        patch(
+            "thenetwork.sim.run.loop.flush_pending_digests",
+            return_value={"digests_sent": 0},
         ),
     ):
         artifacts = await SimRunRecorder(runs_dir=tmp_path).run(
