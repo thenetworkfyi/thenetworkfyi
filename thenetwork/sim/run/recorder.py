@@ -15,8 +15,6 @@ from email.utils import getaddresses
 from pathlib import Path
 from typing import Any
 
-from pydantic_ai.exceptions import ModelHTTPError
-
 from thenetwork.audit import audit_jsonl_file
 from sqlmodel import select
 
@@ -45,10 +43,11 @@ from thenetwork.sim.scoring.scoring import (
     score_scenario_outcomes,
     score_seal_mbox,
 )
-from thenetwork.worker.tasks import process_email
+from thenetwork.worker.tasks import app, process_email
 
 
 Clock = Callable[[], datetime]
+_SIM_PROCESS_EMAIL_QUEUE = "simulation_process_email"
 
 
 @dataclass(frozen=True)
@@ -161,12 +160,15 @@ class SimRunRecorder:
         if process is not None:
             process_mode = "override"
             process_func = process
+            drain_jobs = None
         elif config.mock_process is False:
             process_mode = "real"
-            process_func = process_email.func
+            process_func = _defer_process_email
+            drain_jobs = _drain_process_email_jobs
         else:
             process_mode = "mock"
             process_func = _mock_process(events)
+            drain_jobs = None
 
         audit_log = (
             audit_jsonl_file(artifacts.audit_path)
@@ -190,9 +192,14 @@ class SimRunRecorder:
                 progress=progress,
                 on_delivery=_record_delivered_message(events),
                 on_proactive_trigger=_record_proactive_trigger(events),
+                drain_jobs=drain_jobs,
                 mbox_path=artifacts.raw_mbox_path,
             )
-            result = await loop.run(ticks=config.ticks)
+            if process_mode == "real":
+                async with app.open_async():
+                    result = await loop.run(ticks=config.ticks)
+            else:
+                result = await loop.run(ticks=config.ticks)
             for tick in result.ticks:
                 events.write(
                     "sim.tick_completed",
@@ -489,21 +496,21 @@ def _record_proactive_trigger(events: EventsLog):
     return record
 
 
-# Mirrors production's Procrastinate max_attempts=3 (worker/tasks.py); the sim
-# invokes the task function directly with no job-retry wrapper.
-_PROCESS_EMAIL_MAX_ATTEMPTS = 3
-_TRANSIENT_MODEL_HTTP_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+async def _defer_process_email(**kwargs: Any) -> None:
+    """Queue real simulation mail through the production task definition."""
+    await process_email.configure(queue=_SIM_PROCESS_EMAIL_QUEUE).defer_async(**kwargs)
 
 
-def _is_transient_model_error(exc: Exception) -> bool:
-    """A retryable provider failure: rate limiting or a server-side error.
+async def _drain_process_email_jobs() -> None:
+    """Run ready production jobs without waiting for future work.
 
-    A non-5xx/429 ModelHTTPError (e.g. 400) is a client error that will not
-    succeed on retry, so it is not treated as transient.
+    The task's own RetryStrategy decides whether and when an exception is
+    retried. A later simulation tick drains any retry that has become ready.
     """
-    return (
-        isinstance(exc, ModelHTTPError)
-        and exc.status_code in _TRANSIENT_MODEL_HTTP_STATUS_CODES
+    await app.run_worker_async(
+        queues=(_SIM_PROCESS_EMAIL_QUEUE,),
+        wait=False,
+        install_signal_handlers=False,
     )
 
 
@@ -516,38 +523,17 @@ def _recording_process(process, events: EventsLog):
             subject=kwargs.get("subject"),
             trace_id=trace_id,
         )
-        attempt = 0
-        while True:
-            attempt += 1
-            try:
-                outcome = await process(**kwargs)
-            except Exception as exc:
-                # Production has Procrastinate's job-retry loop around this same
-                # call (see worker/tasks.py's process_email try/except). Without
-                # this, one bad model response aborts the whole multi-tick run
-                # instead of just failing the one turn, unlike production.
-                if (
-                    _is_transient_model_error(exc)
-                    and attempt < _PROCESS_EMAIL_MAX_ATTEMPTS
-                ):
-                    events.write(
-                        "sim.process_email_retrying",
-                        sender_email=kwargs.get("sender_email"),
-                        trace_id=trace_id,
-                        attempt=attempt,
-                        error_type=type(exc).__name__,
-                    )
-                    continue
-                events.write(
-                    "sim.process_email_failed",
-                    sender_email=kwargs.get("sender_email"),
-                    trace_id=trace_id,
-                    attempts=attempt,
-                    error_type=type(exc).__name__,
-                    error=str(exc),
-                )
-                return
-            break
+        try:
+            outcome = await process(**kwargs)
+        except Exception as exc:
+            events.write(
+                "sim.process_email_failed",
+                sender_email=kwargs.get("sender_email"),
+                trace_id=trace_id,
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
+            return
         events.write(
             "sim.process_email_completed",
             sender_email=kwargs.get("sender_email"),

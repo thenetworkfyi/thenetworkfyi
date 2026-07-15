@@ -55,6 +55,7 @@ def provision_sim_database(
     original_limiter = rate_limit._limiter
     original_storage = rate_limit._storage
     original_connector = worker_tasks.app.connector
+    original_job_manager_connector = worker_tasks.app.job_manager.connector
     scratch_engine = None
 
     created = False
@@ -69,12 +70,15 @@ def provision_sim_database(
             db_session._SessionLocal = None
             rate_limit._limiter = None
             rate_limit._storage = None
-            worker_tasks.app.connector = procrastinate.PsycopgConnector(
+            worker_connector = procrastinate.PsycopgConnector(
                 conninfo=settings.database_url.replace(
                     "postgresql+psycopg://", "postgresql://"
                 )
             )
+            worker_tasks.app.connector = worker_connector
+            worker_tasks.app.job_manager.connector = worker_connector
             _upgrade_database()
+            _ensure_procrastinate_schema()
             yield database_name
         finally:
             scratch_engine = db_session._engine
@@ -83,6 +87,7 @@ def provision_sim_database(
             rate_limit._limiter = original_limiter
             rate_limit._storage = original_storage
             worker_tasks.app.connector = original_connector
+            worker_tasks.app.job_manager.connector = original_job_manager_connector
             settings.postgres_db = original_database
 
             if scratch_engine is not None:
@@ -137,3 +142,9 @@ def _upgrade_database() -> None:
     config = Config(str(project_root / "alembic.ini"))
     config.set_main_option("script_location", str(project_root / "alembic"))
     command.upgrade(config, "head")
+
+
+def _ensure_procrastinate_schema() -> None:
+    """Create Procrastinate's queue tables in each disposable simulation DB."""
+    with worker_tasks.app.open():
+        worker_tasks.app.schema_manager.apply_schema()
