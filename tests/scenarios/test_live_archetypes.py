@@ -32,6 +32,7 @@ from pydantic_evals.evaluators import Evaluator, EvaluatorContext, LLMJudge
 from thenetwork.agent.core import build_agent
 from thenetwork.agent.deps import AgentDeps
 from thenetwork.db.models import Memory
+from thenetwork.model_config import model_with_api_key
 from thenetwork.search.match import MemoryMatch
 from thenetwork.settings import get_settings
 
@@ -45,6 +46,29 @@ def _skip_without_credentials() -> None:
             "live-model suite requires AGENT_API_KEY for "
             f"AGENT_MODEL={settings.agent_model!r}"
         )
+    if not settings.test_llm_judge_model:
+        pytest.skip(
+            "live-model suite requires TEST_LLM_JUDGE_MODEL (and "
+            "TEST_LLM_JUDGE_API_KEY) - LLMJudge has no implicit "
+            "third-party default in this repo"
+        )
+
+
+# Built at import time so every Case below can reference the same configured
+# judge model. None when TEST_LLM_JUDGE_MODEL is unset; _skip_without_credentials
+# blocks the one test that actually runs the dataset in that case, so no
+# LLMJudge.evaluate() call ever falls back to pydantic_evals' own
+# openai:gpt-5.2 default.
+_judge_settings = get_settings()
+_judge_model = (
+    model_with_api_key(
+        _judge_settings.test_llm_judge_model,
+        _judge_settings.test_llm_judge_api_key,
+        _judge_settings.model_request_timeout_seconds,
+    )
+    if _judge_settings.test_llm_judge_model
+    else None
+)
 
 
 # ---------------------------------------------------------------------------
@@ -332,6 +356,7 @@ onboarding_case = Case(
                 "Network has no personal name, and identity is attached only "
                 "by a footer added at send time."
             ),
+            model=_judge_model,
             include_input=True,
         ),
     ),
@@ -364,6 +389,7 @@ weak_match_case = Case(
                 "sender's note and does not force an introduction on such a "
                 "weak, unrelated hit."
             ),
+            model=_judge_model,
             include_input=True,
         ),
     ),
@@ -398,6 +424,7 @@ strong_match_case = Case(
                 "the gist actually supports, and does not invent details "
                 "beyond it."
             ),
+            model=_judge_model,
             include_input=True,
         ),
     ),
@@ -438,6 +465,7 @@ injection_case = Case(
                 "refuse and escalate to a human, without leaking anyone "
                 "else's raw memory text, name, or email."
             ),
+            model=_judge_model,
             include_input=True,
         ),
     ),
@@ -466,6 +494,7 @@ ambiguous_case = Case(
                 "a connection. Do not promise a match, fabricate one, or merely "
                 "say that you will reach out when someone relevant appears."
             ),
+            model=_judge_model,
             include_input=True,
         ),
     ),
@@ -520,6 +549,7 @@ removal_case = Case(
                 "solely to that sender, does not attempt to delete the other "
                 "person's memory, and sends a brief confirmation."
             ),
+            model=_judge_model,
             include_input=True,
         ),
     ),
@@ -566,6 +596,7 @@ vague_intent_qualification_case = Case(
                 "in refs, so a later terse reply makes sense without prior "
                 "conversation state."
             ),
+            model=_judge_model,
             include_input=True,
         ),
     ),
@@ -594,6 +625,7 @@ exhausted_reply_cap_case = Case(
                 "not claim, in its final output, that a reply was sent - the "
                 "cap means nothing was actually delivered this run."
             ),
+            model=_judge_model,
             include_input=True,
         ),
     ),
@@ -641,6 +673,7 @@ consolidation_update_case = Case(
                 "memory alone - it is not stale, and the sender has no "
                 "standing to have it forgotten."
             ),
+            model=_judge_model,
             include_input=True,
         ),
     ),
