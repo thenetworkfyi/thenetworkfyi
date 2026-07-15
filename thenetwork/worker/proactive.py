@@ -15,19 +15,9 @@ leaves the system.
 Both hand the agent only opaque ids + PII-stripped gists in the trigger body,
 never raw text, names, or addresses (SEAL).
 
-Both scans are *paced*: candidates are collected, ordered deterministically
-(request-load ascending, then score descending, then the canonical pair key),
-and each person is scheduled for at most one new candidate per scan. A dense
-cluster - e.g. several manufacturing-adjacent members arriving together -
-therefore surfaces as a few best-first pairs per hour instead of a
-combinatorial burst of proposals. Ordering by request load first means a
-recipient with outstanding or recent consent requests is deprioritized behind
-an equally- or similarly-relevant candidate who has none, so pacing does not
-keep re-selecting already-engaged people while a strong, unengaged match waits
-- see `introductions.request_load`. This only reorders candidates that already
-cleared the relevance floor; it never lowers `PROXIMITY_THRESHOLD` or
-`proactive_match_threshold`, and the `introduction_max_*` caps are still the
-ones enforced (at proposal time) in `introductions.propose_pair`.
+Both scans order candidates deterministically by descending relevance score and
+the canonical pair key. Proposal caps remain enforced at the server boundary in
+`introductions.propose_pair`.
 
 """
 
@@ -47,35 +37,10 @@ from thenetwork.introductions import (
     mark_pairs_surfaced,
     pair_is_suppressed,
     recently_surfaced_pairs,
-    request_load,
 )
 from thenetwork.worker.tasks import app, process_email
 
 PROXIMITY_THRESHOLD = 0.3
-
-
-def _pace_one_per_person(
-    candidates: list[tuple[int, float, tuple[str, str], dict]],
-) -> list[dict]:
-    """Order candidates deterministically and cap scheduling at one per person.
-
-    `candidates` items are (request_load, score, canonical_pair_key, payload).
-    Ordering is request-load ascending first - so an unengaged candidate is
-    tried before an already-engaged one regardless of a modest score gap -
-    then score-descending, then the pair key as a stable tiebreak, so the same
-    state always yields the same picks. A person already scheduled this scan
-    blocks any further candidate involving them; the skipped pair simply waits
-    for a later scan (or is superseded by real activity in the meantime).
-    """
-    candidates.sort(key=lambda c: (c[0], -c[1], c[2]))
-    engaged: set[str] = set()
-    picks: list[dict] = []
-    for _load, _score, pair_key, payload in candidates:
-        if pair_key[0] in engaged or pair_key[1] in engaged:
-            continue
-        engaged.update(pair_key)
-        picks.append(payload)
-    return picks
 
 
 def _defer_proactive_jobs(payloads: list[dict]) -> None:
@@ -96,8 +61,6 @@ async def scan_for_opportunities(timestamp: int) -> None:
 
     s = get_settings()
     now = datetime.now(timezone.utc)
-    since = now - timedelta(seconds=s.introduction_request_window_seconds)
-
     with get_session() as session:
         people = session.exec(
             select(Person).where(col(Person.id).in_(person_ids))
@@ -108,14 +71,7 @@ async def scan_for_opportunities(timestamp: int) -> None:
             since=now - timedelta(seconds=s.proactive_surface_cooldown_seconds),
         )
 
-        load_cache: dict[str, int] = {}
-
-        def load_for(pid: str) -> int:
-            if pid not in load_cache:
-                load_cache[pid] = request_load(session, pid, since=since)
-            return load_cache[pid]
-
-        candidates: list[tuple[int, float, tuple[str, str], dict]] = []
+        candidates: list[tuple[float, tuple[str, str], dict]] = []
         for i, pid_a in enumerate(person_ids):
             if pid_a not in email_by_id:
                 continue
@@ -129,10 +85,8 @@ async def scan_for_opportunities(timestamp: int) -> None:
                 pair_key: tuple[str, str] = tuple(sorted((pid_a, pid_b)))  # type: ignore[assignment]
                 if pair_key in surfaced_pairs:
                     continue
-                pair_load = max(load_for(pid_a), load_for(pid_b))
                 candidates.append(
                     (
-                        pair_load,
                         score,
                         pair_key,
                         {
@@ -155,12 +109,9 @@ async def scan_for_opportunities(timestamp: int) -> None:
                     )
                 )
 
-        payloads = _pace_one_per_person(candidates)
-        selected_pairs = {
-            pair_key
-            for _load, _score, pair_key, payload in candidates
-            if payload in payloads
-        }
+        candidates.sort(key=lambda candidate: (-candidate[0], candidate[1]))
+        payloads = [payload for _score, _pair_key, payload in candidates]
+        selected_pairs = {pair_key for _score, pair_key, _payload in candidates}
         mark_pairs_surfaced(session, selected_pairs, surfaced_at=now)
 
     _defer_proactive_jobs(payloads)
@@ -173,7 +124,7 @@ async def scan_for_matches(timestamp: int) -> None:
 
     Every run re-evaluates sanitized person-referencing memories rather than
     relying on a narrow arrival window. A person with no active consent pair
-    gets at most one best eligible counterpart; the pair can be reconsidered
+    considers every eligible counterpart each run; pairs can be reconsidered
     after the proactive-surface cooldown when an earlier attempt did not lead
     to a proposal. Trigger bodies contain only opaque ids and sanitized gists.
     """
@@ -199,9 +150,7 @@ async def scan_for_matches(timestamp: int) -> None:
         email_cache: dict[str, str | None] = {}
         active_cache: dict[str, bool] = {}
         seen: set[frozenset[str]] = set()
-        candidates: list[tuple[int, float, tuple[str, str], dict]] = []
-        since = now - timedelta(seconds=s.introduction_request_window_seconds)
-        load_cache: dict[str, int] = {}
+        candidates: list[tuple[float, tuple[str, str], dict]] = []
 
         def email_for(person_id: str) -> str | None:
             if person_id not in email_cache:
@@ -223,11 +172,6 @@ async def scan_for_matches(timestamp: int) -> None:
                     ).first()
                 )
             return active_cache[person_id]
-
-        def load_for(person_id: str) -> int:
-            if person_id not in load_cache:
-                load_cache[person_id] = request_load(session, person_id, since=since)
-            return load_cache[person_id]
 
         for memory in memories:
             for recipient_id in (person_id for person_id in memory.refs if person_id):
@@ -277,7 +221,6 @@ async def scan_for_matches(timestamp: int) -> None:
                     )
                     candidates.append(
                         (
-                            max(load_for(recipient_id), load_for(counterpart_id)),
                             match.similarity,
                             pair_key,
                             {
@@ -291,12 +234,9 @@ async def scan_for_matches(timestamp: int) -> None:
                         )
                     )
 
-        payloads = _pace_one_per_person(candidates)
-        selected_pairs = {
-            pair_key
-            for _load, _score, pair_key, payload in candidates
-            if payload in payloads
-        }
+        candidates.sort(key=lambda candidate: (-candidate[0], candidate[1]))
+        payloads = [payload for _score, _pair_key, payload in candidates]
+        selected_pairs = {pair_key for _score, pair_key, _payload in candidates}
         mark_pairs_surfaced(session, selected_pairs, surfaced_at=now)
 
     _defer_proactive_jobs(payloads)
