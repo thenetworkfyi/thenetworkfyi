@@ -28,6 +28,7 @@ from thenetwork.worker import proactive
 ScanCallable = Callable[[int], Awaitable[None]]
 ProgressCallable = Callable[[str], None]
 ProactiveTriggerObserver = Callable[[dict[str, Any]], None]
+DrainJobsCallable = Callable[[], Awaitable[None]]
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,7 @@ class SimTickLoop:
         progress: ProgressCallable | None = None,
         on_delivery: SimMessageObserver | None = None,
         on_proactive_trigger: ProactiveTriggerObserver | None = None,
+        drain_jobs: DrainJobsCallable | None = None,
         mbox_path: Path | None = None,
     ) -> None:
         if proactive_every is not None and proactive_every < 1:
@@ -83,6 +85,7 @@ class SimTickLoop:
         self.schedule = schedule or SimSchedule()
         self.progress = progress
         self.on_proactive_trigger = on_proactive_trigger
+        self.drain_jobs = drain_jobs
         self.post_office = SimPostOffice(
             mbox_path=mbox_path or run_dir / "all-mail.mbox", on_deliver=on_delivery
         )
@@ -115,6 +118,7 @@ class SimTickLoop:
                     )
                     digest_result = flush_pending_digests()
                     digest_emails = digest_result.get("digests_sent", 0)
+                    await self._drain_jobs()
                 results.append(
                     TickResult(
                         tick=tick,
@@ -188,6 +192,7 @@ class SimTickLoop:
                 tick=tick,
                 persona=adapter.config.name,
             )
+            await self._drain_jobs()
             self._report(f"{prefix} completed")
             sent += 1
         return sent
@@ -195,6 +200,10 @@ class SimTickLoop:
     def _report(self, message: str) -> None:
         if self.progress is not None:
             self.progress(message)
+
+    async def _drain_jobs(self) -> None:
+        if self.drain_jobs is not None:
+            await self.drain_jobs()
 
 
 async def run_proactive_scans(
