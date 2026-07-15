@@ -40,6 +40,7 @@ def test_provision_sim_database_switches_caches_and_cleans_up(monkeypatch):
     original_limiter = rate_limit._limiter
     original_storage = rate_limit._storage
     original_connector = worker_tasks.app.connector
+    original_job_manager_connector = worker_tasks.app.job_manager.connector
     admin_engine = FakeAdminEngine()
     scratch_engine = Mock()
     scratch_connector = object()
@@ -60,9 +61,12 @@ def test_provision_sim_database_switches_caches_and_cleans_up(monkeypatch):
         assert rate_limit._limiter is None
         assert rate_limit._storage is None
         assert worker_tasks.app.connector is scratch_connector
+        assert worker_tasks.app.job_manager.connector is scratch_connector
         db_session._engine = scratch_engine
 
     monkeypatch.setattr(sim_database, "_upgrade_database", assert_migration_context)
+    queue_schema = Mock()
+    monkeypatch.setattr(sim_database, "_ensure_procrastinate_schema", queue_schema)
 
     with sim_database.provision_sim_database("sim_abc123") as database_name:
         assert database_name == "sim_abc123"
@@ -79,6 +83,8 @@ def test_provision_sim_database_switches_caches_and_cleans_up(monkeypatch):
     assert rate_limit._limiter is original_limiter
     assert rate_limit._storage is original_storage
     assert worker_tasks.app.connector is original_connector
+    assert worker_tasks.app.job_manager.connector is original_job_manager_connector
+    queue_schema.assert_called_once_with()
 
 
 def test_project_root_locates_alembic_scripts():
@@ -100,6 +106,7 @@ def test_provision_sim_database_keep_retains_database(monkeypatch):
         sim_database, "create_engine", lambda *_args, **_kwargs: admin_engine
     )
     monkeypatch.setattr(sim_database, "_upgrade_database", lambda: None)
+    monkeypatch.setattr(sim_database, "_ensure_procrastinate_schema", lambda: None)
 
     with sim_database.provision_sim_database("sim_keep123", keep=True):
         pass
@@ -115,6 +122,7 @@ def test_provision_sim_database_dumps_before_cleanup(monkeypatch, tmp_path):
         sim_database, "create_engine", lambda *_args, **_kwargs: admin_engine
     )
     monkeypatch.setattr(sim_database, "_upgrade_database", lambda: None)
+    monkeypatch.setattr(sim_database, "_ensure_procrastinate_schema", lambda: None)
     monkeypatch.setattr(sim_database, "_dump_database", dump)
     dump_path = tmp_path / "database.dump"
 
