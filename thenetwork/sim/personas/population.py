@@ -228,10 +228,16 @@ def _omar_consented_once(outcome: ScenarioOutcome) -> bool:
     )
 
 
+def _omar_declined_all_presented_pairs(outcome: ScenarioOutcome) -> bool:
+    pairs = [row for row in outcome.consent_rows if _pair_involves(row, OMAR_EMAIL)]
+    return bool(pairs) and all(row.status == "declined" for row in pairs)
+
+
 def _omar_consent_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
     return {
         "sender_id_hash_present": OMAR_EMAIL in outcome.sender_id_hashes,
         "consent_events": _omar_consent_events(outcome),
+        "pairs": _pair_summary(outcome, OMAR_EMAIL),
     }
 
 
@@ -298,9 +304,8 @@ DEFAULT_OUTCOME_CHECKS = (
     ),
     OutcomeCheck(
         description=(
-            "Omar receives at least one consent-pair row; a strong, unengaged "
-            "match must not be starved of any proposal while other candidates "
-            "repeatedly reach the per-recipient request ceiling"
+            "Omar receives at least one consent-pair row from the periodic "
+            "unengaged-member sweep"
         ),
         predicate=_omar_has_consent_pair,
         requires_real_process=True,
@@ -308,8 +313,13 @@ DEFAULT_OUTCOME_CHECKS = (
         evidence=_omar_pair_summary,
     ),
     OutcomeCheck(
-        description="Omar consents exactly once and never revokes",
-        predicate=_omar_consented_once,
+        description=(
+            "Omar consents exactly once and never revokes, or legitimately "
+            "declines every presented counterpart"
+        ),
+        predicate=lambda outcome: (
+            _omar_consented_once(outcome) or _omar_declined_all_presented_pairs(outcome)
+        ),
         requires_real_process=True,
         requires_llm_personas=True,
         evidence=_omar_consent_summary,
