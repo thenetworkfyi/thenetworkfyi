@@ -89,9 +89,22 @@ def _pair_record(session, person_a_id: str, person_b_id: str):
     return record
 
 
-def pair_is_suppressed(session, person_a_id: str, person_b_id: str) -> bool:
-    """Return whether this pair has already been proposed or resolved."""
-    return _pair_record(session, person_a_id, person_b_id) is not None
+def pair_is_suppressed(
+    session,
+    person_a_id: str,
+    person_b_id: str,
+    *,
+    decline_cooldown_days: int = 90,
+) -> bool:
+    """Return whether this pair is proposed, resolved, or still cooling down."""
+    record = _pair_record(session, person_a_id, person_b_id)
+    if record is None:
+        return False
+    return not (
+        record.status == "declined"
+        and record.declined_at is not None
+        and record.declined_at <= _utcnow() - timedelta(days=decline_cooldown_days)
+    )
 
 
 def _outstanding_request_count(session, person_id: str) -> int:

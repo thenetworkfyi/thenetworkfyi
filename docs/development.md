@@ -276,19 +276,14 @@ above `PROXIMITY_THRESHOLD` (0.3) that is not already suppressed as a proposed/r
 introduction pair, `defer`s a synthetic `process_email` job. Requires pre-existing
 connection density, so it says nothing at cold start.
 
-`scan_for_matches` (`cron="30 * * * *"`, semantic rematch). This is the cold-start /
-dormant-user path: it re-evaluates standing intents against *new* arrivals rather than
-only at write time. Driven by memories created within
-`proactive_rematch_lookback_minutes` (65) so a pair surfaces once, when the counterpart
-shows up; for each such arrival it runs `match_memories` and, for any older
-person-referencing memory about a *different* person scoring at least
-`proactive_match_threshold` (0.6), `defer`s a job that re-engages the dormant owner of the
-older note. Guards: pairs already connected in the projected graph are skipped (the
-introduction memory is the durable dedup record); the similarity floor is conservative
-*here specifically* because unsolicited outreach makes a false positive costly - the
-interactive `search` tool deliberately takes no such floor, and the floor sits above the
-~0.55 band where thin keyword overlap lands. The trigger body carries only
-opaque ids + PII-stripped gists; real addresses and raw memory text never enter it.
+`scan_for_matches` (`cron="30 * * * *"`, semantic rematch) is the cold-start /
+dormant-user path. Every run re-evaluates standing intents for people without an active
+consent pair and defers at most one best eligible counterpart per person above
+`proactive_match_threshold` (0.6). Declined pairs remain suppressed for the 90-day
+cooldown, while a no-action surface becomes eligible again after the proactive-surface
+cooldown. Pairs already connected in the projected graph are skipped, and the trigger body
+contains only opaque ids + PII-stripped gists; real addresses and raw memory text never
+enter it.
 
 Both scans pace their output: candidates are ordered deterministically (score
 descending, canonical pair id as tiebreak) and each person is scheduled for at most one
