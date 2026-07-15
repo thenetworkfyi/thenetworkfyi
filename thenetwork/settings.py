@@ -56,6 +56,25 @@ class Settings(BaseSettings):
     small_agent_api_key: str = ""
     embed_api_key: str = ""
 
+    # Test-only: the pydantic-evals LLMJudge model used by
+    # tests/scenarios/test_live_archetypes.py and
+    # sim/scoring/scoring.py's build_transcript_judge. Kept as its own
+    # workload/credential pair, separate from agent_model, because an
+    # unconfigured LLMJudge silently defaults to calling openai:gpt-5.2 -
+    # this repo never wants a third-party API called by an implicit default,
+    # so those call sites require this to be set explicitly and skip/fail
+    # rather than falling back to that default.
+    test_llm_judge_model: str | None = None
+    test_llm_judge_api_key: str = ""
+
+    # Default per-request timeout for every model API call (agent, sanitizer,
+    # sim personas, LLM judge), applied via model_config.model_with_api_key.
+    # The openai SDK's own default is 600s connect-included, which lets one
+    # slow provider round-trip stall a whole agent run; this bounds each call
+    # so a stalled upstream fails fast into the caller's own retry/error path
+    # instead.
+    model_request_timeout_seconds: float = 90.0
+
     # Email - IMAP (inbound polling) and SMTP (outbound send) are distinct
     # accounts/credentials, potentially on different providers entirely.
     imap_account: str = ""
