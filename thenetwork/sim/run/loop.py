@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-from thenetwork.introductions import flush_pending_digests
 from thenetwork.settings import get_settings
 from thenetwork.sim.personas.consent import make_reply_thread_faithful, thread_token_of
 from thenetwork.sim.run.mail import (
@@ -36,7 +35,6 @@ class TickResult:
     tick: int
     persona_messages: int
     proactive_jobs: int
-    digest_emails: int = 0
 
 
 @dataclass(frozen=True)
@@ -51,10 +49,6 @@ class SimLoopResult:
     @property
     def proactive_jobs(self) -> int:
         return sum(tick.proactive_jobs for tick in self.ticks)
-
-    @property
-    def digest_emails(self) -> int:
-        return sum(tick.digest_emails for tick in self.ticks)
 
 
 class SimTickLoop:
@@ -106,7 +100,6 @@ class SimTickLoop:
                     tick, total_ticks=ticks
                 )
                 proactive_jobs = 0
-                digest_emails = 0
                 if (
                     self.proactive_every is not None
                     and tick % self.proactive_every == 0
@@ -116,21 +109,17 @@ class SimTickLoop:
                         process=self.process,
                         on_defer=self.on_proactive_trigger,
                     )
-                    digest_result = flush_pending_digests()
-                    digest_emails = digest_result.get("digests_sent", 0)
                     await self._drain_jobs()
                 results.append(
                     TickResult(
                         tick=tick,
                         persona_messages=persona_messages,
                         proactive_jobs=proactive_jobs,
-                        digest_emails=digest_emails,
                     )
                 )
                 self._report(
                     f"tick {tick}/{ticks}: completed "
-                    f"({persona_messages} persona messages, {proactive_jobs} proactive jobs, "
-                    f"{digest_emails} digest emails)"
+                    f"({persona_messages} persona messages, {proactive_jobs} proactive jobs)"
                 )
 
         return SimLoopResult(ticks=tuple(results), post_office=self.post_office)
@@ -149,7 +138,7 @@ class SimTickLoop:
             ]
             active_thread = consent_threads[0] if consent_threads else None
             if len(consent_threads) > 1:
-                # One consent/digest thread per turn: hold the rest so each
+                # One consent thread per turn: hold the rest so each
                 # decision is authored against its own thread and token on a
                 # later turn.
                 self.post_office.requeue(adapter.config.email, consent_threads[1:])

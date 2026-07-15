@@ -72,4 +72,6 @@ understanding why it was dropped.
 - ❌ LiteLLM / proxy glue → pydantic-ai native multi-provider.
 - ❌ `np.random.rand(1536)` placeholder embeddings → OpenAI embedding wrapper constrained to 1536 dimensions.
 - ❌ Bespoke rate limiting → `limits`.
+- ❌ Introduction digest batching → skip capped proactive candidates and retry them on a
+  later sweep; a person's declines remain the meaningful rate limiter.
 - ❌ Heavyweight guardrail frameworks (NeMo, Guardrails-AI) → architectural least-privilege + RFC 3834 + optional scanner.

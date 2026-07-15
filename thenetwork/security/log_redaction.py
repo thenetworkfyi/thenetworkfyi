@@ -33,7 +33,7 @@ _CUSTOM_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ),
     (
         "INTRO_TOKEN",
-        re.compile(r"\[(?:intro|digest):[0-9a-f]{8}-[0-9a-f-]{27,}\]", re.I),
+        re.compile(r"\[intro:[0-9a-f]{8}-[0-9a-f-]{27,}\]", re.I),
     ),
     (
         "URL",

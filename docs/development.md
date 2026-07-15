@@ -73,7 +73,7 @@ phone numbers, locations, organizations, and credential-like values recognized b
 installed registry) plus application-specific recognizers for:
 
 - email addresses;
-- introduction and digest tokens;
+- introduction tokens;
 - URLs;
 - `api_key`, password, secret, and common provider-key forms; and
 - UUIDs and prefixed application identifiers such as `user_...`, `request_...`, and
@@ -264,11 +264,9 @@ via the `db` container - wire it as a host cron job.
 
 ## Proactive outreach
 
-`thenetwork/worker/proactive.py` holds two hourly periodic scan tasks plus a third,
-`flush_intro_digests`, that batches candidates the scans could not send immediately
-(registered via `import_paths` in `worker/tasks.py`). The two scans only surface
-candidates - the agent run decides whether and how to introduce, so the SEAL still
-governs what leaves the system. Unit-tested in `tests/test_proactive.py`.
+`thenetwork/worker/proactive.py` holds two hourly periodic scan tasks. They only
+surface candidates - the agent run decides whether and how to introduce, so the SEAL
+still governs what leaves the system. Unit-tested in `tests/test_proactive.py`.
 
 `scan_for_opportunities` (`cron="0 * * * *"`, graph proximity). Builds the NetworkX
 graph, scores person pairs by Jaccard proximity over shared neighbours, and for each pair
@@ -293,26 +291,6 @@ Pairs handed to either scan are also recorded by opaque ids in `proactive_surfac
 They are not re-deferred for `proactive_surface_cooldown_seconds` (24 hours by default),
 even when the agent chose not to propose an introduction, so later scans rotate to the
 next eligible candidate.
-
-### Digest batching for capped recipients
-
-When a proactively-surfaced candidate would otherwise be silently dropped because the
-recipient is already at their outstanding- or window-request cap
-(`introduction_max_outstanding_requests_per_person` /
-`introduction_max_requests_per_person_in_window`), `propose_pair` is called with
-`queue_on_cap=True` (only from the proactive path - the model's own interactive
-`propose_introduction` tool never sets it) and queues the candidate instead
-(`introductions.queue_intro_candidate`, `pending_intro_candidates` table).
-`flush_intro_digests` (`cron="15,45 * * * *"`) then calls
-`introductions.flush_pending_digests`, which batches each recipient's queued
-candidates - oldest first, capped at `introduction_digest_size` (default 3, hard
-ceiling 4) - into one digest email listing opaque `A`/`B`/`C`/`D` labels and gists
-only (SEAL-safe: no names, addresses, or raw memory text). A tokened reply
-(`[digest:<uuid>]`) selecting a subset is consumed server-side by
-`introductions.process_digest_reply` before the model runs: selected candidates get a
-normal `[intro:...]` consent request via `propose_pair`, so they proceed through the
-same double-opt-in path as any other introduction. Covered by
-`tests/security/test_introduction_digest.py`.
 
 ## Sharp edges
 

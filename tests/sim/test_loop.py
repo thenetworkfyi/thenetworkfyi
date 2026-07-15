@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from thenetwork.db.models import IntroductionConsent, Person
-from thenetwork.introductions import DigestReplyResult, process_consent_reply
+from thenetwork.introductions import process_consent_reply
 from thenetwork.settings import get_settings
 from thenetwork.sim.run.loop import (
     SimTickLoop,
@@ -428,88 +428,3 @@ async def test_stray_token_is_stripped_when_no_consent_thread_is_pending(tmp_pat
     await loop.run(ticks=1)
 
     assert "[intro:" not in process.await_args.kwargs["body"]
-
-
-@pytest.mark.asyncio
-async def test_tick_loop_flushes_intro_digests_on_the_proactive_cadence(tmp_path):
-    """The gap this task fixes: queued digest candidates never reached mail.
-
-    `flush_pending_digests` needs a live DB in production; the sim only needs
-    to prove the tick loop actually calls it on the same cadence as the
-    identify-only proactive scans, and that its result is surfaced on the
-    `TickResult`/`SimLoopResult`.
-    """
-    process = AsyncMock()
-    loop = SimTickLoop(
-        [_adapter("Priya", "priya@example.test", ["one", "two"], budget=2)],
-        run_dir=tmp_path,
-        process=process,
-        proactive_every=1,
-    )
-
-    with (
-        patch.object(proactive.scan_for_opportunities, "func", AsyncMock()),
-        patch.object(proactive.scan_for_matches, "func", AsyncMock()),
-        patch(
-            "thenetwork.sim.run.loop.flush_pending_digests",
-            return_value={"digests_sent": 2},
-        ) as flush,
-    ):
-        result = await loop.run(ticks=2)
-
-    assert flush.call_count == 2
-    assert [tick.digest_emails for tick in result.ticks] == [2, 2]
-    assert result.digest_emails == 4
-
-
-@pytest.mark.asyncio
-async def test_persona_digest_selection_round_trips_through_digest_processing(
-    tmp_path,
-):
-    """A persona replying to a `[digest:...]` email answers that thread, not
-    a bundled `[intro:...]` token, and the reply reaches `process_digest_reply`
-    with the digest token intact so the selection is consumed server-side.
-    """
-    adapter = _adapter("Alice", "alice@example.test", ["A"], budget=1)
-    loop = SimTickLoop(
-        [adapter],
-        run_dir=tmp_path,
-        proactive_every=None,
-    )
-    digest = EmailMessage()
-    digest["From"] = "join@example.test"
-    digest["To"] = "alice@example.test"
-    digest["Subject"] = (
-        "Possible introductions [digest:cccccccc-cccc-cccc-cccc-cccccccccccc]"
-    )
-    digest["Message-ID"] = "<digest@example.test>"
-    digest.set_content(
-        "A few possible matches came up:\n\nA. some gist\n\nReply with a letter."
-    )
-    loop.post_office.deliver(digest)
-
-    with (
-        patch("thenetwork.worker.tasks.get_session", session_factory(WorkerSession())),
-        patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
-        patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)),
-        patch("thenetwork.worker.tasks.verify_admin_request", return_value=None),
-        patch(
-            "thenetwork.worker.tasks.process_digest_reply",
-            return_value=DigestReplyResult(handled=True, outcome="selected"),
-        ) as digest_handler,
-        patch(
-            "thenetwork.worker.tasks.run_agent_for_email",
-            new_callable=AsyncMock,
-        ) as run_agent,
-    ):
-        result = await loop.run(ticks=1)
-
-    assert result.persona_messages == 1
-    assert digest_handler.call_args.kwargs["subject"] == (
-        "Re: Possible introductions [digest:cccccccc-cccc-cccc-cccc-cccccccccccc]"
-    )
-    assert digest_handler.call_args.kwargs["body"].splitlines()[:2] == [
-        "A",
-        "[digest:cccccccc-cccc-cccc-cccc-cccccccccccc]",
-    ]
-    run_agent.assert_not_awaited()
