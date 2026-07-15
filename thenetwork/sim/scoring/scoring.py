@@ -477,11 +477,31 @@ def score_response_quality(
 
 
 def build_transcript_judge(model: str | None = None) -> LLMJudge:
-    """Tier 3: LLM transcript judge using the live-archetype style rubric."""
-    kwargs: dict[str, Any] = {"rubric": TRANSCRIPT_JUDGE_RUBRIC}
-    if model is not None:
-        kwargs["model"] = model
-    return LLMJudge(**kwargs)
+    """Tier 3: LLM transcript judge using the live-archetype style rubric.
+
+    `model` defaults to `settings.test_llm_judge_model` rather than
+    pydantic_evals' own LLMJudge default (openai:gpt-5.2) - this repo never
+    calls a third-party API from an implicit default, so an unconfigured
+    judge model is a hard error here, not a silent fallback.
+    """
+    resolved_model: Any = model
+    if resolved_model is None:
+        from thenetwork.model_config import model_with_api_key
+        from thenetwork.settings import get_settings
+
+        s = get_settings()
+        if not s.test_llm_judge_model:
+            raise RuntimeError(
+                "build_transcript_judge requires TEST_LLM_JUDGE_MODEL (and "
+                "TEST_LLM_JUDGE_API_KEY), or an explicit model= argument - "
+                "no implicit third-party default is used"
+            )
+        resolved_model = model_with_api_key(
+            s.test_llm_judge_model,
+            s.test_llm_judge_api_key,
+            s.model_request_timeout_seconds,
+        )
+    return LLMJudge(rubric=TRANSCRIPT_JUDGE_RUBRIC, model=resolved_model)
 
 
 def _find_matching_memory(

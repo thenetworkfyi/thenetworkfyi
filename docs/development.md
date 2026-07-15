@@ -18,6 +18,8 @@ EMBED_MODEL=text-embedding-3-small  # OpenAI, 1536 dimensions
 AGENT_API_KEY=
 SMALL_AGENT_API_KEY=
 EMBED_API_KEY=
+TEST_LLM_JUDGE_MODEL=       # tests/scenarios/test_live_archetypes.py's LLMJudge; unset skips that suite
+TEST_LLM_JUDGE_API_KEY=     # rather than falling back to pydantic_evals' own openai:gpt-5.2 default
 IMAP_ACCOUNT=agent@example.com  # polled for inbound
 IMAP_PASSWORD=...
 IMAP_HOST=imap.gmail.com
@@ -31,7 +33,7 @@ RATE_LIMIT_PER_HOUR=10      # authenticated sender bucket
 UNAUTHENTICATED_RATE_LIMIT_PER_HOUR=3
 GLOBAL_EMAIL_RATE_LIMIT_PER_HOUR=100
 CONTENT_SCAN_ENABLED=false
-SANITIZE_LLM_TIER_ENABLED=false   # opt-in higher-fidelity gist pass, see docs/security.md layer 4
+SANITIZE_LLM_TIER_ENABLED=true    # higher-fidelity gist pass, see docs/security.md layer 4; on by default
 ```
 
 The producer never deletes or moves inbound mail - it only flips the IMAP `\Seen` flag,
@@ -140,7 +142,10 @@ under `alembic/versions/`.
   model calls, not a live Postgres/SMTP round trip. Every case is marked both `integration`
   and `live_model` (both declared in `pyproject.toml`) and the module skips itself if no
   `AGENT_API_KEY` is set, so `pytest -m "not integration"` (CI) never
-  reaches a live model. Run deliberately with
+  reaches a live model. The `LLMJudge` evaluators require `TEST_LLM_JUDGE_MODEL` (and
+  `TEST_LLM_JUDGE_API_KEY`) to be set too - unlike a bare pydantic-evals `LLMJudge`, which
+  defaults to calling `openai:gpt-5.2` with no configured key, this suite skips rather than
+  falling back to that implicit third-party default. Run deliberately with
   `uv run pytest -m live_model tests/scenarios/test_live_archetypes.py`.
 
 ## Deployment

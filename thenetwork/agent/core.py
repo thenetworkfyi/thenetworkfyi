@@ -50,7 +50,9 @@ def build_agent(model: Any = None) -> Agent[AgentDeps, str]:
         model = settings.agent_model
     if isinstance(model, str):
         settings = settings or get_settings()
-        model = model_with_api_key(model, settings.agent_api_key)
+        model = model_with_api_key(
+            model, settings.agent_api_key, settings.model_request_timeout_seconds
+        )
 
     thinking_level = settings.agent_thinking_level if settings is not None else None
 

@@ -197,7 +197,7 @@ def test_score_memory_expectations_checks_refs_and_gist():
 
 
 def test_build_transcript_judge_uses_expected_rubric():
-    judge = build_transcript_judge()
+    judge = build_transcript_judge(model="test:stub")
 
     assert "over-promising" in judge.rubric
     assert "SEAL" in judge.rubric

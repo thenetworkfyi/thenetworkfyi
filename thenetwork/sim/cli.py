@@ -42,7 +42,11 @@ def _build_person(persona: PopulationPersona, llm_personas: bool):
     from thenetwork.sim.personas.llm_persona import LLMTinyPerson
 
     settings = get_settings()
-    model = model_with_api_key(settings.small_agent_model, settings.small_agent_api_key)
+    model = model_with_api_key(
+        settings.small_agent_model,
+        settings.small_agent_api_key,
+        settings.model_request_timeout_seconds,
+    )
     return LLMTinyPerson(persona.config, model)
 
 
