@@ -381,9 +381,28 @@ async def test_proactive_semantic_trigger_never_sets_quote_inputs():
 
 
 def test_dispatch_cap_settings_defaults():
-    assert Settings.model_fields["dispatch_max_sends_per_run"].default == 6
-    assert Settings.model_fields["dispatch_recipient_daily_cap"].default == 6
-    assert Settings.model_fields["dispatch_sender_reply_daily_cap"].default == 6
+    assert Settings.model_fields["dispatch_max_sends_per_run"].default == 12
+    assert Settings.model_fields["dispatch_recipient_daily_cap"].default == 12
+    assert Settings.model_fields["dispatch_sender_reply_daily_cap"].default == 12
+
+
+def test_rate_and_introduction_pacing_settings_defaults():
+    assert Settings.model_fields["rate_limit_per_hour"].default == 20
+    assert Settings.model_fields["unauthenticated_rate_limit_per_hour"].default == 6
+    assert Settings.model_fields["global_email_rate_limit_per_hour"].default == 200
+    assert Settings.model_fields["registration_limit_per_day"].default == 100
+    assert Settings.model_fields["introduction_max_proposals_per_run"].default == 6
+    assert (
+        Settings.model_fields[
+            "introduction_max_outstanding_requests_per_person"
+        ].default
+        == 6
+    )
+    assert (
+        Settings.model_fields["introduction_max_requests_per_person_in_window"].default
+        == 6
+    )
+    assert Settings.model_fields["introduction_digest_size"].default == 6
 
 
 @pytest.mark.asyncio
@@ -653,17 +672,12 @@ async def test_propose_introduction_defers_after_per_run_cap():
                 sender_gist="builds storage systems",
                 other_gist="operates distributed databases",
             )
-            for number in range(4)
+            for number in range(7)
         ]
 
-    assert [result["status"] for result in results] == [
-        "proposed",
-        "proposed",
-        "proposed",
-        "deferred",
-    ]
+    assert [result["status"] for result in results] == ["proposed"] * 6 + ["deferred"]
     assert results[-1]["reason"] == "run_proposal_cap"
-    assert propose.call_count == 3
+    assert propose.call_count == 6
 
 
 @pytest.mark.asyncio

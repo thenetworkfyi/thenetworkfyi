@@ -144,7 +144,7 @@ class ResponseQualityThresholds:
     """
 
     max_noop_admin_alerts: int = 0
-    max_consent_requests_per_recipient: int = 3
+    max_consent_requests_per_recipient: int = 6
     weak_match_pairs: tuple[frozenset[str], ...] = ()
 
 

@@ -89,9 +89,9 @@ class Settings(BaseSettings):
     worker_concurrency: int = 4
 
     # Rate limiting: max inbound emails per hour
-    rate_limit_per_hour: int = 10
-    unauthenticated_rate_limit_per_hour: int = 3
-    global_email_rate_limit_per_hour: int = 100
+    rate_limit_per_hour: int = 20
+    unauthenticated_rate_limit_per_hour: int = 6
+    global_email_rate_limit_per_hour: int = 200
 
     # PII-safe audit correlation. Used to derive stable sender pseudonyms with
     # HMAC-SHA256; an unkeyed email hash is not safe because candidate-address
@@ -105,10 +105,10 @@ class Settings(BaseSettings):
     # Outbound send caps. Enforced inside the email capabilities, not by prompt.
     # The dispatch_* names predate the reply_to_sender/send_outreach tool split
     # and stay unchanged because they are deployment-facing env var names.
-    dispatch_max_sends_per_run: int = 6
-    dispatch_recipient_daily_cap: int = 6
-    dispatch_sender_reply_daily_cap: int = 6
-    registration_limit_per_day: int = 50
+    dispatch_max_sends_per_run: int = 12
+    dispatch_recipient_daily_cap: int = 12
+    dispatch_sender_reply_daily_cap: int = 12
+    registration_limit_per_day: int = 100
     consent_decline_cooldown_days: int = 90
 
     # Tool abuse bounds. Set a value to 0 or lower to disable that specific
@@ -120,15 +120,15 @@ class Settings(BaseSettings):
     # Introduction consent pacing. These limits are enforced at the server-side
     # proposal boundary, never by agent prompt wording. A proposal sends one
     # fixed consent request to each participant.
-    introduction_max_proposals_per_run: int = 3
-    introduction_max_outstanding_requests_per_person: int = 3
-    introduction_max_requests_per_person_in_window: int = 3
+    introduction_max_proposals_per_run: int = 6
+    introduction_max_outstanding_requests_per_person: int = 6
+    introduction_max_requests_per_person_in_window: int = 6
     introduction_request_window_seconds: int = 86_400
     # Proactive-only: candidates for one recipient are batched into a single
     # digest email instead of one consent-request pair at a time (see
     # introductions.queue_intro_candidate/flush_pending_digests). A hard
-    # ceiling of 4 is enforced in code regardless of this value.
-    introduction_digest_size: int = 3
+    # ceiling of 6 is enforced in code regardless of this value.
+    introduction_digest_size: int = 6
 
     # Admin channel: allowlisted senders + PGP/MIME-signed request (see admin/auth.py)
     admin_emails: list[str] = []
