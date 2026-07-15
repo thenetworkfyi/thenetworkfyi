@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from procrastinate import RetryStrategy
+from procrastinate import utils as procrastinate_utils
 from procrastinate.testing import InMemoryConnector
 from pydantic_ai.exceptions import ModelHTTPError
 
@@ -26,6 +26,7 @@ from thenetwork.sim.run.recorder import (
     SimRunArtifacts,
     SimRunConfig,
     SimRunRecorder,
+    _SimulationJobDrainer,
     _assemble_scenario_outcome,
     _config_payload,
     _database_outcome_state,
@@ -431,9 +432,15 @@ async def test_real_process_runs_capture_isolated_traceable_audit_logs(
             for line in artifacts.events_path.read_text().splitlines()
             if "process_email_started" in line
         ]
+        completion_events = [
+            json.loads(line)
+            for line in artifacts.events_path.read_text().splitlines()
+            if "process_email_completed" in line
+        ]
         assert len(audit_events) == 1
         assert audit_events[0]["event"] == "agent.tool.completed"
         assert process_events[0]["trace_id"] == "[application_identifier]"
+        assert len(completion_events) == 1
     assert first.audit_path.read_text() != ""
     assert second.audit_path.read_text() != ""
     assert capsys.readouterr().err == ""
@@ -876,12 +883,59 @@ async def test_recording_process_records_override_failure_without_retry(tmp_path
     assert "sim.process_email_completed" not in event_names
 
 
+def test_simulation_job_drainer_records_terminal_job_outcomes(tmp_path):
+    events = EventsLog(tmp_path / "events.jsonl")
+    drainer = _SimulationJobDrainer(events)
+    job_kwargs = {
+        "sender_email": "alice@example.test",
+        "trace_id": "trace-1",
+    }
+
+    drainer._record_job_outcomes(
+        (
+            SimpleNamespace(
+                id=1,
+                status="succeeded",
+                attempts=1,
+                task_kwargs=job_kwargs,
+            ),
+            SimpleNamespace(
+                id=2,
+                status="failed",
+                attempts=3,
+                task_kwargs=job_kwargs,
+            ),
+        )
+    )
+
+    logged = [
+        json.loads(line)
+        for line in (tmp_path / "events.jsonl").read_text().splitlines()
+    ]
+    assert [entry["event"] for entry in logged] == [
+        "sim.process_email_completed",
+        "sim.process_email_failed",
+    ]
+    assert [entry["attempts"] for entry in logged] == [2, 4]
+    assert [entry["job_status"] for entry in logged] == ["succeeded", "failed"]
+
+
 @pytest.mark.asyncio
 async def test_real_process_retries_non_5xx_model_http_error_via_procrastinate(
-    tmp_path,
+    tmp_path, monkeypatch
 ):
     connector = InMemoryConnector()
     calls = []
+    now = [datetime(2026, 7, 14, tzinfo=timezone.utc)]
+
+    async def advance_retry_clock(seconds: float) -> None:
+        now[0] += timedelta(seconds=seconds)
+
+    monkeypatch.setattr(procrastinate_utils, "utcnow", lambda: now[0])
+    monkeypatch.setattr(
+        "thenetwork.sim.run.recorder._sleep_until_retry",
+        advance_retry_clock,
+    )
 
     async def flaky_process(_context, **kwargs):
         calls.append(kwargs)
@@ -895,33 +949,40 @@ async def test_real_process_retries_non_5xx_model_http_error_via_procrastinate(
         stop_condition="Wait for a match.",
         agent_address="join@example.test",
     )
-    previous_strategy = process_email.retry_strategy
-    process_email.retry_strategy = RetryStrategy(max_attempts=3, wait=0)
-    try:
-        with (
-            app.replace_connector(connector),
-            patch.object(process_email, "func", new=flaky_process),
-        ):
-            await SimRunRecorder(runs_dir=tmp_path).run(
-                (TinyPersonEmailAdapter(ScriptedTinyPerson("Hello"), persona),),
-                SimRunConfig(
-                    scenario="queue-retry",
-                    ticks=1,
-                    proactive_every=None,
-                    personas=(persona,),
-                    mock_process=False,
-                ),
-            )
-    finally:
-        process_email.retry_strategy = previous_strategy
+    production_strategy = process_email.retry_strategy
+    assert production_strategy is not None
+    assert production_strategy.wait == 60
+    with (
+        app.replace_connector(connector),
+        patch.object(process_email, "func", new=flaky_process),
+    ):
+        artifacts = await SimRunRecorder(runs_dir=tmp_path).run(
+            (TinyPersonEmailAdapter(ScriptedTinyPerson("Hello"), persona),),
+            SimRunConfig(
+                scenario="queue-retry",
+                ticks=1,
+                proactive_every=None,
+                personas=(persona,),
+                mock_process=False,
+            ),
+        )
 
     assert len(calls) == 2
+    assert process_email.retry_strategy is production_strategy
     sim_jobs = [
         job
         for job in connector.jobs.values()
         if job["queue_name"] == "simulation_process_email"
     ]
     assert [job["status"] for job in sim_jobs] == ["succeeded"]
+    events = [
+        json.loads(line) for line in artifacts.events_path.read_text().splitlines()
+    ]
+    event_names = [event["event"] for event in events]
+    assert event_names.count("sim.process_email_started") == 1
+    assert event_names.count("sim.process_email_retrying") == 1
+    assert event_names.count("sim.process_email_completed") == 1
+    assert "sim.process_email_failed" not in event_names
 
 
 def test_config_payload_keeps_outcome_check_metadata_without_predicates():

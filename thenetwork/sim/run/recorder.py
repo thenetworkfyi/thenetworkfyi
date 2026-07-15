@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import mailbox
 import os
@@ -9,12 +10,13 @@ import subprocess
 from collections import Counter
 from collections.abc import Callable, Iterable
 from contextlib import nullcontext
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from email.utils import getaddresses
 from pathlib import Path
 from typing import Any
 
+from procrastinate import utils as procrastinate_utils
 from thenetwork.audit import audit_jsonl_file
 from sqlmodel import select
 
@@ -163,8 +165,9 @@ class SimRunRecorder:
             drain_jobs = None
         elif config.mock_process is False:
             process_mode = "real"
-            process_func = _defer_process_email
-            drain_jobs = _drain_process_email_jobs
+            job_drainer = _SimulationJobDrainer(events)
+            process_func = _recording_deferred_process(events, job_drainer)
+            drain_jobs = job_drainer
         else:
             process_mode = "mock"
             process_func = _mock_process(events)
@@ -186,7 +189,11 @@ class SimRunRecorder:
             loop = SimTickLoop(
                 adapters,
                 run_dir=run_dir,
-                process=_recording_process(process_func, events),
+                process=(
+                    process_func
+                    if process_mode == "real"
+                    else _recording_process(process_func, events)
+                ),
                 proactive_every=config.proactive_every,
                 schedule=schedule,
                 progress=progress,
@@ -496,22 +503,129 @@ def _record_proactive_trigger(events: EventsLog):
     return record
 
 
-async def _defer_process_email(**kwargs: Any) -> None:
+async def _defer_process_email(**kwargs: Any) -> int:
     """Queue real simulation mail through the production task definition."""
-    await process_email.configure(queue=_SIM_PROCESS_EMAIL_QUEUE).defer_async(**kwargs)
+    return await process_email.configure(queue=_SIM_PROCESS_EMAIL_QUEUE).defer_async(
+        **kwargs
+    )
 
 
-async def _drain_process_email_jobs() -> None:
-    """Run ready production jobs without waiting for future work.
+@dataclass
+class _SimulationJobDrainer:
+    """Run and observe simulation jobs until each one reaches a terminal state.
 
     The task's own RetryStrategy decides whether and when an exception is
-    retried. A later simulation tick drains any retry that has become ready.
+    retried. If it schedules a future retry, wait for that schedule rather than
+    allowing scoring or disposable-database cleanup to drop the pending turn.
     """
-    await app.run_worker_async(
-        queues=(_SIM_PROCESS_EMAIL_QUEUE,),
-        wait=False,
-        install_signal_handlers=False,
-    )
+
+    events: EventsLog
+    job_ids: set[int] = field(default_factory=set)
+    _reported_terminal_job_ids: set[int] = field(default_factory=set)
+    _reported_retry_attempts: set[tuple[int, int]] = field(default_factory=set)
+
+    async def __call__(self) -> None:
+        while True:
+            await app.run_worker_async(
+                queues=(_SIM_PROCESS_EMAIL_QUEUE,),
+                wait=False,
+                install_signal_handlers=False,
+            )
+            jobs = tuple(
+                job
+                for job in await app.job_manager.list_jobs_async(
+                    queue=_SIM_PROCESS_EMAIL_QUEUE
+                )
+                if job.id in self.job_ids
+            )
+            pending = tuple(job for job in jobs if job.status in {"todo", "doing"})
+            self._record_job_outcomes(jobs)
+            self._record_retries(pending)
+            if not pending:
+                return
+            if any(job.status == "doing" for job in pending):
+                raise RuntimeError("simulation worker stopped with a job still running")
+
+            retry_times = tuple(job.scheduled_at for job in pending if job.scheduled_at)
+            if len(retry_times) != len(pending):
+                raise RuntimeError("simulation worker left a ready job unprocessed")
+            wait_seconds = max(
+                0.0,
+                (min(retry_times) - procrastinate_utils.utcnow()).total_seconds(),
+            )
+            if wait_seconds:
+                await _sleep_until_retry(wait_seconds)
+
+    def _record_job_outcomes(self, jobs: tuple[Any, ...]) -> None:
+        for job in jobs:
+            if (
+                job.id is None
+                or job.id in self._reported_terminal_job_ids
+                or job.status in {"todo", "doing"}
+            ):
+                continue
+            self._reported_terminal_job_ids.add(job.id)
+            self.events.write(
+                (
+                    "sim.process_email_completed"
+                    if job.status == "succeeded"
+                    else "sim.process_email_failed"
+                ),
+                sender_email=job.task_kwargs.get("sender_email"),
+                trace_id=job.task_kwargs.get("trace_id"),
+                attempts=job.attempts + 1,
+                job_status=job.status,
+            )
+
+    def _record_retries(self, jobs: tuple[Any, ...]) -> None:
+        for job in jobs:
+            if job.id is None or job.attempts < 1:
+                continue
+            retry = (job.id, job.attempts)
+            if retry in self._reported_retry_attempts:
+                continue
+            self._reported_retry_attempts.add(retry)
+            self.events.write(
+                "sim.process_email_retrying",
+                sender_email=job.task_kwargs.get("sender_email"),
+                trace_id=job.task_kwargs.get("trace_id"),
+                attempt=job.attempts,
+            )
+
+
+async def _sleep_until_retry(seconds: float) -> None:
+    """Wait until Procrastinate's next scheduled simulation retry is due."""
+    await asyncio.sleep(seconds)
+
+
+def _recording_deferred_process(
+    events: EventsLog,
+    drainer: _SimulationJobDrainer,
+):
+    """Record inbound queueing without claiming enqueue means completion."""
+
+    async def wrapped(**kwargs: Any) -> None:
+        trace_id = kwargs.get("trace_id")
+        events.write(
+            "sim.process_email_started",
+            sender_email=kwargs.get("sender_email"),
+            subject=kwargs.get("subject"),
+            trace_id=trace_id,
+        )
+        try:
+            job_id = await _defer_process_email(**kwargs)
+        except Exception as exc:
+            events.write(
+                "sim.process_email_failed",
+                sender_email=kwargs.get("sender_email"),
+                trace_id=trace_id,
+                error_type=type(exc).__name__,
+                error=str(exc),
+            )
+        else:
+            drainer.job_ids.add(job_id)
+
+    return wrapped
 
 
 def _recording_process(process, events: EventsLog):
