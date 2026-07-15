@@ -3,16 +3,13 @@ from __future__ import annotations
 from email.message import EmailMessage
 
 from thenetwork.sim.personas.consent import (
-    digest_token,
     intro_token,
     make_reply_thread_faithful,
-    thread_token_of,
 )
 
 
 TOKEN_A = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 TOKEN_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
-DIGEST_TOKEN = "cccccccc-cccc-cccc-cccc-cccccccccccc"
 
 
 def test_intro_token_reads_subject_first():
@@ -75,50 +72,3 @@ def test_token_free_body_passes_through_unchanged():
 
 def test_body_reduced_to_nothing_becomes_empty():
     assert make_reply_thread_faithful(f"[intro:{TOKEN_B}]", None) == ""
-
-
-def test_digest_token_reads_subject_first():
-    message = EmailMessage()
-    message["Subject"] = f"Possible introductions [digest:{DIGEST_TOKEN}]"
-    message.set_content(f"[digest:{TOKEN_B}]")
-    assert digest_token(message) == DIGEST_TOKEN
-
-
-def test_thread_token_of_distinguishes_intro_and_digest():
-    intro_message = EmailMessage()
-    intro_message["Subject"] = f"Possible introduction [intro:{TOKEN_A}]"
-    intro_message.set_content("Reply YES to opt in.")
-    assert thread_token_of(intro_message) == ("intro", TOKEN_A)
-
-    digest_message = EmailMessage()
-    digest_message["Subject"] = f"Possible introductions [digest:{DIGEST_TOKEN}]"
-    digest_message.set_content("A. some gist\n\nReply with a letter, or NONE.")
-    assert thread_token_of(digest_message) == ("digest", DIGEST_TOKEN)
-
-    plain_message = EmailMessage()
-    plain_message["Subject"] = "Re: hello"
-    plain_message.set_content("thanks")
-    assert thread_token_of(plain_message) is None
-
-
-def test_digest_selection_binds_to_the_digest_thread():
-    body = f"A\n[digest:{DIGEST_TOKEN}]"
-    assert (
-        make_reply_thread_faithful(body, DIGEST_TOKEN, "digest")
-        == f"A\n[digest:{DIGEST_TOKEN}]"
-    )
-
-
-def test_digest_selection_with_stray_intro_token_keeps_only_the_digest_token():
-    body = f"A, C\n[digest:{DIGEST_TOKEN}]\n[intro:{TOKEN_A}]"
-    assert (
-        make_reply_thread_faithful(body, DIGEST_TOKEN, "digest")
-        == f"A, C\n[digest:{DIGEST_TOKEN}]"
-    )
-
-
-def test_digest_none_selection_gains_the_thread_token():
-    assert (
-        make_reply_thread_faithful("NONE", DIGEST_TOKEN, "digest")
-        == f"NONE\n[digest:{DIGEST_TOKEN}]"
-    )

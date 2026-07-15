@@ -402,7 +402,6 @@ def test_rate_and_introduction_pacing_settings_defaults():
         Settings.model_fields["introduction_max_requests_per_person_in_window"].default
         == 6
     )
-    assert Settings.model_fields["introduction_digest_size"].default == 6
 
 
 @pytest.mark.asyncio

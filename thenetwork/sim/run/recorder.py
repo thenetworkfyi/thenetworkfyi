@@ -213,7 +213,6 @@ class SimRunRecorder:
                     tick=tick.tick,
                     persona_messages=tick.persona_messages,
                     proactive_jobs=tick.proactive_jobs,
-                    digest_emails=tick.digest_emails,
                 )
             personas_pii = tuple(
                 PersonaPII.from_config(persona) for persona in config.personas

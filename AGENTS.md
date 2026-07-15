@@ -74,9 +74,5 @@ code, commit messages, docs, or responses. Keep it straightforward and professio
   people themselves, the agent decides. `scan_for_opportunities` finds high graph-proximity
   pairs; `scan_for_matches` is the semantic rematch that re-engages a dormant user when a
   later arrival finally matches an older standing note (SEAL-safe trigger body: opaque ids
-  + gists only). Both covered by `tests/test_proactive.py`. A third periodic task,
-  `flush_intro_digests` (`:15,:45`), batches proactive candidates a recipient's own
-  request cap deferred (`propose_pair(queue_on_cap=True)`) into one digest email per
-  recipient instead of dropping them - see `thenetwork/introductions.py`'s
-  `queue_intro_candidate`/`flush_pending_digests`/`process_digest_reply`, covered by
-  `tests/security/test_introduction_digest.py`.
+  + gists only). Both covered by `tests/test_proactive.py`; capped proposals are skipped
+  and become eligible again on a later sweep.

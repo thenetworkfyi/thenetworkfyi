@@ -46,7 +46,7 @@ from thenetwork.email.outbound import (
     send_reply,
 )
 from thenetwork.memory.sanitize import assert_presidio_ready
-from thenetwork.introductions import process_consent_reply, process_digest_reply
+from thenetwork.introductions import process_consent_reply
 from thenetwork.security.content_scan import scan_content
 from thenetwork.security.rate_limit import (
     PostgresFixedWindowStorage,
@@ -227,26 +227,6 @@ def _consent_remainder_body(remainder: str, outcome: str | None) -> str:
         "their own additional text below - treat it as a normal inbound "
         "message from them: remember new facts, answer a genuine question "
         "briefly, or do nothing.\n\n"
-        f"{remainder}"
-    )
-
-
-def _digest_remainder_body(remainder: str, outcome: str | None) -> str:
-    """Frame digest-reply text the server path would otherwise discard.
-
-    The digest selection itself was already recorded (and any resulting
-    consent requests sent) before any model ran; only the sender's own
-    additional text is forwarded, so the agent can remember it or answer it
-    without re-acting on the selection.
-    """
-    return (
-        "[System note] This message was a reply to a digest of possible "
-        f"introductions. The server already recorded the selection (outcome: "
-        f"{outcome}) and sent any resulting consent requests, so do not act "
-        "on the selection or acknowledge it again. The sender's reply also "
-        "carried their own additional text below - treat it as a normal "
-        "inbound message from them: remember new facts, answer a genuine "
-        "question briefly, or do nothing.\n\n"
         f"{remainder}"
     )
 
@@ -433,21 +413,6 @@ async def process_email(
             email_body = _consent_remainder_body(
                 consent_result.remainder, consent_result.outcome
             )
-        else:
-            digest_result = process_digest_reply(
-                sender_person_id=sender_user_id,
-                sender_authenticated=sender_authenticated,
-                subject=subject,
-                body=body,
-                trace_id=trace_id,
-            )
-            if digest_result.handled:
-                if not digest_result.remainder or sender_user_id is None:
-                    return
-                email_body = _digest_remainder_body(
-                    digest_result.remainder, digest_result.outcome
-                )
-
         if not sender_authenticated and sender_user_id is None:
             audit_event(
                 "worker.message_rejected",
