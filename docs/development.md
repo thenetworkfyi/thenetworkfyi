@@ -283,10 +283,9 @@ cooldown. Pairs already connected in the projected graph are skipped, and the tr
 contains only opaque ids + PII-stripped gists; real addresses and raw memory text never
 enter it.
 
-Both scans pace their output: candidates are ordered deterministically (score
-descending, canonical pair id as tiebreak) and each person is scheduled for at most one
-new candidate per scan, so a dense cluster of similar members surfaces best-first over
-successive hours instead of as a combinatorial proposal burst.
+Both scans order candidates deterministically by score descending with canonical pair id
+as a tiebreak. The agent's per-run proposal cap and the server-side consent-request caps
+bound outbound activity.
 Pairs handed to either scan are also recorded by opaque ids in `proactive_surfaces`.
 They are not re-deferred for `proactive_surface_cooldown_seconds` (24 hours by default),
 even when the agent chose not to propose an introduction, so later scans rotate to the

@@ -107,20 +107,6 @@ def _recent_request_count(session, person_id: str, *, since: datetime) -> int:
     return len(requests)
 
 
-def request_load(session, person_id: str, *, since: datetime) -> int:
-    """Current outstanding/recent consent-request load for one person.
-
-    Mirrors the two signals `propose_pair` enforces as hard caps at proposal
-    time, but here it is read-only: callers use it to *prioritize* candidates
-    (e.g. proactive-scan pacing), not to reject them. The caps themselves stay
-    enforced only in `propose_pair`.
-    """
-    return max(
-        _outstanding_request_count(session, person_id),
-        _recent_request_count(session, person_id, since=since),
-    )
-
-
 def recently_surfaced_pairs(session, *, since: datetime) -> set[tuple[str, str]]:
     """Return opaque pairs already handed to a proactive agent recently."""
     records = session.exec(

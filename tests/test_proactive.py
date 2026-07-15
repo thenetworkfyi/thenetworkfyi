@@ -415,17 +415,7 @@ async def test_rematch_trigger_body_carries_no_raw_pii():
     assert "Raw-Name" not in body
 
 
-# --- pacing + relevance gate ------------------------------------------------
-
-
-def _engaged_ids(defer_calls):
-    """Person ids named in each deferred trigger body ("Person <id>: ...")."""
-    import re
-
-    pairs = []
-    for call in defer_calls:
-        pairs.append(tuple(re.findall(r"Person (\S+):", call.kwargs["body"])))
-    return pairs
+# --- relevance gate ---------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -472,9 +462,8 @@ async def test_rematch_gate_rejects_thin_overlap_keeps_specific_match():
 
 
 @pytest.mark.asyncio
-async def test_rematch_schedules_at_most_one_candidate_per_person():
-    """When two candidates share a person, only the higher-similarity one is
-    scheduled this scan; selection is deterministic (score, then pair key)."""
+async def test_rematch_orders_candidates_by_score_then_pair_key():
+    """Every eligible pair is deferred in deterministic relevance order."""
     from thenetwork.search.match import MemoryMatch
     from thenetwork.worker.proactive import scan_for_matches
 
@@ -501,15 +490,14 @@ async def test_rematch_schedules_at_most_one_candidate_per_person():
     ):
         await scan_for_matches.func(0)
 
-    assert mock_pe.defer.call_count == 1, "B may be scheduled only once per scan"
-    kwargs = mock_pe.defer.call_args.kwargs
-    assert kwargs["sender_email"] == "b@test.com", "the higher-similarity pair wins"
+    assert [
+        call.kwargs["proactive_candidate_id"] for call in mock_pe.defer.call_args_list
+    ] == ["A", "B"]
 
 
 @pytest.mark.asyncio
-async def test_rematch_manufacturing_cluster_does_not_burst():
-    """Four mutually-matching manufacturing members yield at most two paced
-    pairs per scan (each person in at most one), never the combinatorial six."""
+async def test_rematch_surfaces_each_eligible_pair_once():
+    """Four mutually matching members yield their six canonical pairs once."""
     from thenetwork.search.match import MemoryMatch
     from thenetwork.worker.proactive import scan_for_matches
 
@@ -538,20 +526,12 @@ async def test_rematch_manufacturing_cluster_does_not_burst():
     ):
         await scan_for_matches.func(0)
 
-    assert mock_pe.defer.call_count <= 2, (
-        f"expected at most 2 paced pairs for 4 people, got {mock_pe.defer.call_count}"
-    )
-    engaged = [
-        pid for pair in _engaged_ids(mock_pe.defer.call_args_list) for pid in pair
-    ]
-    assert len(engaged) == len(set(engaged)), (
-        "a person may appear in at most one pair per scan"
-    )
+    assert mock_pe.defer.call_count == 6
 
 
 @pytest.mark.asyncio
 async def test_rematch_preserves_pair_suppression():
-    """A previously proposed/resolved pair stays suppressed under pacing."""
+    """A previously proposed/resolved pair stays suppressed."""
     from thenetwork.search.match import MemoryMatch
     from thenetwork.worker.proactive import scan_for_matches
 
@@ -617,70 +597,8 @@ async def test_rematch_tries_next_best_counterpart_after_declined_pair_cools_dow
     assert mock_pe.defer.call_args.kwargs["proactive_candidate_id"] == "R"
 
 
-@pytest.mark.asyncio
-async def test_rematch_prioritizes_zero_load_candidate_over_saturated_peers():
-    """Reproduces the run-shaped scenario where four already-engaged recipients
-    kept winning pacing while a strong, unengaged match (Omar-like) never got
-    scheduled. All candidates here compete for the same newly-arrived person,
-    so only one is paced; request-load ordering must pick the zero-load
-    candidate even though the saturated candidates score as high or higher,
-    without lowering the relevance floor or the per-scan one-per-person cap."""
-    from thenetwork.search.match import MemoryMatch
-    from thenetwork.worker.proactive import scan_for_matches
-
-    recent = [
-        _memory(
-            "arrival", ["newcomer"], "ml infrastructure operator, seeking collaborators"
-        )
-    ]
-    saturated = ["s1", "s2", "s3", "s4"]
-    per_call_matches = [
-        [
-            MemoryMatch("m-omar", "omar", "ml infrastructure standing note", 0.68),
-            *[
-                MemoryMatch(f"m-{s}", s, "ml infrastructure standing note", 0.75)
-                for s in saturated
-            ],
-        ]
-    ]
-    persons = {
-        "newcomer": _person("newcomer", "newcomer@test.com"),
-        "omar": _person("omar", "omar@test.com"),
-        **{s: _person(s, f"{s}@test.com") for s in saturated},
-    }
-
-    def fake_request_load(_session, person_id, *, since):
-        return 0 if person_id in ("newcomer", "omar") else 3
-
-    with (
-        patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()),
-        patch(
-            "thenetwork.worker.proactive.get_session",
-            return_value=_rematch_session(recent, persons),
-        ),
-        patch(
-            "thenetwork.worker.proactive.match_memories", side_effect=per_call_matches
-        ),
-        patch(
-            "thenetwork.worker.proactive.request_load", side_effect=fake_request_load
-        ),
-        patch("thenetwork.worker.proactive.process_email") as mock_pe,
-    ):
-        await scan_for_matches.func(0)
-
-    assert mock_pe.defer.call_count == 1, (
-        "all candidates compete for the same newcomer; only one may be paced"
-    )
-    kwargs = mock_pe.defer.call_args.kwargs
-    assert kwargs["sender_email"] == "newcomer@test.com", (
-        "the unengaged person receives their best eligible match"
-    )
-
-
-@pytest.mark.asyncio
-async def test_opportunities_scan_paces_one_candidate_per_person():
-    """A star graph makes every leaf pair Jaccard 1.0; pacing schedules at most
-    one candidate per person instead of every qualifying pair."""
+async def test_opportunities_scan_orders_all_qualifying_pairs():
+    """A star graph schedules every qualifying pair in stable score order."""
     from thenetwork.worker.proactive import scan_for_opportunities
 
     G = nx.Graph()
@@ -699,9 +617,7 @@ async def test_opportunities_scan_paces_one_candidate_per_person():
     ):
         await scan_for_opportunities.func(0)
 
-    assert mock_pe.defer.call_count == 1, (
-        f"three qualifying pairs share persons; expected 1 paced defer, got {mock_pe.defer.call_count}"
-    )
+    assert mock_pe.defer.call_count == 3
 
 
 @pytest.mark.asyncio
@@ -729,9 +645,11 @@ async def test_opportunities_scan_rotates_recently_surfaced_pairs():
     ):
         await scan_for_opportunities.func(0)
 
-    mock_pe.defer.assert_called_once()
-    assert mock_pe.defer.call_args.kwargs["proactive_candidate_id"] == "c"
-    assert mark_surfaced.call_args.args[1] == {("a", "c")}
+    assert mock_pe.defer.call_count == 2
+    assert {
+        call.kwargs["proactive_candidate_id"] for call in mock_pe.defer.call_args_list
+    } == {"c"}
+    assert mark_surfaced.call_args.args[1] == {("a", "c"), ("b", "c")}
 
 
 @pytest.mark.asyncio
