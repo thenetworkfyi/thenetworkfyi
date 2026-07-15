@@ -527,7 +527,7 @@ class _SimulationJobDrainer:
     async def __call__(self) -> None:
         while True:
             await app.run_worker_async(
-                queues=(_SIM_PROCESS_EMAIL_QUEUE,),
+                queues=[_SIM_PROCESS_EMAIL_QUEUE],
                 wait=False,
                 install_signal_handlers=False,
             )
