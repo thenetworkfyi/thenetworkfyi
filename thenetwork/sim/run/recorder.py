@@ -14,6 +14,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from email.utils import getaddresses
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 from procrastinate import utils as procrastinate_utils
@@ -199,6 +200,7 @@ class SimRunRecorder:
                 progress=progress,
                 on_delivery=_record_delivered_message(events),
                 on_proactive_trigger=_record_proactive_trigger(events),
+                on_stage_timing=_record_stage_timing(events),
                 drain_jobs=drain_jobs,
                 mbox_path=artifacts.raw_mbox_path,
             )
@@ -502,6 +504,15 @@ def _record_proactive_trigger(events: EventsLog):
     return record
 
 
+def _record_stage_timing(events: EventsLog):
+    """Record elapsed wall-clock time for a simulation stage."""
+
+    def record(event: str, **fields: Any) -> None:
+        events.write(event, **fields)
+
+    return record
+
+
 async def _defer_process_email(**kwargs: Any) -> int:
     """Queue real simulation mail through the production task definition."""
     return await process_email.configure(queue=_SIM_PROCESS_EMAIL_QUEUE).defer_async(
@@ -520,6 +531,7 @@ class _SimulationJobDrainer:
 
     events: EventsLog
     job_ids: set[int] = field(default_factory=set)
+    job_started_at: dict[int, float] = field(default_factory=dict)
     _reported_terminal_job_ids: set[int] = field(default_factory=set)
     _reported_retry_attempts: set[tuple[int, int]] = field(default_factory=set)
 
@@ -564,16 +576,22 @@ class _SimulationJobDrainer:
             ):
                 continue
             self._reported_terminal_job_ids.add(job.id)
+            fields = {
+                "sender_email": job.task_kwargs.get("sender_email"),
+                "trace_id": job.task_kwargs.get("trace_id"),
+                "attempts": job.attempts + 1,
+                "job_status": job.status,
+            }
+            started_at = self.job_started_at.pop(job.id, None)
+            if started_at is not None:
+                fields["elapsed_ms"] = round((perf_counter() - started_at) * 1000)
             self.events.write(
                 (
                     "sim.process_email_completed"
                     if job.status == "succeeded"
                     else "sim.process_email_failed"
                 ),
-                sender_email=job.task_kwargs.get("sender_email"),
-                trace_id=job.task_kwargs.get("trace_id"),
-                attempts=job.attempts + 1,
-                job_status=job.status,
+                **fields,
             )
 
     def _record_retries(self, jobs: tuple[Any, ...]) -> None:
@@ -611,6 +629,7 @@ def _recording_deferred_process(
             subject=kwargs.get("subject"),
             trace_id=trace_id,
         )
+        started_at = perf_counter()
         try:
             job_id = await _defer_process_email(**kwargs)
         except Exception as exc:
@@ -620,9 +639,16 @@ def _recording_deferred_process(
                 trace_id=trace_id,
                 error_type=type(exc).__name__,
                 error=str(exc),
+                elapsed_ms=round((perf_counter() - started_at) * 1000),
             )
         else:
             drainer.job_ids.add(job_id)
+            drainer.job_started_at[job_id] = started_at
+            events.write(
+                "sim.process_email_enqueued",
+                trace_id=trace_id,
+                elapsed_ms=round((perf_counter() - started_at) * 1000),
+            )
 
     return wrapped
 
@@ -636,6 +662,7 @@ def _recording_process(process, events: EventsLog):
             subject=kwargs.get("subject"),
             trace_id=trace_id,
         )
+        started_at = perf_counter()
         try:
             outcome = await process(**kwargs)
         except Exception as exc:
@@ -645,12 +672,14 @@ def _recording_process(process, events: EventsLog):
                 trace_id=trace_id,
                 error_type=type(exc).__name__,
                 error=str(exc),
+                elapsed_ms=round((perf_counter() - started_at) * 1000),
             )
             return
         events.write(
             "sim.process_email_completed",
             sender_email=kwargs.get("sender_email"),
             trace_id=trace_id,
+            elapsed_ms=round((perf_counter() - started_at) * 1000),
         )
         _record_outcome(events, outcome, trace_id=trace_id)
 

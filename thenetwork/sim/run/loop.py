@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 from unittest.mock import patch
 
@@ -28,6 +29,7 @@ ScanCallable = Callable[[int], Awaitable[None]]
 ProgressCallable = Callable[[str], None]
 ProactiveTriggerObserver = Callable[[dict[str, Any]], None]
 DrainJobsCallable = Callable[[], Awaitable[None]]
+StageTimingObserver = Callable[..., None]
 
 
 @dataclass(frozen=True)
@@ -66,6 +68,7 @@ class SimTickLoop:
         progress: ProgressCallable | None = None,
         on_delivery: SimMessageObserver | None = None,
         on_proactive_trigger: ProactiveTriggerObserver | None = None,
+        on_stage_timing: StageTimingObserver | None = None,
         drain_jobs: DrainJobsCallable | None = None,
         mbox_path: Path | None = None,
     ) -> None:
@@ -79,6 +82,7 @@ class SimTickLoop:
         self.schedule = schedule or SimSchedule()
         self.progress = progress
         self.on_proactive_trigger = on_proactive_trigger
+        self.on_stage_timing = on_stage_timing
         self.drain_jobs = drain_jobs
         self.post_office = SimPostOffice(
             mbox_path=mbox_path or run_dir / "all-mail.mbox", on_deliver=on_delivery
@@ -108,6 +112,7 @@ class SimTickLoop:
                         timestamp=tick,
                         process=self.process,
                         on_defer=self.on_proactive_trigger,
+                        on_stage_timing=self.on_stage_timing,
                     )
                     await self._drain_jobs()
                 results.append(
@@ -161,15 +166,33 @@ class SimTickLoop:
             thread_kind = active[0] if active is not None else "intro"
             thread_token = active[1] if active is not None else None
             events = self.schedule.events_for(adapter.config, tick)
-            msg = await adapter.anext_email(
-                _tick_prompt(adapter.config.goal, tick, events, reply_texts),
-                tick=tick,
-                subject=f"Simulation tick {tick}",
-                reply_to=reply_to,
-                body_filter=lambda body, token=thread_token, kind=thread_kind: (
-                    make_reply_thread_faithful(body, token, kind)
-                ),
-            )
+            started_at = perf_counter()
+            timing_fields: dict[str, Any] = {
+                "tick": tick,
+                "persona": adapter.config.name,
+            }
+            try:
+                msg = await adapter.anext_email(
+                    _tick_prompt(adapter.config.goal, tick, events, reply_texts),
+                    tick=tick,
+                    subject=f"Simulation tick {tick}",
+                    reply_to=reply_to,
+                    body_filter=lambda body, token=thread_token, kind=thread_kind: (
+                        make_reply_thread_faithful(body, token, kind)
+                    ),
+                )
+            except BaseException as exc:
+                timing_fields.update(status="failed", error_type=type(exc).__name__)
+                raise
+            else:
+                timing_fields["status"] = "succeeded"
+            finally:
+                _record_stage_timing(
+                    self.on_stage_timing,
+                    "sim.persona_generation_completed",
+                    started_at,
+                    **timing_fields,
+                )
             if msg is None:
                 continue
             prefix = f"tick {tick}/{total_ticks}: {adapter.config.name}: process_email"
@@ -201,6 +224,7 @@ async def run_proactive_scans(
     process: ProcessEmailCallable | None = None,
     scans: Sequence[Any] | None = None,
     on_defer: ProactiveTriggerObserver | None = None,
+    on_stage_timing: StageTimingObserver | None = None,
 ) -> int:
     """Run proactive scans and execute their deferred jobs in-loop."""
     captured: list[dict[str, Any]] = []
@@ -220,8 +244,35 @@ async def run_proactive_scans(
 
     process_func = process or proactive.process_email.func
     for job in captured:
-        await process_func(**job)
+        started_at = perf_counter()
+        timing_fields: dict[str, Any] = {"trace_id": job.get("trace_id")}
+        try:
+            await process_func(**job)
+        except BaseException as exc:
+            timing_fields.update(status="failed", error_type=type(exc).__name__)
+            raise
+        else:
+            timing_fields["status"] = "succeeded"
+        finally:
+            _record_stage_timing(
+                on_stage_timing,
+                "sim.proactive_job_processed",
+                started_at,
+                **timing_fields,
+            )
     return len(captured)
+
+
+def _record_stage_timing(
+    observer: StageTimingObserver | None,
+    event: str,
+    started_at: float,
+    **fields: Any,
+) -> None:
+    if observer is not None:
+        observer(
+            event, elapsed_ms=round((perf_counter() - started_at) * 1000), **fields
+        )
 
 
 @contextmanager
