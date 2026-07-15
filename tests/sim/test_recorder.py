@@ -921,6 +921,29 @@ def test_simulation_job_drainer_records_terminal_job_outcomes(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_simulation_job_drainer_passes_queue_filter_as_postgres_array(tmp_path):
+    events = EventsLog(tmp_path / "events.jsonl")
+    drainer = _SimulationJobDrainer(events)
+
+    with (
+        patch.object(app, "run_worker_async", new_callable=AsyncMock) as run_worker,
+        patch.object(
+            app.job_manager,
+            "list_jobs_async",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+    ):
+        await drainer()
+
+    run_worker.assert_awaited_once_with(
+        queues=["simulation_process_email"],
+        wait=False,
+        install_signal_handlers=False,
+    )
+
+
+@pytest.mark.asyncio
 async def test_real_process_retries_non_5xx_model_http_error_via_procrastinate(
     tmp_path, monkeypatch
 ):
