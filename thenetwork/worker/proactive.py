@@ -8,10 +8,9 @@ leaves the system.
 - `scan_for_opportunities` (graph): high graph-proximity pairs, Jaccard over
   shared neighbours in the projected graph. Needs pre-existing connection
   density to say anything.
-- `scan_for_matches` (semantic): a newly-arrived memory that now closely
-  matches an *older* standing note about a different person. This is what lets
-  the system re-engage a dormant user weeks later, when someone who finally
-  fits what they told us first shows up - no shared connections required.
+- `scan_for_matches` (semantic): periodic rematching of standing notes for
+  unengaged people. This re-engages a dormant user when an eligible counterpart
+  emerges - no shared connections required.
 
 Both hand the agent only opaque ids + PII-stripped gists in the trigger body,
 never raw text, names, or addresses (SEAL).
@@ -44,7 +43,7 @@ from uuid import uuid4
 
 from sqlmodel import col, select
 
-from thenetwork.db.models import Memory, Person
+from thenetwork.db.models import IntroductionConsent, Memory, Person
 from thenetwork.db.session import get_session
 from thenetwork.search.graph import build_graph, score_proximity
 from thenetwork.search.match import match_memories
@@ -190,133 +189,124 @@ async def flush_intro_digests(timestamp: int) -> None:
 @app.periodic(cron="30 * * * *", periodic_id="scan_for_matches")
 @app.task()
 async def scan_for_matches(timestamp: int) -> None:
-    """Hourly semantic rematch: new memories against older standing notes.
+    """Periodically surface each unengaged person's best semantic counterpart.
 
-    Driven by *arrivals* - memories created since roughly the last run - rather
-    than by re-sweeping the whole store, so a pair only surfaces once, at the
-    moment the counterpart shows up. For each recent memory, find older
-    person-referencing memories about a *different* person that it now matches
-    above `proactive_match_threshold`, and hand the pair to the agent. The
-    dormant owner of the older note is the one re-engaged.
-
-    Guards:
-    - Pairs already connected in the graph are skipped - an introduction the
-      agent already made is itself the durable dedup record.
-    - The relevance floor is conservative and enforced here as well as in the
-      match query: unsolicited outreach makes a false positive costly, so a
-      thin keyword-overlap match (two people who merely both mention factories)
-      must not surface, while a specific shared-ground match still does.
-    - Pacing: at most one new candidate per person per scan, best match first,
-      deterministic ordering (see `_pace_one_per_person`).
-    - The trigger body carries only opaque ids + gists (SEAL-safe); raw memory
-      text and real addresses never enter it.
+    Every run re-evaluates sanitized person-referencing memories rather than
+    relying on a narrow arrival window. A person with no active consent pair
+    gets at most one best eligible counterpart; the pair can be reconsidered
+    after the proactive-surface cooldown when an earlier attempt did not lead
+    to a proposal. Trigger bodies contain only opaque ids and sanitized gists.
     """
     s = get_settings()
     now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(minutes=s.proactive_rematch_lookback_minutes)
 
     with get_session() as session:
-        recent = session.exec(
+        memories = session.exec(
             select(Memory)
-            .where(col(Memory.created_at) >= cutoff)
             .where(col(Memory.gist).is_not(None))
             .where(col(Memory.embedding).is_not(None))
             .order_by(col(Memory.created_at).desc())
-            .limit(200)
+            .limit(500)
         ).all()
-
-        if not recent:
+        if not memories:
             return
 
         graph = build_graph()
-        seen: set[frozenset[str]] = set()
         surfaced_pairs = recently_surfaced_pairs(
             session,
             since=now - timedelta(seconds=s.proactive_surface_cooldown_seconds),
         )
         email_cache: dict[str, str | None] = {}
-        load_cache: dict[str, int] = {}
-        since = datetime.now(timezone.utc) - timedelta(
-            seconds=s.introduction_request_window_seconds
-        )
-
-        def email_for(pid: str) -> str | None:
-            if pid not in email_cache:
-                person = session.get(Person, pid)
-                email_cache[pid] = person.email if person else None
-            return email_cache[pid]
-
-        def load_for(pid: str) -> int:
-            if pid not in load_cache:
-                load_cache[pid] = request_load(session, pid, since=since)
-            return load_cache[pid]
-
+        active_cache: dict[str, bool] = {}
+        seen: set[frozenset[str]] = set()
         candidates: list[tuple[int, float, tuple[str, str], dict]] = []
-        for arrival_mem in recent:
-            arrivals = [r for r in arrival_mem.refs if r]
-            if not arrivals:
-                continue
+        since = now - timedelta(seconds=s.introduction_request_window_seconds)
+        load_cache: dict[str, int] = {}
 
-            matches = match_memories(
-                arrival_mem.embedding,
-                session,
-                limit=s.proactive_rematch_top_k,
-                min_similarity=s.proactive_match_threshold,
-            )
-            for m in matches:
-                if m.memory_id == arrival_mem.id:
-                    continue
-                if m.similarity < s.proactive_match_threshold:
-                    continue
-                standing = m.person_id  # owner of the older matched note
-                if standing in arrivals:
-                    continue
+        def email_for(person_id: str) -> str | None:
+            if person_id not in email_cache:
+                person = session.get(Person, person_id)
+                email_cache[person_id] = person.email if person is not None else None
+            return email_cache[person_id]
 
-                for arrival in arrivals:
-                    pair = frozenset((standing, arrival))
+        def has_active_consent(person_id: str) -> bool:
+            if person_id not in active_cache:
+                active_cache[person_id] = bool(
+                    session.exec(
+                        select(IntroductionConsent.id).where(
+                            (IntroductionConsent.person_a_id == person_id)
+                            | (IntroductionConsent.person_b_id == person_id),
+                            col(IntroductionConsent.status).in_(
+                                ("proposed", "one_consented", "introduced")
+                            ),
+                        )
+                    ).first()
+                )
+            return active_cache[person_id]
+
+        def load_for(person_id: str) -> int:
+            if person_id not in load_cache:
+                load_cache[person_id] = request_load(session, person_id, since=since)
+            return load_cache[person_id]
+
+        for memory in memories:
+            for recipient_id in (person_id for person_id in memory.refs if person_id):
+                if has_active_consent(recipient_id) or email_for(recipient_id) is None:
+                    continue
+                matches = match_memories(
+                    memory.embedding,
+                    session,
+                    limit=s.proactive_rematch_top_k,
+                    min_similarity=s.proactive_match_threshold,
+                )
+                for match in matches:
+                    counterpart_id = match.person_id
+                    pair = frozenset((recipient_id, counterpart_id))
                     if (
-                        pair in seen
-                        or graph.has_edge(standing, arrival)
-                        or pair_is_suppressed(session, standing, arrival)
+                        counterpart_id == recipient_id
+                        or len(pair) != 2
+                        or pair in seen
+                        or match.similarity < s.proactive_match_threshold
+                        or graph.has_edge(recipient_id, counterpart_id)
+                        or pair_is_suppressed(
+                            session,
+                            recipient_id,
+                            counterpart_id,
+                            decline_cooldown_days=s.consent_decline_cooldown_days,
+                        )
                     ):
                         continue
-                    seen.add(pair)
-
-                    recipient = email_for(standing)
-                    if recipient is None:
+                    pair_key: tuple[str, str] = tuple(sorted(pair))  # type: ignore[assignment]
+                    if pair_key in surfaced_pairs or email_for(counterpart_id) is None:
                         continue
-
+                    seen.add(pair)
                     body = (
-                        "[System match] A new signal about one person closely "
-                        "matches a standing note about another "
-                        f"(similarity={m.similarity:.2f}).\n\n"
-                        f"Person {standing}: {m.gist}\n"
-                        f"Person {arrival}: {arrival_mem.gist}\n\n"
-                        f"You are acting for person {standing}, the recipient "
+                        "[System match] A standing signal about one person closely "
+                        "matches a standing signal about another "
+                        f"(similarity={match.similarity:.2f}).\n\n"
+                        f"Person {recipient_id}: {memory.gist}\n"
+                        f"Person {counterpart_id}: {match.gist}\n\n"
+                        f"You are acting for person {recipient_id}, the recipient "
                         "of this trigger. Their side of the pair is derived "
                         "server-side, so never pass their id to "
                         "`propose_introduction`. If these two share specific, "
                         "real common ground, propose an introduction with "
-                        f"`propose_introduction` and other_person_id={arrival} "
+                        f"`propose_introduction` and other_person_id={counterpart_id} "
                         "(the counterpart), using only what the gists support. "
                         "If the overlap is thin or you are unsure, do nothing."
                     )
-                    pair_key: tuple[str, str] = tuple(sorted(pair))  # type: ignore[assignment]
-                    if pair_key in surfaced_pairs:
-                        continue
-                    pair_load = max(load_for(standing), load_for(arrival))
                     candidates.append(
                         (
-                            pair_load,
-                            m.similarity,
+                            max(load_for(recipient_id), load_for(counterpart_id)),
+                            match.similarity,
                             pair_key,
                             {
-                                "sender_email": recipient,
+                                "sender_email": email_for(recipient_id),
                                 "subject": "[Proactive] Possible connection",
                                 "body": body,
                                 "sender_authenticated": True,
                                 "is_proactive": True,
-                                "proactive_candidate_id": arrival,
+                                "proactive_candidate_id": counterpart_id,
                             },
                         )
                     )

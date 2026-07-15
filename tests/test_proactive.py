@@ -215,8 +215,7 @@ def _rematch_session(recent, persons):
 
 @pytest.mark.asyncio
 async def test_rematch_enqueues_new_match_against_standing_note():
-    """A recent memory matching an older note about a different person defers
-    a job that re-engages the dormant owner of the older note."""
+    """A standing note defers a job for its unengaged owner."""
     from thenetwork.search.match import MemoryMatch
     from thenetwork.worker.proactive import scan_for_matches
 
@@ -239,20 +238,17 @@ async def test_rematch_enqueues_new_match_against_standing_note():
 
     assert mock_pe.defer.call_count == 1
     kwargs = mock_pe.defer.call_args.kwargs
-    # the dormant standing-note owner (P) is the one re-engaged
-    assert kwargs["sender_email"] == "p@test.com"
+    assert kwargs["sender_email"] == "q@test.com"
     assert "P" in kwargs["body"] and "Q" in kwargs["body"]
     assert "rust startup" in kwargs["body"]  # P's gist
     assert "rust cofounder" in kwargs["body"]  # Q's gist
     assert kwargs["sender_authenticated"] is True
     assert str(UUID(kwargs["trace_id"], version=4)) == kwargs["trace_id"]
-    # the bound counterpart is the newly-arrived person (Q), not the dormant
-    # standing-note owner (P) who is the effective sender
-    assert kwargs["proactive_candidate_id"] == "Q"
+    assert kwargs["proactive_candidate_id"] == "P"
     # the body labels the recipient's role and names the counterpart id to
     # pass, so the model does not offer the sender's own id back
-    assert "acting for person P" in kwargs["body"]
-    assert "other_person_id=Q" in kwargs["body"]
+    assert "acting for person Q" in kwargs["body"]
+    assert "other_person_id=P" in kwargs["body"]
     assert "never pass their id" in kwargs["body"]
 
 
@@ -305,13 +301,13 @@ async def test_rematch_job_reaches_agent_through_real_worker_handoff():
 
     run_agent.assert_awaited_once()
     check_rate_limit.assert_called_once_with(
-        "p@test.com", sender_authenticated=True, skip_sender_limit=True
+        "q@test.com", sender_authenticated=True, skip_sender_limit=True
     )
     assert run_agent.call_args.kwargs["sender_authenticated"] is True
-    assert run_agent.call_args.kwargs["sender_email"] == "p@test.com"
+    assert run_agent.call_args.kwargs["sender_email"] == "q@test.com"
     # the bound candidate id survives the full defer() -> process_email.func()
     # -> run_agent_for_email handoff, so propose_introduction can enforce it
-    assert run_agent.call_args.kwargs["proactive_candidate_id"] == "Q"
+    assert run_agent.call_args.kwargs["proactive_candidate_id"] == "P"
 
 
 @pytest.mark.asyncio
@@ -469,7 +465,7 @@ async def test_rematch_gate_rejects_thin_overlap_keeps_specific_match():
 
     assert mock_pe.defer.call_count == 1, "only the specific match may surface"
     kwargs = mock_pe.defer.call_args.kwargs
-    assert kwargs["sender_email"] == "priya@test.com"
+    assert kwargs["sender_email"] == "samir@test.com"
     for call in mock_pe.defer.call_args_list:
         assert "nora" not in call.kwargs["body"]
         assert "ines" not in call.kwargs["body"]
@@ -507,7 +503,7 @@ async def test_rematch_schedules_at_most_one_candidate_per_person():
 
     assert mock_pe.defer.call_count == 1, "B may be scheduled only once per scan"
     kwargs = mock_pe.defer.call_args.kwargs
-    assert kwargs["sender_email"] == "a@test.com", "the higher-similarity pair wins"
+    assert kwargs["sender_email"] == "b@test.com", "the higher-similarity pair wins"
 
 
 @pytest.mark.asyncio
@@ -579,6 +575,49 @@ async def test_rematch_preserves_pair_suppression():
 
 
 @pytest.mark.asyncio
+async def test_rematch_tries_next_best_counterpart_after_declined_pair_cools_down():
+    """A declined first-choice pair does not strand an unengaged person.
+
+    On a later sweep after the proactive-surface cooldown, the declined pair
+    remains suppressed by its own 90-day cooldown and the next-best eligible
+    counterpart is deferred instead.
+    """
+    from thenetwork.search.match import MemoryMatch
+    from thenetwork.worker.proactive import scan_for_matches
+
+    memories = [_memory("m-q", ["Q"], "seeking a Rust cofounder")]
+    matches = [
+        MemoryMatch("m-p", "P", "first-choice Rust founder", 0.9),
+        MemoryMatch("m-r", "R", "second-choice Rust founder", 0.8),
+    ]
+    persons = {
+        person_id: _person(person_id, f"{person_id.lower()}@test.com")
+        for person_id in ("P", "Q", "R")
+    }
+
+    def suppressed(_session, person_a, person_b, **_kwargs):
+        return {person_a, person_b} == {"P", "Q"}
+
+    with (
+        patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()),
+        patch(
+            "thenetwork.worker.proactive.get_session",
+            return_value=_rematch_session(memories, persons),
+        ),
+        patch("thenetwork.worker.proactive.match_memories", return_value=matches),
+        patch(
+            "thenetwork.worker.proactive.pair_is_suppressed",
+            side_effect=suppressed,
+        ),
+        patch("thenetwork.worker.proactive.process_email") as mock_pe,
+    ):
+        await scan_for_matches.func(0)
+
+    mock_pe.defer.assert_called_once()
+    assert mock_pe.defer.call_args.kwargs["proactive_candidate_id"] == "R"
+
+
+@pytest.mark.asyncio
 async def test_rematch_prioritizes_zero_load_candidate_over_saturated_peers():
     """Reproduces the run-shaped scenario where four already-engaged recipients
     kept winning pacing while a strong, unengaged match (Omar-like) never got
@@ -633,9 +672,8 @@ async def test_rematch_prioritizes_zero_load_candidate_over_saturated_peers():
         "all candidates compete for the same newcomer; only one may be paced"
     )
     kwargs = mock_pe.defer.call_args.kwargs
-    assert kwargs["sender_email"] == "omar@test.com", (
-        "the zero-load candidate must be scheduled ahead of similarly relevant "
-        "saturated candidates, even though the saturated ones score higher"
+    assert kwargs["sender_email"] == "newcomer@test.com", (
+        "the unengaged person receives their best eligible match"
     )
 
 

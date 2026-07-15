@@ -152,19 +152,13 @@ class Settings(BaseSettings):
     # not agent-composed, so prompt injection can't alter or suppress it)
     growth_footer_enabled: bool = True
 
-    # Proactive semantic rematch (worker/proactive.py:scan_for_matches). When a
-    # newly-arrived memory closely matches an OLDER standing note about a
-    # *different* person, surface the pair to the agent, which decides whether
-    # to introduce. This is unsolicited outreach, so the similarity floor is
-    # deliberately conservative - a false positive costs a real email (unlike
-    # interactive search, where the agent can just ignore a weak hit). Lookback
-    # bounds the scan to memories created since roughly the last hourly run, so
-    # a match only fires once, when the counterpart first arrives. The floor
-    # sits above the ~0.55 band where thin keyword overlap lands (two people
-    # who merely both mention factories) while keeping specific shared-ground
-    # matches (e.g. two ML-in-manufacturing operators, ~0.7+).
+    # Proactive semantic rematch (worker/proactive.py:scan_for_matches). Every
+    # run revisits sanitized standing notes for people without an active consent
+    # pair. This is unsolicited outreach, so the similarity floor is deliberately
+    # conservative - a false positive costs a real email. The floor sits above
+    # the ~0.55 band where thin keyword overlap lands while keeping specific
+    # shared-ground matches (e.g. two ML-in-manufacturing operators, ~0.7+).
     proactive_match_threshold: float = 0.6
-    proactive_rematch_lookback_minutes: int = 65
     proactive_rematch_top_k: int = 5
     proactive_surface_cooldown_seconds: int = 86_400
 
