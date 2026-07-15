@@ -297,6 +297,9 @@ def test_score_response_quality_flags_consent_burst(tmp_path):
         "44444444-4444-4444-4444-444444444444",
         "55555555-5555-5555-5555-555555555555",
         "66666666-6666-6666-6666-666666666666",
+        "77777777-7777-7777-7777-777777777777",
+        "88888888-8888-8888-8888-888888888888",
+        "99999999-9999-9999-9999-999999999999",
     )
     for token in tokens:
         post_office.deliver(
@@ -313,8 +316,8 @@ def test_score_response_quality_flags_consent_burst(tmp_path):
     finding = next(f for f in score.findings if not f.passed)
     assert "Consent-request burst" in finding.message
     assert finding.evidence["recipient"] == "ines@example.test"
-    assert finding.evidence["count"] == 4
-    assert finding.evidence["limit"] == 3
+    assert finding.evidence["count"] == 7
+    assert finding.evidence["limit"] == 6
 
 
 def test_score_response_quality_flags_configured_weak_match_pair(tmp_path):

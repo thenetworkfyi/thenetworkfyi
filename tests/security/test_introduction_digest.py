@@ -196,7 +196,7 @@ def test_flush_batches_queued_candidates_into_one_digest_capped_and_labeled():
             candidate_gist=f"candidate {n} gist",
             status="queued",
         )
-        for n in range(4)
+        for n in range(7)
     ] + [
         PendingIntroCandidate(
             recipient_person_id="alice",
@@ -224,16 +224,19 @@ def test_flush_batches_queued_candidates_into_one_digest_capped_and_labeled():
     assert "A. candidate 0 gist" in body
     assert "B. candidate 1 gist" in body
     assert "C. candidate 2 gist" in body
-    # Default introduction_digest_size=3 caps the batch below the hard max of 4.
-    assert "candidate 3 gist" not in body
+    assert "D. candidate 3 gist" in body
+    assert "E. candidate 4 gist" in body
+    assert "F. candidate 5 gist" in body
+    # The default introduction_digest_size matches the hard max of 6.
+    assert "candidate 6 gist" not in body
     assert "Bob" not in body
     assert "bob@example.com" not in body
 
     digested = [
         r for r in rows if r.recipient_person_id == "bob" and r.status == "digested"
     ]
-    assert len(digested) == 3
-    assert {r.label for r in digested} == {"A", "B", "C"}
+    assert len(digested) == 6
+    assert {r.label for r in digested} == {"A", "B", "C", "D", "E", "F"}
     still_queued = [
         r for r in rows if r.recipient_person_id == "bob" and r.status == "queued"
     ]

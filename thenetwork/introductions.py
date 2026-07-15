@@ -45,8 +45,8 @@ CONSENT_ALREADY_DECLINED_REPLY = (
     "This introduction has already been declined and will not go ahead."
 )
 
-_DIGEST_LABELS = ("A", "B", "C", "D")
-_DIGEST_MAX_SIZE = 4
+_DIGEST_LABELS = ("A", "B", "C", "D", "E", "F")
+_DIGEST_MAX_SIZE = 6
 _DIGEST_TOKEN_RE = re.compile(
     r"\[digest:(?P<token>[0-9a-f]{8}-[0-9a-f-]{27,})\]",
     re.IGNORECASE,
@@ -424,7 +424,7 @@ def flush_pending_digests(
     gets exactly one digest listing up to `introduction_digest_size` (capped
     at `_DIGEST_MAX_SIZE`) candidates, oldest first; any further queued
     candidates for that recipient wait for the next flush. The digest body
-    carries only gists and opaque A/B/C/D labels (SEAL-safe) - no names, no
+    carries only gists and opaque labels (SEAL-safe) - no names, no
     addresses, no raw memory text.
     """
     s = get_settings()

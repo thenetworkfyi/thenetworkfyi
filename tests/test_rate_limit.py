@@ -37,9 +37,9 @@ class UnavailableLimiter:
 
 def _settings(**overrides):
     defaults = {
-        "rate_limit_per_hour": 10,
-        "unauthenticated_rate_limit_per_hour": 3,
-        "global_email_rate_limit_per_hour": 100,
+        "rate_limit_per_hour": 20,
+        "unauthenticated_rate_limit_per_hour": 6,
+        "global_email_rate_limit_per_hour": 200,
     }
     defaults.update(overrides)
     return SimpleNamespace(**defaults)
@@ -122,7 +122,7 @@ def test_unauthenticated_sender_uses_smaller_separate_bucket():
         assert check_rate_limit("real@example.com", sender_authenticated=False)
 
     assert limiter.tested[0] == (
-        "3 per 1 hour",
+        "6 per 1 hour",
         "unauthenticated-sender:real@example.com",
     )
     assert "authenticated-sender:real@example.com" not in limiter.hit_keys
@@ -165,7 +165,7 @@ def test_proactive_rate_limit_skips_sender_bucket_but_keeps_global_cap():
             skip_sender_limit=True,
         )
 
-    assert limiter.tested == [("100 per 1 hour", "global:emails-processed")]
+    assert limiter.tested == [("200 per 1 hour", "global:emails-processed")]
     assert limiter.hit_keys == ["global:emails-processed"]
 
 
