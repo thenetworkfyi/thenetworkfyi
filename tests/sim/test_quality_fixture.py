@@ -35,7 +35,7 @@ PETRA = "petra.sim@example.test"
 ELISE = "elise.sim@example.test"
 ADMIN = "admin@example.test"
 
-_BURST_TOKENS = tuple(f"{d}0000000-0000-0000-0000-00000000000{d}" for d in "123456")
+_BURST_TOKENS = tuple(f"{d}0000000-0000-0000-0000-00000000000{d}" for d in "1234567")
 _WEAK_PAIR_TOKEN = "77777777-7777-7777-7777-777777777777"
 _VIC_TOKEN_A = "88888888-8888-8888-8888-888888888888"
 _VIC_TOKEN_B = "99999999-9999-9999-9999-999999999999"
@@ -130,7 +130,7 @@ def _build_legacy_mbox(mbox_path: Path) -> None:
             )
         )
 
-    # Ungated matching sent Ines six consent requests in one run.
+    # Ungated matching sent Ines seven consent requests in one run.
     for token in _BURST_TOKENS:
         post_office.deliver(_consent_request(INES, token))
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import contextmanager
 from email.message import EmailMessage
 from functools import partial
@@ -39,6 +40,22 @@ class RecordingTinyPerson:
     def listen_and_act(self, stimulus: str):
         self.stimuli.append(stimulus)
         return {"content": self.replies.pop(0)}
+
+
+class ConcurrentTinyPerson:
+    """Wait until every persona in the batch has entered its async turn."""
+
+    def __init__(self, name: str, started: list[str], ready: asyncio.Event) -> None:
+        self.name = name
+        self.started = started
+        self.ready = ready
+
+    async def alisten_and_act(self, _stimulus: str):
+        self.started.append(self.name)
+        if len(self.started) == 2:
+            self.ready.set()
+        await asyncio.wait_for(self.ready.wait(), timeout=1)
+        return {"content": f"message from {self.name}"}
 
 
 class Result:
@@ -123,6 +140,83 @@ async def test_tick_loop_advances_time_and_processes_persona_messages(tmp_path):
     assert result.persona_messages == 2
     assert process.await_count == 2
     assert len(result.post_office.messages_for("join@example.test")) == 2
+
+
+@pytest.mark.asyncio
+async def test_tick_loop_generates_persona_turns_concurrently(tmp_path):
+    started: list[str] = []
+    ready = asyncio.Event()
+    adapters = tuple(
+        TinyPersonEmailAdapter(
+            ConcurrentTinyPerson(name, started, ready),
+            PersonaConfig(
+                name=name,
+                email=f"{name.lower()}@example.test",
+                goal="Find a strong match.",
+                stop_condition="Stop when registered.",
+                message_budget=1,
+                agent_address="join@example.test",
+            ),
+        )
+        for name in ("Alice", "Bob")
+    )
+    process = AsyncMock()
+    drain_jobs = AsyncMock()
+    loop = SimTickLoop(
+        adapters,
+        run_dir=tmp_path,
+        process=process,
+        proactive_every=None,
+        drain_jobs=drain_jobs,
+        turn_concurrency=2,
+    )
+
+    result = await loop.run(ticks=1)
+
+    assert result.persona_messages == 2
+    assert set(started) == {"Alice", "Bob"}
+    assert process.await_count == 2
+    drain_jobs.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_tick_loop_holds_agent_mail_until_the_next_tick(tmp_path):
+    alice = _adapter("Alice", "alice@example.test", ["initial ask"], budget=1)
+    bob_person = RecordingTinyPerson(["first ask", "reply after notification"])
+    bob = TinyPersonEmailAdapter(
+        bob_person,
+        PersonaConfig(
+            name="Bob",
+            email="bob@example.test",
+            goal="Find a strong match.",
+            stop_condition="Stop when registered.",
+            message_budget=2,
+            agent_address="join@example.test",
+        ),
+    )
+
+    async def process(**kwargs):
+        if kwargs["sender_email"] != "alice@example.test":
+            return
+        reply = EmailMessage()
+        reply["From"] = "join@example.test"
+        reply["To"] = "bob@example.test"
+        reply["Subject"] = "A match for Bob"
+        reply.set_content("Alice may be a match for you.")
+        loop.post_office.deliver(reply)
+
+    loop = SimTickLoop(
+        (alice, bob),
+        run_dir=tmp_path,
+        process=process,
+        proactive_every=None,
+        turn_concurrency=2,
+    )
+
+    await loop.run(ticks=2)
+
+    assert "Alice may be a match" not in bob_person.stimuli[0]
+    assert "Alice may be a match" in bob_person.stimuli[1]
 
 
 @pytest.mark.asyncio

@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
+from email.message import EmailMessage
 from pathlib import Path
 from time import perf_counter
 from typing import Any
@@ -70,6 +72,7 @@ class SimTickLoop:
         on_proactive_trigger: ProactiveTriggerObserver | None = None,
         on_stage_timing: StageTimingObserver | None = None,
         drain_jobs: DrainJobsCallable | None = None,
+        turn_concurrency: int | None = None,
         mbox_path: Path | None = None,
     ) -> None:
         if proactive_every is not None and proactive_every < 1:
@@ -84,6 +87,13 @@ class SimTickLoop:
         self.on_proactive_trigger = on_proactive_trigger
         self.on_stage_timing = on_stage_timing
         self.drain_jobs = drain_jobs
+        self.turn_concurrency = (
+            get_settings().worker_concurrency
+            if turn_concurrency is None
+            else turn_concurrency
+        )
+        if self.turn_concurrency < 1:
+            raise ValueError("turn_concurrency must be at least 1")
         self.post_office = SimPostOffice(
             mbox_path=mbox_path or run_dir / "all-mail.mbox", on_deliver=on_delivery
         )
@@ -130,84 +140,108 @@ class SimTickLoop:
         return SimLoopResult(ticks=tuple(results), post_office=self.post_office)
 
     async def _run_persona_turns(self, tick: int, *, total_ticks: int) -> int:
-        sent = 0
-        for adapter in self.adapters:
-            if self.schedule.is_interrupted(adapter.config, tick):
-                continue
-            replies = self.post_office.pop_all(adapter.config.email)
-            consent_threads = [
-                reply for reply in replies if thread_token_of(reply) is not None
-            ]
-            plain_replies = [
-                reply for reply in replies if thread_token_of(reply) is None
-            ]
-            active_thread = consent_threads[0] if consent_threads else None
-            if len(consent_threads) > 1:
-                # One consent thread per turn: hold the rest so each
-                # decision is authored against its own thread and token on a
-                # later turn.
-                self.post_office.requeue(adapter.config.email, consent_threads[1:])
-            turn_replies = (
-                [*plain_replies, active_thread]
-                if active_thread is not None
-                else list(replies)
+        semaphore = asyncio.Semaphore(self.turn_concurrency)
+
+        async def generate(adapter: TinyPersonEmailAdapter):
+            async with semaphore:
+                return await self._generate_persona_message(adapter, tick)
+
+        generated = await asyncio.gather(
+            *(
+                generate(adapter)
+                for adapter in self.adapters
+                if not self.schedule.is_interrupted(adapter.config, tick)
             )
-            reply_texts = tuple(
-                text
-                for text in (_extract_body(reply).strip() for reply in turn_replies)
-                if text
-            )
-            reply_to = (
-                active_thread
-                if active_thread is not None
-                else (replies[-1] if replies else None)
-            )
-            active = thread_token_of(reply_to) if reply_to is not None else None
-            thread_kind = active[0] if active is not None else "intro"
-            thread_token = active[1] if active is not None else None
-            events = self.schedule.events_for(adapter.config, tick)
-            started_at = perf_counter()
-            timing_fields: dict[str, Any] = {
-                "tick": tick,
-                "persona": adapter.config.name,
-            }
-            try:
-                msg = await adapter.anext_email(
-                    _tick_prompt(adapter.config.goal, tick, events, reply_texts),
-                    tick=tick,
-                    subject=f"Simulation tick {tick}",
-                    reply_to=reply_to,
-                    body_filter=lambda body, token=thread_token, kind=thread_kind: (
-                        make_reply_thread_faithful(body, token, kind)
-                    ),
-                )
-            except BaseException as exc:
-                timing_fields.update(status="failed", error_type=type(exc).__name__)
-                raise
-            else:
-                timing_fields["status"] = "succeeded"
-            finally:
-                _record_stage_timing(
-                    self.on_stage_timing,
-                    "sim.persona_generation_completed",
-                    started_at,
-                    **timing_fields,
-                )
-            if msg is None:
-                continue
-            prefix = f"tick {tick}/{total_ticks}: {adapter.config.name}: process_email"
+        )
+        pending = tuple(item for item in generated if item is not None)
+        prefixes = tuple(
+            f"tick {tick}/{total_ticks}: {adapter.config.name}: process_email"
+            for adapter, _message in pending
+        )
+        for prefix in prefixes:
             self._report(f"{prefix} started")
-            await deliver_inbound(
-                msg,
-                process=self.process,
-                post_office=self.post_office,
-                tick=tick,
-                persona=adapter.config.name,
+
+        await asyncio.gather(
+            *(
+                deliver_inbound(
+                    message,
+                    process=self.process,
+                    post_office=self.post_office,
+                    tick=tick,
+                    persona=adapter.config.name,
+                )
+                for adapter, message in pending
             )
-            await self._drain_jobs()
+        )
+        await self._drain_jobs()
+
+        for prefix in prefixes:
             self._report(f"{prefix} completed")
-            sent += 1
-        return sent
+        return len(pending)
+
+    async def _generate_persona_message(
+        self, adapter: TinyPersonEmailAdapter, tick: int
+    ) -> tuple[TinyPersonEmailAdapter, EmailMessage] | None:
+        """Generate one persona's turn from the mailbox snapshot for this tick."""
+        replies = self.post_office.pop_all(adapter.config.email)
+        consent_threads = [
+            reply for reply in replies if thread_token_of(reply) is not None
+        ]
+        plain_replies = [reply for reply in replies if thread_token_of(reply) is None]
+        active_thread = consent_threads[0] if consent_threads else None
+        if len(consent_threads) > 1:
+            # One consent thread per turn: hold the rest so each decision is
+            # authored against its own thread and token on a later turn.
+            self.post_office.requeue(adapter.config.email, consent_threads[1:])
+        turn_replies = (
+            [*plain_replies, active_thread]
+            if active_thread is not None
+            else list(replies)
+        )
+        reply_texts = tuple(
+            text
+            for text in (_extract_body(reply).strip() for reply in turn_replies)
+            if text
+        )
+        reply_to = (
+            active_thread
+            if active_thread is not None
+            else (replies[-1] if replies else None)
+        )
+        active = thread_token_of(reply_to) if reply_to is not None else None
+        thread_kind = active[0] if active is not None else "intro"
+        thread_token = active[1] if active is not None else None
+        events = self.schedule.events_for(adapter.config, tick)
+        started_at = perf_counter()
+        timing_fields: dict[str, Any] = {
+            "tick": tick,
+            "persona": adapter.config.name,
+        }
+        try:
+            message = await adapter.anext_email(
+                _tick_prompt(adapter.config.goal, tick, events, reply_texts),
+                tick=tick,
+                subject=f"Simulation tick {tick}",
+                reply_to=reply_to,
+                body_filter=lambda body, token=thread_token, kind=thread_kind: (
+                    make_reply_thread_faithful(body, token, kind)
+                ),
+            )
+        except BaseException as exc:
+            timing_fields.update(status="failed", error_type=type(exc).__name__)
+            raise
+        else:
+            timing_fields["status"] = "succeeded"
+        finally:
+            _record_stage_timing(
+                self.on_stage_timing,
+                "sim.persona_generation_completed",
+                started_at,
+                **timing_fields,
+            )
+        if message is None:
+            return None
+        return adapter, message
 
     def _report(self, message: str) -> None:
         if self.progress is not None:
