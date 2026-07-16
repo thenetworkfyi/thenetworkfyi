@@ -274,6 +274,25 @@ class ToolCalledAtMostOnce(Evaluator[EmailScenario, RunOutcome, object]):
 
 
 @dataclass(repr=False)
+class RememberedSubstringAny(Evaluator[EmailScenario, RunOutcome, object]):
+    """Asserts some remembered chunk retains one of the given substrings.
+
+    Used to pin that a stated preference about who ("experienced peers")
+    survives into the stored intent rather than being dropped as flavor text.
+    """
+
+    substrings: tuple[str, ...] = ()
+
+    def evaluate(
+        self, ctx: EvaluatorContext[EmailScenario, RunOutcome, object]
+    ) -> bool:
+        texts = [chunk["text"].lower() for chunk in ctx.output.remembered]
+        return any(
+            needle.lower() in text for needle in self.substrings for text in texts
+        )
+
+
+@dataclass(repr=False)
 class ForgotExactly(Evaluator[EmailScenario, RunOutcome, object]):
     """Asserts the agent attempted deletion only for the expected memory ids."""
 
@@ -602,6 +621,96 @@ vague_intent_qualification_case = Case(
     ),
 )
 
+peer_level_qualification_case = Case(
+    name="peer_level_qualification",
+    inputs=EmailScenario(
+        subject="Joining",
+        body="I work on ML infrastructure and want to meet experienced peers.",
+        sender_email="noor@example.com",
+        sender_user_id="user-noor",
+        sender_authenticated=True,
+        search_results=[
+            MemoryMatch(
+                memory_id="mem-adjacent-ml-1",
+                person_id="person-adjacent-ml-1",
+                gist="works on data pipelines and model serving",
+                similarity=0.57,
+            )
+        ],
+    ),
+    evaluators=(
+        ToolWasCalled("reply_to_sender"),
+        ToolWasCalled("remember"),
+        ToolWasNotCalled("propose_introduction"),
+        RepliedWithQuestion(),
+        RememberedSubstringAny(("experienced", "senior", "peer")),
+        NoPersonalSignoff(),
+        LLMJudge(
+            rubric=(
+                "The sender named a broad field (ML infrastructure) and a "
+                "generic audience (experienced peers) - a topic, but nothing "
+                "that says what a good match would look like. This is a "
+                "qualification turn: a reasonable response asks one brief, "
+                "concrete question about what corner of the field they work "
+                "in and what kind of people and opportunities they are "
+                "looking for, and does not propose an introduction yet, even "
+                "though search surfaced a topically adjacent person. The "
+                "stated preference for experienced peers should be captured "
+                "in memory, not dropped. The question must read as curious "
+                "and polite, never as gatekeeping or judging whether anyone "
+                "deserves the sender's attention."
+            ),
+            model=_judge_model,
+            include_input=True,
+        ),
+    ),
+)
+
+preference_mismatch_case = Case(
+    name="preference_mismatch",
+    inputs=EmailScenario(
+        subject="Checking in",
+        body=(
+            "Any progress? Still hoping to meet experienced ML infrastructure peers."
+        ),
+        sender_email="noor@example.com",
+        sender_user_id="user-noor",
+        sender_authenticated=True,
+        search_results=[
+            MemoryMatch(
+                memory_id="mem-hobbyist-1",
+                person_id="person-hobbyist-1",
+                gist=(
+                    "self-taught hobbyist experimenting with ML tooling on "
+                    "weekends, new to the field and eager to learn from anyone"
+                ),
+                similarity=0.83,
+            )
+        ],
+    ),
+    evaluators=(
+        ToolWasNotCalled("propose_introduction"),
+        NoPersonalSignoff(),
+        LLMJudge(
+            rubric=(
+                "The sender has a standing intent to meet experienced ML "
+                "infrastructure peers. The only search result is topically "
+                "close (high similarity) but its gist describes a self-taught "
+                "hobbyist who is new to the field - it contradicts the "
+                "sender's stated preference for experienced peers. A stated "
+                "preference is a constraint, not decoration: a reasonable "
+                "response does not propose this introduction on topic overlap "
+                "alone, and replies honestly that nothing fitting has turned "
+                "up yet, without promising a match or a timeline. The reply "
+                "must not disparage the near-match or reveal anything about "
+                "them."
+            ),
+            model=_judge_model,
+            include_input=True,
+        ),
+    ),
+)
+
 exhausted_reply_cap_case = Case(
     name="exhausted_reply_cap",
     inputs=EmailScenario(
@@ -690,6 +799,8 @@ archetype_dataset = Dataset[EmailScenario, RunOutcome](
         ambiguous_case,
         removal_case,
         vague_intent_qualification_case,
+        peer_level_qualification_case,
+        preference_mismatch_case,
         exhausted_reply_cap_case,
         consolidation_update_case,
     ],
