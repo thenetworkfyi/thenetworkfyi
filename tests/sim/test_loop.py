@@ -11,6 +11,7 @@ import pytest
 from thenetwork.db.models import IntroductionConsent, Person
 from thenetwork.introductions import process_consent_reply
 from thenetwork.settings import get_settings
+from thenetwork.sim.personas.llm_persona import TransientPersonaError
 from thenetwork.sim.run.loop import (
     SimTickLoop,
     override_rate_limits,
@@ -56,6 +57,13 @@ class ConcurrentTinyPerson:
             self.ready.set()
         await asyncio.wait_for(self.ready.wait(), timeout=1)
         return {"content": f"message from {self.name}"}
+
+
+class UnavailableTinyPerson:
+    name = "Unavailable"
+
+    async def alisten_and_act(self, _stimulus: str):
+        raise TransientPersonaError("ModelHTTPError")
 
 
 class Result:
@@ -177,6 +185,48 @@ async def test_tick_loop_generates_persona_turns_concurrently(tmp_path):
     assert set(started) == {"Alice", "Bob"}
     assert process.await_count == 2
     drain_jobs.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_tick_loop_skips_exhausted_persona_without_cancelling_batch(tmp_path):
+    unavailable = TinyPersonEmailAdapter(
+        UnavailableTinyPerson(),
+        PersonaConfig(
+            name="Unavailable",
+            email="unavailable@example.test",
+            goal="Find a strong match.",
+            stop_condition="Stop when registered.",
+            message_budget=1,
+            agent_address="join@example.test",
+        ),
+    )
+    available = _adapter("Available", "available@example.test", ["hello"], budget=1)
+    process = AsyncMock()
+    timings = []
+    loop = SimTickLoop(
+        (unavailable, available),
+        run_dir=tmp_path,
+        process=process,
+        proactive_every=None,
+        turn_concurrency=2,
+        on_stage_timing=lambda event, **fields: timings.append((event, fields)),
+    )
+
+    result = await loop.run(ticks=1)
+
+    assert result.persona_messages == 1
+    assert process.await_count == 1
+    assert unavailable.messages_sent == 0
+    failed = [fields for _event, fields in timings if fields["status"] == "failed"]
+    assert failed == [
+        {
+            "tick": 1,
+            "persona": "Unavailable",
+            "status": "failed",
+            "error_type": "ModelHTTPError",
+            "elapsed_ms": pytest.approx(0, abs=100),
+        }
+    ]
 
 
 @pytest.mark.asyncio

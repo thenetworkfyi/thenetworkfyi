@@ -1,8 +1,15 @@
 import pytest
 
+from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
-from thenetwork.sim.personas.llm_persona import LLMTinyPerson, _PERSONA_PROMPT
+from thenetwork.sim.personas.llm_persona import (
+    LLMTinyPerson,
+    TransientPersonaError,
+    _PERSONA_PROMPT,
+)
 from thenetwork.sim.personas.persona import PersonaConfig, TinyPersonEmailAdapter
 
 
@@ -90,6 +97,61 @@ async def test_llm_persona_keeps_history_across_ticks():
     await person.alisten_and_act("Tick 2.")
 
     assert len(person._history) > first_len
+
+
+async def test_llm_persona_retries_transient_model_http_error(monkeypatch):
+    calls = 0
+
+    async def no_sleep(_delay: float) -> None:
+        pass
+
+    async def flaky_model(
+        _messages: list[ModelMessage], _info: AgentInfo
+    ) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        if calls < 3:
+            raise ModelHTTPError(
+                status_code=429,
+                model_name="test-persona",
+                body="provider unavailable",
+            )
+        return ModelResponse(parts=[TextPart(content="Recovered response")])
+
+    monkeypatch.setattr(LLMTinyPerson._run_agent.retry, "sleep", no_sleep)
+    person = LLMTinyPerson(_config(), FunctionModel(flaky_model))
+
+    result = await person.alisten_and_act("Tick 1.")
+
+    assert result == {"content": "Recovered response"}
+    assert calls == 3
+
+
+async def test_llm_persona_wraps_exhausted_transient_error(monkeypatch):
+    calls = 0
+
+    async def no_sleep(_delay: float) -> None:
+        pass
+
+    async def unavailable_model(
+        _messages: list[ModelMessage], _info: AgentInfo
+    ) -> ModelResponse:
+        nonlocal calls
+        calls += 1
+        raise ModelHTTPError(
+            status_code=429,
+            model_name="test-persona",
+            body="provider unavailable",
+        )
+
+    monkeypatch.setattr(LLMTinyPerson._run_agent.retry, "sleep", no_sleep)
+    person = LLMTinyPerson(_config(), FunctionModel(unavailable_model))
+
+    with pytest.raises(TransientPersonaError) as exc_info:
+        await person.alisten_and_act("Tick 1.")
+
+    assert exc_info.value.error_type == "ModelHTTPError"
+    assert calls == 3
 
 
 async def test_anext_email_falls_back_to_sync_listener():

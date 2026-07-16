@@ -7,9 +7,10 @@ from typing import Any
 
 import httpx
 from pydantic_ai import Agent
+from pydantic_ai.exceptions import ModelHTTPError
 from tenacity import (
     retry,
-    retry_if_exception_type,
+    retry_if_exception,
     stop_after_attempt,
     wait_random_exponential,
 )
@@ -18,6 +19,21 @@ from thenetwork.sim.personas.persona import PersonaConfig
 
 
 PASS_SENTINEL = "PASS"
+
+
+class TransientPersonaError(RuntimeError):
+    """A persona model call exhausted retries on a transient provider failure."""
+
+    def __init__(self, error_type: str) -> None:
+        super().__init__("persona model call exhausted transient retries")
+        self.error_type = error_type
+
+
+def _is_retryable_persona_error(exc: BaseException) -> bool:
+    if isinstance(exc, ModelHTTPError):
+        return exc.status_code in {408, 409, 429} or exc.status_code >= 500
+    return isinstance(exc, (json.JSONDecodeError, httpx.HTTPError))
+
 
 _PERSONA_PROMPT = """\
 You are {name} <{email}>, a real person corresponding by email with a
@@ -83,7 +99,7 @@ class LLMTinyPerson:
         raise RuntimeError("LLMTinyPerson is async-only; use alisten_and_act")
 
     @retry(
-        retry=retry_if_exception_type((json.JSONDecodeError, httpx.HTTPError)),
+        retry=retry_if_exception(_is_retryable_persona_error),
         stop=stop_after_attempt(3),
         wait=wait_random_exponential(multiplier=1, max=10),
         reraise=True,
@@ -92,7 +108,12 @@ class LLMTinyPerson:
         return await self._agent.run(stimulus, message_history=self._history)
 
     async def alisten_and_act(self, stimulus: str) -> dict[str, str]:
-        result = await self._run_agent(stimulus)
+        try:
+            result = await self._run_agent(stimulus)
+        except Exception as exc:
+            if _is_retryable_persona_error(exc):
+                raise TransientPersonaError(type(exc).__name__) from exc
+            raise
         self._history = result.all_messages()
         text = result.output.strip()
         if _is_pass_sentinel(text):
