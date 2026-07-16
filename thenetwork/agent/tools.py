@@ -456,7 +456,7 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
         return _tool_result({"status": "escalated", "memory_id": memory_id})
 
 
-async def no_action(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
+async def no_action(ctx: RunContext[AgentDeps], reason: str) -> str:
     """Declare that this email genuinely warrants no reply, outreach, or memory.
 
     Use for spam, automated mail, or content with no genuine human ask - not
@@ -469,7 +469,8 @@ async def no_action(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
     `escalate` when you are unsure rather than calling this to end the run.
     """
     with audit_span("agent.tool", tool_name="no_action"):
-        return _tool_result({"status": "no_action"})
+        audit_span_completion(tool_outcome="no_action")
+        return ""
 
 
 async def register_person(

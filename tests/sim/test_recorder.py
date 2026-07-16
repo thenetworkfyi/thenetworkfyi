@@ -910,10 +910,49 @@ def test_simulation_job_drainer_records_terminal_job_outcomes(tmp_path):
     ]
     assert [entry["event"] for entry in logged] == [
         "sim.process_email_completed",
+        "sim.process_email_retrying",
+        "sim.process_email_retrying",
         "sim.process_email_failed",
     ]
-    assert [entry["attempts"] for entry in logged] == [2, 4]
-    assert [entry["job_status"] for entry in logged] == ["succeeded", "failed"]
+    terminal = [entry for entry in logged if "job_status" in entry]
+    assert [entry["attempts"] for entry in terminal] == [1, 3]
+    assert [entry["job_status"] for entry in terminal] == ["succeeded", "failed"]
+    retries = [entry for entry in logged if entry["event"].endswith("retrying")]
+    assert [entry["attempt"] for entry in retries] == [1, 2]
+
+
+def test_simulation_job_drainer_does_not_duplicate_observed_retry(tmp_path):
+    events = EventsLog(tmp_path / "events.jsonl")
+    drainer = _SimulationJobDrainer(events)
+    job_kwargs = {
+        "sender_email": "alice@example.test",
+        "trace_id": "trace-1",
+    }
+    pending = SimpleNamespace(
+        id=1,
+        status="todo",
+        attempts=1,
+        task_kwargs=job_kwargs,
+    )
+    terminal = SimpleNamespace(
+        id=1,
+        status="succeeded",
+        attempts=2,
+        task_kwargs=job_kwargs,
+    )
+
+    drainer._record_retries((pending,))
+    drainer._record_job_outcomes((terminal,))
+
+    logged = [
+        json.loads(line)
+        for line in (tmp_path / "events.jsonl").read_text().splitlines()
+    ]
+    assert [entry["event"] for entry in logged] == [
+        "sim.process_email_retrying",
+        "sim.process_email_completed",
+    ]
+    assert logged[-1]["attempts"] == 2
 
 
 @pytest.mark.asyncio

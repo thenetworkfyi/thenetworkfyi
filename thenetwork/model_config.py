@@ -41,7 +41,7 @@ class _TimedProviderClient(httpx.AsyncClient):
         audit_event(
             "model.http_attempt.completed",
             **fields,
-            outcome="success",
+            outcome="success" if response.is_success else "error",
             http_status=response.status_code,
             duration_ms=round((monotonic() - started) * 1000, 3),
         )

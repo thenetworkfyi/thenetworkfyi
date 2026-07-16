@@ -581,10 +581,11 @@ class _SimulationJobDrainer:
             ):
                 continue
             self._reported_terminal_job_ids.add(job.id)
+            self._record_retry_attempts(job, retry_count=max(0, job.attempts - 1))
             fields = {
                 "sender_email": job.task_kwargs.get("sender_email"),
                 "trace_id": job.task_kwargs.get("trace_id"),
-                "attempts": job.attempts + 1,
+                "attempts": job.attempts,
                 "job_status": job.status,
             }
             started_at = self.job_started_at.pop(job.id, None)
@@ -603,7 +604,12 @@ class _SimulationJobDrainer:
         for job in jobs:
             if job.id is None or job.attempts < 1:
                 continue
-            retry = (job.id, job.attempts)
+            self._record_retry_attempts(job, retry_count=job.attempts)
+
+    def _record_retry_attempts(self, job: Any, *, retry_count: int) -> None:
+        """Record every scheduled retry, including ones completed within a drain."""
+        for attempt in range(1, retry_count + 1):
+            retry = (job.id, attempt)
             if retry in self._reported_retry_attempts:
                 continue
             self._reported_retry_attempts.add(retry)
@@ -611,7 +617,7 @@ class _SimulationJobDrainer:
                 "sim.process_email_retrying",
                 sender_email=job.task_kwargs.get("sender_email"),
                 trace_id=job.task_kwargs.get("trace_id"),
-                attempt=job.attempts,
+                attempt=attempt,
             )
 
 

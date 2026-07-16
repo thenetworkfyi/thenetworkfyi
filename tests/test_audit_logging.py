@@ -122,6 +122,28 @@ def test_audit_categories_replace_arbitrary_values(caplog):
     assert "private_secret" not in caplog.records[0].message
 
 
+@pytest.mark.asyncio
+async def test_no_action_output_has_exact_audit_name_and_outcome(caplog):
+    from thenetwork.agent.tools import no_action
+
+    ctx, _session = _tool_ctx()
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    result = await no_action(ctx, "private reason that must not be logged")
+
+    assert result == ""
+    events = _events(caplog)
+    assert [event["event"] for event in events] == [
+        "agent.tool.started",
+        "agent.tool.completed",
+    ]
+    assert {event["tool_name"] for event in events} == {"no_action"}
+    assert events[-1]["tool_outcome"] == "no_action"
+    assert "private reason" not in "\n".join(
+        record.message for record in caplog.records
+    )
+
+
 def test_audit_event_level_split_error_vs_expected_negative_outcomes(caplog):
     caplog.set_level(logging.INFO, logger=LOGGER_NAME)
 

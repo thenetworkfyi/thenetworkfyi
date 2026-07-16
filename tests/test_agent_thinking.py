@@ -1,13 +1,18 @@
 from types import SimpleNamespace
 
+import pytest
+from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
 from thenetwork.agent.core import build_agent
+from thenetwork.agent.deps import AgentDeps
 from thenetwork.settings import Settings
 
 
 def test_agent_thinking_level_defaults_to_medium():
     settings = Settings(
+        _env_file=None,
         agent_model="test:model",
         small_agent_model="test:model",
         embed_model="test:embed",
@@ -47,3 +52,37 @@ def test_build_agent_omits_thinking_settings_when_disabled(monkeypatch):
     agent = build_agent()
 
     assert agent.model_settings is None
+
+
+@pytest.mark.asyncio
+async def test_no_action_output_ends_run_without_another_model_request():
+    request_count = 0
+
+    async def call_no_action(
+        _messages: list[ModelMessage], _info: AgentInfo
+    ) -> ModelResponse:
+        nonlocal request_count
+        request_count += 1
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name="no_action",
+                    args={"reason": "nothing useful to do"},
+                )
+            ]
+        )
+
+    agent = build_agent(model=FunctionModel(call_no_action))
+
+    result = await agent.run("FYI", deps=AgentDeps())
+
+    assert result.output == ""
+    assert request_count == 1
+    assert result.usage.requests == 1
+    tool_calls = [
+        part
+        for message in result.all_messages()
+        for part in message.parts
+        if getattr(part, "part_kind", None) == "tool-call"
+    ]
+    assert [part.tool_name for part in tool_calls] == ["no_action"]
