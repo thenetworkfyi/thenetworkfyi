@@ -551,7 +551,7 @@ def default_population(
                     "another email no matter what arrives."
                 ),
                 stop_condition="Stop permanently after you have consented once.",
-                message_budget=3,
+                message_budget=5,
                 agent_address=agent_address,
             ),
             opening_body="I work on ML infrastructure and want to meet experienced peers.",
