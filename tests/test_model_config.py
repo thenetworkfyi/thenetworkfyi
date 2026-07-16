@@ -70,6 +70,26 @@ async def test_timed_provider_client_records_each_successful_attempt(caplog):
 
 
 @pytest.mark.asyncio
+async def test_timed_provider_client_records_http_error_response(caplog):
+    caplog.set_level(logging.ERROR, logger=LOGGER_NAME)
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, request=request)
+
+    async with _TimedProviderClient(transport=httpx.MockTransport(handler)) as client:
+        response = await client.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers={"x-stainless-retry-count": "0"},
+        )
+
+    assert response.status_code == 429
+    event = _events(caplog)[0]
+    assert event["event"] == "model.http_attempt.completed"
+    assert event["http_status"] == 429
+    assert event["outcome"] == "error"
+
+
+@pytest.mark.asyncio
 async def test_timed_provider_client_records_timeout_attempt(caplog):
     caplog.set_level(logging.ERROR, logger=LOGGER_NAME)
 

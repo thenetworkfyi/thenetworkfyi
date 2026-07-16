@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ToolOutput
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
@@ -60,7 +60,10 @@ def build_agent(model: Any = None) -> Agent[AgentDeps, str]:
         model=model,
         system_prompt=SYSTEM_PROMPT,
         deps_type=AgentDeps,
-        output_type=str,
+        output_type=[
+            str,
+            ToolOutput(no_action, name="no_action", max_retries=1),
+        ],
         model_settings=(
             ModelSettings(thinking=thinking_level)
             if thinking_level is not None
@@ -78,7 +81,6 @@ def build_agent(model: Any = None) -> Agent[AgentDeps, str]:
     agent.tool(reply_to_sender, retries=1)
     agent.tool(send_outreach, retries=1)
     agent.tool(register_person, retries=1)
-    agent.tool(no_action, retries=1)
 
     return agent
 

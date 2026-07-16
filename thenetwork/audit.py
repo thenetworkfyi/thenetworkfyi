@@ -148,6 +148,7 @@ _SAFE_CATEGORIES = {
             "forbidden",
             "limited",
             "not_found",
+            "no_action",
             "proposed",
             "sent",
             "success",
@@ -208,6 +209,7 @@ _SAFE_CATEGORIES = {
         {
             "escalate",
             "forget",
+            "no_action",
             "propose_introduction",
             "reply_to_sender",
             "register_person",
