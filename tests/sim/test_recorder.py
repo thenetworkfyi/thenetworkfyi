@@ -934,6 +934,7 @@ async def test_simulation_job_drainer_passes_queue_filter_as_postgres_array(tmp_
 
     run_worker.assert_awaited_once_with(
         queues=["simulation_process_email"],
+        concurrency=1,
         wait=False,
         install_signal_handlers=False,
     )

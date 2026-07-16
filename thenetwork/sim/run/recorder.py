@@ -23,6 +23,7 @@ from sqlmodel import select
 
 from thenetwork.db.models import IntroductionConsent, Memory, Person
 from thenetwork.db.session import get_session
+from thenetwork.settings import get_settings
 from thenetwork.security.sender_identifier import optional_sender_identifier
 from thenetwork.security.log_redaction import redact_structured_values
 from thenetwork.sim.run.loop import ProgressCallable, SimTickLoop
@@ -166,7 +167,9 @@ class SimRunRecorder:
             drain_jobs = None
         elif config.mock_process is False:
             process_mode = "real"
-            job_drainer = _SimulationJobDrainer(events)
+            job_drainer = _SimulationJobDrainer(
+                events, concurrency=get_settings().worker_concurrency
+            )
             process_func = _recording_deferred_process(events, job_drainer)
             drain_jobs = job_drainer
         else:
@@ -530,6 +533,7 @@ class _SimulationJobDrainer:
     """
 
     events: EventsLog
+    concurrency: int = 1
     job_ids: set[int] = field(default_factory=set)
     job_started_at: dict[int, float] = field(default_factory=dict)
     _reported_terminal_job_ids: set[int] = field(default_factory=set)
@@ -539,6 +543,7 @@ class _SimulationJobDrainer:
         while True:
             await app.run_worker_async(
                 queues=[_SIM_PROCESS_EMAIL_QUEUE],
+                concurrency=self.concurrency,
                 wait=False,
                 install_signal_handlers=False,
             )
