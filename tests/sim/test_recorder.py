@@ -956,7 +956,7 @@ def test_simulation_job_drainer_does_not_duplicate_observed_retry(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_simulation_job_drainer_passes_queue_filter_as_postgres_array(tmp_path):
+async def test_simulation_job_drainer_skips_worker_without_tracked_jobs(tmp_path):
     events = EventsLog(tmp_path / "events.jsonl")
     drainer = _SimulationJobDrainer(events)
 
@@ -967,14 +967,74 @@ async def test_simulation_job_drainer_passes_queue_filter_as_postgres_array(tmp_
             "list_jobs_async",
             new_callable=AsyncMock,
             return_value=[],
+        ) as list_jobs,
+    ):
+        await drainer()
+
+    run_worker.assert_not_awaited()
+    list_jobs.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_simulation_job_drainer_skips_worker_for_terminal_jobs(tmp_path):
+    events = EventsLog(tmp_path / "events.jsonl")
+    drainer = _SimulationJobDrainer(events, job_ids={1})
+    terminal = SimpleNamespace(
+        id=1,
+        status="succeeded",
+        attempts=1,
+        task_kwargs={"sender_email": "alice@example.test", "trace_id": "trace-1"},
+    )
+
+    with (
+        patch.object(app, "run_worker_async", new_callable=AsyncMock) as run_worker,
+        patch.object(
+            app.job_manager,
+            "list_jobs_async",
+            new_callable=AsyncMock,
+            return_value=[terminal],
+        ),
+    ):
+        await drainer()
+
+    run_worker.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_simulation_job_drainer_runs_ready_work_with_one_shot_options(tmp_path):
+    events = EventsLog(tmp_path / "events.jsonl")
+    drainer = _SimulationJobDrainer(events, concurrency=3, job_ids={1})
+    job_kwargs = {"sender_email": "alice@example.test", "trace_id": "trace-1"}
+    ready = SimpleNamespace(
+        id=1,
+        status="todo",
+        attempts=0,
+        scheduled_at=None,
+        task_kwargs=job_kwargs,
+    )
+    terminal = SimpleNamespace(
+        id=1,
+        status="succeeded",
+        attempts=1,
+        task_kwargs=job_kwargs,
+    )
+
+    with (
+        patch.object(app, "run_worker_async", new_callable=AsyncMock) as run_worker,
+        patch.object(
+            app.job_manager,
+            "list_jobs_async",
+            new_callable=AsyncMock,
+            side_effect=([ready], [terminal]),
         ),
     ):
         await drainer()
 
     run_worker.assert_awaited_once_with(
         queues=["simulation_process_email"],
-        concurrency=1,
+        concurrency=3,
         wait=False,
+        listen_notify=False,
         install_signal_handlers=False,
     )
 
