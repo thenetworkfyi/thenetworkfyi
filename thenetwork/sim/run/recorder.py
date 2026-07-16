@@ -540,13 +540,11 @@ class _SimulationJobDrainer:
     _reported_retry_attempts: set[tuple[int, int]] = field(default_factory=set)
 
     async def __call__(self) -> None:
+        if not self.job_ids:
+            return
+
+        ran_worker = False
         while True:
-            await app.run_worker_async(
-                queues=[_SIM_PROCESS_EMAIL_QUEUE],
-                concurrency=self.concurrency,
-                wait=False,
-                install_signal_handlers=False,
-            )
             jobs = tuple(
                 job
                 for job in await app.job_manager.list_jobs_async(
@@ -563,14 +561,25 @@ class _SimulationJobDrainer:
                 raise RuntimeError("simulation worker stopped with a job still running")
 
             retry_times = tuple(job.scheduled_at for job in pending if job.scheduled_at)
-            if len(retry_times) != len(pending):
+            if len(retry_times) == len(pending):
+                wait_seconds = max(
+                    0.0,
+                    (min(retry_times) - procrastinate_utils.utcnow()).total_seconds(),
+                )
+                if wait_seconds:
+                    await _sleep_until_retry(wait_seconds)
+                    continue
+            elif ran_worker:
                 raise RuntimeError("simulation worker left a ready job unprocessed")
-            wait_seconds = max(
-                0.0,
-                (min(retry_times) - procrastinate_utils.utcnow()).total_seconds(),
+
+            await app.run_worker_async(
+                queues=[_SIM_PROCESS_EMAIL_QUEUE],
+                concurrency=self.concurrency,
+                wait=False,
+                listen_notify=False,
+                install_signal_handlers=False,
             )
-            if wait_seconds:
-                await _sleep_until_retry(wait_seconds)
+            ran_worker = True
 
     def _record_job_outcomes(self, jobs: tuple[Any, ...]) -> None:
         for job in jobs:
