@@ -77,6 +77,8 @@ _SAFE_FIELDS = frozenset(
         "header_names",
         "html_present",
         "message_count",
+        "model_endpoint",
+        "model_provider_host",
         "outcome",
         "part_kinds",
         "consent_state",
@@ -86,6 +88,7 @@ _SAFE_FIELDS = frozenset(
         "record_type",
         "refs_count",
         "result_count",
+        "retry_count",
         "sender_authenticated",
         "sender_id_hash",
         "sender_known",
@@ -98,6 +101,8 @@ _SAFE_FIELDS = frozenset(
         "tool_reason",
         "top_k",
         "trace_id",
+        "http_method",
+        "http_status",
         "user_message_chars",
     }
 )
@@ -191,6 +196,10 @@ _SAFE_CATEGORIES = {
             "banned",
         }
     ),
+    "model_endpoint": frozenset(
+        {"chat_completions", "embeddings", "responses", "other"}
+    ),
+    "http_method": frozenset({"GET", "POST", "PUT", "PATCH", "DELETE"}),
     "record_type": frozenset({"introduction_consent", "memory", "person"}),
     "consent_state": frozenset(
         {"declined", "introduced", "one_consented", "proposed", "revoked"}
