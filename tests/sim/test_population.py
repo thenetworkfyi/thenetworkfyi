@@ -178,7 +178,7 @@ def test_default_population_has_authored_personas_and_schedule():
     assert additions["Omar Feld"].config.stop_condition == (
         "Stop permanently after you have consented once."
     )
-    assert additions["Omar Feld"].config.message_budget == 3
+    assert additions["Omar Feld"].config.message_budget == 5
     assert (
         "when it does, tell The Network plainly and redirect"
         in additions["Nadia Reyes"].config.goal
