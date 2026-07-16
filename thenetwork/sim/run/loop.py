@@ -14,6 +14,7 @@ from unittest.mock import patch
 
 from thenetwork.settings import get_settings
 from thenetwork.sim.personas.consent import make_reply_thread_faithful, thread_token_of
+from thenetwork.sim.personas.llm_persona import TransientPersonaError
 from thenetwork.sim.run.mail import (
     ProcessEmailCallable,
     SimMessageObserver,
@@ -144,7 +145,14 @@ class SimTickLoop:
 
         async def generate(adapter: TinyPersonEmailAdapter):
             async with semaphore:
-                return await self._generate_persona_message(adapter, tick)
+                try:
+                    return await self._generate_persona_message(adapter, tick)
+                except TransientPersonaError:
+                    self._report(
+                        f"tick {tick}/{total_ticks}: {adapter.config.name}: "
+                        "persona generation skipped after transient provider errors"
+                    )
+                    return None
 
         generated = await asyncio.gather(
             *(
@@ -228,7 +236,10 @@ class SimTickLoop:
                 ),
             )
         except BaseException as exc:
-            timing_fields.update(status="failed", error_type=type(exc).__name__)
+            timing_fields.update(
+                status="failed",
+                error_type=getattr(exc, "error_type", type(exc).__name__),
+            )
             raise
         else:
             timing_fields["status"] = "succeeded"
