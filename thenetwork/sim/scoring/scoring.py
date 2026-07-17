@@ -113,6 +113,36 @@ class MailFacts:
 
 
 @dataclass(frozen=True)
+class EventOutcomeFact:
+    """Minimum sealed lifecycle facts for one event or recurring series."""
+
+    event_key: str
+    owner_sender_id_hash: str | None
+    version: int
+    active: bool
+    recurring: bool
+
+
+@dataclass(frozen=True)
+class EventRecommendationOutcomeFact:
+    """Minimum version-bound consideration and delivery facts."""
+
+    event_key: str
+    recipient_sender_id_hash: str | None
+    event_version: int
+    notified: bool
+
+
+@dataclass(frozen=True)
+class ProactiveEventTriggerOutcomeFact:
+    """SEAL-safe event trigger correlation retained by the public recorder."""
+
+    event_key: str
+    recipient_sender_id_hash: str | None
+    event_version: int
+
+
+@dataclass(frozen=True)
 class ScenarioOutcome:
     """Observable run results made available to scenario outcome predicates."""
 
@@ -121,6 +151,9 @@ class ScenarioOutcome:
     sender_id_hashes: Mapping[str, str] = field(default_factory=dict)
     mail_facts: tuple[MailFacts, ...] = ()
     memory_counts: Mapping[str, int] = field(default_factory=dict)
+    event_rows: tuple[EventOutcomeFact, ...] = ()
+    event_recommendation_rows: tuple[EventRecommendationOutcomeFact, ...] = ()
+    proactive_event_triggers: tuple[ProactiveEventTriggerOutcomeFact, ...] = ()
 
 
 @dataclass(frozen=True)

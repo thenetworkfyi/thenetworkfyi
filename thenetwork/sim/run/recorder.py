@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import mailbox
 import os
@@ -21,7 +22,13 @@ from procrastinate import utils as procrastinate_utils
 from thenetwork.audit import audit_jsonl_file
 from sqlmodel import select
 
-from thenetwork.db.models import IntroductionConsent, Memory, Person
+from thenetwork.db.models import (
+    Event,
+    EventRecommendation,
+    IntroductionConsent,
+    Memory,
+    Person,
+)
 from thenetwork.db.session import get_session
 from thenetwork.settings import get_settings
 from thenetwork.security.sender_identifier import optional_sender_identifier
@@ -35,11 +42,14 @@ from thenetwork.sim.run.mail import (
 from thenetwork.sim.personas.persona import PersonaConfig, TinyPersonEmailAdapter
 from thenetwork.sim.personas.population import SimSchedule
 from thenetwork.sim.scoring.scoring import (
+    EventOutcomeFact,
+    EventRecommendationOutcomeFact,
     IntroductionRevealAuthorization,
     MailFacts,
     MemoryExpectation,
     OutcomeCheck,
     PersonaPII,
+    ProactiveEventTriggerOutcomeFact,
     ResponseQualityThresholds,
     ScenarioOutcome,
     score_memory_expectations,
@@ -178,7 +188,10 @@ class SimRunRecorder:
             drain_jobs = None
 
         audit_log = (
-            audit_jsonl_file(artifacts.audit_path)
+            audit_jsonl_file(
+                artifacts.audit_path,
+                include_model_responses=False,
+            )
             if process_mode == "real"
             else nullcontext()
         )
@@ -353,15 +366,22 @@ def _assemble_scenario_outcome(
     persona_emails: Iterable[str] = (),
 ) -> tuple[ScenarioOutcome, tuple[Memory, ...], dict[str, str]]:
     if load_database_state:
-        consent_rows, database_memories, memory_counts, emails_by_id = (
-            _database_outcome_state()
-        )
+        (
+            consent_rows,
+            database_memories,
+            memory_counts,
+            emails_by_id,
+            event_rows,
+            event_recommendation_rows,
+        ) = _database_outcome_state()
         outcome_memories = database_memories
     else:
         consent_rows = ()
         outcome_memories = tuple(memories)
         emails_by_id = {}
         memory_counts = _memory_counts(outcome_memories, emails_by_id)
+        event_rows = ()
+        event_recommendation_rows = ()
     return (
         ScenarioOutcome(
             consent_rows=consent_rows,
@@ -375,6 +395,9 @@ def _assemble_scenario_outcome(
             },
             mail_facts=_mail_facts(artifacts.raw_mbox_path),
             memory_counts=memory_counts,
+            event_rows=event_rows,
+            event_recommendation_rows=event_recommendation_rows,
+            proactive_event_triggers=_proactive_event_triggers(artifacts.events_path),
         ),
         outcome_memories,
         emails_by_id,
@@ -386,19 +409,27 @@ def _database_outcome_state() -> tuple[
     tuple[Memory, ...],
     dict[str, int],
     dict[str, str],
+    tuple[EventOutcomeFact, ...],
+    tuple[EventRecommendationOutcomeFact, ...],
 ]:
     consent_rows = []
     with get_session() as session:
+        people = tuple(session.exec(select(Person)).all())
+        emails_by_id = {person.id: person.email for person in people}
+        sender_id_hashes_by_id = {
+            person_id: optional_sender_identifier(email)
+            for person_id, email in emails_by_id.items()
+        }
         records = session.exec(select(IntroductionConsent)).all()
         for record in records:
-            person_a = session.get(Person, record.person_a_id)
-            person_b = session.get(Person, record.person_b_id)
-            if person_a is None or person_b is None:
+            person_a_email = emails_by_id.get(record.person_a_id)
+            person_b_email = emails_by_id.get(record.person_b_id)
+            if person_a_email is None or person_b_email is None:
                 continue
             consent_rows.append(
                 IntroductionRevealAuthorization(
-                    person_a_email=person_a.email,
-                    person_b_email=person_b.email,
+                    person_a_email=person_a_email,
+                    person_b_email=person_b_email,
                     status=record.status,
                     person_a_consented=record.person_a_consented,
                     person_b_consented=record.person_b_consented,
@@ -413,11 +444,107 @@ def _database_outcome_state() -> tuple[
             )
             for memory in session.exec(select(Memory)).all()
         )
-        emails_by_id = {
-            person.id: person.email for person in session.exec(select(Person)).all()
-        }
         memory_counts = _memory_counts(memories, emails_by_id)
-    return tuple(consent_rows), memories, memory_counts, emails_by_id
+        now = datetime.now(timezone.utc)
+        event_rows = tuple(
+            EventOutcomeFact(
+                event_key=_event_correlation_key(event_id),
+                owner_sender_id_hash=sender_id_hashes_by_id.get(submitter_id),
+                version=version,
+                active=cancelled_at is None and _as_utc(expires_at) > now,
+                recurring=recurring,
+            )
+            for (
+                event_id,
+                submitter_id,
+                version,
+                expires_at,
+                cancelled_at,
+                recurring,
+            ) in session.exec(
+                select(
+                    Event.id,
+                    Event.submitter_id,
+                    Event.version,
+                    Event.expires_at,
+                    Event.cancelled_at,
+                    Event.recurrence.is_not(None),
+                )
+            ).all()
+        )
+        event_recommendation_rows = tuple(
+            EventRecommendationOutcomeFact(
+                event_key=_event_correlation_key(event_id),
+                recipient_sender_id_hash=sender_id_hashes_by_id.get(person_id),
+                event_version=event_version,
+                notified=notified_at is not None,
+            )
+            for (
+                event_id,
+                person_id,
+                event_version,
+                notified_at,
+            ) in session.exec(
+                select(
+                    EventRecommendation.event_id,
+                    EventRecommendation.person_id,
+                    EventRecommendation.event_version,
+                    EventRecommendation.notified_at,
+                )
+            ).all()
+        )
+    return (
+        tuple(consent_rows),
+        memories,
+        memory_counts,
+        emails_by_id,
+        event_rows,
+        event_recommendation_rows,
+    )
+
+
+def _event_correlation_key(event_id: str) -> str:
+    """Derive a stable public key from a server-generated opaque event id."""
+    digest = hashlib.sha256(event_id.encode("utf-8")).hexdigest()[:24]
+    return f"evt_v1_{digest}"
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _proactive_event_triggers(
+    path: Path,
+) -> tuple[ProactiveEventTriggerOutcomeFact, ...]:
+    if not path.exists():
+        return ()
+    triggers = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        event = json.loads(line)
+        if (
+            event.get("event") != "sim.proactive_job_deferred"
+            or event.get("trigger_kind") != "event"
+            or not isinstance(event.get("event_key"), str)
+            or not isinstance(event.get("event_version"), int)
+        ):
+            continue
+        recipient_sender_id_hash = event.get("recipient_sender_id_hash")
+        triggers.append(
+            ProactiveEventTriggerOutcomeFact(
+                event_key=event["event_key"],
+                recipient_sender_id_hash=(
+                    recipient_sender_id_hash
+                    if isinstance(recipient_sender_id_hash, str)
+                    else None
+                ),
+                event_version=event["event_version"],
+            )
+        )
+    return tuple(triggers)
 
 
 def _audit_events(path: Path) -> tuple[dict[str, Any], ...]:
@@ -477,12 +604,13 @@ def _mock_process(events: EventsLog):
 
 
 def _record_delivered_message(events: EventsLog):
-    """Write complete synthetic mail only to a simulation run's event log."""
+    """Record delivery metadata without copying raw mail into public events."""
 
     def record(message, meta: SimMessageMeta | None) -> None:
+        body = _extract_body(message)
         events.write(
             "sim.message_delivered",
-            body=_extract_body(message),
+            body_chars=len(body),
             direction=meta.direction if meta is not None else "agent->persona",
             persona=meta.persona if meta is not None else None,
             subject=message.get("Subject", ""),
@@ -494,14 +622,33 @@ def _record_delivered_message(events: EventsLog):
 
 
 def _record_proactive_trigger(events: EventsLog):
-    """Record the complete SEAL-safe synthetic trigger for a sim-only job."""
+    """Record safe trigger metadata; event bodies remain model-context only."""
 
     def record(job: dict[str, Any]) -> None:
+        event_id = job.get("proactive_event_id")
+        event_version = job.get("proactive_event_version")
+        if isinstance(event_id, str) and isinstance(event_version, int):
+            sender_email = job.get("sender_email")
+            events.write(
+                "sim.proactive_job_deferred",
+                event_key=_event_correlation_key(event_id),
+                event_version=event_version,
+                recipient_sender_id_hash=(
+                    optional_sender_identifier(sender_email)
+                    if isinstance(sender_email, str)
+                    else None
+                ),
+                subject=job.get("subject"),
+                trace_id=job.get("trace_id"),
+                trigger_kind="event",
+            )
+            return
         events.write(
             "sim.proactive_job_deferred",
             body=job.get("body"),
             subject=job.get("subject"),
             trace_id=job.get("trace_id"),
+            trigger_kind="people",
         )
 
     return record

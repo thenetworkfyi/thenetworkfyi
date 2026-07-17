@@ -19,8 +19,16 @@ VIC_EMAIL = "vic.sim@example.test"
 OMAR_EMAIL = "omar.sim@example.test"
 NADIA_EMAIL = "nadia.sim@example.test"
 PETRA_EMAIL = "petra.sim@example.test"
+EVENT_ORGANIZER_EMAIL = "sloane.sim@example.test"
+EVENT_ATTENDEE_EMAIL = "mina.sim@example.test"
+EVENT_CONTROL_EMAIL = "theo.sim@example.test"
 
 _INTRODUCTION_SUBJECT = "Your introduction"
+_EVENT_RECOMMENDATION_SUBJECT = "An event you might care about"
+_FIRST_EVENT_PERMISSION_NOTICE = (
+    "Would you like occasional event recommendations like this? Reply yes or no. "
+    "A no stops only event recommendations."
+)
 _INES_CANNED_CLARIFICATION = "I could not determine your response."
 _VIC_MAX_MEMORIES = 6
 _VIC_MAX_PAIR_ROWS = 6
@@ -249,6 +257,165 @@ def _omar_pair_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
     return _pair_summary(outcome, OMAR_EMAIL)
 
 
+def _sender_id_hash(outcome: ScenarioOutcome, email: str) -> str | None:
+    return outcome.sender_id_hashes.get(email)
+
+
+def _expected_event_rows(outcome: ScenarioOutcome):
+    owner_sender_id_hash = _sender_id_hash(outcome, EVENT_ORGANIZER_EMAIL)
+    if owner_sender_id_hash is None:
+        return ()
+    return tuple(
+        row
+        for row in outcome.event_rows
+        if row.owner_sender_id_hash == owner_sender_id_hash
+        and row.active
+        and row.recurring
+    )
+
+
+def _expected_event_versions(outcome: ScenarioOutcome) -> dict[str, int]:
+    return {row.event_key: row.version for row in _expected_event_rows(outcome)}
+
+
+def _event_recommendations_for(outcome: ScenarioOutcome, email: str):
+    recipient_sender_id_hash = _sender_id_hash(outcome, email)
+    if recipient_sender_id_hash is None:
+        return ()
+    event_versions = _expected_event_versions(outcome)
+    return tuple(
+        row
+        for row in outcome.event_recommendation_rows
+        if row.recipient_sender_id_hash == recipient_sender_id_hash
+        and row.event_key in event_versions
+    )
+
+
+def _event_triggers_for(outcome: ScenarioOutcome, email: str):
+    recipient_sender_id_hash = _sender_id_hash(outcome, email)
+    if recipient_sender_id_hash is None:
+        return ()
+    event_versions = _expected_event_versions(outcome)
+    return tuple(
+        trigger
+        for trigger in outcome.proactive_event_triggers
+        if trigger.recipient_sender_id_hash == recipient_sender_id_hash
+        and trigger.event_key in event_versions
+    )
+
+
+def _event_delivery_audits_for(outcome: ScenarioOutcome, email: str):
+    sender_id_hash = _sender_id_hash(outcome, email)
+    if sender_id_hash is None:
+        return ()
+    return tuple(
+        event
+        for event in outcome.audit_events
+        if event.get("event") == "agent.tool.completed"
+        and event.get("tool_name") == "send_event_recommendation"
+        and event.get("outcome") == "success"
+        and event.get("sender_id_hash") == sender_id_hash
+    )
+
+
+def _event_fyi_mail_for(outcome: ScenarioOutcome, email: str):
+    return tuple(
+        message
+        for message in outcome.mail_facts
+        if message.subject == _EVENT_RECOMMENDATION_SUBJECT
+        and email.lower() in message.recipients
+    )
+
+
+def _has_expected_active_event(outcome: ScenarioOutcome) -> bool:
+    return bool(_expected_event_rows(outcome))
+
+
+def _has_one_bound_event_scan(outcome: ScenarioOutcome) -> bool:
+    event_versions = _expected_event_versions(outcome)
+    recommendations = _event_recommendations_for(outcome, EVENT_ATTENDEE_EMAIL)
+    triggers = _event_triggers_for(outcome, EVENT_ATTENDEE_EMAIL)
+    return (
+        len(recommendations) == 1
+        and len(triggers) == 1
+        and recommendations[0].event_version
+        == event_versions.get(recommendations[0].event_key)
+        and triggers[0].event_key == recommendations[0].event_key
+        and triggers[0].event_version == recommendations[0].event_version
+    )
+
+
+def _has_one_delivered_event_fyi(outcome: ScenarioOutcome) -> bool:
+    recommendations = _event_recommendations_for(outcome, EVENT_ATTENDEE_EMAIL)
+    messages = _event_fyi_mail_for(outcome, EVENT_ATTENDEE_EMAIL)
+    return (
+        len(recommendations) == 1
+        and recommendations[0].notified
+        and len(messages) == 1
+        and _FIRST_EVENT_PERMISSION_NOTICE in messages[0].body
+        and bool(_event_delivery_audits_for(outcome, EVENT_ATTENDEE_EMAIL))
+    )
+
+
+def _event_exclusions_hold(outcome: ScenarioOutcome) -> bool:
+    return all(
+        not _event_recommendations_for(outcome, email)
+        and not _event_triggers_for(outcome, email)
+        and not _event_fyi_mail_for(outcome, email)
+        for email in (EVENT_ORGANIZER_EMAIL, EVENT_CONTROL_EMAIL)
+    )
+
+
+def _active_event_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
+    rows = _expected_event_rows(outcome)
+    return {
+        "active_recurring_event_count": len(rows),
+        "event_keys": sorted(row.event_key for row in rows),
+        "versions": sorted(row.version for row in rows),
+    }
+
+
+def _event_scan_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
+    recommendations = _event_recommendations_for(outcome, EVENT_ATTENDEE_EMAIL)
+    triggers = _event_triggers_for(outcome, EVENT_ATTENDEE_EMAIL)
+    return {
+        "recommendation_count": len(recommendations),
+        "recommendation_versions": sorted(row.event_version for row in recommendations),
+        "trigger_count": len(triggers),
+        "trigger_versions": sorted(trigger.event_version for trigger in triggers),
+    }
+
+
+def _event_delivery_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
+    recommendations = _event_recommendations_for(outcome, EVENT_ATTENDEE_EMAIL)
+    messages = _event_fyi_mail_for(outcome, EVENT_ATTENDEE_EMAIL)
+    return {
+        "notified_rows": sum(row.notified for row in recommendations),
+        "event_fyi_count": len(messages),
+        "first_permission_notice_count": sum(
+            _FIRST_EVENT_PERMISSION_NOTICE in message.body for message in messages
+        ),
+        "completed_send_audit_count": len(
+            _event_delivery_audits_for(outcome, EVENT_ATTENDEE_EMAIL)
+        ),
+    }
+
+
+def _event_exclusion_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
+    return {
+        "submitter_recommendation_count": len(
+            _event_recommendations_for(outcome, EVENT_ORGANIZER_EMAIL)
+        ),
+        "submitter_trigger_count": len(
+            _event_triggers_for(outcome, EVENT_ORGANIZER_EMAIL)
+        ),
+        "control_recommendation_count": len(
+            _event_recommendations_for(outcome, EVENT_CONTROL_EMAIL)
+        ),
+        "control_trigger_count": len(_event_triggers_for(outcome, EVENT_CONTROL_EMAIL)),
+    }
+
+
 DEFAULT_OUTCOME_CHECKS = (
     OutcomeCheck(
         description="Ruth declines an introduction and the pair enters cooldown",
@@ -334,6 +501,45 @@ DEFAULT_OUTCOME_CHECKS = (
         requires_real_process=True,
         requires_llm_personas=True,
         evidence=lambda outcome: _reveal_summary(outcome, OMAR_EMAIL),
+    ),
+    OutcomeCheck(
+        description=(
+            "The event organizer owns an active versioned recurring event series"
+        ),
+        predicate=_has_expected_active_event,
+        requires_real_process=True,
+        requires_llm_personas=True,
+        evidence=_active_event_summary,
+    ),
+    OutcomeCheck(
+        description=(
+            "The aligned attendee receives one version-bound event consideration "
+            "and one periodic event trigger"
+        ),
+        predicate=_has_one_bound_event_scan,
+        requires_real_process=True,
+        requires_llm_personas=True,
+        evidence=_event_scan_summary,
+    ),
+    OutcomeCheck(
+        description=(
+            "The aligned attendee receives exactly one first-event FYI and the "
+            "delivery ledger and audit trail record it"
+        ),
+        predicate=_has_one_delivered_event_fyi,
+        requires_real_process=True,
+        requires_llm_personas=True,
+        evidence=_event_delivery_summary,
+    ),
+    OutcomeCheck(
+        description=(
+            "The event submitter and unrelated control persona receive no event "
+            "recommendation or trigger"
+        ),
+        predicate=_event_exclusions_hold,
+        requires_real_process=True,
+        requires_llm_personas=True,
+        evidence=_event_exclusion_summary,
     ),
 )
 
@@ -610,6 +816,66 @@ def default_population(
             opening_body=(
                 "I am interested in archival science and data management, but I am still "
                 "figuring out what kind of connection would be useful."
+            ),
+        ),
+        PopulationPersona(
+            config=PersonaConfig(
+                name="Sloane Park",
+                email=EVENT_ORGANIZER_EMAIL,
+                goal=(
+                    "Register as an organizer first. When a scheduled update says your "
+                    "event is confirmed, send its complete details once and explicitly ask "
+                    "The Network to record it as a recurring event, not as a request for a "
+                    "person-to-person introduction. Never resubmit, update, or cancel it."
+                ),
+                stop_condition="Stop after the event submission has been acknowledged.",
+                message_budget=4,
+                agent_address=agent_address,
+            ),
+            opening_body=(
+                "I organize practical facilities-operations workshops. Please register "
+                "that role; I will send the next event once its details are confirmed."
+            ),
+            scheduled_events=(
+                ScheduledEvent(
+                    tick=2,
+                    persona_email=EVENT_ORGANIZER_EMAIL,
+                    text=(
+                        "A quarterly online workshop is confirmed for municipal-library "
+                        "facilities teams planning heat-pump retrofits, focused on "
+                        "procurement and measuring energy performance. The first session "
+                        "is October 16, 2035. Ask The Network to record the recurring "
+                        "quarterly series as an event expiring December 31, 2035. Submit "
+                        "it exactly once and do not turn it into a networking request."
+                    ),
+                ),
+            ),
+        ),
+        PopulationPersona(
+            config=PersonaConfig(
+                name="Mina Brooks",
+                email=EVENT_ATTENDEE_EMAIL,
+                goal=(
+                    "Register one standing interest in occasional event recommendations "
+                    "for hands-on online workshops for municipal-library facilities teams "
+                    "planning heat-pump retrofits, especially procurement and "
+                    "energy-performance measurement. Do not ask for an introduction."
+                ),
+                stop_condition="Stop once that standing event interest is registered.",
+                message_budget=2,
+                agent_address=agent_address,
+            ),
+            opening_body=(
+                "I want occasional event recommendations for hands-on online workshops "
+                "for municipal-library facilities teams planning heat-pump retrofits, "
+                "especially procurement and energy-performance measurement."
+            ),
+            interruptions=(
+                MechanicalInterruption(
+                    persona_email=EVENT_ATTENDEE_EMAIL,
+                    start_tick=2,
+                    kind="dormancy",
+                ),
             ),
         ),
     )
