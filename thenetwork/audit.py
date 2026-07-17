@@ -121,6 +121,7 @@ _SAFE_CATEGORIES = {
             "revoke",
             "search",
             "unban",
+            "update",
         }
     ),
     "outcome": frozenset(
@@ -140,6 +141,10 @@ _SAFE_CATEGORIES = {
     "tool_outcome": frozenset(
         {
             "created",
+            "cancelled",
+            "already_cancelled",
+            "already_enabled",
+            "already_suppressed",
             "deferred",
             "deleted",
             "error",
@@ -153,6 +158,8 @@ _SAFE_CATEGORIES = {
             "sent",
             "success",
             "suppressed",
+            "resumed",
+            "updated",
             "welcomed",
             "welcomed_and_escalated",
         }
@@ -161,13 +168,24 @@ _SAFE_CATEGORIES = {
         {
             "already_registered",
             "declined",
+            "event_already_notified",
+            "event_cancelled",
+            "event_expired",
+            "event_expiry_not_future",
+            "event_not_considered",
+            "event_not_found",
+            "event_recommendations_stopped",
+            "event_text_too_long",
             "introduced",
+            "invalid_event_expiry",
             "invalid_person_id",
             "max_sends_per_run",
             "memory_text_too_long",
             "not_sender_memory",
             "one_consented",
             "outside_proactive_pair",
+            "outside_event_trigger",
+            "not_event_owner",
             "person_memory_limit_exceeded",
             "person_not_found",
             "proposed",
@@ -181,6 +199,7 @@ _SAFE_CATEGORIES = {
             "run_proposal_cap",
             "sanitization_failed",
             "self_introduction",
+            "self_event",
             "sender_not_authenticated",
             "sender_reply_daily_cap",
             "use_reply_to_sender",
@@ -201,21 +220,37 @@ _SAFE_CATEGORIES = {
         {"chat_completions", "embeddings", "responses", "other"}
     ),
     "http_method": frozenset({"GET", "POST", "PUT", "PATCH", "DELETE"}),
-    "record_type": frozenset({"introduction_consent", "memory", "person"}),
+    "record_type": frozenset(
+        {
+            "event",
+            "event_recommendation",
+            "event_suppression",
+            "introduction_consent",
+            "memory",
+            "person",
+        }
+    ),
     "consent_state": frozenset(
         {"declined", "introduced", "one_consented", "proposed", "revoked"}
     ),
     "tool_name": frozenset(
         {
             "escalate",
+            "cancel_event",
+            "create_event",
             "forget",
             "no_action",
             "propose_introduction",
             "reply_to_sender",
+            "resume_event_recommendations",
             "register_person",
             "remember",
             "search",
+            "search_events",
+            "send_event_recommendation",
             "send_outreach",
+            "stop_event_recommendations",
+            "update_event",
         }
     ),
 }

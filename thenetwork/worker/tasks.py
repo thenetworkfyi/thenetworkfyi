@@ -256,6 +256,7 @@ async def process_email(
     trace_id: str | None = None,
     is_proactive: bool = False,
     proactive_candidate_id: str | None = None,
+    proactive_event_id: str | None = None,
 ) -> None:
     """Procrastinate worker task: run the agent for one inbound email.
 
@@ -431,6 +432,8 @@ async def process_email(
         }
         if proactive_candidate_id:
             agent_kwargs["proactive_candidate_id"] = proactive_candidate_id
+        if proactive_event_id:
+            agent_kwargs["proactive_event_id"] = proactive_event_id
         if trace_id:
             agent_kwargs["trace_id"] = trace_id
         if inbound_message_id:

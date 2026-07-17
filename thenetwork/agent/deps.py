@@ -34,6 +34,9 @@ class AgentDeps:
     # counterpart for sender_user_id. propose_introduction must reject any
     # other_person_id that doesn't match this when is_proactive is set.
     proactive_candidate_id: str | None = None
+    # For proactive event runs only: the one opaque event id selected by the
+    # server-side scan. The event-send capability rejects every other id.
+    proactive_event_id: str | None = None
     # Session factory: () -> contextmanager[Session]
     # Stored as a callable to avoid serialization issues
     session_factory: Callable | None = None

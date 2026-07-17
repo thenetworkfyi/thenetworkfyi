@@ -12,6 +12,8 @@ from pydantic_ai.usage import UsageLimits
 from thenetwork.agent.deps import AgentDeps
 from thenetwork.agent.prompts import SYSTEM_PROMPT
 from thenetwork.agent.tools import (
+    cancel_event,
+    create_event,
     escalate,
     forget,
     no_action,
@@ -19,8 +21,13 @@ from thenetwork.agent.tools import (
     register_person,
     remember,
     reply_to_sender,
+    resume_event_recommendations,
     search,
+    search_events,
+    send_event_recommendation,
     send_outreach,
+    stop_event_recommendations,
+    update_event,
 )
 from thenetwork.audit import (
     audit_event,
@@ -81,6 +88,13 @@ def build_agent(model: Any = None) -> Agent[AgentDeps, str]:
     agent.tool(reply_to_sender, retries=1)
     agent.tool(send_outreach, retries=1)
     agent.tool(register_person, retries=1)
+    agent.tool(create_event, retries=1)
+    agent.tool(update_event, retries=1)
+    agent.tool(cancel_event, retries=1)
+    agent.tool(search_events, retries=1)
+    agent.tool(send_event_recommendation, retries=1)
+    agent.tool(stop_event_recommendations, retries=1)
+    agent.tool(resume_event_recommendations, retries=1)
 
     return agent
 
@@ -99,6 +113,7 @@ async def run_agent_for_email(
     trace_id: str | None = None,
     is_proactive: bool = False,
     proactive_candidate_id: str | None = None,
+    proactive_event_id: str | None = None,
 ) -> str:
     """Run the agent for one inbound email.
 
@@ -128,6 +143,7 @@ async def run_agent_for_email(
             trace_id=trace_id,
             is_proactive=is_proactive,
             proactive_candidate_id=proactive_candidate_id,
+            proactive_event_id=proactive_event_id,
         )
         settings = get_settings()
         agent = build_agent(model=settings.agent_model)

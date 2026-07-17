@@ -16,13 +16,15 @@ prompt-injection exfiltrate it, so the privacy boundary cannot be "withhold a co
    (the durable substrate, read only by the sanitizer and the PGP-verified admin
    channel) and a **sanitized gist** (PII-stripped), which is the only form any
    search may return.
-2. **Cross-user retrieval and the LLM only ever touch gist + opaque ids.** A hijacked
-   model has no identifying text to leak. Real addresses never enter LLM context - the
-   mailer resolves them server-side.
-3. **The search projection is the chokepoint** (`search/match.py`): `match_memories`
-   selects only `gist` + opaque ids in the SQL projection itself - raw `text` never
-   enters the result set, for any requester (including the memory's own subject), so
-   there is no runtime self/other branch a hijacked model could steer toward raw text.
+2. **Cross-user retrieval and the LLM only ever touch gists + opaque ids.** A hijacked
+   model has no identifying text to leak. This applies to person memories and events;
+   real addresses and event submitter identities never enter LLM context. The mailer
+   resolves addresses server-side.
+3. **Search projections are the chokepoints** (`search/match.py`, `search/events.py`):
+   their SQL selects only sanitized gists, opaque ids, and the minimum lifecycle fields.
+   Raw memory/event text, raw event recurrence, and event submitter identity never enter
+   a cross-user result set, so there is no runtime branch a hijacked model can steer
+   toward them.
 4. **The sanitizer is a separate, narrowly-scoped step** (`memory/sanitize.py`): a
    mandatory Presidio pass redacts person names, email addresses, and phone numbers.
    Organizations and locations are deliberately kept in gists because those gists are what
@@ -36,7 +38,10 @@ prompt-injection exfiltrate it, so the privacy boundary cannot be "withhold a co
 5. **Capability-style email tools (confused-deputy fix).** `reply_to_sender` has no
    recipient argument and derives its only recipient from the inbound sender.
    `send_outreach` takes an opaque `recipient_user_id`; the address is resolved
-   server-side at send time. The LLM never sees or supplies a raw address.
+   server-side at send time. `send_event_recommendation` accepts only the opaque event
+   id bound into a server-authored trigger, derives the recipient from authenticated
+   context, and composes fixed mail from the stored sanitized event gist. The LLM never
+   sees or supplies a raw address, submitter identity, subject, or event body.
 6. **Double-opt-in identity reveal.** The model can propose an unordered pair but cannot
    record consent or compose the revealing message. A random reply token associates an
    explicit `YES`, `NO`, or `REVOKE` reply with the pair; the worker accepts it only from
