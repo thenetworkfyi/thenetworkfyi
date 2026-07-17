@@ -47,6 +47,12 @@ thin wrapper over a well-adopted library, swappable by config.
   world-state outcomes are not exceptions for the model to retry; pydantic-ai
   gets one retry solely for argument validation. This keeps rate limits,
   suppression, ownership checks, and exhausted caps explicit and bounded.
+- **Events are a narrow operational exception to the freeform-only substrate.** Event
+  meaning remains freeform, but recommendations require server-enforced stable identity,
+  ownership, expiry/cancellation, delivery deduplication, and an event-only opt-out. The
+  `events`, `event_recommendations`, and `event_suppressions` tables store only that
+  lifecycle state. They do not model categories, RSVPs, attendance, reminders, or
+  calendars, and they are not memories, introduction consent, or proactive pair state.
 
 ## Explicitly rejected (anti-patterns)
 
@@ -54,7 +60,9 @@ Each of these was deliberately chosen *against*. Don't reintroduce one without
 understanding why it was dropped.
 
 - ❌ Domain columns (`skills[]`, `available_to_collaborate`, `intent_*`) → freeform `memories.text`.
-- ❌ Typed object tables (`events`, `items`, `subscriptions`) or `kind`/`direction`/`status` discriminators → meaning lives in text + agent reasoning.
+- ❌ General typed object tables (`items`, `subscriptions`) or
+  `kind`/`direction`/`status` discriminators → meaning lives in text + agent reasoning.
+  The narrowly scoped event lifecycle tables described above are the sole exception.
 - ❌ A curated `network_connections` edge table → graph projected from multi-ref memories.
 - ❌ One big notepad blob per person → small append-only chunks (clean recall).
 - ❌ In-place memory edits → delete + create (keeps embeddings/gists consistent).

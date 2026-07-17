@@ -176,3 +176,101 @@ class ProactiveSurface(SQLModel, table=True):
         default_factory=_utcnow,
         sa_column=Column(DateTime(timezone=True), nullable=False, index=True),
     )
+
+
+class Event(SQLModel, table=True):
+    """A stable, owner-controlled event or recurring event series.
+
+    Event meaning stays in freeform content. Only the identity and lifecycle
+    state that server code must enforce are structured here. A recurring
+    series is one row with a freeform ``recurrence`` description, so it is
+    recommended at most once per person rather than once per occurrence.
+    """
+
+    __tablename__ = "events"
+
+    id: str = Field(default_factory=_new_uuid, primary_key=True)
+    submitter_id: str = Field(
+        sa_column=Column(
+            Text(),
+            ForeignKey("people.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        )
+    )
+    text: str = Field(sa_column=Column(Text(), nullable=False))
+    gist: str = Field(sa_column=Column(Text(), nullable=False))
+    embedding: Optional[list[float]] = Field(
+        default=None, sa_column=Column(Vector(1536))
+    )
+    recurrence: Optional[str] = Field(
+        default=None, sa_column=Column(Text(), nullable=True)
+    )
+    expires_at: datetime = Field(
+        sa_column=Column(DateTime(timezone=True), nullable=False, index=True)
+    )
+    cancelled_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    created_at: datetime = Field(
+        default_factory=_utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    updated_at: datetime = Field(
+        default_factory=_utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
+class EventRecommendation(SQLModel, table=True):
+    """One durable consideration/delivery ledger row per event and person."""
+
+    __tablename__ = "event_recommendations"
+    __table_args__ = (
+        UniqueConstraint(
+            "event_id", "person_id", name="uq_event_recommendation_event_person"
+        ),
+    )
+
+    id: str = Field(default_factory=_new_uuid, primary_key=True)
+    event_id: str = Field(
+        sa_column=Column(
+            Text(),
+            ForeignKey("events.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        )
+    )
+    person_id: str = Field(
+        sa_column=Column(
+            Text(),
+            ForeignKey("people.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        )
+    )
+    considered_at: datetime = Field(
+        default_factory=_utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+    notified_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+
+
+class EventSuppression(SQLModel, table=True):
+    """Person-level opt-out from event FYIs, independent of people matching."""
+
+    __tablename__ = "event_suppressions"
+
+    person_id: str = Field(
+        sa_column=Column(
+            Text(),
+            ForeignKey("people.id", ondelete="CASCADE"),
+            primary_key=True,
+        )
+    )
+    suppressed_at: datetime = Field(
+        default_factory=_utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
