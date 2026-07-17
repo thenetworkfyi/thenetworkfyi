@@ -42,7 +42,7 @@ async def test_real_process_intro_flow_records_consent_reveal_and_revocation(tmp
     assert completed["reproposal_blocked"] is True
     assert completed["tier1_passed"] is True
 
-    box = mailbox.mbox(artifacts.mbox_path)
+    box = mailbox.mbox(artifacts.raw_mbox_path)
     try:
         messages = list(box)
     finally:
