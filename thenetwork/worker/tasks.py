@@ -65,11 +65,13 @@ app = procrastinate.App(
         )
     ),
     # All modules that register tasks/periodics must be imported so the worker
-    # discovers them: email processing (here), IMAP polling, proactive scans.
+    # discovers them: email processing (here), IMAP polling, proactive scans,
+    # and the independent event-recommendation scan.
     import_paths=[
         "thenetwork.worker.tasks",
         "thenetwork.worker.producer",
         "thenetwork.worker.proactive",
+        "thenetwork.worker.event_scan",
     ],
 )
 
