@@ -1,15 +1,11 @@
-"""Synthetic MIME checks for the HTML-email rollout.
-
-These helpers deliberately inspect messages built by tests and client fixtures,
-not production templates.  They make the rendering contract executable without
-turning simulation artifacts into HTML previews.
-"""
+"""MIME checks for safe, semantically equivalent user-facing HTML email."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from email.message import Message
 from html import escape
+import re
 from typing import Iterable
 
 from bs4 import BeautifulSoup
@@ -30,7 +26,6 @@ _FORBIDDEN_ELEMENTS = frozenset(
         "object",
         "script",
         "select",
-        "style",
         "svg",
         "textarea",
         "video",
@@ -46,6 +41,29 @@ _HIDDEN_STYLE_MARKERS = (
     "max-height: 0",
     "mso-hide:all",
     "mso-hide: all",
+)
+_QUOTED_TRAIL_RE = re.compile(
+    r"(?s)(?P<prefix>(?:^|\n)On [^\n]+, you wrote:\n)"
+    r"(?P<quoted>(?:[ \t]*>[^\n]*(?:\n|$))+)$"
+)
+_QUOTE_MARKER_RE = re.compile(r"(?m)^[ \t]*>[ \t]?")
+_CSS_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
+_CSS_HIDDEN_RE = re.compile(
+    r"(?:display\s*:\s*none\b|visibility\s*:\s*hidden\b|"
+    r"(?:max-)?height\s*:\s*0(?:[a-z%]+)?\b|width\s*:\s*0(?:[a-z%]+)?\b|"
+    r"opacity\s*:\s*0(?:\.0+)?\b|font-size\s*:\s*0(?:[a-z%]+)?\b|"
+    r"line-height\s*:\s*0(?:[a-z%]+)?\b|mso-hide\s*:\s*all\b|"
+    r"text-indent\s*:\s*-[0-9]+(?:px|em|rem|%)\b|"
+    r"clip(?:-path)?\s*:)",
+    re.IGNORECASE,
+)
+_CSS_UNSAFE_RULES = (
+    (re.compile(r"@import\b", re.IGNORECASE), "remote stylesheet import"),
+    (re.compile(r"url\s*\(", re.IGNORECASE), "remote resource in CSS"),
+    (re.compile(r"expression\s*\(", re.IGNORECASE), "active CSS expression"),
+    (re.compile(r"(?:-moz-binding|behavior)\s*:", re.IGNORECASE), "active CSS binding"),
+    (re.compile(r"javascript\s*:", re.IGNORECASE), "active CSS URL"),
+    (re.compile(r"\bcontent\s*:", re.IGNORECASE), "CSS generated content"),
 )
 
 
@@ -66,7 +84,7 @@ def inspect_html_email(
     required_text: Iterable[str] = (),
     untrusted_values: Iterable[str] = (),
 ) -> HtmlEmailInspection:
-    """Inspect a synthetic user-facing email against the presentation contract.
+    """Inspect a user-facing email against the presentation contract.
 
     ``required_text`` is useful for signatures and capability tokens that must
     appear in both alternatives. ``untrusted_values`` detects raw interpolation
@@ -85,9 +103,11 @@ def inspect_html_email(
     visible_html_text = html_to_visible_text(html) if html is not None else None
 
     if plain_text is not None and visible_html_text is not None:
-        if _normalize_semantic_text(plain_text) != _normalize_semantic_text(
-            visible_html_text
-        ):
+        plain_semantic_text = _normalize_semantic_text(
+            plain_text,
+            normalize_quoted_trail=_has_server_rendered_quoted_trail(html),
+        )
+        if plain_semantic_text != _normalize_semantic_text(visible_html_text):
             violations.append("plain text and visible HTML text differ")
     for text in required_text:
         normalized = _normalize(text)
@@ -118,7 +138,7 @@ def assert_html_email_contract(
     required_text: Iterable[str] = (),
     untrusted_values: Iterable[str] = (),
 ) -> HtmlEmailInspection:
-    """Assert the synthetic message satisfies MIME, parity, and safety rules."""
+    """Assert the message satisfies MIME, parity, and safety rules."""
     inspection = inspect_html_email(
         message,
         required_text=required_text,
@@ -166,6 +186,10 @@ def _html_safety_violations(
         name = tag.name.lower()
         if name in _FORBIDDEN_ELEMENTS:
             violations.append(f"forbidden HTML element: {name}")
+        if name == "style":
+            if tag.find_parent("head") is None:
+                violations.append("style element outside head")
+            violations.extend(_css_safety_violations(tag.get_text()))
         for attribute, value in tag.attrs.items():
             lowered = attribute.lower()
             rendered_value = " ".join(value) if isinstance(value, list) else str(value)
@@ -177,10 +201,8 @@ def _html_safety_violations(
                 lowered == "aria-hidden" and rendered_value.lower() == "true"
             ):
                 violations.append(f"hidden content attribute: {attribute}")
-            if lowered == "style" and any(
-                marker in rendered_value.lower() for marker in _HIDDEN_STYLE_MARKERS
-            ):
-                violations.append("hidden content style")
+            if lowered == "style":
+                violations.extend(_css_safety_violations(rendered_value))
 
     for value in untrusted_values:
         if value and value in html and escape(value) != value:
@@ -192,6 +214,50 @@ def _normalize(text: str) -> str:
     return " ".join(text.split())
 
 
-def _normalize_semantic_text(text: str) -> str:
-    """Treat the plain-text signature delimiter and HTML divider as equivalent."""
-    return _normalize(text.replace("\n--\n", "\n"))
+def _normalize_semantic_text(text: str, *, normalize_quoted_trail: bool = False) -> str:
+    """Normalize signature syntax and an explicitly rendered trailing quote."""
+    text = text.replace("\n--\n", "\n")
+    if normalize_quoted_trail:
+        text = _normalize_quoted_trail(text)
+    return _normalize(text)
+
+
+def _has_server_rendered_quoted_trail(html: str) -> bool:
+    """Identify the final ``On …, you wrote:`` plus blockquote template shape."""
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+    except Exception:
+        return False
+    blockquotes = soup.find_all("blockquote")
+    if not blockquotes:
+        return False
+    quote = blockquotes[-1]
+    if quote.find_next_sibling(lambda node: getattr(node, "name", None)) is not None:
+        return False
+    prefix = quote.find_previous_sibling("p")
+    return prefix is not None and bool(
+        re.fullmatch(r"On .+, you wrote:", prefix.get_text(" ", strip=True))
+    )
+
+
+def _normalize_quoted_trail(text: str) -> str:
+    """Remove plain quote markers only from the server's terminal quote trail."""
+    match = _QUOTED_TRAIL_RE.search(text)
+    if match is None:
+        return text
+    return text[: match.start("quoted")] + _QUOTE_MARKER_RE.sub(
+        "", match.group("quoted")
+    )
+
+
+def _css_safety_violations(css: str) -> list[str]:
+    """Permit static presentation CSS but reject active, remote, or hidden content."""
+    uncommented = _CSS_COMMENT_RE.sub("", css)
+    violations = [
+        reason for pattern, reason in _CSS_UNSAFE_RULES if pattern.search(uncommented)
+    ]
+    if _CSS_HIDDEN_RE.search(uncommented) or any(
+        marker in uncommented.lower() for marker in _HIDDEN_STYLE_MARKERS
+    ):
+        violations.append("hidden content style")
+    return violations
