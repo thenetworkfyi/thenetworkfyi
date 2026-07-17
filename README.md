@@ -131,14 +131,13 @@ column." Instead:
    (the durable substrate, read only by the sanitizer and the PGP-verified admin
    channel) and a **sanitized gist** (PII-stripped) that is the only form any
    search may return.
-2. **Cross-user retrieval and the LLM only ever touch the gist + opaque ids.** A
-   hijacked model has no identifying text to leak. Real addresses never enter LLM
-   context - the mailer resolves them server-side.
-3. **The search projection is the chokepoint** (`thenetwork/search/match.py`):
-   `match_memories` selects only `gist` + opaque ids in the SQL projection itself -
-   raw `text` never enters the result set, for any requester (including the
-   memory's own subject), so there is no runtime self/other branch a hijacked
-   model could steer toward raw text.
+2. **Cross-user retrieval and the LLM only ever touch gists + opaque ids.** A
+   hijacked model has no identifying text to leak. This applies to person memories and
+   events; real addresses and event submitter identities never enter LLM context.
+3. **Search projections are the chokepoints** (`thenetwork/search/match.py`,
+   `thenetwork/search/events.py`): their SQL selects only sanitized gists, opaque ids,
+   and minimum lifecycle fields. Raw memory/event text, raw event recurrence, and event
+   submitter identity never enter a cross-user result set.
 4. **The sanitizer is a separate, narrowly-scoped step**
    (`thenetwork/memory/sanitize.py`) - mandatory Presidio redaction of names, email
    addresses, and phone numbers while keeping organizations and locations for search
@@ -149,7 +148,9 @@ column." Instead:
 5. **Capability-style email tools (confused-deputy fix).** `reply_to_sender`
    derives its only recipient from the inbound sender. `send_outreach` accepts an
    opaque `recipient_user_id`; the address is resolved server-side at send time.
-   Neither tool lets the LLM see or supply a raw address.
+   `send_event_recommendation` accepts only a server-bound opaque event id, derives the
+   recipient from authenticated context, and composes fixed mail from a sanitized gist.
+   None of these tools lets the LLM see or supply a raw address.
 6. **Role separation.** The untrusted inbound body is passed as user-role message
    content, never into the system prompt (`thenetwork/agent/core.py`).
 7. **Mail-loop prevention (RFC 3834).** Inbound carrying `Auto-Submitted` /

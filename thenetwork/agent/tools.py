@@ -14,6 +14,7 @@ are final for this run. Pydantic AI gets one retry only for argument validation.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 from limits import parse, strategies
@@ -23,7 +24,13 @@ from sqlmodel import select
 
 from thenetwork.agent.deps import AgentDeps
 from thenetwork.audit import audit_event, audit_span, audit_span_completion
-from thenetwork.db.models import Memory, Person
+from thenetwork.db.models import (
+    Event,
+    EventRecommendation,
+    EventSuppression,
+    Memory,
+    Person,
+)
 from thenetwork.db.session import get_session
 from thenetwork.embed.embeddings import embed_text
 from thenetwork.email.outbound import (
@@ -33,10 +40,14 @@ from thenetwork.email.outbound import (
     reply_subject,
     send_reply,
 )
-from thenetwork.memory.sanitize import sanitize_memory_high_fidelity
+from thenetwork.memory.sanitize import (
+    sanitize_memory_high_fidelity,
+    sanitize_text_high_fidelity,
+)
 from thenetwork.security.rate_limit import PostgresFixedWindowStorage
 from thenetwork.introductions import propose_pair
 from thenetwork.search.match import MemoryMatch, match_memories
+from thenetwork.search.events import EventMatch, match_events
 
 MAX_CONSOLIDATION_CANDIDATES = 3
 # match_memories returns one row per ref, so a single multi-ref memory can
@@ -47,6 +58,15 @@ _dispatch_limiter: strategies.FixedWindowRateLimiter | None = None
 _dispatch_storage: PostgresFixedWindowStorage | None = None
 _registration_limiter: strategies.FixedWindowRateLimiter | None = None
 _registration_storage: PostgresFixedWindowStorage | None = None
+
+FIRST_EVENT_RECOMMENDATION_NOTICE = (
+    "Would you like occasional event recommendations like this? Reply yes or no. "
+    "A no stops only event recommendations."
+)
+EVENT_RECOMMENDATION_STOP_NOTICE = (
+    'To stop event recommendations, reply "stop event recommendations."'
+)
+EVENT_RECOMMENDATION_SUBJECT = "An event you might care about"
 
 
 class _SanitizationFailed(Exception):
@@ -108,6 +128,43 @@ def _introduction_result(result: dict[str, Any]) -> dict[str, Any]:
 
 def _trace_kwargs(trace_id: str | None) -> dict[str, str]:
     return {"trace_id": trace_id} if trace_id else {}
+
+
+def _utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _parse_event_expiry(value: str | datetime) -> datetime | None:
+    if isinstance(value, datetime):
+        return _utc(value)
+    try:
+        return _utc(datetime.fromisoformat(value.replace("Z", "+00:00")))
+    except (TypeError, ValueError):
+        return None
+
+
+def _event_projection(event: Event) -> dict[str, Any]:
+    """Return only the sealed event fields allowed into model context."""
+    return {
+        "event_id": event.id,
+        "gist": event.gist,
+        "expires_at": event.expires_at,
+        "cancelled": event.cancelled_at is not None,
+    }
+
+
+def _event_sanitization_source(text: str, recurrence: str | None) -> str:
+    if not recurrence:
+        return text
+    return f"{text}\nRecurrence: {recurrence}"
+
+
+def _authenticated_person_id(ctx: RunContext[AgentDeps]) -> str | None:
+    if not ctx.deps.sender_authenticated:
+        return None
+    return ctx.deps.sender_user_id
 
 
 def _check_daily_dispatch_cap(key: str, limit: int) -> bool:
@@ -387,6 +444,247 @@ async def search(
             results.append(result)
         audit_span_completion(tool_outcome="success")
         return results
+
+
+async def create_event(
+    ctx: RunContext[AgentDeps],
+    text: str,
+    expires_at: str,
+    recurrence: str | None = None,
+) -> dict[str, Any]:
+    """Create an owner-controlled one-off event or recurring event series.
+
+    Raw content remains in the owner-controlled event row. The returned and
+    searchable form is always a sanitized gist with an embedding derived from
+    that gist, never from the raw text.
+    """
+    with audit_span("agent.tool", tool_name="create_event"):
+        owner_id = _authenticated_person_id(ctx)
+        if owner_id is None:
+            return _tool_result(
+                {"status": "error", "reason": "sender_not_authenticated"}
+            )
+        sanitization_source = _event_sanitization_source(text, recurrence)
+        max_chars = ctx.deps.settings.remember_text_max_chars
+        if max_chars > 0 and len(sanitization_source) > max_chars:
+            return _tool_result(
+                {"status": "error", "reason": "event_text_too_long", "limit": max_chars}
+            )
+        expiry = _parse_event_expiry(expires_at)
+        if expiry is None:
+            return _tool_result({"status": "error", "reason": "invalid_event_expiry"})
+        if expiry <= datetime.now(timezone.utc):
+            return _tool_result(
+                {"status": "error", "reason": "event_expiry_not_future"}
+            )
+        try:
+            gist = await sanitize_text_high_fidelity(sanitization_source)
+            embedding = await embed_text(gist)
+        except Exception:
+            return _tool_result({"status": "error", "reason": "sanitization_failed"})
+
+        event = Event(
+            submitter_id=owner_id,
+            text=text,
+            gist=gist,
+            embedding=embedding,
+            recurrence=recurrence,
+            expires_at=expiry,
+        )
+        with _get_session(ctx) as session:
+            session.add(event)
+            projection = _event_projection(event)
+            session.commit()
+        audit_event(
+            "database.action",
+            action="insert",
+            record_type="event",
+            outcome="success",
+        )
+        return _tool_result({"status": "created", **projection})
+
+
+async def update_event(
+    ctx: RunContext[AgentDeps],
+    event_id: str,
+    text: str,
+    expires_at: str,
+    recurrence: str | None = None,
+) -> dict[str, Any]:
+    """Replace an authenticated sender's event content without changing its id."""
+    with audit_span("agent.tool", tool_name="update_event"):
+        owner_id = _authenticated_person_id(ctx)
+        if owner_id is None:
+            return _tool_result(
+                {"status": "error", "reason": "sender_not_authenticated"}
+            )
+        sanitization_source = _event_sanitization_source(text, recurrence)
+        max_chars = ctx.deps.settings.remember_text_max_chars
+        if max_chars > 0 and len(sanitization_source) > max_chars:
+            return _tool_result(
+                {"status": "error", "reason": "event_text_too_long", "limit": max_chars}
+            )
+        expiry = _parse_event_expiry(expires_at)
+        if expiry is None:
+            return _tool_result({"status": "error", "reason": "invalid_event_expiry"})
+        if expiry <= datetime.now(timezone.utc):
+            return _tool_result(
+                {"status": "error", "reason": "event_expiry_not_future"}
+            )
+
+        with _get_session(ctx) as session:
+            event = session.get(Event, event_id)
+            if event is None:
+                return _tool_result({"status": "not_found"})
+            if event.submitter_id != owner_id:
+                return _tool_result(
+                    {"status": "forbidden", "reason": "not_event_owner"}
+                )
+            if event.cancelled_at is not None:
+                return _tool_result(
+                    {"status": "forbidden", "reason": "event_cancelled"}
+                )
+            try:
+                gist = await sanitize_text_high_fidelity(sanitization_source)
+                embedding = await embed_text(gist)
+            except Exception:
+                session.rollback()
+                return _tool_result(
+                    {"status": "error", "reason": "sanitization_failed"}
+                )
+            event.text = text
+            event.gist = gist
+            event.embedding = embedding
+            event.recurrence = recurrence
+            event.expires_at = expiry
+            event.updated_at = datetime.now(timezone.utc)
+            session.add(event)
+            projection = _event_projection(event)
+            session.commit()
+        audit_event(
+            "database.action",
+            action="update",
+            record_type="event",
+            outcome="success",
+        )
+        return _tool_result({"status": "updated", **projection})
+
+
+async def cancel_event(ctx: RunContext[AgentDeps], event_id: str) -> dict[str, Any]:
+    """Cancel an authenticated sender's event; other users cannot mutate it."""
+    with audit_span("agent.tool", tool_name="cancel_event"):
+        owner_id = _authenticated_person_id(ctx)
+        if owner_id is None:
+            return _tool_result(
+                {"status": "error", "reason": "sender_not_authenticated"}
+            )
+        with _get_session(ctx) as session:
+            event = session.get(Event, event_id)
+            if event is None:
+                return _tool_result({"status": "not_found"})
+            if event.submitter_id != owner_id:
+                return _tool_result(
+                    {"status": "forbidden", "reason": "not_event_owner"}
+                )
+            if event.cancelled_at is None:
+                now = datetime.now(timezone.utc)
+                event.cancelled_at = now
+                event.updated_at = now
+                session.add(event)
+                projection = _event_projection(event)
+                session.commit()
+                status = "cancelled"
+            else:
+                status = "already_cancelled"
+                projection = _event_projection(event)
+        return _tool_result({"status": status, **projection})
+
+
+async def search_events(
+    ctx: RunContext[AgentDeps], query: str, top_k: int = 5
+) -> list[dict[str, Any]] | dict[str, Any]:
+    """Search active events through the gist-only SQL projection."""
+    with audit_span(
+        "agent.tool", tool_name="search_events", query_chars=len(query), top_k=top_k
+    ):
+        if _authenticated_person_id(ctx) is None:
+            return _tool_result(
+                {"status": "error", "reason": "sender_not_authenticated"}
+            )
+        max_chars = ctx.deps.settings.search_query_max_chars
+        if max_chars > 0 and len(query) > max_chars:
+            return _tool_result(
+                {"status": "error", "reason": "query_too_long", "limit": max_chars}
+            )
+        query_vec = await embed_text(query)
+        with _get_session(ctx) as session:
+            matches: list[EventMatch] = match_events(
+                query_vec, session, limit=min(max(top_k, 0), 20)
+            )
+        audit_span_completion(tool_outcome="success")
+        return [
+            {
+                "event_id": match.event_id,
+                "gist": match.gist,
+                "expires_at": match.expires_at,
+                "similarity": round(match.similarity, 3),
+            }
+            for match in matches
+        ]
+
+
+async def stop_event_recommendations(
+    ctx: RunContext[AgentDeps],
+) -> dict[str, Any]:
+    """Suppress only event FYIs for the authenticated sender."""
+    with audit_span("agent.tool", tool_name="stop_event_recommendations"):
+        person_id = _authenticated_person_id(ctx)
+        if person_id is None:
+            return _tool_result(
+                {"status": "error", "reason": "sender_not_authenticated"}
+            )
+        with _get_session(ctx) as session:
+            suppression = session.get(EventSuppression, person_id)
+            if suppression is None:
+                session.add(EventSuppression(person_id=person_id))
+                session.commit()
+                status = "suppressed"
+            else:
+                status = "already_suppressed"
+        audit_event(
+            "database.action",
+            action="insert",
+            record_type="event_suppression",
+            outcome="success" if status == "suppressed" else "exists",
+        )
+        return _tool_result({"status": status})
+
+
+async def resume_event_recommendations(
+    ctx: RunContext[AgentDeps],
+) -> dict[str, Any]:
+    """Resume only event FYIs for the authenticated sender."""
+    with audit_span("agent.tool", tool_name="resume_event_recommendations"):
+        person_id = _authenticated_person_id(ctx)
+        if person_id is None:
+            return _tool_result(
+                {"status": "error", "reason": "sender_not_authenticated"}
+            )
+        with _get_session(ctx) as session:
+            suppression = session.get(EventSuppression, person_id)
+            if suppression is None:
+                status = "already_enabled"
+            else:
+                session.delete(suppression)
+                session.commit()
+                status = "resumed"
+        audit_event(
+            "database.action",
+            action="delete",
+            record_type="event_suppression",
+            outcome="success" if status == "resumed" else "not_found",
+        )
+        return _tool_result({"status": status})
 
 
 async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
@@ -729,6 +1027,108 @@ async def send_outreach(
         is_sender_reply=False,
         tool_name="send_outreach",
     )
+
+
+async def send_event_recommendation(
+    ctx: RunContext[AgentDeps],
+    event_id: str,
+) -> dict[str, Any]:
+    """Send one event FYI to the bound proactive recipient.
+
+    The recipient is always the authenticated person this run is acting for;
+    the caller cannot select an address or another user id. The selected event
+    is likewise bound by the server-authored trigger. Lifecycle, suppression,
+    and duplicate gates are checked while the recommendation ledger row is
+    locked. ``notified_at`` is written only after SMTP succeeds.
+    """
+    with audit_span("agent.tool", tool_name="send_event_recommendation"):
+        recipient_id = _authenticated_person_id(ctx)
+        if recipient_id is None:
+            return _tool_result(
+                {"status": "error", "reason": "sender_not_authenticated"}
+            )
+        if (
+            not ctx.deps.is_proactive
+            or not ctx.deps.proactive_event_id
+            or event_id != ctx.deps.proactive_event_id
+        ):
+            return _tool_result(
+                {"status": "forbidden", "reason": "outside_event_trigger"}
+            )
+
+        now = datetime.now(timezone.utc)
+        with _get_session(ctx) as session:
+            event = session.get(Event, event_id)
+            if event is None:
+                return _tool_result(
+                    {"status": "not_found", "reason": "event_not_found"}
+                )
+            if event.cancelled_at is not None:
+                return _tool_result(
+                    {"status": "suppressed", "reason": "event_cancelled"}
+                )
+            if _utc(event.expires_at) <= now:
+                return _tool_result({"status": "suppressed", "reason": "event_expired"})
+            if event.submitter_id == recipient_id:
+                return _tool_result({"status": "suppressed", "reason": "self_event"})
+            if session.get(EventSuppression, recipient_id) is not None:
+                return _tool_result(
+                    {"status": "suppressed", "reason": "event_recommendations_stopped"}
+                )
+
+            recommendation = session.exec(
+                select(EventRecommendation)
+                .where(
+                    EventRecommendation.event_id == event_id,
+                    EventRecommendation.person_id == recipient_id,
+                )
+                .with_for_update()
+            ).first()
+            if recommendation is None:
+                return _tool_result(
+                    {"status": "forbidden", "reason": "event_not_considered"}
+                )
+            if recommendation.notified_at is not None:
+                return _tool_result(
+                    {"status": "suppressed", "reason": "event_already_notified"}
+                )
+
+            prior_delivery_count = session.exec(
+                select(func.count())
+                .select_from(EventRecommendation)
+                .where(
+                    EventRecommendation.person_id == recipient_id,
+                    EventRecommendation.notified_at.is_not(None),
+                )
+            ).one()
+            notice = (
+                FIRST_EVENT_RECOMMENDATION_NOTICE
+                if prior_delivery_count == 0
+                else EVENT_RECOMMENDATION_STOP_NOTICE
+            )
+            result = await _send_email(
+                ctx,
+                recipient_user_id=recipient_id,
+                subject=EVENT_RECOMMENDATION_SUBJECT,
+                body_text=(
+                    f"An event that may be relevant:\n\n{event.gist}\n\n{notice}"
+                ),
+                is_sender_reply=False,
+                tool_name="send_event_recommendation",
+            )
+            if result.get("status") != "sent":
+                return result
+
+            recommendation.notified_at = datetime.now(timezone.utc)
+            session.add(recommendation)
+            session.commit()
+        audit_event(
+            "database.action",
+            action="update",
+            record_type="event_recommendation",
+            outcome="success",
+        )
+        return result
 
 
 async def propose_introduction(

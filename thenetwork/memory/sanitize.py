@@ -60,6 +60,16 @@ def _strip_pii_ner(text: str) -> str:
     return text
 
 
+def sanitize_text(text: str) -> str:
+    """Return a deterministic PII-stripped projection of freeform content.
+
+    This is the shared SEAL boundary for freeform records that can cross a
+    user boundary. Callers persist only the returned projection in searchable
+    fields; the raw text remains confined to its owner-controlled record.
+    """
+    return _strip_pii_ner(text)
+
+
 def sanitize_memory(memory: Memory, session: Session) -> str:
     """Produce and persist a gist for a person-referencing memory.
 
@@ -73,11 +83,57 @@ def sanitize_memory(memory: Memory, session: Session) -> str:
         raise ValueError(
             f"Memory {memory.id} has no refs; only person-referencing memories require sanitization"
         )
-    gist = _strip_pii_ner(memory.text)
+    gist = sanitize_text(memory.text)
     memory.gist = gist
     session.add(memory)
     session.flush()
     return gist
+
+
+async def sanitize_text_llm(text: str) -> str:
+    """Apply the fixed, tool-free high-fidelity sanitizer to freeform text."""
+    from pydantic_ai import Agent
+    from thenetwork.model_config import model_with_api_key
+    from thenetwork.settings import get_settings
+
+    s = get_settings()
+    sanitizer: Agent[None, str] = Agent(
+        model=model_with_api_key(
+            s.small_agent_model, s.small_agent_api_key, s.model_request_timeout_seconds
+        ),
+        system_prompt=(
+            "You are a PII sanitizer. You will receive freeform content that may "
+            "be shown outside its owner's privacy boundary. Return a version with "
+            "all personally-identifying information removed: replace names with "
+            "[name], email addresses with [email], phone numbers with [phone], "
+            "specific street addresses with [address], employers or other "
+            "organizations with [org], social media handles or platform usernames "
+            "with [handle], and URLs or links with [url]. Also watch for "
+            "quasi-identifying combinations: generalize details that together "
+            "would single out one person. Keep non-identifying factual content "
+            "useful for semantic matching. Return only the sanitized text."
+        ),
+        output_type=str,
+    )
+    result = await sanitizer.run(text)
+    return result.output
+
+
+async def sanitize_text_high_fidelity(text: str) -> str:
+    """Return a SEAL-safe gist, with mandatory Presidio fallback."""
+    from thenetwork.settings import get_settings
+
+    s = get_settings()
+    deterministic_gist = sanitize_text(text)
+    if not s.sanitize_llm_tier_enabled:
+        return deterministic_gist
+    try:
+        # The optional model never sees the PII already caught by mandatory
+        # Presidio and therefore cannot reproduce it in its output.
+        return await sanitize_text_llm(deterministic_gist)
+    except Exception as exc:
+        audit_event("sanitize.tier_downgrade", error_type=type(exc).__name__)
+        return deterministic_gist
 
 
 async def sanitize_memory_llm(memory: Memory, session: Session) -> str:
@@ -93,42 +149,12 @@ async def sanitize_memory_llm(memory: Memory, session: Session) -> str:
     combinations" - otherwise-innocuous facts that, combined, single out one
     person (e.g. "the only Rust developer in Fargo").
     """
-    from pydantic_ai import Agent
-    from thenetwork.model_config import model_with_api_key
-    from thenetwork.settings import get_settings
-
     if not memory.refs:
         raise ValueError(
             f"Memory {memory.id} has no refs; only person-referencing memories require sanitization"
         )
 
-    s = get_settings()
-    _sanitizer: Agent[None, str] = Agent(
-        model=model_with_api_key(
-            s.small_agent_model, s.small_agent_api_key, s.model_request_timeout_seconds
-        ),
-        system_prompt=(
-            "You are a PII sanitizer. You will receive a memory about a person. "
-            "Return a version with all personally-identifying information removed: "
-            "replace names with [name], email addresses with [email], phone numbers "
-            "with [phone], specific street addresses with [address], employers or "
-            "other organizations with [org], social media handles or platform "
-            "usernames (e.g. @someuser) with [handle], and URLs or links with "
-            "[url]. Also watch for quasi-identifying combinations: a set of "
-            "otherwise-innocuous facts that, taken together, would let a reader "
-            "single out this one person (e.g. 'the only Rust developer in "
-            "Fargo', or 'the CTO's college roommate who now lives in a town of "
-            "2,000 people') - when you see one, generalize the specific detail "
-            "(e.g. drop the town, broaden the role, widen the timeframe) so the "
-            "combination no longer narrows to one identifiable individual. "
-            "Keep factual content (skills, interests, context) that is not "
-            "identifying, on its own or in combination. "
-            "Return only the sanitized text, nothing else."
-        ),
-        output_type=str,
-    )
-    result = await _sanitizer.run(memory.text)
-    gist = result.output
+    gist = await sanitize_text_llm(memory.text)
     memory.gist = gist
     session.add(memory)
     session.flush()
