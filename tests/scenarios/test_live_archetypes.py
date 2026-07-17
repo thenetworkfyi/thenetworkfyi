@@ -99,6 +99,7 @@ class EmailScenario:
     outbound_send_count: int = 0
     is_proactive: bool = False
     proactive_event_id: str | None = None
+    proactive_event_version: int | None = None
     event: Event | None = None
     event_recommendation: EventRecommendation | None = None
     prior_event_deliveries: int = 0
@@ -231,6 +232,7 @@ async def run_scenario(inputs: EmailScenario) -> RunOutcome:
             outbound_send_count=inputs.outbound_send_count,
             is_proactive=inputs.is_proactive,
             proactive_event_id=inputs.proactive_event_id,
+            proactive_event_version=inputs.proactive_event_version,
         )
         user_message = f"Subject: {inputs.subject}\n\n{inputs.body}"
         result = await agent.run(user_message, deps=deps)
@@ -1046,6 +1048,7 @@ strong_event_relevance_case = Case(
         known_people={"user-maya": "maya@example.com"},
         is_proactive=True,
         proactive_event_id="event-climate-roundtable",
+        proactive_event_version=1,
         event=_strong_event,
         event_recommendation=EventRecommendation(
             event_id="event-climate-roundtable", person_id="user-maya"
@@ -1092,6 +1095,7 @@ event_preference_mismatch_case = Case(
         sender_authenticated=True,
         is_proactive=True,
         proactive_event_id="event-beginner-webinar",
+        proactive_event_version=1,
     ),
     evaluators=(
         ToolWasNotCalled("send_event_recommendation"),

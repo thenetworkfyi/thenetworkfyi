@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Column, DateTime, ForeignKey, Text, UniqueConstraint
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlmodel import Field, SQLModel
 
@@ -206,6 +206,10 @@ class Event(SQLModel, table=True):
     recurrence: Optional[str] = Field(
         default=None, sa_column=Column(Text(), nullable=True)
     )
+    version: int = Field(
+        default=1,
+        sa_column=Column(Integer(), nullable=False, server_default="1"),
+    )
     expires_at: datetime = Field(
         sa_column=Column(DateTime(timezone=True), nullable=False, index=True)
     )
@@ -248,6 +252,10 @@ class EventRecommendation(SQLModel, table=True):
             nullable=False,
             index=True,
         )
+    )
+    event_version: int = Field(
+        default=1,
+        sa_column=Column(Integer(), nullable=False, server_default="1"),
     )
     considered_at: datetime = Field(
         default_factory=_utcnow,
