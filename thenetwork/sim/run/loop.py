@@ -25,7 +25,7 @@ from thenetwork.sim.run.mail import (
 )
 from thenetwork.sim.personas.persona import TinyPersonEmailAdapter
 from thenetwork.sim.personas.population import SimSchedule
-from thenetwork.worker import proactive
+from thenetwork.worker import event_scan, proactive
 
 
 ScanCallable = Callable[[int], Awaitable[None]]
@@ -57,7 +57,7 @@ class SimLoopResult:
 
 
 class SimTickLoop:
-    """Drive persona email turns and proactive scans over discrete ticks."""
+    """Drive persona email turns and periodic discovery over discrete ticks."""
 
     def __init__(
         self,
@@ -271,7 +271,7 @@ async def run_proactive_scans(
     on_defer: ProactiveTriggerObserver | None = None,
     on_stage_timing: StageTimingObserver | None = None,
 ) -> int:
-    """Run proactive scans and execute their deferred jobs in-loop."""
+    """Run people and event discovery scans and execute deferred jobs in-loop."""
     captured: list[dict[str, Any]] = []
 
     def capture_defer(**kwargs: Any) -> None:
@@ -282,6 +282,7 @@ async def run_proactive_scans(
     scan_tasks = scans or (
         proactive.scan_for_opportunities,
         proactive.scan_for_matches,
+        event_scan.scan_for_event_recommendations,
     )
     with patch.object(proactive.process_email, "defer", side_effect=capture_defer):
         for scan in scan_tasks:

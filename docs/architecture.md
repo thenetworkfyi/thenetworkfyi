@@ -15,9 +15,8 @@ The "big picture" that requires reading several files to reconstruct. See
                 Worker (Procrastinate task: process_email)
                     | rate-limit + optional content scan
                     | run the pydantic-ai agent: Think / Act / Observe
-                    | tools: remember / forget / search / reply_to_sender /
-                    |        send_outreach / propose_introduction / escalate /
-                    |        register_person
+                    | tools: person memory + introductions + event lifecycle /
+                    |        sealed one-way event recommendations
                     v
                 Reply --SMTP--> [Sender]
                     | append to IMAP Sent folder (best-effort, post-send)
@@ -27,7 +26,8 @@ The "big picture" that requires reading several files to reconstruct. See
 
 There is **one** long-lived process (`thenetwork-worker` → `worker/tasks.py:main`). It
 drains the Procrastinate queue *and*, via periodic tasks, polls IMAP every minute
-(`producer.poll_inbox`) and runs the hourly proactive scan. No separate producer daemon
+(`producer.poll_inbox`) and runs three independent hourly discovery scans: graph and
+semantic people matching plus semantic event recommendations. No separate producer daemon
 is required; `thenetwork-producer` is just a manual one-shot poll for cron/debugging.
 
 - **Producer** (`worker/producer.py`): polls IMAP for unseen mail, enqueues exactly one
@@ -84,6 +84,23 @@ is required; `thenetwork-producer` is just a manual one-shot poll for cron/debug
 This table is security/capability state, not a domain schema over memories. The model
 cannot write consent or read identities from it.
 
+Event recommendations add a similarly narrow operational exception to the freeform
+substrate. Event meaning remains freeform; these tables hold only state that server code
+must enforce:
+
+- **`events`** - stable owner and series identity, raw owner-controlled text, sealed gist
+  and embedding, freeform recurrence, expiry, and cancellation. A recurring series is one
+  row and one stable id.
+- **`event_recommendations`** - one consideration/delivery ledger row per stable event id
+  and person. `notified_at` is written only after SMTP succeeds.
+- **`event_suppressions`** - person-level event-FYI suppression. It is never consulted by
+  the people-matching or introduction paths.
+
+Raw event text, recurrence, and submitter identity do not enter cross-user search or agent
+context. Event search projects only opaque event id, sealed gist, and necessary lifecycle
+fields. The dedicated send capability resolves the recipient and composes fixed mail from
+the stored gist server-side.
+
 There is no `kind`/`direction`/`status`/`category`/`tags`. Those are distinctions the
 agent draws from `text` at reasoning time, not columns the DB enforces. The cardinality
 of `refs` is the only structure, and it is incidental:
@@ -99,7 +116,7 @@ exists because some memory references both, edge weight comes from count/recency
 memories. NetworkX does multi-hop proximity math; the LLM does the language→reference
 mapping at write time. Semantic match over memories lives in `search/match.py`.
 
-## Agent surface - nine tools (`agent/tools.py`)
+## Agent surface - sixteen tools (`agent/tools.py`)
 
 | tool | description |
 |---|---|
@@ -112,6 +129,16 @@ mapping at write time. Semantic match over memories lives in `search/match.py`.
 | `register_person(name)` | onboard an authenticated sender on first contact; self-registration only, with the address supplied from the verified inbound sender - the id it returns is what later `remember` calls key off |
 | `escalate(reason)` | flag this email for human review and notify `admin_emails`; no auto-reply is sent for true escalations. For authenticated unknown senders, it sends the fixed first-contact welcome instead of escalating. The fallback when no safe, useful action is clear (e.g. an unauthenticated first contact) |
 | `no_action(reason)` | record that no reply, outreach, or memory is warranted (spam, automated mail, no genuine ask); a no-op that notifies no one - the explicit way to end a run without dispatching anything, so a deliberate no-op is distinguishable from a dropped response |
+| `create_event(text, expires_at, recurrence)` | create one authenticated sender-owned event or recurring series; sanitize and embed its cross-user gist |
+| `update_event(event_id, text, expires_at, recurrence)` | replace an authenticated owner's event content while preserving its stable id and refreshing its gist/embedding |
+| `cancel_event(event_id)` | cancel an authenticated owner's event so it cannot be searched or recommended |
+| `search_events(query)` | search active events through the gist-only projection; raw event text and owner identity are absent |
+| `send_event_recommendation(event_id)` | send the scan-bound event to the current authenticated proactive recipient using fixed server-composed copy; lifecycle, event suppression, and ledger deduplication are rechecked |
+| `stop_event_recommendations()` | suppress event FYIs only for the authenticated sender |
+| `resume_event_recommendations()` | remove only the authenticated sender's event-FYI suppression |
+
+The event path is deliberately a one-way FYI service. It has no reminders, RSVP or
+attendance tracking, follow-up, calendar integration, or people-recommendation opt-out.
 
 ## Stack
 
