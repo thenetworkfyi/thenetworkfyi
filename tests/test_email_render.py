@@ -24,7 +24,6 @@ from thenetwork.email.render import (
     render_conversational_email,
     render_fixed_email,
 )
-from thenetwork.settings import Settings
 
 
 def _visible_html(html: str) -> str:
@@ -38,7 +37,7 @@ def _visible_html(html: str) -> str:
 def test_conversational_renderer_escapes_injection_and_does_not_autolink():
     body = '<script>steal()</script> <img src=x onerror="steal()"> & "quotes" https://bad.example'
 
-    rendered = render_conversational_email(body, html_enabled=True)
+    rendered = render_conversational_email(body)
 
     assert rendered.html is not None
     assert "<script>steal()</script>" not in rendered.html
@@ -58,7 +57,6 @@ def test_conversational_renderer_preserves_paragraphs_breaks_and_unicode():
     rendered = render_conversational_email(
         body,
         signature_variant=SignatureVariant.NONE,
-        html_enabled=True,
     )
 
     assert (
@@ -81,7 +79,6 @@ def test_fixed_renderer_uses_only_named_template_and_escapes_context():
             person_a_name='<img src=x onerror="steal()">',
             person_b_name="Renée & O'Connor",
         ),
-        html_enabled=True,
     )
 
     assert rendered.html is not None
@@ -117,7 +114,6 @@ def test_worker_fixed_templates_have_equivalent_plain_and_html_parts(
         context,
         signature_variant=SignatureVariant.NONE,
         quoted_message=QuotedMessage("Original line", "Tuesday"),
-        html_enabled=True,
     )
 
     assert rendered.html is not None
@@ -151,7 +147,6 @@ def test_consent_request_renderer_preserves_anonymous_plain_body_and_escapes_con
             reply_token="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa<script>",
         ),
         signature_variant=SignatureVariant.NONE,
-        html_enabled=True,
     )
 
     assert (
@@ -199,7 +194,6 @@ def test_fixed_consent_replies_have_equivalent_plain_and_html_meaning(
         template,
         EmptyEmailContext(),
         signature_variant=SignatureVariant.NONE,
-        html_enabled=True,
     )
 
     assert rendered.text == expected
@@ -230,7 +224,6 @@ def test_event_recommendation_template_escapes_only_the_sealed_gist():
             notice=EventRecommendationNotice.FIRST,
         ),
         signature_variant=SignatureVariant.NONE,
-        html_enabled=True,
     )
 
     assert rendered.html is not None
@@ -257,7 +250,6 @@ def test_signature_variants_are_rendered_once(variant, expected_signature):
         "A short note.",
         signature_variant=variant,
         referral_account="join@example.com",
-        html_enabled=True,
     )
 
     assert rendered.html is not None
@@ -272,7 +264,6 @@ def test_plain_and_html_have_equivalent_meaning_and_ordering():
     rendered = render_conversational_email(
         "First line\nsecond line\n\nSecond paragraph",
         quoted_message=QuotedMessage("Original line\nSecond original", "Tuesday"),
-        html_enabled=True,
     )
 
     assert rendered.html is not None
@@ -302,22 +293,8 @@ def test_plain_and_html_have_equivalent_meaning_and_ordering():
     )
 
 
-def test_plain_only_fallback_is_explicit_and_complete():
-    rendered = render_conversational_email("Body", html_enabled=False)
-
-    assert rendered.html is None
-    assert (
-        rendered.text
-        == "Body\n\n--\nThe Network\nAn automated connection service\nReply anytime."
-    )
-
-
-def test_html_feature_flag_defaults_to_plain_only():
-    assert Settings.model_fields["html_email_enabled"].default is False
-
-
 def test_html_document_is_accessible_fluid_and_has_no_remote_assets():
-    rendered = render_conversational_email("Body", html_enabled=True)
+    rendered = render_conversational_email("Body")
 
     assert rendered.html is not None
     assert '<html lang="en" dir="ltr">' in rendered.html

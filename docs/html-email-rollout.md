@@ -29,24 +29,22 @@ and the plain-text view. Record the client/version, fixture identifier, result,
 and screenshot location in the release ticket; do not store real message bodies
 or HTML there.
 
-## Baseline and phased enablement
+## Baseline and release monitoring
 
-Keep the feature flag plain-only during a baseline window of at least 14 days or
+Before release, record the existing delivery baseline for at least 14 days or
 100 delivered user-facing messages per message type, whichever is later. For
 each type, capture delivery attempts, SMTP successes, bounces, replies within
 seven days, median time to first reply, consent completion, event opt-out or
 suppression, complaints, and HTML-related support reports. Do not add open or
 click tracking.
 
-After fixture and client review pass, enable one user-facing message type for a
-small cohort. Keep all other types plain-only. Expand only after the same metric
-window shows no material degradation against that type's baseline. The flag must
-force the complete canonical plain message, with the same subject, threading,
-rate-limit charge, and domain behavior.
+After fixture and client review pass, release all applicable user-facing message
+types with their complete plain alternative. Compare the same metrics against
+the baseline and investigate material degradation without adding tracking.
 
 ## Rollback criteria
 
-Immediately return the affected type to plain-only and open an incident when:
+Open an incident and pause further rollout work when:
 
 - a delivered message lacks its plain part, has alternatives in the wrong order,
   has a visible-text/signature/token mismatch, or violates the fixture safety
@@ -59,8 +57,7 @@ Immediately return the affected type to plain-only and open an incident when:
   baseline after at least 100 deliveries, or two credible HTML-related complaint
   or support reports arrive in a day.
 
-Rollback is a feature-flag operation, not a retry or a resend. Preserve the
-minimal structural delivery evidence needed to investigate, follow existing
-redaction and retention rules, and do not put raw message content in public
-artifacts. Re-enable only after a new synthetic fixture pass, client reproduction
-check, and a documented owner approval.
+Preserve the minimal structural delivery evidence needed to investigate, follow
+existing redaction and retention rules, and do not put raw message content in
+public artifacts. Any corrective deployment requires a new synthetic fixture
+pass, client reproduction check, and a documented owner approval.

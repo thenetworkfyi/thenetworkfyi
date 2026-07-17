@@ -205,10 +205,9 @@ def render_conversational_email(
     *,
     signature_variant: SignatureVariant = SignatureVariant.STANDARD,
     quoted_message: QuotedMessage | None = None,
-    html_enabled: bool | None = None,
     referral_account: str | None = None,
 ) -> RenderedEmail:
-    """Render canonical conversational text and, when enabled, its HTML peer.
+    """Render canonical conversational text and its trusted HTML peer.
 
     Paragraphs are separated by blank lines and individual source line breaks
     become ``<br>`` elements. The input is never interpreted as HTML, Markdown,
@@ -230,7 +229,6 @@ def render_conversational_email(
         body_text=plain_body,
         signature_variant=signature_variant,
         quoted_message=quoted_message,
-        html_enabled=html_enabled,
         referral_account=referral_account,
     )
 
@@ -241,7 +239,6 @@ def render_fixed_email(
     *,
     signature_variant: SignatureVariant = SignatureVariant.STANDARD,
     quoted_message: QuotedMessage | None = None,
-    html_enabled: bool | None = None,
     referral_account: str | None = None,
 ) -> RenderedEmail:
     """Render one named fixed template from its matching typed context.
@@ -262,8 +259,6 @@ def render_fixed_email(
         referral_account=referral_account,
     )
 
-    if not _html_is_enabled(html_enabled):
-        return RenderedEmail(text=text, html=None)
     try:
         html = _render_document(
             body_paragraphs=None,
@@ -344,11 +339,8 @@ def _render_html_alternative(
     body_text: str,
     signature_variant: SignatureVariant,
     quoted_message: QuotedMessage | None,
-    html_enabled: bool | None,
     referral_account: str | None,
 ) -> RenderedEmail:
-    if not _html_is_enabled(html_enabled):
-        return RenderedEmail(text=text, html=None)
     try:
         html = _render_document(
             body_paragraphs=_paragraphs(body_text),
@@ -448,10 +440,6 @@ def _paragraphs(text: str) -> tuple[tuple[str, ...], ...]:
 
 def _normalize_text(text: str) -> str:
     return text.replace("\r\n", "\n").replace("\r", "\n")
-
-
-def _html_is_enabled(html_enabled: bool | None) -> bool:
-    return get_settings().html_email_enabled if html_enabled is None else html_enabled
 
 
 def _require_text(value: object, name: str) -> None:

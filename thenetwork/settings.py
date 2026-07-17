@@ -165,11 +165,6 @@ class Settings(BaseSettings):
     # not agent-composed, so prompt injection can't alter or suppress it)
     growth_footer_enabled: bool = True
 
-    # HTML is an optional presentation alternative to the canonical plain-text
-    # message. Leave it disabled by default so a configuration rollback always
-    # produces complete plain-only mail without changing the message body.
-    html_email_enabled: bool = False
-
     # Proactive semantic rematch (worker/proactive.py:scan_for_matches). Every
     # run revisits sanitized standing notes for people without an active consent
     # pair. This is unsolicited outreach, so the similarity floor is deliberately

@@ -9,8 +9,8 @@ Scope: user-facing application mail and the simulation harness
 The Network will send lightweight `multipart/alternative` email: a complete
 `text/plain` part followed by a server-rendered `text/html` part. Plain text is
 canonical. The agent supplies only subject and plain text; the service owns
-template choice, markup, signature, links, and MIME assembly. Plain-only output
-remains a feature-flag fallback and a permanent recipient alternative.
+template choice, markup, signature, links, and MIME assembly. The complete
+plain part remains the permanent recipient alternative.
 
 The presentation is a carefully formatted personal email, not a newsletter:
 one column, system fonts, restrained spacing, no decorative media, and a fixed
@@ -176,10 +176,9 @@ Do not run simulations as part of this work without explicit user approval.
 Fixture-level MIME checks and unit tests are sufficient until that approval is
 given. Do not publish rendered HTML previews containing real simulation content.
 
-Enable message types gradually behind a plain-only rollback flag after fixture
-validation in the supported-client matrix. Track reply rate, time to reply,
-consent completion, event suppression, bounces, complaints, and support reports.
-Do not add open or click tracking.
+Release after fixture validation in the supported-client matrix. Track reply
+rate, time to reply, consent completion, event suppression, bounces, complaints,
+and support reports. Do not add open or click tracking.
 
 ## Decision status
 
@@ -192,7 +191,7 @@ Do not add open or click tracking.
 | Template system | Strict, autoescaped Jinja package templates. |
 | Agent HTML authority | None. |
 | Assets and links | No remote assets, tracking, scripts, forms, hidden content, arbitrary links, or auto-links. |
-| Operational fallback | Stable feature flag forces plain-only output. |
+| Operational fallback | A renderer error preserves the complete plain message. |
 
 Renderer work has no unresolved presentation inputs. Remaining decisions are
 operational: rollout cohort/duration based on actual volume, and whether later
