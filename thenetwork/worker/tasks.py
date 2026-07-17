@@ -38,12 +38,17 @@ from thenetwork.email.inbound import (
     is_near_empty_body,
 )
 from thenetwork.email.outbound import (
-    FIRST_CONTACT_WELCOME_REPLY,
     _direct_reply_kwargs,
     _thread_headers,
     notify_admins,
     reply_subject,
     send_reply,
+)
+from thenetwork.email.render import (
+    FirstContactWelcomeEmailContext,
+    FixedEmailTemplate,
+    InfrastructureRejectionEmailContext,
+    InfrastructureRejectionReason,
 )
 from thenetwork.memory.sanitize import assert_presidio_ready
 from thenetwork.introductions import process_consent_reply
@@ -78,20 +83,6 @@ app = procrastinate.App(
 REJECT_RATE_LIMIT = "rate_limit"
 REJECT_CONTENT_SCAN = "content_scan"
 
-_INFRASTRUCTURE_REJECTION_REPLIES = {
-    REJECT_BODY_OVERSIZE: (
-        "We could not process your email because the message body was too large. "
-        "Please send a shorter message and try again."
-    ),
-    REJECT_RATE_LIMIT: (
-        "We could not process your email because this address is sending too many "
-        "messages right now. Please wait and try again later."
-    ),
-    REJECT_CONTENT_SCAN: (
-        "We could not process your email because it was blocked by an automated "
-        "safety scan. Please revise the message and try again."
-    ),
-}
 _WELCOME_LIMIT = parse("1/day")
 _welcome_limiter: strategies.FixedWindowRateLimiter | None = None
 _welcome_storage: PostgresFixedWindowStorage | None = None
@@ -157,15 +148,17 @@ def _send_infrastructure_rejection_reply(
     inbound_date: str | None = None,
     trace_id: str | None = None,
 ) -> None:
-    body_text = _INFRASTRUCTURE_REJECTION_REPLIES[reason]
     if not _is_known_authenticated_sender(sender_email, sender_authenticated):
         return
 
     send_reply(
         to_address=sender_email,
         subject=f"Re: {subject}",
-        body_text=body_text,
         include_footer=False,
+        fixed_template=FixedEmailTemplate.INFRASTRUCTURE_REJECTION,
+        fixed_context=InfrastructureRejectionEmailContext(
+            InfrastructureRejectionReason(reason)
+        ),
         **_trace_kwargs(trace_id),
         **_direct_reply_kwargs(
             inbound_message_id=inbound_message_id,
@@ -200,8 +193,9 @@ def _send_first_contact_welcome_reply(
     send_reply(
         to_address=sender_email,
         subject=reply_subject(subject, fallback="How to join"),
-        body_text=FIRST_CONTACT_WELCOME_REPLY,
         include_footer=False,
+        fixed_template=FixedEmailTemplate.FIRST_CONTACT_WELCOME,
+        fixed_context=FirstContactWelcomeEmailContext(),
         **_trace_kwargs(trace_id),
         **_direct_reply_kwargs(
             inbound_message_id=inbound_message_id,

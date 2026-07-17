@@ -34,6 +34,16 @@ class FixedEmailTemplate(str, Enum):
     """Closed set of fixed server-selected email bodies."""
 
     INTRODUCTION = "introduction"
+    FIRST_CONTACT_WELCOME = "first_contact_welcome"
+    INFRASTRUCTURE_REJECTION = "infrastructure_rejection"
+
+
+class InfrastructureRejectionReason(str, Enum):
+    """Server-owned reasons for a fixed infrastructure rejection reply."""
+
+    BODY_OVERSIZE = "body_oversize"
+    RATE_LIMIT = "rate_limit"
+    CONTENT_SCAN = "content_scan"
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,6 +52,25 @@ class IntroductionEmailContext:
 
     person_a_name: str
     person_b_name: str
+
+
+@dataclass(frozen=True, slots=True)
+class FirstContactWelcomeEmailContext:
+    """Typed context for the fixed first-contact welcome email."""
+
+
+@dataclass(frozen=True, slots=True)
+class InfrastructureRejectionEmailContext:
+    """Typed context for a fixed infrastructure rejection email."""
+
+    reason: InfrastructureRejectionReason
+
+
+type FixedEmailContext = (
+    IntroductionEmailContext
+    | FirstContactWelcomeEmailContext
+    | InfrastructureRejectionEmailContext
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +101,29 @@ _FIXED_TEMPLATE_FILES: dict[FixedEmailTemplate, tuple[str, str]] = {
     FixedEmailTemplate.INTRODUCTION: (
         "fixed/introduction.txt",
         "fixed/introduction.html",
+    ),
+    FixedEmailTemplate.FIRST_CONTACT_WELCOME: (
+        "fixed/first_contact_welcome.txt",
+        "fixed/first_contact_welcome.html",
+    ),
+    FixedEmailTemplate.INFRASTRUCTURE_REJECTION: (
+        "fixed/infrastructure_rejection.txt",
+        "fixed/infrastructure_rejection.html",
+    ),
+}
+
+_INFRASTRUCTURE_REJECTION_COPY = {
+    InfrastructureRejectionReason.BODY_OVERSIZE: (
+        "We could not process your email because the message body was too large. "
+        "Please send a shorter message and try again."
+    ),
+    InfrastructureRejectionReason.RATE_LIMIT: (
+        "We could not process your email because this address is sending too many "
+        "messages right now. Please wait and try again later."
+    ),
+    InfrastructureRejectionReason.CONTENT_SCAN: (
+        "We could not process your email because it was blocked by an automated "
+        "safety scan. Please revise the message and try again."
     ),
 }
 
@@ -121,9 +173,10 @@ def render_conversational_email(
 
 def render_fixed_email(
     template: FixedEmailTemplate,
-    context: IntroductionEmailContext,
+    context: FixedEmailContext,
     *,
     signature_variant: SignatureVariant = SignatureVariant.STANDARD,
+    quoted_message: QuotedMessage | None = None,
     html_enabled: bool | None = None,
     referral_account: str | None = None,
 ) -> RenderedEmail:
@@ -134,23 +187,14 @@ def render_fixed_email(
     """
     if not isinstance(template, FixedEmailTemplate):
         raise TypeError("template must be a FixedEmailTemplate")
-    if template is not FixedEmailTemplate.INTRODUCTION or not isinstance(
-        context, IntroductionEmailContext
-    ):
-        raise TypeError("introduction requires IntroductionEmailContext")
-    _require_text(context.person_a_name, "context.person_a_name")
-    _require_text(context.person_b_name, "context.person_b_name")
+    template_context = _fixed_template_context(template, context)
 
     text_name, _html_name = _FIXED_TEMPLATE_FILES[template]
-    template_context = {
-        "person_a_name": context.person_a_name,
-        "person_b_name": context.person_b_name,
-    }
     plain_body = _ENVIRONMENT.get_template(text_name).render(template_context).strip()
     text = _assemble_plain_text(
         plain_body,
         signature_variant=signature_variant,
-        quoted_message=None,
+        quoted_message=quoted_message,
         referral_account=referral_account,
     )
 
@@ -162,12 +206,37 @@ def render_fixed_email(
             fixed_template=template,
             fixed_context=template_context,
             signature_variant=signature_variant,
-            quoted_message=None,
+            quoted_message=quoted_message,
             referral_account=referral_account,
         )
     except TemplateError:
         return RenderedEmail(text=text, html=None)
     return RenderedEmail(text=text, html=html)
+
+
+def _fixed_template_context(
+    template: FixedEmailTemplate, context: FixedEmailContext
+) -> dict[str, str]:
+    if template is FixedEmailTemplate.INTRODUCTION and isinstance(
+        context, IntroductionEmailContext
+    ):
+        _require_text(context.person_a_name, "context.person_a_name")
+        _require_text(context.person_b_name, "context.person_b_name")
+        return {
+            "person_a_name": context.person_a_name,
+            "person_b_name": context.person_b_name,
+        }
+    if template is FixedEmailTemplate.FIRST_CONTACT_WELCOME and isinstance(
+        context, FirstContactWelcomeEmailContext
+    ):
+        return {}
+    if template is FixedEmailTemplate.INFRASTRUCTURE_REJECTION and isinstance(
+        context, InfrastructureRejectionEmailContext
+    ):
+        if not isinstance(context.reason, InfrastructureRejectionReason):
+            raise TypeError("context.reason must be an InfrastructureRejectionReason")
+        return {"message": _INFRASTRUCTURE_REJECTION_COPY[context.reason]}
+    raise TypeError(f"{template.value} requires its matching typed context")
 
 
 def _render_html_alternative(

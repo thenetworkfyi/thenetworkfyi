@@ -11,6 +11,8 @@ from imap_tools import MailBox, MailMessageFlags
 
 from thenetwork.audit import audit_event, audit_span, audit_trace
 from thenetwork.email.render import (
+    FirstContactWelcomeEmailContext,
+    FixedEmailContext,
     FixedEmailTemplate,
     IntroductionEmailContext,
     QuotedMessage,
@@ -27,18 +29,12 @@ from thenetwork.settings import get_settings
 # escalate() routes an authenticated first contact to a standard welcome
 # instead of human escalation (agent/tools.py) - in both cases the sender
 # doesn't yet know how to join.
-FIRST_CONTACT_WELCOME_REPLY = """\
-Welcome,
-
-To join, let us know something about yourself, what might be interesting
-to you and/or what you're working on. What you send is what gets matched
-on. Specifics help, but don't feel like you need to write a long essay.
-A few sentences are more than enough to get started.
-
-You may not hear from us for a while. Introductions happen when they
-make sense, not on a schedule. Silence means the right thing has yet
-to present itself.
-"""
+FIRST_CONTACT_WELCOME_REPLY = render_fixed_email(
+    FixedEmailTemplate.FIRST_CONTACT_WELCOME,
+    FirstContactWelcomeEmailContext(),
+    signature_variant=SignatureVariant.NONE,
+    html_enabled=False,
+).text
 
 MAX_QUOTED_TRAIL_CHARS = 2_000
 
@@ -169,13 +165,15 @@ def _direct_reply_kwargs(
 def send_reply(
     to_address: str,
     subject: str,
-    body_text: str,
+    body_text: str | None = None,
     in_reply_to: str | None = None,
     references: str | None = None,
     quoted_body_text: str | None = None,
     quoted_date: str | None = None,
     include_footer: bool = True,
     trace_id: str | None = None,
+    fixed_template: FixedEmailTemplate | None = None,
+    fixed_context: FixedEmailContext | None = None,
 ) -> None:
     """Send an email from the configured account.
 
@@ -183,16 +181,29 @@ def send_reply(
     IMAP pollers skip our outbound replies and don't create a loop.
 
     The trusted renderer, rather than any caller, owns the HTML alternative,
-    signature, referral footer, and quoted-message markup. Set
-    ``include_footer=False`` for internal/ops mail that should have no
+    signature, referral footer, and quoted-message markup. ``fixed_template``
+    accepts only a named server-owned template with its matching typed context.
+    Set ``include_footer=False`` for internal/ops mail that should have no
     signature or referral copy.
     """
+    if fixed_template is not None and fixed_context is None:
+        raise TypeError("fixed_template requires fixed_context")
+    if fixed_template is None and fixed_context is not None:
+        raise TypeError("fixed_context requires fixed_template")
+    if fixed_template is not None and body_text is not None:
+        raise TypeError("fixed-template replies do not accept body_text")
+    if fixed_template is None and not isinstance(body_text, str):
+        raise TypeError("conversational replies require body_text")
+
+    template_id = (
+        fixed_template.value if fixed_template is not None else "conversational"
+    )
     with (
         audit_trace(trace_id),
         audit_span(
             "email.smtp_send",
             recipient_count=1,
-            template_id="conversational",
+            template_id=template_id,
         ),
     ):
         s = get_settings()
@@ -204,17 +215,27 @@ def send_reply(
         quoted_message = (
             _quoted_message(quoted_body_text, quoted_date) if quoted_body_text else None
         )
-        rendered = render_conversational_email(
-            body_text,
-            signature_variant=signature_variant,
-            quoted_message=quoted_message,
-            html_enabled=s.html_email_enabled,
-            referral_account=s.imap_account,
-        )
+        if fixed_template is None:
+            rendered = render_conversational_email(
+                body_text,
+                signature_variant=signature_variant,
+                quoted_message=quoted_message,
+                html_enabled=s.html_email_enabled,
+                referral_account=s.imap_account,
+            )
+        else:
+            rendered = render_fixed_email(
+                fixed_template,
+                fixed_context,
+                signature_variant=signature_variant,
+                quoted_message=quoted_message,
+                html_enabled=s.html_email_enabled,
+                referral_account=s.imap_account,
+            )
         audit_event(
             "email.rendered",
             html_present=rendered.html is not None,
-            template_id="conversational",
+            template_id=template_id,
             recipient_count=1,
             outcome="success",
         )

@@ -8,6 +8,7 @@ from email.utils import getaddresses, parsedate_to_datetime
 from unittest.mock import MagicMock, patch
 
 from imap_tools import MailMessageFlags
+import pytest
 
 from thenetwork.audit import LOGGER_NAME
 from thenetwork.email.render import RenderedEmail
@@ -75,6 +76,65 @@ def test_append_called_on_success():
         )
 
     mb_instance.append.assert_called_once()
+
+
+def test_fixed_worker_reply_is_multipart_and_preserves_threading():
+    from thenetwork.email.outbound import FIRST_CONTACT_WELCOME_REPLY, send_reply
+    from thenetwork.email.render import (
+        FirstContactWelcomeEmailContext,
+        FixedEmailTemplate,
+    )
+
+    captured = []
+    smtp_instance = _mock_smtp()
+    smtp_instance.send_message.side_effect = captured.append
+    mock_mailbox, _ = _mock_mailbox_success()
+
+    with (
+        patch(
+            "thenetwork.email.outbound.get_settings",
+            return_value=_mock_settings(html_email_enabled=True),
+        ),
+        patch("smtplib.SMTP", return_value=smtp_instance),
+        patch("thenetwork.email.outbound.MailBox", mock_mailbox),
+    ):
+        send_reply(
+            to_address="new@example.com",
+            subject="How to join",
+            include_footer=False,
+            fixed_template=FixedEmailTemplate.FIRST_CONTACT_WELCOME,
+            fixed_context=FirstContactWelcomeEmailContext(),
+            in_reply_to="<original@example.com>",
+            references="<root@example.com> <original@example.com>",
+        )
+
+    message = captured[0]
+    assert message["In-Reply-To"] == "<original@example.com>"
+    assert message["References"] == "<root@example.com> <original@example.com>"
+    assert message.get_body(preferencelist=("plain",)).get_content().strip() == (
+        FIRST_CONTACT_WELCOME_REPLY
+    )
+    assert [part.get_content_type() for part in message.iter_parts()] == [
+        "text/plain",
+        "text/html",
+    ]
+
+
+def test_fixed_worker_reply_rejects_callers_providing_freeform_body_text():
+    from thenetwork.email.outbound import send_reply
+    from thenetwork.email.render import (
+        FirstContactWelcomeEmailContext,
+        FixedEmailTemplate,
+    )
+
+    with pytest.raises(TypeError, match="do not accept body_text"):
+        send_reply(
+            to_address="new@example.com",
+            subject="How to join",
+            body_text="<script>steal()</script>",
+            fixed_template=FixedEmailTemplate.FIRST_CONTACT_WELCOME,
+            fixed_context=FirstContactWelcomeEmailContext(),
+        )
 
 
 def test_group_introduction_addresses_both_consented_people():
