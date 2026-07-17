@@ -192,8 +192,8 @@ The compose stack uses `pgvector/pgvector:pg17`; use the corresponding local Pos
 
 ### Population situations
 
-`sim run` uses the authored population of 17 personas by default. The original first ten
-remain available for backward-compatible smoke runs with `--personas 10`; the seven later
+`sim run` uses the authored population of 19 personas by default. The original first ten
+remain available for backward-compatible smoke runs with `--personas 10`; the nine later
 personas are deliberately varied situations, not a scenario script. Their replies remain
 prompt-emergent when `--llm-personas` is enabled, so the checks describe observable
 outcomes rather than force a particular conversation.
@@ -220,6 +220,14 @@ outcomes rather than force a particular conversation.
 - **Petra Lindqvist** starts with a vague archival-science and data-management interest,
   then reveals her museum-archive provenance interest only after a thoughtful follow-up.
   Tier 2 expects that provenance interest in memory.
+- **Sloane Park** registers as an event organizer on the first tick. A tick 2 intervention
+  tells the LLM persona that a recurring municipal-library heat-pump workshop is confirmed;
+  the persona must submit it through ordinary email as an event exactly once, rather than
+  treating it as a people-introduction request.
+- **Mina Brooks** registers a deliberately aligned standing event interest on tick 1 and
+  becomes dormant from tick 2 onward. This ordering makes her sealed memory available before
+  Sloane's event is created and before the event scan runs. Theo Anders is the authored
+  unrelated control for this outcome.
 
 The recorder emits three score-event tiers: tier 1 for delivered-mail SEAL checks, tier 2
 for memory expectations, and `sim.score.outcome` for the persona outcome predicates. The
@@ -240,7 +248,7 @@ clarification, consent, and dormancy behaviors are unchanged.
 For a user-run end-to-end evaluation against a local pgvector PostgreSQL instance:
 
 ```bash
-uv run sim run --real-process --llm-personas --ticks 10 --message-budget 6 --proactive-every 1
+uv run sim run --real-process --llm-personas --ticks 10 --proactive-every 2
 ```
 
 `--proactive-every` defaults to `0` (disabled). When enabled, each simulation interval runs
@@ -248,6 +256,24 @@ all production discovery paths: graph people matching, semantic people rematchin
 independent semantic event scan. Their deferred jobs are captured and processed in the same
 loop. Omitting it means none of those periodic scans fire, so dormant-user outcomes that
 depend on them (e.g. Omar Feld's rematch) and event recommendation delivery are not exercised.
+For the default event situation, use `--proactive-every 2`: Mina's interest is recorded on
+tick 1, Sloane submits the confirmed event on tick 2, and that tick's scan runs after persona
+turns so it can consider the versioned event for Mina. Later even-numbered scans prove
+deduplication by producing no second trigger, ledger row, or delivered FYI for the stable
+recurring series. Omitting `--message-budget` preserves each authored persona's configured
+budget.
+
+In `events.jsonl`, `sim.proactive_job_deferred` distinguishes event work with
+`trigger_kind: "event"`; it carries only a stable `event_key`, `event_version`, trace id, fixed
+subject, and optional recipient sender pseudonym. Event-trigger bodies are deliberately not
+copied into this public artifact. People-matching jobs use `trigger_kind: "people"`. Delivered
+message events similarly retain `body_chars` rather than message content. Confirm an event
+delivery by correlating the event outcome finding with a successful
+`agent.tool.completed` / `send_event_recommendation` entry in `audit.jsonl`; the private raw
+mbox and database dump remain the only artifacts containing exact mail or database state.
+Simulation audit files omit `agent.model_response` records entirely: general audit redaction
+removes identities and secrets, but event submissions are freeform owner-controlled content
+that must not be copied into a publishable artifact even when it contains no recognizable PII.
 
 Use [simulation-review.md](simulation-review.md) to conduct either an isolated run review or
 a comparison with a compatible baseline, interpret the artifacts and score tiers, inspect

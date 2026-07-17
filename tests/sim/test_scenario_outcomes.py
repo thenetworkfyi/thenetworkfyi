@@ -8,13 +8,19 @@ from thenetwork.db.models import Memory
 from thenetwork.sim.personas.population import (
     DEFAULT_EXPECTATIONS,
     DEFAULT_OUTCOME_CHECKS,
+    EVENT_ATTENDEE_EMAIL,
+    EVENT_CONTROL_EMAIL,
+    EVENT_ORGANIZER_EMAIL,
     NADIA_EMAIL,
     PETRA_EMAIL,
 )
 from thenetwork.sim.scoring.scoring import (
+    EventOutcomeFact,
+    EventRecommendationOutcomeFact,
     IntroductionRevealAuthorization,
     MailFacts,
     OutcomeCheck,
+    ProactiveEventTriggerOutcomeFact,
     ScenarioOutcome,
     score_memory_expectations,
     score_scenario_outcomes,
@@ -184,10 +190,19 @@ def _default_outcome() -> ScenarioOutcome:
                 "consent_state": "one_consented",
                 "sender_id_hash": "snd_v1_omar",
             },
+            {
+                "event": "agent.tool.completed",
+                "tool_name": "send_event_recommendation",
+                "outcome": "success",
+                "sender_id_hash": "snd_v1_mina",
+            },
         ),
         sender_id_hashes={
             "omar.sim@example.test": "snd_v1_omar",
             "ines.sim@example.test": "snd_v1_ines",
+            EVENT_ORGANIZER_EMAIL: "snd_v1_sloane",
+            EVENT_ATTENDEE_EMAIL: "snd_v1_mina",
+            EVENT_CONTROL_EMAIL: "snd_v1_theo",
         },
         mail_facts=(
             MailFacts(
@@ -199,8 +214,42 @@ def _default_outcome() -> ScenarioOutcome:
                     "NO to decline, or REVOKE to withdraw consent."
                 ),
             ),
+            MailFacts(
+                sender="join@example.test",
+                recipients=frozenset({EVENT_ATTENDEE_EMAIL}),
+                subject="An event you might care about",
+                body=(
+                    "An event that may be relevant. Would you like occasional event "
+                    "recommendations like this? Reply yes or no. A no stops only event "
+                    "recommendations."
+                ),
+            ),
         ),
         memory_counts={"vic.sim@example.test": 6},
+        event_rows=(
+            EventOutcomeFact(
+                event_key="evt_v1_default",
+                owner_sender_id_hash="snd_v1_sloane",
+                version=1,
+                active=True,
+                recurring=True,
+            ),
+        ),
+        event_recommendation_rows=(
+            EventRecommendationOutcomeFact(
+                event_key="evt_v1_default",
+                recipient_sender_id_hash="snd_v1_mina",
+                event_version=1,
+                notified=True,
+            ),
+        ),
+        proactive_event_triggers=(
+            ProactiveEventTriggerOutcomeFact(
+                event_key="evt_v1_default",
+                recipient_sender_id_hash="snd_v1_mina",
+                event_version=1,
+            ),
+        ),
     )
 
 
@@ -213,7 +262,7 @@ def test_default_outcome_checks_cover_all_persona_situations():
     )
 
     assert score.passed is True
-    assert len(score.findings) == 9
+    assert len(score.findings) == 13
     assert all(check.requires_real_process for check in DEFAULT_OUTCOME_CHECKS)
     assert all(check.requires_llm_personas for check in DEFAULT_OUTCOME_CHECKS)
 
@@ -342,6 +391,77 @@ def test_default_outcome_checks_have_failure_fixtures(
 
     assert score.passed is False
     assert score.findings[0].passed is False
+
+
+@pytest.mark.parametrize(
+    ("check_index", "outcome"),
+    [
+        (9, replace(_default_outcome(), event_rows=())),
+        (10, replace(_default_outcome(), proactive_event_triggers=())),
+        (
+            11,
+            replace(
+                _default_outcome(),
+                event_recommendation_rows=(
+                    EventRecommendationOutcomeFact(
+                        event_key="evt_v1_default",
+                        recipient_sender_id_hash="snd_v1_mina",
+                        event_version=1,
+                        notified=False,
+                    ),
+                ),
+            ),
+        ),
+        (
+            12,
+            replace(
+                _default_outcome(),
+                event_recommendation_rows=(
+                    *_default_outcome().event_recommendation_rows,
+                    EventRecommendationOutcomeFact(
+                        event_key="evt_v1_default",
+                        recipient_sender_id_hash="snd_v1_sloane",
+                        event_version=1,
+                        notified=False,
+                    ),
+                ),
+            ),
+        ),
+    ],
+)
+def test_event_outcome_checks_have_failure_fixtures(
+    check_index: int,
+    outcome: ScenarioOutcome,
+):
+    score = score_scenario_outcomes(
+        outcome,
+        (DEFAULT_OUTCOME_CHECKS[check_index],),
+        real_process=True,
+        llm_personas=True,
+    )
+
+    assert score.passed is False
+
+
+def test_event_outcome_evidence_contains_only_safe_correlation_facts():
+    score = score_scenario_outcomes(
+        _default_outcome(),
+        DEFAULT_OUTCOME_CHECKS[9:],
+        real_process=True,
+        llm_personas=True,
+    )
+
+    evidence = repr([finding.evidence for finding in score.findings])
+    assert score.passed is True
+    for sensitive in (
+        EVENT_ORGANIZER_EMAIL,
+        EVENT_ATTENDEE_EMAIL,
+        EVENT_CONTROL_EMAIL,
+        "municipal-library facilities teams",
+        "Sloane Park",
+    ):
+        assert sensitive not in evidence
+    assert "evt_v1_default" in evidence
 
 
 def test_ines_clarification_check_ignores_other_personas_clarify_events():

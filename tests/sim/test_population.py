@@ -10,6 +10,8 @@ from thenetwork.sim.run.loop import SimTickLoop
 from thenetwork.sim.personas.persona import TinyPersonEmailAdapter
 from thenetwork.sim.personas.population import (
     DEFAULT_EXPECTATIONS,
+    EVENT_ATTENDEE_EMAIL,
+    EVENT_ORGANIZER_EMAIL,
     PETRA_EMAIL,
     SimSchedule,
     default_population,
@@ -57,7 +59,7 @@ class QualifyingPetra:
 def test_default_population_has_authored_personas_and_schedule():
     population = default_population(agent_address="join@example.test")
 
-    assert len(population) == 17
+    assert len(population) == 19
     assert len({persona.config.email for persona in population}) == len(population)
     assert all(persona.opening_body for persona in population)
 
@@ -137,6 +139,8 @@ def test_default_population_has_authored_personas_and_schedule():
         "Omar Feld",
         "Nadia Reyes",
         "Petra Lindqvist",
+        "Sloane Park",
+        "Mina Brooks",
     }
     assert additions["Ruth Calder"].config.goal.endswith(
         "include the [intro:...] token line from the proposal."
@@ -207,6 +211,23 @@ def test_default_population_has_authored_personas_and_schedule():
         "I am interested in archival science and data management, but I am still "
         "figuring out what kind of connection would be useful."
     )
+    sloane = additions["Sloane Park"]
+    assert sloane.config.email == EVENT_ORGANIZER_EMAIL
+    assert "record it as a recurring event" in sloane.config.goal
+    assert "person-to-person introduction" in sloane.config.goal
+    assert sloane.config.message_budget == 4
+    assert sloane.scheduled_events[0].tick == 2
+    assert sloane.scheduled_events[0].persona_email == EVENT_ORGANIZER_EMAIL
+    assert "quarterly online workshop" in sloane.scheduled_events[0].text
+    assert "expiring December 31, 2035" in sloane.scheduled_events[0].text
+    mina = additions["Mina Brooks"]
+    assert mina.config.email == EVENT_ATTENDEE_EMAIL
+    assert "standing interest in occasional event recommendations" in mina.config.goal
+    assert "municipal-library facilities teams" in mina.opening_body
+    assert "heat-pump retrofits" in mina.opening_body
+    assert mina.config.message_budget == 2
+    assert mina.interruptions[0].start_tick == 2
+    assert mina.interruptions[0].kind == "dormancy"
     assert all(
         persona.config.agent_address == "join@example.test"
         for persona in additions.values()

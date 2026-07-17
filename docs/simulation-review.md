@@ -88,7 +88,9 @@ Review artifacts in this order:
    completion.
 3. `audit.jsonl` is the privacy-safe structural trace of the production processing path. Use
    it for tool completions, consent transitions, errors, and trace correlation. It exists only
-   for real-process runs.
+   for real-process runs. Simulation audit capture deliberately omits `agent.model_response`
+   records because their freeform tool arguments can include raw owner-controlled event text;
+   use the retained structural tool events rather than expecting model copy in this artifact.
 4. `all-mail.mbox` and `transcript.md` are redacted, publishable views. They preserve
    message order and debugging structure, but they are not a source of raw identity or
    conversation content.

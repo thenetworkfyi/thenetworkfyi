@@ -13,8 +13,14 @@ from procrastinate import utils as procrastinate_utils
 from procrastinate.testing import InMemoryConnector
 from pydantic_ai.exceptions import ModelHTTPError
 
-from thenetwork.audit import audit_event
-from thenetwork.db.models import IntroductionConsent, Memory, Person
+from thenetwork.audit import audit_event, audit_model_trace
+from thenetwork.db.models import (
+    Event,
+    EventRecommendation,
+    IntroductionConsent,
+    Memory,
+    Person,
+)
 from thenetwork.security import log_redaction
 from thenetwork.sim.cli import main, run_sim
 from thenetwork.sim.scoring.compare import compare_runs, load_run_metrics
@@ -30,10 +36,17 @@ from thenetwork.sim.run.recorder import (
     _assemble_scenario_outcome,
     _config_payload,
     _database_outcome_state,
+    _event_correlation_key,
     _recording_process,
 )
 from thenetwork.sim.scenarios import default_strong_match_configs
-from thenetwork.sim.scoring.scoring import IntroductionRevealAuthorization, OutcomeCheck
+from thenetwork.sim.scoring.scoring import (
+    EventOutcomeFact,
+    EventRecommendationOutcomeFact,
+    IntroductionRevealAuthorization,
+    OutcomeCheck,
+    ProactiveEventTriggerOutcomeFact,
+)
 from thenetwork.worker.tasks import app, process_email
 
 
@@ -223,7 +236,7 @@ async def test_sim_run_cli_function_creates_run_directory(tmp_path):
     assert artifacts.audit_path.name == "audit.jsonl"
     assert not artifacts.audit_path.exists()
     config = json.loads(artifacts.config_path.read_text())
-    assert len(config["personas"]) == 17
+    assert len(config["personas"]) == 19
     assert len(config["outcome_checks"]) == len(DEFAULT_OUTCOME_CHECKS)
     assert config["llm_personas"] is False
     events = [
@@ -402,10 +415,26 @@ async def test_real_process_runs_capture_isolated_traceable_audit_logs(
     )
 
     async def audited_process(_context, **kwargs):
+        from pydantic_ai.messages import ModelResponse, ToolCallPart
+
         audit_event(
             "agent.tool.completed",
             tool_name="remember",
             trace_id=kwargs["trace_id"],
+        )
+        audit_model_trace(
+            SimpleNamespace(
+                all_messages=lambda: [
+                    ModelResponse(
+                        parts=[
+                            ToolCallPart(
+                                tool_name="create_event",
+                                args={"text": "RAW EVENT CONTENT"},
+                            )
+                        ]
+                    )
+                ]
+            )
         )
 
     clock_calls = iter(
@@ -437,8 +466,12 @@ async def test_real_process_runs_capture_isolated_traceable_audit_logs(
             for line in artifacts.events_path.read_text().splitlines()
             if "process_email_completed" in line
         ]
-        assert len(audit_events) == 1
-        assert audit_events[0]["event"] == "agent.tool.completed"
+        assert [event["event"] for event in audit_events] == [
+            "agent.tool.completed",
+            "agent.model_trace",
+        ]
+        assert "agent.model_response" not in artifacts.audit_path.read_text()
+        assert "RAW EVENT CONTENT" not in artifacts.audit_path.read_text()
         assert process_events[0]["trace_id"] == "[application_identifier]"
         assert len(completion_events) == 1
     assert first.audit_path.read_text() != ""
@@ -447,7 +480,9 @@ async def test_real_process_runs_capture_isolated_traceable_audit_logs(
 
 
 @pytest.mark.asyncio
-async def test_run_recorder_logs_complete_inbound_and_outbound_messages(tmp_path):
+async def test_run_recorder_logs_delivery_metadata_without_public_message_bodies(
+    tmp_path,
+):
     from thenetwork.email.outbound import send_reply
 
     persona = PersonaConfig(
@@ -496,10 +531,14 @@ async def test_run_recorder_logs_complete_inbound_and_outbound_messages(tmp_path
         "persona->agent",
         "agent->persona",
     ]
-    assert [(delivery["subject"], delivery["body"]) for delivery in deliveries] == [
-        ("Simulation tick 1", "Inbound details.\n"),
-        ("A possible connection", "Here is why you may fit.\n"),
+    assert [
+        (delivery["subject"], delivery["body_chars"]) for delivery in deliveries
+    ] == [
+        ("Simulation tick 1", len("Inbound details.\n")),
+        ("A possible connection", len("Here is why you may fit.\n")),
     ]
+    assert "Inbound details." not in artifacts.events_path.read_text()
+    assert "Here is why you may fit." not in artifacts.events_path.read_text()
 
 
 @pytest.mark.asyncio
@@ -538,7 +577,10 @@ async def test_real_process_run_logs_each_deferred_proactive_trigger(tmp_path):
         proactive.process_email.defer(
             sender_email="alice@example.test",
             subject="[Proactive] Possible event",
-            body="[System event match] Event event-1: sanitized event gist.",
+            body=(
+                "[System event match] Event event-1: RAW EVENT SUBMISSION MUST "
+                "NOT REACH PUBLIC ARTIFACTS."
+            ),
             proactive_event_id="event-1",
             proactive_event_version=1,
             trace_id="event-trace",
@@ -583,20 +625,28 @@ async def test_real_process_run_logs_each_deferred_proactive_trigger(tmp_path):
             "event": "sim.proactive_job_deferred",
             "subject": "[Proactive] Potential connection",
             "trace_id": "opportunity-trace",
+            "trigger_kind": "people",
         },
         {
             "body": "[System match] Person person-1: sanitized gist.",
             "event": "sim.proactive_job_deferred",
             "subject": "[Proactive] New matching signal",
             "trace_id": "match-trace",
+            "trigger_kind": "people",
         },
         {
-            "body": "[System event match] Event event-1: sanitized event gist.",
             "event": "sim.proactive_job_deferred",
+            "event_key": _event_correlation_key("event-1"),
+            "event_version": 1,
+            "recipient_sender_id_hash": None,
             "subject": "[Proactive] Possible event",
             "trace_id": "event-trace",
+            "trigger_kind": "event",
         },
     ]
+    public_events = artifacts.events_path.read_text()
+    assert "RAW EVENT SUBMISSION" not in public_events
+    assert '"event_id"' not in public_events
 
 
 @pytest.mark.asyncio
@@ -683,6 +733,19 @@ def test_outcome_assembly_reads_fixture_mail_audit_and_database_state(tmp_path):
         + "\n",
         encoding="utf-8",
     )
+    artifacts.events_path.write_text(
+        json.dumps(
+            {
+                "event": "sim.proactive_job_deferred",
+                "trigger_kind": "event",
+                "event_key": "evt_v1_test",
+                "event_version": 2,
+                "recipient_sender_id_hash": "snd_v1_recipient",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     rows = (
         IntroductionRevealAuthorization(
             person_a_email="omar.sim@example.test",
@@ -692,11 +755,35 @@ def test_outcome_assembly_reads_fixture_mail_audit_and_database_state(tmp_path):
     )
     memories = (Memory(id="memory-1", text="raw", refs=["nadia-id"], gist="bakery"),)
     memory_counts = {"nadia.sim@example.test": 1}
+    event_rows = (
+        EventOutcomeFact(
+            event_key="evt_v1_test",
+            owner_sender_id_hash="snd_v1_owner",
+            version=2,
+            active=True,
+            recurring=True,
+        ),
+    )
+    event_recommendation_rows = (
+        EventRecommendationOutcomeFact(
+            event_key="evt_v1_test",
+            recipient_sender_id_hash="snd_v1_recipient",
+            event_version=2,
+            notified=True,
+        ),
+    )
 
     emails_by_id = {"nadia-id": "nadia.sim@example.test"}
     with patch(
         "thenetwork.sim.run.recorder._database_outcome_state",
-        return_value=(rows, memories, memory_counts, emails_by_id),
+        return_value=(
+            rows,
+            memories,
+            memory_counts,
+            emails_by_id,
+            event_rows,
+            event_recommendation_rows,
+        ),
     ):
         outcome, assembled_memories, assembled_emails = _assemble_scenario_outcome(
             artifacts,
@@ -711,6 +798,15 @@ def test_outcome_assembly_reads_fixture_mail_audit_and_database_state(tmp_path):
     assert outcome.mail_facts[0].recipients == frozenset({"nadia.sim@example.test"})
     assert outcome.mail_facts[0].body == "Bakery supply co-op update\n"
     assert outcome.memory_counts == memory_counts
+    assert outcome.event_rows == event_rows
+    assert outcome.event_recommendation_rows == event_recommendation_rows
+    assert outcome.proactive_event_triggers == (
+        ProactiveEventTriggerOutcomeFact(
+            event_key="evt_v1_test",
+            recipient_sender_id_hash="snd_v1_recipient",
+            event_version=2,
+        ),
+    )
     assert assembled_memories == memories
     assert assembled_emails == emails_by_id
 
@@ -769,6 +865,9 @@ def test_database_outcome_state_materializes_values_before_session_closes():
         person_a_consented=True,
         person_b_consented=True,
     )
+    future = datetime.now(timezone.utc) + timedelta(days=30)
+    event_row = ("event-1", "nadia-id", 2, future, None, True)
+    recommendation_row = ("event-1", "peer-id", 2, future)
 
     class Result:
         def __init__(self, rows) -> None:
@@ -785,6 +884,8 @@ def test_database_outcome_state_materializes_values_before_session_closes():
                     IntroductionConsent: [consent],
                     Memory: [memory],
                     Person: [nadia, peer],
+                    Event: [event_row],
+                    EventRecommendation: [recommendation_row],
                 }[entity]
             )
 
@@ -801,8 +902,21 @@ def test_database_outcome_state_materializes_values_before_session_closes():
             peer.detached = True
             memory.detached = True
 
-    with patch("thenetwork.sim.run.recorder.get_session", session_context):
-        consent_rows, memories, memory_counts, emails_by_id = _database_outcome_state()
+    with (
+        patch("thenetwork.sim.run.recorder.get_session", session_context),
+        patch(
+            "thenetwork.sim.run.recorder.optional_sender_identifier",
+            side_effect=lambda email: f"sender-key:{email}",
+        ),
+    ):
+        (
+            consent_rows,
+            memories,
+            memory_counts,
+            emails_by_id,
+            event_rows,
+            event_recommendation_rows,
+        ) = _database_outcome_state()
 
     assert consent_rows[0].participant_emails == frozenset(
         {"nadia.sim@example.test", "peer@example.test"}
@@ -815,6 +929,23 @@ def test_database_outcome_state_materializes_values_before_session_closes():
         "nadia-id": "nadia.sim@example.test",
         "peer-id": "peer@example.test",
     }
+    assert event_rows == (
+        EventOutcomeFact(
+            event_key=_event_correlation_key("event-1"),
+            owner_sender_id_hash="sender-key:nadia.sim@example.test",
+            version=2,
+            active=True,
+            recurring=True,
+        ),
+    )
+    assert event_recommendation_rows == (
+        EventRecommendationOutcomeFact(
+            event_key=_event_correlation_key("event-1"),
+            recipient_sender_id_hash="sender-key:peer@example.test",
+            event_version=2,
+            notified=True,
+        ),
+    )
 
 
 def _fake_git_run(commit: str, porcelain: str):

@@ -108,6 +108,27 @@ def test_audit_jsonl_file_reenables_disabled_logger_and_restores_it(tmp_path):
         logger.disabled = previous_disabled
 
 
+def test_audit_jsonl_file_can_exclude_content_bearing_model_responses(tmp_path):
+    audit_path = tmp_path / "audit.jsonl"
+    logger = logging.getLogger(LOGGER_NAME)
+
+    with audit_jsonl_file(audit_path, include_model_responses=False):
+        audit_event("agent.tool.completed", tool_name="create_event", outcome="success")
+        logger.info(
+            json.dumps(
+                {
+                    "event": "agent.model_response",
+                    "response": {"parts": [{"args": "RAW EVENT CONTENT"}]},
+                }
+            )
+        )
+
+    artifact = audit_path.read_text()
+    assert "agent.tool.completed" in artifact
+    assert "agent.model_response" not in artifact
+    assert "RAW EVENT CONTENT" not in artifact
+
+
 def test_audit_api_rejects_content_bearing_fields():
     with pytest.raises(ValueError, match="unsafe audit fields"):
         audit_event("unsafe", email="person@example.com", body="private")

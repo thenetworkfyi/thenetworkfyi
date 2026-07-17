@@ -1,6 +1,7 @@
 """PII-safe structured audit events for the agent execution lifecycle."""
 
 from __future__ import annotations
+import json
 import logging
 import re
 from contextlib import contextmanager
@@ -296,15 +297,40 @@ def configure_audit_logging() -> None:
     logging.getLogger("presidio-analyzer").setLevel(logging.ERROR)
 
 
+class _AuditFileFilter(logging.Filter):
+    """Optionally keep content-bearing model responses out of a JSONL sink."""
+
+    def __init__(self, *, include_model_responses: bool) -> None:
+        super().__init__()
+        self.include_model_responses = include_model_responses
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if self.include_model_responses:
+            return True
+        try:
+            payload = json.loads(record.getMessage())
+        except (TypeError, ValueError):
+            return True
+        return payload.get("event") != "agent.model_response"
+
+
 @contextmanager
-def audit_jsonl_file(path: Path) -> Iterator[None]:
-    """Write audit events to one JSONL file without reconfiguring global logging."""
+def audit_jsonl_file(
+    path: Path, *, include_model_responses: bool = True
+) -> Iterator[None]:
+    """Write selected audit events to JSONL without reconfiguring logging.
+
+    Production audit keeps redacted model responses for diagnostics. Public
+    simulation artifacts disable them because redaction removes identities and
+    secrets, not all freeform owner-controlled event content.
+    """
     stdlib_logger = logging.getLogger(LOGGER_NAME)
     previous_disabled = stdlib_logger.disabled
     previous_level = stdlib_logger.level
     previous_propagate = stdlib_logger.propagate
     handler = logging.FileHandler(path, encoding="utf-8")
     handler.setFormatter(logging.Formatter("%(message)s"))
+    handler.addFilter(_AuditFileFilter(include_model_responses=include_model_responses))
     stdlib_logger.addHandler(handler)
     stdlib_logger.disabled = False
     stdlib_logger.setLevel(logging.INFO)
