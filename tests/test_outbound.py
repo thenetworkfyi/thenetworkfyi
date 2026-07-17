@@ -237,6 +237,67 @@ def test_group_introduction_builds_plain_first_multipart_alternative():
     ]
 
 
+def test_event_fyi_uses_fixed_subject_template_and_one_referral_signature():
+    from thenetwork.email.outbound import EVENT_RECOMMENDATION_SUBJECT, send_event_fyi
+    from thenetwork.email.render import EventRecommendationNotice
+
+    captured = []
+    smtp_instance = _mock_smtp()
+    smtp_instance.send_message.side_effect = captured.append
+    mock_mailbox, _mb_instance = _mock_mailbox_success()
+
+    with (
+        patch(
+            "thenetwork.email.outbound.get_settings",
+            return_value=_mock_settings(
+                growth_footer_enabled=True,
+                html_email_enabled=True,
+            ),
+        ),
+        patch("smtplib.SMTP", return_value=smtp_instance),
+        patch("thenetwork.email.outbound.MailBox", mock_mailbox),
+    ):
+        send_event_fyi(
+            to_address="recipient@example.com",
+            event_gist="A sealed event gist",
+            notice=EventRecommendationNotice.FIRST,
+        )
+
+    message = captured[0]
+    plain = message.get_body(preferencelist=("plain",)).get_content()
+    html = message.get_body(preferencelist=("html",)).get_content()
+    assert message["Subject"] == EVENT_RECOMMENDATION_SUBJECT
+    assert [part.get_content_type() for part in message.iter_parts()] == [
+        "text/plain",
+        "text/html",
+    ]
+    for body in (plain, html):
+        assert body.count("A sealed event gist") == 1
+        assert body.count(EventRecommendationNotice.FIRST.value) == 1
+        assert body.count("The Network") == 1
+        assert body.count("agent@example.com") == 1
+
+
+def test_send_reply_without_referral_keeps_standard_signature():
+    from thenetwork.email.outbound import send_reply
+
+    captured = []
+    smtp_instance = _mock_smtp()
+    smtp_instance.send_message.side_effect = captured.append
+    mock_mailbox, _mb_instance = _mock_mailbox_success()
+
+    with (
+        patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()),
+        patch("smtplib.SMTP", return_value=smtp_instance),
+        patch("thenetwork.email.outbound.MailBox", mock_mailbox),
+    ):
+        send_reply(to_address="recipient@example.com", subject="Hi", body_text="Body")
+
+    body = captured[0].get_content()
+    assert body.count("The Network") == 1
+    assert "Know someone who should be on this?" not in body
+
+
 def test_append_uses_configured_folder_name():
     """The folder passed to append() comes from settings.imap_sent_folder."""
     from thenetwork.email.outbound import send_reply

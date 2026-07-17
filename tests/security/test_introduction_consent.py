@@ -8,16 +8,13 @@ import pytest
 
 from thenetwork.db.models import IntroductionConsent, Person
 from thenetwork.introductions import (
-    CONSENT_ACKNOWLEDGMENT_REPLY,
-    CONSENT_ALREADY_DECLINED_REPLY,
-    CONSENT_DECLINED_REPLY,
-    CONSENT_CLARIFICATION_REPLY,
     ConsentReplyResult,
     _reply_action,
     process_consent_reply,
     propose_pair,
     _utcnow,
 )
+from thenetwork.email.render import ConsentRequestEmailContext, FixedEmailTemplate
 
 
 @pytest.mark.integration
@@ -174,7 +171,10 @@ def test_tolerant_yes_reply_consents_without_revealing_identity(body):
     assert not session.proposal.person_b_consented
     group_send.assert_not_called()
     send.assert_called_once()
-    assert send.call_args.kwargs["body_text"] == CONSENT_ACKNOWLEDGMENT_REPLY
+    assert (
+        send.call_args.kwargs["fixed_template"]
+        is FixedEmailTemplate.CONSENT_ACKNOWLEDGMENT
+    )
 
 
 @pytest.mark.parametrize(
@@ -223,7 +223,10 @@ def test_tokened_prose_reply_gets_clarification_without_revoking_pair():
     assert session.proposal.status == "proposed"
     assert not session.proposal.person_a_consented
     assert session.commits == 0
-    assert send.call_args.kwargs["body_text"] == CONSENT_CLARIFICATION_REPLY
+    assert (
+        send.call_args.kwargs["fixed_template"]
+        is FixedEmailTemplate.CONSENT_CLARIFICATION
+    )
 
 
 def test_punctuated_no_reply_creates_temporary_decline():
@@ -241,7 +244,9 @@ def test_punctuated_no_reply_creates_temporary_decline():
     assert result.outcome == "declined"
     assert session.proposal.status == "declined"
     assert session.proposal.declined_at is not None
-    assert send.call_args.kwargs["body_text"] == CONSENT_DECLINED_REPLY
+    assert (
+        send.call_args.kwargs["fixed_template"] is FixedEmailTemplate.CONSENT_DECLINED
+    )
 
 
 @pytest.mark.parametrize("late_sender", ["alice", "bob"])
@@ -270,7 +275,10 @@ def test_declined_pair_refuses_later_consent_without_lifting_cooldown(late_sende
     assert session.proposal.declined_at == declined_at
     assert session.commits == 0
     send.assert_called_once()
-    assert send.call_args.kwargs["body_text"] == CONSENT_ALREADY_DECLINED_REPLY
+    assert (
+        send.call_args.kwargs["fixed_template"]
+        is FixedEmailTemplate.CONSENT_ALREADY_DECLINED
+    )
     group_send.assert_not_called()
 
 
@@ -577,13 +585,17 @@ def test_proposal_notifications_contain_only_supplied_gists_not_identity_data():
 
     assert result == {"status": "proposed"}
     assert send.call_count == 2
-    bodies = [call.kwargs["body_text"] for call in send.call_args_list]
-    assert "Bob" not in bodies[0]
-    assert "bob@example.com" not in bodies[0]
-    assert "Alice" not in bodies[1]
-    assert "alice@example.com" not in bodies[1]
-    token = f"[intro:{session.proposal.reply_token}]"
-    assert all(token in body for body in bodies)
+    contexts = [call.kwargs["fixed_context"] for call in send.call_args_list]
+    assert all(isinstance(context, ConsentRequestEmailContext) for context in contexts)
+    assert contexts[0].counterpart_gist == "operates distributed databases"
+    assert contexts[1].counterpart_gist == "builds storage systems"
+    assert all(
+        context.reply_token == session.proposal.reply_token for context in contexts
+    )
+    assert all(
+        call.kwargs["fixed_template"] is FixedEmailTemplate.CONSENT_REQUEST
+        for call in send.call_args_list
+    )
 
 
 def test_body_token_consents_when_subject_is_from_another_thread():
@@ -685,7 +697,10 @@ async def test_unparseable_tokened_reply_gets_clarification_before_model():
     # runs; the sender's own prose then reaches the agent as a framed
     # remainder so the question is not simply discarded.
     send.assert_called_once()
-    assert send.call_args.kwargs["body_text"] == CONSENT_CLARIFICATION_REPLY
+    assert (
+        send.call_args.kwargs["fixed_template"]
+        is FixedEmailTemplate.CONSENT_CLARIFICATION
+    )
     run_agent.assert_awaited_once()
     forwarded = run_agent.await_args.kwargs["email_body"]
     assert forwarded.startswith("[System note]")
@@ -746,7 +761,10 @@ def test_clarification_reply_carries_question_as_remainder():
         )
 
     assert result.outcome == "clarification_sent"
-    assert send.call_args.kwargs["body_text"] == CONSENT_CLARIFICATION_REPLY
+    assert (
+        send.call_args.kwargs["fixed_template"]
+        is FixedEmailTemplate.CONSENT_CLARIFICATION
+    )
     assert result.remainder == (
         "Before I decide, why was this introduction chosen for me?"
     )
@@ -815,7 +833,10 @@ async def test_consent_remainder_reaches_agent_after_server_handling():
     # The consent transition and fixed acknowledgment stay server-side.
     assert consent_session.proposal.person_a_consented
     send.assert_called_once()
-    assert send.call_args.kwargs["body_text"] == CONSENT_ACKNOWLEDGMENT_REPLY
+    assert (
+        send.call_args.kwargs["fixed_template"]
+        is FixedEmailTemplate.CONSENT_ACKNOWLEDGMENT
+    )
     # Only the framed leftover text reaches the agent, never the token.
     run_agent.assert_awaited_once()
     forwarded = run_agent.await_args.kwargs["email_body"]

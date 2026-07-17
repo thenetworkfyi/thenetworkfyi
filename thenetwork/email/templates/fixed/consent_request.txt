@@ -1,0 +1,5 @@
+A possible match came up:
+
+{{ counterpart_gist }}
+
+No name or contact details have been shared. Reply YES to opt in, or NO to decline. If you reply from another thread, include this token in your reply: [intro:{{ reply_token }}]

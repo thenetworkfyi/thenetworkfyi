@@ -1,0 +1,5 @@
+An event that may be relevant:
+
+{{ event_gist }}
+
+{{ notice }}

@@ -33,9 +33,15 @@ class SignatureVariant(str, Enum):
 class FixedEmailTemplate(str, Enum):
     """Closed set of fixed server-selected email bodies."""
 
+    CONSENT_REQUEST = "consent_request"
+    CONSENT_CLARIFICATION = "consent_clarification"
+    CONSENT_ACKNOWLEDGMENT = "consent_acknowledgment"
+    CONSENT_DECLINED = "consent_declined"
+    CONSENT_ALREADY_DECLINED = "consent_already_declined"
     INTRODUCTION = "introduction"
     FIRST_CONTACT_WELCOME = "first_contact_welcome"
     INFRASTRUCTURE_REJECTION = "infrastructure_rejection"
+    EVENT_RECOMMENDATION = "event_recommendation"
 
 
 class InfrastructureRejectionReason(str, Enum):
@@ -54,6 +60,24 @@ class IntroductionEmailContext:
     person_b_name: str
 
 
+class EventRecommendationNotice(str, Enum):
+    """Fixed capability instructions for an event recommendation."""
+
+    FIRST = (
+        "Would you like occasional event recommendations like this? Reply yes or no. "
+        "A no stops only event recommendations."
+    )
+    STOP = 'To stop event recommendations, reply "stop event recommendations."'
+
+
+@dataclass(frozen=True, slots=True)
+class EventRecommendationEmailContext:
+    """Typed sealed context for a one-way event recommendation."""
+
+    event_gist: str
+    notice: EventRecommendationNotice
+
+
 @dataclass(frozen=True, slots=True)
 class FirstContactWelcomeEmailContext:
     """Typed context for the fixed first-contact welcome email."""
@@ -66,10 +90,26 @@ class InfrastructureRejectionEmailContext:
     reason: InfrastructureRejectionReason
 
 
+@dataclass(frozen=True, slots=True)
+class ConsentRequestEmailContext:
+    """Typed, anonymous context for an introduction consent request."""
+
+    counterpart_gist: str
+    reply_token: str
+
+
+@dataclass(frozen=True, slots=True)
+class EmptyEmailContext:
+    """Typed context for a fixed body with no interpolated fields."""
+
+
 type FixedEmailContext = (
     IntroductionEmailContext
     | FirstContactWelcomeEmailContext
     | InfrastructureRejectionEmailContext
+    | ConsentRequestEmailContext
+    | EmptyEmailContext
+    | EventRecommendationEmailContext
 )
 
 
@@ -98,6 +138,26 @@ _ENVIRONMENT = Environment(
 )
 
 _FIXED_TEMPLATE_FILES: dict[FixedEmailTemplate, tuple[str, str]] = {
+    FixedEmailTemplate.CONSENT_REQUEST: (
+        "fixed/consent_request.txt",
+        "fixed/consent_request.html",
+    ),
+    FixedEmailTemplate.CONSENT_CLARIFICATION: (
+        "fixed/consent_clarification.txt",
+        "fixed/consent_clarification.html",
+    ),
+    FixedEmailTemplate.CONSENT_ACKNOWLEDGMENT: (
+        "fixed/consent_acknowledgment.txt",
+        "fixed/consent_acknowledgment.html",
+    ),
+    FixedEmailTemplate.CONSENT_DECLINED: (
+        "fixed/consent_declined.txt",
+        "fixed/consent_declined.html",
+    ),
+    FixedEmailTemplate.CONSENT_ALREADY_DECLINED: (
+        "fixed/consent_already_declined.txt",
+        "fixed/consent_already_declined.html",
+    ),
     FixedEmailTemplate.INTRODUCTION: (
         "fixed/introduction.txt",
         "fixed/introduction.html",
@@ -109,6 +169,10 @@ _FIXED_TEMPLATE_FILES: dict[FixedEmailTemplate, tuple[str, str]] = {
     FixedEmailTemplate.INFRASTRUCTURE_REJECTION: (
         "fixed/infrastructure_rejection.txt",
         "fixed/infrastructure_rejection.html",
+    ),
+    FixedEmailTemplate.EVENT_RECOMMENDATION: (
+        "fixed/event_recommendation.txt",
+        "fixed/event_recommendation.html",
     ),
 }
 
@@ -215,28 +279,63 @@ def render_fixed_email(
 
 
 def _fixed_template_context(
-    template: FixedEmailTemplate, context: FixedEmailContext
+    template: FixedEmailTemplate,
+    context: FixedEmailContext,
 ) -> dict[str, str]:
-    if template is FixedEmailTemplate.INTRODUCTION and isinstance(
-        context, IntroductionEmailContext
-    ):
+    if template is FixedEmailTemplate.INTRODUCTION:
+        if not isinstance(context, IntroductionEmailContext):
+            raise TypeError("introduction requires IntroductionEmailContext")
         _require_text(context.person_a_name, "context.person_a_name")
         _require_text(context.person_b_name, "context.person_b_name")
         return {
             "person_a_name": context.person_a_name,
             "person_b_name": context.person_b_name,
         }
-    if template is FixedEmailTemplate.FIRST_CONTACT_WELCOME and isinstance(
-        context, FirstContactWelcomeEmailContext
-    ):
+    if template is FixedEmailTemplate.FIRST_CONTACT_WELCOME:
+        if not isinstance(context, FirstContactWelcomeEmailContext):
+            raise TypeError(
+                "first_contact_welcome requires FirstContactWelcomeEmailContext"
+            )
         return {}
-    if template is FixedEmailTemplate.INFRASTRUCTURE_REJECTION and isinstance(
-        context, InfrastructureRejectionEmailContext
-    ):
+    if template is FixedEmailTemplate.INFRASTRUCTURE_REJECTION:
+        if not isinstance(context, InfrastructureRejectionEmailContext):
+            raise TypeError(
+                "infrastructure_rejection requires InfrastructureRejectionEmailContext"
+            )
         if not isinstance(context.reason, InfrastructureRejectionReason):
             raise TypeError("context.reason must be an InfrastructureRejectionReason")
         return {"message": _INFRASTRUCTURE_REJECTION_COPY[context.reason]}
-    raise TypeError(f"{template.value} requires its matching typed context")
+    if template is FixedEmailTemplate.EVENT_RECOMMENDATION:
+        if not isinstance(context, EventRecommendationEmailContext):
+            raise TypeError(
+                "event recommendation requires EventRecommendationEmailContext"
+            )
+        _require_text(context.event_gist, "context.event_gist")
+        if not isinstance(context.notice, EventRecommendationNotice):
+            raise TypeError("context.notice must be an EventRecommendationNotice")
+        return {
+            "event_gist": context.event_gist,
+            "notice": context.notice.value,
+        }
+    if template is FixedEmailTemplate.CONSENT_REQUEST:
+        if not isinstance(context, ConsentRequestEmailContext):
+            raise TypeError("consent request requires ConsentRequestEmailContext")
+        _require_text(context.counterpart_gist, "context.counterpart_gist")
+        _require_text(context.reply_token, "context.reply_token")
+        return {
+            "counterpart_gist": context.counterpart_gist,
+            "reply_token": context.reply_token,
+        }
+    if template in {
+        FixedEmailTemplate.CONSENT_CLARIFICATION,
+        FixedEmailTemplate.CONSENT_ACKNOWLEDGMENT,
+        FixedEmailTemplate.CONSENT_DECLINED,
+        FixedEmailTemplate.CONSENT_ALREADY_DECLINED,
+    }:
+        if not isinstance(context, EmptyEmailContext):
+            raise TypeError(f"{template.value} requires EmptyEmailContext")
+        return {}
+    raise AssertionError(f"unhandled fixed template: {template}")
 
 
 def _render_html_alternative(

@@ -10,7 +10,6 @@ import pytest
 from thenetwork.agent.deps import AgentDeps
 from thenetwork.agent.tools import (
     EVENT_RECOMMENDATION_STOP_NOTICE,
-    EVENT_RECOMMENDATION_SUBJECT,
     FIRST_EVENT_RECOMMENDATION_NOTICE,
     cancel_event,
     create_event,
@@ -290,7 +289,9 @@ async def test_event_send_hard_gates_before_delivery(
     session = _delivery_session(event, recommendation, suppressed=suppressed)
     ctx = _ctx(session, event_id="event-1")
 
-    with patch("thenetwork.agent.tools._send_email", new_callable=AsyncMock) as send:
+    with patch(
+        "thenetwork.agent.tools._send_event_fyi", new_callable=AsyncMock
+    ) as send:
         result = await send_event_recommendation(ctx, event_id="event-1")
 
     assert result == {"status": "suppressed", "reason": reason}
@@ -321,7 +322,9 @@ async def test_event_send_rejects_a_trigger_for_an_older_event_version():
     session = _delivery_session(event, recommendation)
     ctx = _ctx(session, event_id="event-1", event_version=1)
 
-    with patch("thenetwork.agent.tools._send_email", new_callable=AsyncMock) as send:
+    with patch(
+        "thenetwork.agent.tools._send_event_fyi", new_callable=AsyncMock
+    ) as send:
         result = await send_event_recommendation(ctx, event_id="event-1")
 
     assert result == {"status": "suppressed", "reason": "event_version_changed"}
@@ -338,7 +341,7 @@ async def test_event_send_records_notified_only_after_successful_one_way_fyi():
     ctx = _ctx(session, event_id="event-1")
 
     with patch(
-        "thenetwork.agent.tools._send_email",
+        "thenetwork.agent.tools._send_event_fyi",
         new=AsyncMock(return_value={"status": "sent"}),
     ) as send:
         result = await send_event_recommendation(ctx, event_id="event-1")
@@ -348,10 +351,10 @@ async def test_event_send_records_notified_only_after_successful_one_way_fyi():
     session.commit.assert_called_once()
     kwargs = send.await_args.kwargs
     assert kwargs["recipient_user_id"] == "person-1"
-    assert kwargs["is_sender_reply"] is False
-    assert kwargs["subject"] == EVENT_RECOMMENDATION_SUBJECT
-    assert event.gist in kwargs["body_text"]
-    assert FIRST_EVENT_RECOMMENDATION_NOTICE in kwargs["body_text"]
+    assert kwargs["event_gist"] == event.gist
+    assert kwargs["notice"].value == FIRST_EVENT_RECOMMENDATION_NOTICE
+    assert "subject" not in kwargs
+    assert "body_text" not in kwargs
     assert event.text not in repr(send.await_args)
 
 
@@ -363,7 +366,7 @@ async def test_failed_event_send_does_not_record_delivery():
     ctx = _ctx(session, event_id="event-1")
 
     with patch(
-        "thenetwork.agent.tools._send_email",
+        "thenetwork.agent.tools._send_event_fyi",
         new=AsyncMock(
             return_value={"status": "limited", "reason": "recipient_daily_cap"}
         ),
@@ -384,7 +387,7 @@ async def test_smtp_exception_does_not_record_event_delivery():
 
     with (
         patch(
-            "thenetwork.agent.tools._send_email",
+            "thenetwork.agent.tools._send_event_fyi",
             new=AsyncMock(side_effect=OSError("smtp unavailable")),
         ),
         pytest.raises(OSError, match="smtp unavailable"),
@@ -402,16 +405,17 @@ async def test_later_event_fyi_has_only_concise_event_stop_notice():
     ctx = _ctx(session, event_id="event-1")
 
     with patch(
-        "thenetwork.agent.tools._send_email",
+        "thenetwork.agent.tools._send_event_fyi",
         new=AsyncMock(return_value={"status": "sent"}),
     ) as send:
         await send_event_recommendation(ctx, event_id="event-1")
 
-    body = send.await_args.kwargs["body_text"]
-    assert EVENT_RECOMMENDATION_STOP_NOTICE in body
-    assert FIRST_EVENT_RECOMMENDATION_NOTICE not in body
+    kwargs = send.await_args.kwargs
+    assert kwargs["notice"].value == EVENT_RECOMMENDATION_STOP_NOTICE
+    assert kwargs["notice"].value != FIRST_EVENT_RECOMMENDATION_NOTICE
+    assert kwargs["event_gist"] == "Event hosted by [name] [email]"
     assert not {"rsvp", "reminder", "attendance", "calendar"}.intersection(
-        body.lower().split()
+        kwargs["event_gist"].lower().split()
     )
 
 

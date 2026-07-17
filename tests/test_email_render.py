@@ -9,6 +9,10 @@ from bs4 import BeautifulSoup
 from jinja2 import UndefinedError
 
 from thenetwork.email.render import (
+    ConsentRequestEmailContext,
+    EmptyEmailContext,
+    EventRecommendationEmailContext,
+    EventRecommendationNotice,
     FirstContactWelcomeEmailContext,
     FixedEmailTemplate,
     InfrastructureRejectionEmailContext,
@@ -139,11 +143,105 @@ def test_fixed_renderer_rejects_mismatched_or_untrusted_worker_contexts():
         )
 
 
+def test_consent_request_renderer_preserves_anonymous_plain_body_and_escapes_context():
+    rendered = render_fixed_email(
+        FixedEmailTemplate.CONSENT_REQUEST,
+        ConsentRequestEmailContext(
+            counterpart_gist='<img src=x onerror="steal()"> builds databases',
+            reply_token="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa<script>",
+        ),
+        signature_variant=SignatureVariant.NONE,
+        html_enabled=True,
+    )
+
+    assert (
+        rendered.text == "A possible match came up:\n\n"
+        '<img src=x onerror="steal()"> builds databases\n\n'
+        "No name or contact details have been shared. Reply YES to opt in, or NO "
+        "to decline. If you reply from another thread, include this token in your "
+        "reply: [intro:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa<script>]"
+    )
+    assert rendered.html is not None
+    assert '<img src=x onerror="steal()">' not in rendered.html
+    assert "&lt;img src=x onerror=&#34;steal()&#34;&gt;" in rendered.html
+    assert "&lt;script&gt;" in rendered.html
+    assert "No name or contact details have been shared." in _visible_html(
+        rendered.html
+    )
+
+
+@pytest.mark.parametrize(
+    ("template", "expected"),
+    [
+        (
+            FixedEmailTemplate.CONSENT_CLARIFICATION,
+            "I could not determine your response. Reply with YES to opt in, NO to "
+            "decline, or REVOKE to withdraw consent.",
+        ),
+        (
+            FixedEmailTemplate.CONSENT_ACKNOWLEDGMENT,
+            "Noted — waiting on the other party.",
+        ),
+        (
+            FixedEmailTemplate.CONSENT_DECLINED,
+            "Noted — this introduction will not go ahead.",
+        ),
+        (
+            FixedEmailTemplate.CONSENT_ALREADY_DECLINED,
+            "This introduction has already been declined and will not go ahead.",
+        ),
+    ],
+)
+def test_fixed_consent_replies_have_equivalent_plain_and_html_meaning(
+    template, expected
+):
+    rendered = render_fixed_email(
+        template,
+        EmptyEmailContext(),
+        signature_variant=SignatureVariant.NONE,
+        html_enabled=True,
+    )
+
+    assert rendered.text == expected
+    assert rendered.html is not None
+    assert _visible_html(rendered.html) == expected
+
+
+def test_fixed_renderer_rejects_mismatched_context():
+    with pytest.raises(TypeError, match="ConsentRequestEmailContext"):
+        render_fixed_email(
+            FixedEmailTemplate.CONSENT_REQUEST,
+            EmptyEmailContext(),
+        )
+
+
 def test_environment_is_strict_for_missing_fixed_context_fields():
     template = _ENVIRONMENT.get_template("fixed/introduction.html")
 
     with pytest.raises(UndefinedError):
         template.render(fixed_context={})
+
+
+def test_event_recommendation_template_escapes_only_the_sealed_gist():
+    rendered = render_fixed_email(
+        FixedEmailTemplate.EVENT_RECOMMENDATION,
+        EventRecommendationEmailContext(
+            event_gist='<img src=x onerror="steal()">',
+            notice=EventRecommendationNotice.FIRST,
+        ),
+        signature_variant=SignatureVariant.NONE,
+        html_enabled=True,
+    )
+
+    assert rendered.html is not None
+    assert "<img src=x" not in rendered.html
+    assert "&lt;img src=x onerror=&#34;steal()&#34;&gt;" in rendered.html
+    assert EventRecommendationNotice.FIRST.value in rendered.text
+    with pytest.raises(TypeError, match="EventRecommendationEmailContext"):
+        render_fixed_email(
+            FixedEmailTemplate.EVENT_RECOMMENDATION,
+            IntroductionEmailContext("A", "B"),
+        )
 
 
 @pytest.mark.parametrize(

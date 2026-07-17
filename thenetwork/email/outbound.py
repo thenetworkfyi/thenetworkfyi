@@ -11,6 +11,8 @@ from imap_tools import MailBox, MailMessageFlags
 
 from thenetwork.audit import audit_event, audit_span, audit_trace
 from thenetwork.email.render import (
+    EventRecommendationEmailContext,
+    EventRecommendationNotice,
     FirstContactWelcomeEmailContext,
     FixedEmailContext,
     FixedEmailTemplate,
@@ -37,6 +39,7 @@ FIRST_CONTACT_WELCOME_REPLY = render_fixed_email(
 ).text
 
 MAX_QUOTED_TRAIL_CHARS = 2_000
+EVENT_RECOMMENDATION_SUBJECT = "An event you might care about"
 
 
 def _quoted_body_lines(body_text: str) -> tuple[list[str], bool]:
@@ -56,6 +59,17 @@ def _quoted_message(body_text: str, quoted_date: str | None = None) -> QuotedMes
     if truncated:
         body_lines.append("[quoted text truncated]")
     return QuotedMessage(body_text="\n".join(body_lines), date=quoted_date)
+
+
+def _user_facing_signature_variant(
+    settings, *, include_footer: bool = True
+) -> SignatureVariant:
+    """Choose the server-owned signature; only configured mail gets referral copy."""
+    if not include_footer:
+        return SignatureVariant.NONE
+    if settings.growth_footer_enabled:
+        return SignatureVariant.STANDARD_WITH_REFERRAL
+    return SignatureVariant.STANDARD
 
 
 def _append_to_sent(msg: EmailMessage, trace_id: str | None = None) -> None:
@@ -182,7 +196,9 @@ def send_reply(
 
     The trusted renderer, rather than any caller, owns the HTML alternative,
     signature, referral footer, and quoted-message markup. ``fixed_template``
-    accepts only a named server-owned template with its matching typed context.
+    is an internal, closed server-selected path for fixed replies; it accepts
+    only a named server-owned template with its matching typed context, never
+    caller-authored markup.
     Set ``include_footer=False`` for internal/ops mail that should have no
     signature or referral copy.
     """
@@ -194,7 +210,6 @@ def send_reply(
         raise TypeError("fixed-template replies do not accept body_text")
     if fixed_template is None and not isinstance(body_text, str):
         raise TypeError("conversational replies require body_text")
-
     template_id = (
         fixed_template.value if fixed_template is not None else "conversational"
     )
@@ -207,10 +222,8 @@ def send_reply(
         ),
     ):
         s = get_settings()
-        signature_variant = (
-            SignatureVariant.STANDARD_WITH_REFERRAL
-            if include_footer and s.growth_footer_enabled
-            else SignatureVariant.NONE
+        signature_variant = _user_facing_signature_variant(
+            s, include_footer=include_footer
         )
         quoted_message = (
             _quoted_message(quoted_body_text, quoted_date) if quoted_body_text else None
@@ -262,6 +275,63 @@ def send_reply(
             smtp.ehlo()
             smtp.starttls()
             smtp.login(s.smtp_account, s.smtp_password)
+            smtp.send_message(msg)
+
+        _append_to_sent(msg, trace_id=trace_id)
+
+
+def send_event_fyi(
+    *,
+    to_address: str,
+    event_gist: str,
+    notice: EventRecommendationNotice,
+    trace_id: str | None = None,
+) -> None:
+    """Send a fixed, sealed event recommendation to one resolved recipient.
+
+    This is intentionally not a general-purpose email entry point: the subject,
+    body structure, and opt-out wording are all server-owned. Callers can supply
+    only the current sanitized event gist and one of the closed notice variants.
+    """
+    with (
+        audit_trace(trace_id),
+        audit_span(
+            "email.smtp_send",
+            recipient_count=1,
+            template_id=FixedEmailTemplate.EVENT_RECOMMENDATION.value,
+        ),
+    ):
+        settings = get_settings()
+        rendered = render_fixed_email(
+            FixedEmailTemplate.EVENT_RECOMMENDATION,
+            EventRecommendationEmailContext(event_gist=event_gist, notice=notice),
+            signature_variant=_user_facing_signature_variant(settings),
+            html_enabled=settings.html_email_enabled,
+            referral_account=settings.imap_account,
+        )
+        audit_event(
+            "email.rendered",
+            html_present=rendered.html is not None,
+            template_id=FixedEmailTemplate.EVENT_RECOMMENDATION.value,
+            recipient_count=1,
+            outcome="success",
+        )
+
+        msg = EmailMessage()
+        msg["From"] = settings.email_from
+        msg["To"] = to_address
+        msg["Subject"] = EVENT_RECOMMENDATION_SUBJECT
+        msg["Date"] = formatdate(localtime=True)
+        msg["Message-ID"] = make_msgid()
+        msg["Auto-Submitted"] = "auto-replied"
+        msg.set_content(rendered.text)
+        if rendered.html is not None:
+            msg.add_alternative(rendered.html, subtype="html")
+
+        with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as smtp:
+            smtp.ehlo()
+            smtp.starttls()
+            smtp.login(settings.smtp_account, settings.smtp_password)
             smtp.send_message(msg)
 
         _append_to_sent(msg, trace_id=trace_id)

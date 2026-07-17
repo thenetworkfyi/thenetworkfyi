@@ -22,6 +22,11 @@ from thenetwork.db.models import (
 )
 from thenetwork.db.session import get_session
 from thenetwork.email.outbound import send_group_introduction, send_reply
+from thenetwork.email.render import (
+    ConsentRequestEmailContext,
+    EmptyEmailContext,
+    FixedEmailTemplate,
+)
 
 _TOKEN_RE = re.compile(
     r"\[intro:(?P<token>[0-9a-f]{8}-[0-9a-f-]{27,})\]",
@@ -32,15 +37,6 @@ _ACTION_RE = re.compile(
     r"(?:\s*,?\s*(?:please|thanks?|thank\s+you))?"
     r"\s*[.!?;:)\]}'\"]*\s*$",
     re.IGNORECASE,
-)
-CONSENT_CLARIFICATION_REPLY = (
-    "I could not determine your response. Reply with YES to opt in, "
-    "NO to decline, or REVOKE to withdraw consent."
-)
-CONSENT_ACKNOWLEDGMENT_REPLY = "Noted — waiting on the other party."
-CONSENT_DECLINED_REPLY = "Noted — this introduction will not go ahead."
-CONSENT_ALREADY_DECLINED_REPLY = (
-    "This introduction has already been declined and will not go ahead."
 )
 
 
@@ -239,32 +235,25 @@ def propose_pair(
             session.refresh(proposal)
 
         subject = f"Possible introduction [intro:{proposal.reply_token}]"
-        token = f"[intro:{proposal.reply_token}]"
-        sender_body = (
-            "A possible match came up:\n\n"
-            f"{other_gist}\n\n"
-            "No name or contact details have been shared. Reply YES to opt in, "
-            "or NO to decline. If you reply from another thread, include this "
-            f"token in your reply: {token}"
-        )
-        other_body = (
-            "A possible match came up:\n\n"
-            f"{sender_gist}\n\n"
-            "No name or contact details have been shared. Reply YES to opt in, "
-            "or NO to decline. If you reply from another thread, include this "
-            f"token in your reply: {token}"
-        )
         send_reply(
             to_address=sender.email,
             subject=subject,
-            body_text=sender_body,
             trace_id=trace_id,
+            fixed_template=FixedEmailTemplate.CONSENT_REQUEST,
+            fixed_context=ConsentRequestEmailContext(
+                counterpart_gist=other_gist,
+                reply_token=proposal.reply_token,
+            ),
         )
         send_reply(
             to_address=other.email,
             subject=subject,
-            body_text=other_body,
             trace_id=trace_id,
+            fixed_template=FixedEmailTemplate.CONSENT_REQUEST,
+            fixed_context=ConsentRequestEmailContext(
+                counterpart_gist=sender_gist,
+                reply_token=proposal.reply_token,
+            ),
         )
     audit_event(
         "introduction.consent_transition",
@@ -330,15 +319,16 @@ def _send_fixed_reply(
     *,
     to_address: str,
     subject: str,
-    body_text: str,
+    template: FixedEmailTemplate,
     trace_id: str | None,
 ) -> None:
     send_reply(
         to_address=to_address,
         subject=f"Re: {subject}",
-        body_text=body_text,
         include_footer=False,
         trace_id=trace_id,
+        fixed_template=template,
+        fixed_context=EmptyEmailContext(),
     )
 
 
@@ -405,7 +395,7 @@ def process_consent_reply(
             _send_fixed_reply(
                 to_address=sender.email,
                 subject=subject,
-                body_text=CONSENT_CLARIFICATION_REPLY,
+                template=FixedEmailTemplate.CONSENT_CLARIFICATION,
                 trace_id=trace_id,
             )
             audit_event(
@@ -428,7 +418,7 @@ def process_consent_reply(
             _send_fixed_reply(
                 to_address=sender.email,
                 subject=subject,
-                body_text=CONSENT_ALREADY_DECLINED_REPLY,
+                template=FixedEmailTemplate.CONSENT_ALREADY_DECLINED,
                 trace_id=trace_id,
             )
             return ConsentReplyResult(
@@ -451,7 +441,7 @@ def process_consent_reply(
             _send_fixed_reply(
                 to_address=sender.email,
                 subject=subject,
-                body_text=CONSENT_DECLINED_REPLY,
+                template=FixedEmailTemplate.CONSENT_DECLINED,
                 trace_id=trace_id,
             )
         elif proposal.status == "introduced":
@@ -486,7 +476,7 @@ def process_consent_reply(
                 _send_fixed_reply(
                     to_address=sender.email,
                     subject=subject,
-                    body_text=CONSENT_ACKNOWLEDGMENT_REPLY,
+                    template=FixedEmailTemplate.CONSENT_ACKNOWLEDGMENT,
                     trace_id=trace_id,
                 )
 
