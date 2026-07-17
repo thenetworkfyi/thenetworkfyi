@@ -6,6 +6,7 @@ import smtplib
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid
 from time import monotonic
+from typing import Literal
 
 from imap_tools import MailBox, MailMessageFlags
 
@@ -35,7 +36,6 @@ FIRST_CONTACT_WELCOME_REPLY = render_fixed_email(
     FixedEmailTemplate.FIRST_CONTACT_WELCOME,
     FirstContactWelcomeEmailContext(),
     signature_variant=SignatureVariant.NONE,
-    html_enabled=False,
 ).text
 
 MAX_QUOTED_TRAIL_CHARS = 2_000
@@ -128,6 +128,7 @@ def notify_admins(
             subject=subject,
             body_text=body,
             include_footer=False,
+            audience="internal",
             trace_id=trace_id,
         )
 
@@ -188,6 +189,7 @@ def send_reply(
     trace_id: str | None = None,
     fixed_template: FixedEmailTemplate | None = None,
     fixed_context: FixedEmailContext | None = None,
+    audience: Literal["user", "internal"] = "user",
 ) -> None:
     """Send an email from the configured account.
 
@@ -199,8 +201,8 @@ def send_reply(
     is an internal, closed server-selected path for fixed replies; it accepts
     only a named server-owned template with its matching typed context, never
     caller-authored markup.
-    Set ``include_footer=False`` for internal/ops mail that should have no
-    signature or referral copy.
+    ``audience="internal"`` is the closed server-side path for operational
+    notifications that must remain plain-only.
     """
     if fixed_template is not None and fixed_context is None:
         raise TypeError("fixed_template requires fixed_context")
@@ -210,6 +212,8 @@ def send_reply(
         raise TypeError("fixed-template replies do not accept body_text")
     if fixed_template is None and not isinstance(body_text, str):
         raise TypeError("conversational replies require body_text")
+    if audience not in {"user", "internal"}:
+        raise ValueError("audience must be 'user' or 'internal'")
     template_id = (
         fixed_template.value if fixed_template is not None else "conversational"
     )
@@ -233,7 +237,6 @@ def send_reply(
                 body_text,
                 signature_variant=signature_variant,
                 quoted_message=quoted_message,
-                html_enabled=s.html_email_enabled,
                 referral_account=s.imap_account,
             )
         else:
@@ -242,12 +245,11 @@ def send_reply(
                 fixed_context,
                 signature_variant=signature_variant,
                 quoted_message=quoted_message,
-                html_enabled=s.html_email_enabled,
                 referral_account=s.imap_account,
             )
         audit_event(
             "email.rendered",
-            html_present=rendered.html is not None,
+            html_present=audience == "user" and rendered.html is not None,
             template_id=template_id,
             recipient_count=1,
             outcome="success",
@@ -268,7 +270,7 @@ def send_reply(
             msg["References"] = references
 
         msg.set_content(rendered.text)
-        if rendered.html is not None:
+        if audience == "user" and rendered.html is not None:
             msg.add_alternative(rendered.html, subtype="html")
 
         with smtplib.SMTP(s.smtp_host, s.smtp_port) as smtp:
@@ -306,7 +308,6 @@ def send_event_fyi(
             FixedEmailTemplate.EVENT_RECOMMENDATION,
             EventRecommendationEmailContext(event_gist=event_gist, notice=notice),
             signature_variant=_user_facing_signature_variant(settings),
-            html_enabled=settings.html_email_enabled,
             referral_account=settings.imap_account,
         )
         audit_event(
@@ -362,7 +363,6 @@ def send_group_introduction(
                 person_b_name=person_b_name,
             ),
             signature_variant=SignatureVariant.NONE,
-            html_enabled=settings.html_email_enabled,
         )
         audit_event(
             "email.rendered",
