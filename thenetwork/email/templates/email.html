@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="supported-color-schemes" content="light dark">
+    <style>
+      :root { color-scheme: light dark; supported-color-schemes: light dark; }
+      body { margin: 0; padding: 0; color: #1f2933; background: #ffffff; }
+      .message { box-sizing: border-box; width: 100%; max-width: 600px; margin: 0 auto; padding: 24px 20px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; font-size: 16px; line-height: 1.5; }
+      p { margin: 0 0 16px; }
+      hr { border: 0; border-top: 1px solid #cbd5e1; margin: 24px 0 16px; }
+      blockquote { margin: 0 0 16px; padding-left: 16px; border-left: 3px solid #cbd5e1; color: #475569; }
+      .signature { color: #475569; }
+      @media (prefers-color-scheme: dark) { body { color: #e2e8f0; background: #111827; } hr { border-top-color: #475569; } blockquote { border-left-color: #64748b; color: #cbd5e1; } .signature { color: #cbd5e1; } }
+    </style>
+  </head>
+  <body>
+    <div class="message">
+      {% if fixed_template == "introduction" %}
+        {% include "fixed/introduction.html" %}
+      {% else %}
+        {% for paragraph in body_paragraphs %}
+          <p>{% for line in paragraph %}{{ line }}{% if not loop.last %}<br>{% endif %}{% endfor %}</p>
+        {% endfor %}
+      {% endif %}
+      {% if signature.show %}
+        <hr>
+        <p class="signature"><strong>The Network</strong><br>An automated connection service<br>Reply anytime.{% if signature.referral %}<br>{{ signature.referral }}{% endif %}</p>
+      {% endif %}
+      {% if quote %}
+        <p>On {{ quote.date }}, you wrote:</p>
+        <blockquote>{% for line in quote.lines %}{{ line }}{% if not loop.last %}<br>{% endif %}{% endfor %}</blockquote>
+      {% endif %}
+    </div>
+  </body>
+</html>
