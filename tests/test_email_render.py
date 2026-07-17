@@ -9,7 +9,10 @@ from bs4 import BeautifulSoup
 from jinja2 import UndefinedError
 
 from thenetwork.email.render import (
+    FirstContactWelcomeEmailContext,
     FixedEmailTemplate,
+    InfrastructureRejectionEmailContext,
+    InfrastructureRejectionReason,
     IntroductionEmailContext,
     QuotedMessage,
     SignatureVariant,
@@ -83,6 +86,57 @@ def test_fixed_renderer_uses_only_named_template_and_escapes_context():
     assert "Renée &amp; O&#39;Connor" in rendered.html
     with pytest.raises(TypeError, match="FixedEmailTemplate"):
         render_fixed_email("introduction", IntroductionEmailContext("A", "B"))  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("template", "context", "expected_text"),
+    [
+        (
+            FixedEmailTemplate.FIRST_CONTACT_WELCOME,
+            FirstContactWelcomeEmailContext(),
+            "To join, let us know something about yourself",
+        ),
+        (
+            FixedEmailTemplate.INFRASTRUCTURE_REJECTION,
+            InfrastructureRejectionEmailContext(
+                InfrastructureRejectionReason.RATE_LIMIT
+            ),
+            "this address is sending too many messages right now",
+        ),
+    ],
+)
+def test_worker_fixed_templates_have_equivalent_plain_and_html_parts(
+    template, context, expected_text
+):
+    rendered = render_fixed_email(
+        template,
+        context,
+        signature_variant=SignatureVariant.NONE,
+        quoted_message=QuotedMessage("Original line", "Tuesday"),
+        html_enabled=True,
+    )
+
+    assert rendered.html is not None
+    html_visible = _visible_html(rendered.html)
+    assert expected_text in rendered.text
+    assert expected_text in html_visible
+    assert rendered.text.index(expected_text) < rendered.text.index("On Tuesday")
+    assert html_visible.index(expected_text) < html_visible.index("On Tuesday")
+    assert "Original line" in rendered.text
+    assert "Original line" in html_visible
+
+
+def test_fixed_renderer_rejects_mismatched_or_untrusted_worker_contexts():
+    with pytest.raises(TypeError, match="first_contact_welcome"):
+        render_fixed_email(
+            FixedEmailTemplate.FIRST_CONTACT_WELCOME,
+            IntroductionEmailContext("Alice", "Bob"),
+        )
+    with pytest.raises(TypeError, match="InfrastructureRejectionReason"):
+        render_fixed_email(
+            FixedEmailTemplate.INFRASTRUCTURE_REJECTION,
+            InfrastructureRejectionEmailContext("<script>steal()</script>"),  # type: ignore[arg-type]
+        )
 
 
 def test_environment_is_strict_for_missing_fixed_context_fields():

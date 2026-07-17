@@ -1469,8 +1469,12 @@ async def test_worker_replies_to_known_authenticated_sender_on_infrastructure_re
     from thenetwork.worker.tasks import (
         REJECT_CONTENT_SCAN,
         REJECT_RATE_LIMIT,
-        _INFRASTRUCTURE_REJECTION_REPLIES,
         process_email,
+    )
+    from thenetwork.email.render import (
+        FixedEmailTemplate,
+        InfrastructureRejectionEmailContext,
+        InfrastructureRejectionReason,
     )
 
     body = "Project Finch closes Friday"
@@ -1502,8 +1506,11 @@ async def test_worker_replies_to_known_authenticated_sender_on_infrastructure_re
     send_reply.assert_called_once_with(
         to_address="alice@example.com",
         subject="Re: Hello",
-        body_text=_INFRASTRUCTURE_REJECTION_REPLIES[reason],
         include_footer=False,
+        fixed_template=FixedEmailTemplate.INFRASTRUCTURE_REJECTION,
+        fixed_context=InfrastructureRejectionEmailContext(
+            InfrastructureRejectionReason(reason)
+        ),
     )
     mock_agent.assert_not_called()
 
@@ -1514,10 +1521,11 @@ async def test_worker_replies_to_known_authenticated_sender_on_infrastructure_re
 
 @pytest.mark.asyncio
 async def test_worker_threads_infrastructure_rejection_reply():
-    from thenetwork.worker.tasks import (
-        REJECT_RATE_LIMIT,
-        _INFRASTRUCTURE_REJECTION_REPLIES,
-        process_email,
+    from thenetwork.worker.tasks import process_email
+    from thenetwork.email.render import (
+        FixedEmailTemplate,
+        InfrastructureRejectionEmailContext,
+        InfrastructureRejectionReason,
     )
 
     mock_session = _mock_sender_lookup("person-id")
@@ -1542,8 +1550,11 @@ async def test_worker_threads_infrastructure_rejection_reply():
     send_reply.assert_called_once_with(
         to_address="alice@example.com",
         subject="Re: Hello",
-        body_text=_INFRASTRUCTURE_REJECTION_REPLIES[REJECT_RATE_LIMIT],
         include_footer=False,
+        fixed_template=FixedEmailTemplate.INFRASTRUCTURE_REJECTION,
+        fixed_context=InfrastructureRejectionEmailContext(
+            InfrastructureRejectionReason.RATE_LIMIT
+        ),
         in_reply_to="<abc123@example.com>",
         references="<root@example.com> <parent@example.com> <abc123@example.com>",
         quoted_body_text="Project Finch closes Friday",

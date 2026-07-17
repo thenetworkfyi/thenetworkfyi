@@ -20,6 +20,10 @@
     <div class="message">
       {% if fixed_template == "introduction" %}
         {% include "fixed/introduction.html" %}
+      {% elif fixed_template == "first_contact_welcome" %}
+        {% include "fixed/first_contact_welcome.html" %}
+      {% elif fixed_template == "infrastructure_rejection" %}
+        {% include "fixed/infrastructure_rejection.html" %}
       {% else %}
         {% for paragraph in body_paragraphs %}
           <p>{% for line in paragraph %}{{ line }}{% if not loop.last %}<br>{% endif %}{% endfor %}</p>

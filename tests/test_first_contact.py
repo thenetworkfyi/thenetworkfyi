@@ -24,7 +24,10 @@ def _reset_welcome_limiter() -> None:
 
 @pytest.mark.asyncio
 async def test_near_empty_authenticated_unknown_sender_gets_welcome_after_rate_limit():
-    from thenetwork.email.outbound import FIRST_CONTACT_WELCOME_REPLY
+    from thenetwork.email.render import (
+        FirstContactWelcomeEmailContext,
+        FixedEmailTemplate,
+    )
     from thenetwork.worker.tasks import process_email
 
     _reset_welcome_limiter()
@@ -54,15 +57,19 @@ async def test_near_empty_authenticated_unknown_sender_gets_welcome_after_rate_l
     send_reply.assert_called_once_with(
         to_address="new@example.com",
         subject="How to join",
-        body_text=FIRST_CONTACT_WELCOME_REPLY,
         include_footer=False,
+        fixed_template=FixedEmailTemplate.FIRST_CONTACT_WELCOME,
+        fixed_context=FirstContactWelcomeEmailContext(),
     )
     mock_agent.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_first_contact_welcome_threads_reply_when_message_id_present():
-    from thenetwork.email.outbound import FIRST_CONTACT_WELCOME_REPLY
+    from thenetwork.email.render import (
+        FirstContactWelcomeEmailContext,
+        FixedEmailTemplate,
+    )
     from thenetwork.worker.tasks import process_email
 
     _reset_welcome_limiter()
@@ -86,8 +93,9 @@ async def test_first_contact_welcome_threads_reply_when_message_id_present():
     send_reply.assert_called_once_with(
         to_address="new@example.com",
         subject="How to join",
-        body_text=FIRST_CONTACT_WELCOME_REPLY,
         include_footer=False,
+        fixed_template=FixedEmailTemplate.FIRST_CONTACT_WELCOME,
+        fixed_context=FirstContactWelcomeEmailContext(),
         in_reply_to="<abc123@example.com>",
         references="<abc123@example.com>",
         quoted_body_text="Hi",
@@ -97,7 +105,10 @@ async def test_first_contact_welcome_threads_reply_when_message_id_present():
 
 @pytest.mark.asyncio
 async def test_first_contact_welcome_appends_to_references_chain():
-    from thenetwork.email.outbound import FIRST_CONTACT_WELCOME_REPLY
+    from thenetwork.email.render import (
+        FirstContactWelcomeEmailContext,
+        FixedEmailTemplate,
+    )
     from thenetwork.worker.tasks import process_email
 
     _reset_welcome_limiter()
@@ -122,8 +133,9 @@ async def test_first_contact_welcome_appends_to_references_chain():
     send_reply.assert_called_once_with(
         to_address="new@example.com",
         subject="How to join",
-        body_text=FIRST_CONTACT_WELCOME_REPLY,
         include_footer=False,
+        fixed_template=FixedEmailTemplate.FIRST_CONTACT_WELCOME,
+        fixed_context=FirstContactWelcomeEmailContext(),
         in_reply_to="<abc123@example.com>",
         references="<root@example.com> <parent@example.com> <abc123@example.com>",
         quoted_body_text="Hi",
@@ -133,7 +145,10 @@ async def test_first_contact_welcome_appends_to_references_chain():
 
 @pytest.mark.asyncio
 async def test_first_contact_welcome_drops_unsafe_message_id():
-    from thenetwork.email.outbound import FIRST_CONTACT_WELCOME_REPLY
+    from thenetwork.email.render import (
+        FirstContactWelcomeEmailContext,
+        FixedEmailTemplate,
+    )
     from thenetwork.worker.tasks import process_email
 
     _reset_welcome_limiter()
@@ -158,8 +173,9 @@ async def test_first_contact_welcome_drops_unsafe_message_id():
     send_reply.assert_called_once_with(
         to_address="new@example.com",
         subject="How to join",
-        body_text=FIRST_CONTACT_WELCOME_REPLY,
         include_footer=False,
+        fixed_template=FixedEmailTemplate.FIRST_CONTACT_WELCOME,
+        fixed_context=FirstContactWelcomeEmailContext(),
     )
 
 
