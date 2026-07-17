@@ -867,7 +867,6 @@ async def _send_email(
     recipient_user_id: str,
     subject: str,
     body_text: str,
-    body_html: str | None = None,
     *,
     is_sender_reply: bool,
     tool_name: str,
@@ -878,7 +877,6 @@ async def _send_email(
         recipient_id_present=bool(recipient_user_id),
         subject_chars=len(subject),
         body_chars=len(body_text),
-        html_present=body_html is not None,
     ):
         s = ctx.deps.settings
         if ctx.deps.sender_user_id is None:
@@ -944,7 +942,6 @@ async def _send_email(
             to_address=to_address,
             subject=subject,
             body_text=body_text,
-            body_html=body_html,
             **_trace_kwargs(ctx.deps.trace_id),
             **thread_headers,
         )
@@ -965,7 +962,6 @@ async def reply_to_sender(
     ctx: RunContext[AgentDeps],
     subject: str,
     body_text: str,
-    body_html: str | None = None,
 ) -> dict[str, Any]:
     """Reply to this inbound email's registered sender.
 
@@ -992,7 +988,6 @@ async def reply_to_sender(
         recipient_user_id=ctx.deps.sender_user_id,
         subject=subject,
         body_text=body_text,
-        body_html=body_html,
         is_sender_reply=True,
         tool_name="reply_to_sender",
     )
@@ -1003,7 +998,6 @@ async def send_outreach(
     recipient_user_id: str,
     subject: str,
     body_text: str,
-    body_html: str | None = None,
 ) -> dict[str, Any]:
     """Send a new, unthreaded email to another user by opaque ID.
 
@@ -1024,7 +1018,6 @@ async def send_outreach(
         recipient_user_id=recipient_user_id,
         subject=subject,
         body_text=body_text,
-        body_html=body_html,
         is_sender_reply=False,
         tool_name="send_outreach",
     )

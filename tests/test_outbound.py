@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 from imap_tools import MailMessageFlags
 
 from thenetwork.audit import LOGGER_NAME
+from thenetwork.email.render import RenderedEmail
 
 
 def _events(caplog) -> list[dict]:
@@ -33,6 +34,7 @@ def _mock_settings(**overrides):
     s.imap_port = 993
     s.imap_sent_folder = "Sent"
     s.growth_footer_enabled = False
+    s.html_email_enabled = False
     for key, value in overrides.items():
         setattr(s, key, value)
     return s
@@ -105,7 +107,7 @@ def test_group_introduction_addresses_both_consented_people():
     assert "both opted in" in body
 
 
-def test_group_introduction_audits_actual_body_length(caplog):
+def test_group_introduction_audits_rendering_metadata_only(caplog):
     from thenetwork.email.outbound import send_group_introduction
 
     caplog.set_level(logging.INFO, logger=LOGGER_NAME)
@@ -123,18 +125,56 @@ def test_group_introduction_audits_actual_body_length(caplog):
             person_b_email="bob@example.com",
         )
 
-    body = (
-        "Alice and Bob,\n\n"
-        "You both opted in to this introduction. Your addresses are included "
-        "on this message so you can take it from here."
-    )
     smtp_events = [
         event
         for event in _events(caplog)
         if event["event"] in {"email.smtp_send.started", "email.smtp_send.completed"}
     ]
     assert len(smtp_events) == 2
-    assert {event["body_chars"] for event in smtp_events} == {len(body)}
+    assert {event["recipient_count"] for event in smtp_events} == {2}
+    assert {event["template_id"] for event in smtp_events} == {"introduction"}
+    assert all("body_chars" not in event for event in smtp_events)
+    assert all("subject_chars" not in event for event in smtp_events)
+
+    rendered_events = [
+        event for event in _events(caplog) if event["event"] == "email.rendered"
+    ]
+    assert len(rendered_events) == 1
+    assert {
+        "html_present": False,
+        "outcome": "success",
+        "recipient_count": 2,
+        "template_id": "introduction",
+    }.items() <= rendered_events[0].items()
+
+
+def test_group_introduction_builds_plain_first_multipart_alternative():
+    from thenetwork.email.outbound import send_group_introduction
+
+    captured = []
+    smtp_instance = _mock_smtp()
+    smtp_instance.send_message.side_effect = captured.append
+    mock_mailbox, _mb_instance = _mock_mailbox_success()
+
+    with (
+        patch(
+            "thenetwork.email.outbound.get_settings",
+            return_value=_mock_settings(html_email_enabled=True),
+        ),
+        patch("smtplib.SMTP", return_value=smtp_instance),
+        patch("thenetwork.email.outbound.MailBox", mock_mailbox),
+    ):
+        send_group_introduction(
+            person_a_name="Alice",
+            person_a_email="alice@example.com",
+            person_b_name="Bob",
+            person_b_email="bob@example.com",
+        )
+
+    assert [part.get_content_type() for part in captured[0].iter_parts()] == [
+        "text/plain",
+        "text/html",
+    ]
 
 
 def test_append_uses_configured_folder_name():
@@ -264,7 +304,10 @@ def test_send_reply_appends_plain_text_quoted_trail():
     mock_mailbox, _mb_instance = _mock_mailbox_success()
 
     with (
-        patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()),
+        patch(
+            "thenetwork.email.outbound.get_settings",
+            return_value=_mock_settings(html_email_enabled=True),
+        ),
         patch("smtplib.SMTP", return_value=smtp_instance),
         patch("thenetwork.email.outbound.MailBox", mock_mailbox),
     ):
@@ -272,7 +315,6 @@ def test_send_reply_appends_plain_text_quoted_trail():
             to_address="bob@example.com",
             subject="Hi",
             body_text="Hello",
-            body_html="<p>Hello</p>",
             quoted_body_text="Original line\n> old quote\nSecond line",
             quoted_date="Sat, 04 Jul 2026 12:00:00 -0700",
             include_footer=False,
@@ -301,7 +343,10 @@ def test_send_reply_escapes_html_quoted_trail():
     mock_mailbox, _mb_instance = _mock_mailbox_success()
 
     with (
-        patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()),
+        patch(
+            "thenetwork.email.outbound.get_settings",
+            return_value=_mock_settings(html_email_enabled=True),
+        ),
         patch("smtplib.SMTP", return_value=smtp_instance),
         patch("thenetwork.email.outbound.MailBox", mock_mailbox),
     ):
@@ -309,7 +354,6 @@ def test_send_reply_escapes_html_quoted_trail():
             to_address="bob@example.com",
             subject="Hi",
             body_text="Hello",
-            body_html="<p>Hello</p>",
             quoted_body_text="<script>steal()</script>",
             include_footer=False,
         )
@@ -373,9 +417,74 @@ def test_send_reply_places_growth_footer_before_quoted_trail():
 
     plain = captured[0].get_content()
     reply_index = plain.index("Hello")
-    footer_index = plain.index("--\nThe Network.")
+    footer_index = plain.index("--\nThe Network\nAn automated connection service")
     quote_index = plain.index("On Sat, 04 Jul 2026 12:00:00 -0700, you wrote:")
     assert reply_index < footer_index < quote_index
+
+
+def test_send_reply_builds_plain_first_multipart_alternative():
+    from thenetwork.email.outbound import send_reply
+
+    captured = []
+    smtp_instance = _mock_smtp()
+    smtp_instance.send_message.side_effect = captured.append
+    mock_mailbox, _mb_instance = _mock_mailbox_success()
+
+    with (
+        patch(
+            "thenetwork.email.outbound.get_settings",
+            return_value=_mock_settings(html_email_enabled=True),
+        ),
+        patch("smtplib.SMTP", return_value=smtp_instance),
+        patch("thenetwork.email.outbound.MailBox", mock_mailbox),
+    ):
+        send_reply(
+            to_address="bob@example.com",
+            subject="Hi",
+            body_text="Hello",
+            include_footer=False,
+        )
+
+    message = captured[0]
+    assert message.get_content_type() == "multipart/alternative"
+    assert [part.get_content_type() for part in message.iter_parts()] == [
+        "text/plain",
+        "text/html",
+    ]
+    assert message["Message-ID"]
+    assert message["Auto-Submitted"] == "auto-replied"
+
+
+def test_send_reply_render_fallback_sends_complete_plain_only_message():
+    from thenetwork.email.outbound import send_reply
+
+    captured = []
+    smtp_instance = _mock_smtp()
+    smtp_instance.send_message.side_effect = captured.append
+    mock_mailbox, _mb_instance = _mock_mailbox_success()
+
+    with (
+        patch(
+            "thenetwork.email.outbound.get_settings",
+            return_value=_mock_settings(html_email_enabled=True),
+        ),
+        patch(
+            "thenetwork.email.outbound.render_conversational_email",
+            return_value=RenderedEmail(text="Complete plain message", html=None),
+        ),
+        patch("smtplib.SMTP", return_value=smtp_instance),
+        patch("thenetwork.email.outbound.MailBox", mock_mailbox),
+    ):
+        send_reply(
+            to_address="bob@example.com",
+            subject="Hi",
+            body_text="Hello",
+            include_footer=False,
+        )
+
+    message = captured[0]
+    assert not message.is_multipart()
+    assert message.get_content() == "Complete plain message\n"
 
 
 def test_append_failure_does_not_propagate():
