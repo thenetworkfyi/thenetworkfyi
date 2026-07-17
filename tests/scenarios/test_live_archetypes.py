@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -31,7 +32,16 @@ from pydantic_evals.evaluators import Evaluator, EvaluatorContext, LLMJudge
 
 from thenetwork.agent.core import build_agent
 from thenetwork.agent.deps import AgentDeps
-from thenetwork.db.models import Memory
+from thenetwork.agent.tools import (
+    EVENT_RECOMMENDATION_SUBJECT,
+    FIRST_EVENT_RECOMMENDATION_NOTICE,
+)
+from thenetwork.db.models import (
+    Event,
+    EventRecommendation,
+    EventSuppression,
+    Memory,
+)
 from thenetwork.model_config import model_with_api_key
 from thenetwork.search.match import MemoryMatch
 from thenetwork.settings import get_settings
@@ -87,6 +97,12 @@ class EmailScenario:
     memory_refs: dict[str, list[str]] = field(default_factory=dict)
     search_results: list[MemoryMatch] = field(default_factory=list)
     outbound_send_count: int = 0
+    is_proactive: bool = False
+    proactive_event_id: str | None = None
+    event: Event | None = None
+    event_recommendation: EventRecommendation | None = None
+    prior_event_deliveries: int = 0
+    event_recommendations_stopped: bool = False
 
 
 @dataclass
@@ -98,6 +114,7 @@ class RunOutcome:
     remembered: list[dict[str, Any]]
     forget_attempts: list[str]
     forgotten: list[str]
+    created_events: list[Event]
 
 
 async def run_scenario(inputs: EmailScenario) -> RunOutcome:
@@ -112,12 +129,20 @@ async def run_scenario(inputs: EmailScenario) -> RunOutcome:
     remembered: list[dict[str, Any]] = []
     forget_attempts: list[str] = []
     forgotten: list[str] = []
+    created_events: list[Event] = []
+    event_suppressed = inputs.event_recommendations_stopped
+    event_recommendation = (
+        inputs.event_recommendation.model_copy(deep=True)
+        if inputs.event_recommendation is not None
+        else None
+    )
 
     mock_session = MagicMock()
     mock_session.__enter__ = MagicMock(return_value=mock_session)
     mock_session.__exit__ = MagicMock(return_value=False)
 
     def fake_session_get(model_cls, obj_id):
+        nonlocal event_suppressed
         if model_cls is Memory:
             forget_attempts.append(obj_id)
             refs = inputs.memory_refs.get(obj_id)
@@ -129,6 +154,12 @@ async def run_scenario(inputs: EmailScenario) -> RunOutcome:
                 refs=refs,
                 gist=f"gist {obj_id}",
             )
+        if model_cls is Event:
+            if inputs.event is not None and inputs.event.id == obj_id:
+                return inputs.event
+            return None
+        if model_cls is EventSuppression:
+            return EventSuppression(person_id=obj_id) if event_suppressed else None
         email = inputs.known_people.get(obj_id)
         if email is None:
             return None
@@ -136,9 +167,25 @@ async def run_scenario(inputs: EmailScenario) -> RunOutcome:
         person.email = email
         return person
 
+    def fake_session_add(obj):
+        nonlocal event_suppressed
+        if isinstance(obj, Event):
+            created_events.append(obj)
+        elif isinstance(obj, EventSuppression):
+            event_suppressed = True
+
+    def fake_session_delete(obj):
+        nonlocal event_suppressed
+        if isinstance(obj, EventSuppression):
+            event_suppressed = False
+        elif isinstance(obj, Memory):
+            forgotten.append(obj.id)
+
     mock_session.get.side_effect = fake_session_get
-    mock_session.delete.side_effect = lambda memory: forgotten.append(memory.id)
-    mock_session.exec.return_value.first.return_value = None
+    mock_session.add.side_effect = fake_session_add
+    mock_session.delete.side_effect = fake_session_delete
+    mock_session.exec.return_value.first.return_value = event_recommendation
+    mock_session.exec.return_value.one.return_value = inputs.prior_event_deliveries
 
     def fake_send_reply(to_address, subject, body_text, body_html=None, **kwargs):
         dispatched.append({"to": to_address, "subject": subject, "body": body_text})
@@ -149,6 +196,9 @@ async def run_scenario(inputs: EmailScenario) -> RunOutcome:
     async def fake_sanitize(memory, session):
         remembered.append({"text": memory.text, "refs": list(memory.refs or [])})
         return memory.gist or "note"
+
+    async def fake_sanitize_event(text: str) -> str:
+        return f"sealed event: {text}"
 
     with (
         patch("thenetwork.agent.tools.get_session", return_value=mock_session),
@@ -164,6 +214,12 @@ async def run_scenario(inputs: EmailScenario) -> RunOutcome:
             "thenetwork.agent.tools.sanitize_memory_high_fidelity",
             new=AsyncMock(side_effect=fake_sanitize),
         ),
+        patch(
+            "thenetwork.agent.tools.sanitize_text_high_fidelity",
+            new=AsyncMock(side_effect=fake_sanitize_event),
+        ),
+        patch("thenetwork.agent.tools._check_daily_dispatch_cap", return_value=True),
+        patch("thenetwork.agent.tools._consume_daily_dispatch_cap"),
     ):
         settings = get_settings()
         agent = build_agent(model=settings.agent_model)
@@ -173,6 +229,8 @@ async def run_scenario(inputs: EmailScenario) -> RunOutcome:
             sender_authenticated=inputs.sender_authenticated,
             inbound_subject=inputs.subject,
             outbound_send_count=inputs.outbound_send_count,
+            is_proactive=inputs.is_proactive,
+            proactive_event_id=inputs.proactive_event_id,
         )
         user_message = f"Subject: {inputs.subject}\n\n{inputs.body}"
         result = await agent.run(user_message, deps=deps)
@@ -195,6 +253,7 @@ async def run_scenario(inputs: EmailScenario) -> RunOutcome:
         remembered=remembered,
         forget_attempts=forget_attempts,
         forgotten=forgotten,
+        created_events=created_events,
     )
 
 
@@ -289,6 +348,75 @@ class RememberedSubstringAny(Evaluator[EmailScenario, RunOutcome, object]):
         texts = [chunk["text"].lower() for chunk in ctx.output.remembered]
         return any(
             needle.lower() in text for needle in self.substrings for text in texts
+        )
+
+
+@dataclass(repr=False)
+class RememberedSubstringsTogether(Evaluator[EmailScenario, RunOutcome, object]):
+    """A nuanced event interest must retain all of its stated constraints."""
+
+    substrings: tuple[str, ...] = ()
+
+    def evaluate(
+        self, ctx: EvaluatorContext[EmailScenario, RunOutcome, object]
+    ) -> bool:
+        joined = "\n".join(chunk["text"].lower() for chunk in ctx.output.remembered)
+        return all(needle.lower() in joined for needle in self.substrings)
+
+
+@dataclass(repr=False)
+class CreatedEventKind(Evaluator[EmailScenario, RunOutcome, object]):
+    """The dedicated event record distinguishes one-offs from recurring series."""
+
+    recurring: bool = False
+
+    def evaluate(
+        self, ctx: EvaluatorContext[EmailScenario, RunOutcome, object]
+    ) -> bool:
+        if len(ctx.output.created_events) != 1:
+            return False
+        recurrence = ctx.output.created_events[0].recurrence
+        return bool(recurrence) is self.recurring
+
+
+@dataclass(repr=False)
+class FirstEventPermissionIsScoped(Evaluator[EmailScenario, RunOutcome, object]):
+    """The first FYI's server-owned permission question applies only to events."""
+
+    def evaluate(
+        self, ctx: EvaluatorContext[EmailScenario, RunOutcome, object]
+    ) -> bool:
+        if len(ctx.output.dispatched) != 1:
+            return False
+        dispatch = ctx.output.dispatched[0]
+        body = dispatch["body"]
+        lowered = body.lower()
+        return (
+            dispatch["subject"] == EVENT_RECOMMENDATION_SUBJECT
+            and FIRST_EVENT_RECOMMENDATION_NOTICE in body
+            and "stops only event recommendations" in lowered
+            and "people recommendations" not in lowered
+            and "opt out of introductions" not in lowered
+        )
+
+
+@dataclass(repr=False)
+class NoUnsupportedEventServices(Evaluator[EmailScenario, RunOutcome, object]):
+    """An event FYI must not imply a scheduling or event-management service."""
+
+    def evaluate(
+        self, ctx: EvaluatorContext[EmailScenario, RunOutcome, object]
+    ) -> bool:
+        body = "\n".join(dispatch["body"] for dispatch in ctx.output.dispatched).lower()
+        return not any(
+            phrase in body
+            for phrase in (
+                "remind you",
+                "rsvp",
+                "track attendance",
+                "follow up after",
+                "add to your calendar",
+            )
         )
 
 
@@ -789,6 +917,265 @@ consolidation_update_case = Case(
 )
 
 
+one_off_event_submission_case = Case(
+    name="one_off_event_submission",
+    inputs=EmailScenario(
+        subject="Compiler meetup on September 8",
+        body=(
+            "Please record this event for other members: an in-person compiler "
+            "engineering meetup in Seattle on September 8, 2099. It is a one-off, "
+            "and the listing should expire at 2099-09-09T07:00:00Z."
+        ),
+        sender_email="organizer@example.com",
+        sender_user_id="user-organizer",
+        sender_authenticated=True,
+    ),
+    evaluators=(
+        ToolWasCalled("create_event"),
+        CreatedEventKind(False),
+        ToolWasNotCalled("remember"),
+        ToolWasNotCalled("propose_introduction"),
+        LLMJudge(
+            rubric=(
+                "The authenticated member is submitting a genuine one-off event "
+                "for discovery and supplied an explicit future expiry. A reasonable "
+                "response records exactly one owner-controlled event using the "
+                "dedicated event capability, without treating the event itself as a "
+                "person memory or proposing an introduction."
+            ),
+            model=_judge_model,
+            include_input=True,
+        ),
+    ),
+)
+
+
+recurring_event_submission_case = Case(
+    name="recurring_event_submission",
+    inputs=EmailScenario(
+        subject="Monthly climate policy roundtable",
+        body=(
+            "Please list our climate policy practitioner roundtable. It meets in "
+            "person in San Francisco on the first Thursday of every month at 6pm "
+            "Pacific through June 2099. Use 2099-07-01T07:00:00Z as the listing expiry."
+        ),
+        sender_email="roundtable@example.com",
+        sender_user_id="user-roundtable-organizer",
+        sender_authenticated=True,
+    ),
+    evaluators=(
+        ToolWasCalled("create_event"),
+        CreatedEventKind(True),
+        ToolWasNotCalled("remember"),
+        ToolWasNotCalled("propose_introduction"),
+        LLMJudge(
+            rubric=(
+                "The authenticated member is submitting one recurring event series, "
+                "not many one-off occurrences. A reasonable response creates one event "
+                "record whose recurrence preserves the first-Thursday, 6pm Pacific, "
+                "in-person San Francisco schedule and uses the supplied series expiry."
+            ),
+            model=_judge_model,
+            include_input=True,
+        ),
+    ),
+)
+
+
+nuanced_event_interest_case = Case(
+    name="nuanced_event_interest",
+    inputs=EmailScenario(
+        subject="Events I care about",
+        body=(
+            "For event tips, I only want small, in-person climate policy workshops "
+            "in San Francisco for experienced practitioners, ideally weekday evenings. "
+            "Online webinars and beginner sessions are not useful to me."
+        ),
+        sender_email="maya@example.com",
+        sender_user_id="user-maya",
+        sender_authenticated=True,
+    ),
+    evaluators=(
+        ToolWasCalled("remember"),
+        RememberedSubstringsTogether(
+            ("in-person", "climate policy", "san francisco", "experienced")
+        ),
+        ToolWasNotCalled("create_event"),
+        ToolWasNotCalled("propose_introduction"),
+        LLMJudge(
+            rubric=(
+                "This is a person's nuanced preference about event recommendations, "
+                "not an event submission. A reasonable response stores the preference "
+                "as person memory and preserves the meaningful constraints: small and "
+                "in-person, climate policy, San Francisco, experienced practitioners, "
+                "weekday evenings, and the rejection of webinars or beginner sessions."
+            ),
+            model=_judge_model,
+            include_input=True,
+        ),
+    ),
+)
+
+
+_strong_event = Event(
+    id="event-climate-roundtable",
+    submitter_id="user-event-owner",
+    text="Private raw event submission",
+    gist=(
+        "small in-person climate policy workshop in San Francisco for experienced "
+        "practitioners, Thursday evening"
+    ),
+    expires_at=datetime(2099, 7, 1, tzinfo=timezone.utc),
+)
+strong_event_relevance_case = Case(
+    name="strong_event_relevance",
+    inputs=EmailScenario(
+        subject="[Proactive] Possible event",
+        body=(
+            "[Proactive event] You are acting for person user-maya. Their standing "
+            "event interest is: small, in-person climate policy workshops in San "
+            "Francisco for experienced practitioners, preferably weekday evenings.\n\n"
+            "Event event-climate-roundtable: small in-person climate policy workshop "
+            "in San Francisco for experienced practitioners, Thursday evening.\n\n"
+            "Judge this event fit independently. The event id bound to this trigger is "
+            "event-climate-roundtable."
+        ),
+        sender_email="maya@example.com",
+        sender_user_id="user-maya",
+        sender_authenticated=True,
+        known_people={"user-maya": "maya@example.com"},
+        is_proactive=True,
+        proactive_event_id="event-climate-roundtable",
+        event=_strong_event,
+        event_recommendation=EventRecommendation(
+            event_id="event-climate-roundtable", person_id="user-maya"
+        ),
+    ),
+    evaluators=(
+        ToolWasCalled("send_event_recommendation"),
+        ToolWasNotCalled("send_outreach"),
+        ToolWasNotCalled("reply_to_sender"),
+        ToolWasNotCalled("propose_introduction"),
+        FirstEventPermissionIsScoped(),
+        NoUnsupportedEventServices(),
+        LLMJudge(
+            rubric=(
+                "This proactive event is a strong, specific fit on topic, format, "
+                "location, audience level, and timing. A reasonable response uses the "
+                "dedicated bound event recommendation capability exactly as a one-way "
+                "FYI. It does not turn the event into a person introduction, compose a "
+                "generic outreach message, or offer RSVP, reminders, attendance, "
+                "follow-up, or calendar services."
+            ),
+            model=_judge_model,
+            include_input=True,
+        ),
+    ),
+)
+
+
+event_preference_mismatch_case = Case(
+    name="event_preference_mismatch",
+    inputs=EmailScenario(
+        subject="[Proactive] Possible event",
+        body=(
+            "[Proactive event] You are acting for person user-maya. Their standing "
+            "event interest is: advanced, in-person climate policy workshops in San "
+            "Francisco only; no online webinars or beginner sessions.\n\n"
+            "Event event-beginner-webinar: a broad online introductory climate webinar "
+            "for students, streamed on a weekday morning.\n\n"
+            "Judge this event fit independently. The event id bound to this trigger is "
+            "event-beginner-webinar."
+        ),
+        sender_email="maya@example.com",
+        sender_user_id="user-maya",
+        sender_authenticated=True,
+        is_proactive=True,
+        proactive_event_id="event-beginner-webinar",
+    ),
+    evaluators=(
+        ToolWasNotCalled("send_event_recommendation"),
+        ToolWasNotCalled("send_outreach"),
+        ToolWasNotCalled("reply_to_sender"),
+        ToolWasNotCalled("propose_introduction"),
+        LLMJudge(
+            rubric=(
+                "The event has topic overlap but contradicts every important stated "
+                "constraint: it is online, introductory, aimed at students, and not a "
+                "San Francisco practitioner workshop. A reasonable response treats "
+                "those preferences as constraints, sends nothing, and does not propose "
+                "an introduction merely because the word climate overlaps."
+            ),
+            model=_judge_model,
+            include_input=True,
+        ),
+    ),
+)
+
+
+stop_event_recommendations_case = Case(
+    name="stop_event_recommendations_only",
+    inputs=EmailScenario(
+        subject="Re: An event you might care about",
+        body=(
+            "No, please stop event recommendations. I still want pair-specific "
+            "introduction proposals when a genuinely relevant person turns up."
+        ),
+        sender_email="maya@example.com",
+        sender_user_id="user-maya",
+        sender_authenticated=True,
+    ),
+    evaluators=(
+        ToolWasCalled("stop_event_recommendations"),
+        ToolWasNotCalled("resume_event_recommendations"),
+        ToolWasNotCalled("remember"),
+        ToolWasNotCalled("propose_introduction"),
+        LLMJudge(
+            rubric=(
+                "The sender explicitly stops event recommendations while preserving "
+                "pair-specific introduction proposals. A reasonable response changes "
+                "only event recommendation suppression and never describes this as a "
+                "people-recommendation or introduction opt-out."
+            ),
+            model=_judge_model,
+            include_input=True,
+        ),
+    ),
+)
+
+
+resume_event_recommendations_case = Case(
+    name="resume_event_recommendations_only",
+    inputs=EmailScenario(
+        subject="Event recommendations",
+        body=(
+            "Please resume occasional event recommendations. This does not change any "
+            "pair-specific introduction consent."
+        ),
+        sender_email="maya@example.com",
+        sender_user_id="user-maya",
+        sender_authenticated=True,
+        event_recommendations_stopped=True,
+    ),
+    evaluators=(
+        ToolWasCalled("resume_event_recommendations"),
+        ToolWasNotCalled("stop_event_recommendations"),
+        ToolWasNotCalled("remember"),
+        ToolWasNotCalled("propose_introduction"),
+        LLMJudge(
+            rubric=(
+                "The sender explicitly resumes only occasional event recommendations. "
+                "A reasonable response removes only event suppression and does not "
+                "claim to alter people recommendations, introduction consent, or any "
+                "unrelated preference."
+            ),
+            model=_judge_model,
+            include_input=True,
+        ),
+    ),
+)
+
+
 archetype_dataset = Dataset[EmailScenario, RunOutcome](
     name="live_model_archetypes",
     cases=[
@@ -803,6 +1190,13 @@ archetype_dataset = Dataset[EmailScenario, RunOutcome](
         preference_mismatch_case,
         exhausted_reply_cap_case,
         consolidation_update_case,
+        one_off_event_submission_case,
+        recurring_event_submission_case,
+        nuanced_event_interest_case,
+        strong_event_relevance_case,
+        event_preference_mismatch_case,
+        stop_event_recommendations_case,
+        resume_event_recommendations_case,
     ],
 )
 
