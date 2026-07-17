@@ -114,6 +114,7 @@ async def run_agent_for_email(
     is_proactive: bool = False,
     proactive_candidate_id: str | None = None,
     proactive_event_id: str | None = None,
+    proactive_event_version: int | None = None,
 ) -> str:
     """Run the agent for one inbound email.
 
@@ -144,6 +145,7 @@ async def run_agent_for_email(
             is_proactive=is_proactive,
             proactive_candidate_id=proactive_candidate_id,
             proactive_event_id=proactive_event_id,
+            proactive_event_version=proactive_event_version,
         )
         settings = get_settings()
         agent = build_agent(model=settings.agent_model)

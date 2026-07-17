@@ -36,6 +36,7 @@ from thenetwork.worker.tasks import app, process_email
 @dataclass(frozen=True)
 class _SemanticCandidate:
     event_id: str
+    event_version: int
     person_id: str
     event_gist: str
     person_gist: str
@@ -66,6 +67,7 @@ async def scan_for_event_recommendations(timestamp: int) -> None:
         events = session.exec(
             select(
                 Event.id,
+                Event.version,
                 Event.gist,
                 Event.embedding,
                 Event.submitter_id,
@@ -83,7 +85,14 @@ async def scan_for_event_recommendations(timestamp: int) -> None:
         # One person can appear in several matching memories. Keep only their
         # strongest deterministic match for each stable event/series id.
         candidate_by_key: dict[tuple[str, str], _SemanticCandidate] = {}
-        for event_id, event_gist, embedding, submitter_id, expires_at in events:
+        for (
+            event_id,
+            event_version,
+            event_gist,
+            embedding,
+            submitter_id,
+            expires_at,
+        ) in events:
             for match in match_memories(
                 embedding,
                 session,
@@ -100,6 +109,7 @@ async def scan_for_event_recommendations(timestamp: int) -> None:
 
                 candidate = _SemanticCandidate(
                     event_id=event_id,
+                    event_version=event_version,
                     person_id=person_id,
                     event_gist=event_gist,
                     person_gist=match.gist,
@@ -132,20 +142,30 @@ async def scan_for_event_recommendations(timestamp: int) -> None:
                 )
             ).all()
         )
-        considered = set(
-            session.exec(
-                select(EventRecommendation.event_id, EventRecommendation.person_id)
+        recommendations_by_key = {
+            (recommendation.event_id, recommendation.person_id): recommendation
+            for recommendation in session.exec(
+                select(EventRecommendation)
                 .where(col(EventRecommendation.event_id).in_(candidate_event_ids))
                 .where(col(EventRecommendation.person_id).in_(candidate_person_ids))
             ).all()
-        )
+        }
+
+        def is_available(candidate: _SemanticCandidate) -> bool:
+            recommendation = recommendations_by_key.get(
+                (candidate.event_id, candidate.person_id)
+            )
+            return recommendation is None or (
+                recommendation.notified_at is None
+                and recommendation.event_version != candidate.event_version
+            )
 
         candidates = [
             candidate
-            for key, candidate in candidate_by_key.items()
+            for candidate in candidate_by_key.values()
             if candidate.person_id in email_by_id
             and candidate.person_id not in suppressed_people
-            and key not in considered
+            and is_available(candidate)
         ]
         candidates.sort(
             key=lambda candidate: (
@@ -170,13 +190,19 @@ async def scan_for_event_recommendations(timestamp: int) -> None:
             return
 
         for candidate in selected:
-            session.add(
-                EventRecommendation(
+            key = (candidate.event_id, candidate.person_id)
+            recommendation = recommendations_by_key.get(key)
+            if recommendation is None:
+                recommendation = EventRecommendation(
                     event_id=candidate.event_id,
                     person_id=candidate.person_id,
+                    event_version=candidate.event_version,
                     considered_at=now,
                 )
-            )
+            else:
+                recommendation.event_version = candidate.event_version
+                recommendation.considered_at = now
+            session.add(recommendation)
 
         # Consideration is durable before any job can run. The unique
         # event/person constraint is the final guard against concurrent scans.
@@ -201,6 +227,7 @@ async def scan_for_event_recommendations(timestamp: int) -> None:
                 "sender_authenticated": True,
                 "is_proactive": True,
                 "proactive_event_id": candidate.event_id,
+                "proactive_event_version": candidate.event_version,
             }
             for candidate in selected
         ]

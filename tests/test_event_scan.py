@@ -28,6 +28,7 @@ def _settings(**overrides):
 def _event_row(
     event_id: str,
     *,
+    version: int = 1,
     gist: str = "sealed compiler meetup",
     embedding: list[float] | None = None,
     submitter_id: str = "owner",
@@ -35,6 +36,7 @@ def _event_row(
 ):
     return (
         event_id,
+        version,
         gist,
         embedding or [1.0, 0.0],
         submitter_id,
@@ -113,6 +115,7 @@ async def test_event_scan_selects_only_semantically_relevant_eligible_audience()
     assert job["sender_authenticated"] is True
     assert job["is_proactive"] is True
     assert job["proactive_event_id"] == "event-1"
+    assert job["proactive_event_version"] == 1
     assert str(UUID(job["trace_id"], version=4)) == job["trace_id"]
     assert "Person relevant: sealed compiler interest" in job["body"]
     assert "Event event-1: sealed compiler meetup" in job["body"]
@@ -169,7 +172,11 @@ async def test_event_scan_skips_suppressed_and_previously_considered_people():
         events=[_event_row("event-1")],
         people=[("suppressed", "s@example.com"), ("considered", "c@example.com")],
         suppressed=["suppressed"],
-        considered=[("event-1", "considered")],
+        considered=[
+            EventRecommendation(
+                event_id="event-1", person_id="considered", event_version=1
+            )
+        ],
     )
     matches = [
         MemoryMatch("m-s", "suppressed", "sealed relevant signal", 0.9),
@@ -239,6 +246,33 @@ async def test_event_scan_orders_stably_and_applies_per_person_and_global_caps()
         ("event-2", "p2@example.com"),
     ]
     assert session.add.call_count == 4
+
+
+@pytest.mark.asyncio
+async def test_event_scan_refreshes_a_pending_consideration_for_an_updated_event():
+    from thenetwork.worker.event_scan import scan_for_event_recommendations
+
+    stale = EventRecommendation(
+        event_id="event-1", person_id="person-1", event_version=1
+    )
+    session = _scan_session(
+        events=[_event_row("event-1", version=2, gist="sealed updated event")],
+        people=[("person-1", "person@example.com")],
+        considered=[stale],
+    )
+    matches = [MemoryMatch("memory-1", "person-1", "sealed interest", 0.9)]
+
+    with (
+        patch("thenetwork.worker.event_scan.get_settings", return_value=_settings()),
+        patch("thenetwork.worker.event_scan.get_session", return_value=session),
+        patch("thenetwork.worker.event_scan.match_memories", return_value=matches),
+        patch("thenetwork.worker.event_scan.process_email") as deferred,
+    ):
+        await scan_for_event_recommendations.func(0)
+
+    assert stale.event_version == 2
+    assert deferred.defer.call_args.kwargs["proactive_event_version"] == 2
+    assert "sealed updated event" in deferred.defer.call_args.kwargs["body"]
 
 
 @pytest.mark.asyncio
@@ -337,6 +371,7 @@ async def test_event_scan_job_reaches_agent_through_real_worker_handoff():
     assert kwargs["sender_authenticated"] is True
     assert kwargs["is_proactive"] is True
     assert kwargs["proactive_event_id"] == "event-1"
+    assert kwargs["proactive_event_version"] == 1
     assert kwargs["email_body"] == job["body"]
 
 

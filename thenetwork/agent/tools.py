@@ -557,6 +557,7 @@ async def update_event(
             event.embedding = embedding
             event.recurrence = recurrence
             event.expires_at = expiry
+            event.version += 1
             event.updated_at = datetime.now(timezone.utc)
             session.add(event)
             projection = _event_projection(event)
@@ -1050,6 +1051,7 @@ async def send_event_recommendation(
         if (
             not ctx.deps.is_proactive
             or not ctx.deps.proactive_event_id
+            or ctx.deps.proactive_event_version is None
             or event_id != ctx.deps.proactive_event_id
         ):
             return _tool_result(
@@ -1091,6 +1093,13 @@ async def send_event_recommendation(
             if recommendation.notified_at is not None:
                 return _tool_result(
                     {"status": "suppressed", "reason": "event_already_notified"}
+                )
+            if (
+                event.version != ctx.deps.proactive_event_version
+                or recommendation.event_version != ctx.deps.proactive_event_version
+            ):
+                return _tool_result(
+                    {"status": "suppressed", "reason": "event_version_changed"}
                 )
 
             prior_delivery_count = session.exec(

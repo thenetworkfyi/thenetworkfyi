@@ -37,6 +37,9 @@ class AgentDeps:
     # For proactive event runs only: the one opaque event id selected by the
     # server-side scan. The event-send capability rejects every other id.
     proactive_event_id: str | None = None
+    # The exact event version whose sealed gist appeared in the trigger. The
+    # event-send capability rejects stale jobs after an owner edits the event.
+    proactive_event_version: int | None = None
     # Session factory: () -> contextmanager[Session]
     # Stored as a callable to avoid serialization issues
     session_factory: Callable | None = None

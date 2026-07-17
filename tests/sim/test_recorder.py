@@ -540,6 +540,7 @@ async def test_real_process_run_logs_each_deferred_proactive_trigger(tmp_path):
             subject="[Proactive] Possible event",
             body="[System event match] Event event-1: sanitized event gist.",
             proactive_event_id="event-1",
+            proactive_event_version=1,
             trace_id="event-trace",
         )
 
