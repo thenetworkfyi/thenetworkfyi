@@ -310,17 +310,20 @@ next eligible candidate.
 `scan_for_event_recommendations` (`cron="45 * * * *"`) is separate from both people scans.
 It loads only active, embedded events through a server-side projection that omits raw event
 text and recurrence, semantically matches each sealed event gist against sealed person
-memories, and excludes the submitter, missing people, event-suppressed people, and existing
-event/person ledger rows. Selection is deterministic and bounded by the active-event,
-top-k, whole-scan, and per-person settings above.
+memories, and excludes the submitter, missing people, event-suppressed people, delivered
+event/person ledger rows, and pending rows for the current event version. A pending row for
+an older version is refreshed so the edited event receives a new relevance evaluation.
+Selection is deterministic and bounded by the active-event, top-k, whole-scan, and
+per-person settings above.
 
 Before deferring a synthetic `process_email` job, the scan commits one
 `event_recommendations` row for the stable event/series id and person. The trigger contains
-only opaque ids, sealed gists, expiry, and similarity and binds `proactive_event_id`. The
-agent may then call only `send_event_recommendation` for that bound id. The capability
-rechecks authentication, expiry, cancellation, self-delivery, event-only suppression, and
-deduplication under a row lock; it resolves the address and composes the FYI from the stored
-gist server-side, then records `notified_at` only after SMTP succeeds. The first delivered
+only opaque ids, sealed gists, expiry, and similarity and binds both the event id and its
+monotonic content version. The agent may then call only `send_event_recommendation` for that
+bound id. The capability rechecks authentication, the bound version, expiry, cancellation,
+self-delivery, event-only suppression, and deduplication under a row lock; it resolves the
+address and composes the FYI from the stored gist server-side only if the evaluated version
+is still current, then records `notified_at` only after SMTP succeeds. The first delivered
 event FYI asks whether occasional event recommendations are welcome; later FYIs carry only
 a concise event-specific stop instruction.
 

@@ -88,11 +88,12 @@ Event recommendations add a similarly narrow operational exception to the freefo
 substrate. Event meaning remains freeform; these tables hold only state that server code
 must enforce:
 
-- **`events`** - stable owner and series identity, raw owner-controlled text, sealed gist
-  and embedding, freeform recurrence, expiry, and cancellation. A recurring series is one
-  row and one stable id.
+- **`events`** - stable owner and series identity, a monotonic content version, raw
+  owner-controlled text, sealed gist and embedding, freeform recurrence, expiry, and
+  cancellation. A recurring series is one row and one stable id.
 - **`event_recommendations`** - one consideration/delivery ledger row per stable event id
-  and person. `notified_at` is written only after SMTP succeeds.
+  and person, bound to the event version whose gist was evaluated. `notified_at` is written
+  only after SMTP succeeds.
 - **`event_suppressions`** - person-level event-FYI suppression. It is never consulted by
   the people-matching or introduction paths.
 
@@ -133,7 +134,7 @@ mapping at write time. Semantic match over memories lives in `search/match.py`.
 | `update_event(event_id, text, expires_at, recurrence)` | replace an authenticated owner's event content while preserving its stable id and refreshing its gist/embedding |
 | `cancel_event(event_id)` | cancel an authenticated owner's event so it cannot be searched or recommended |
 | `search_events(query)` | search active events through the gist-only projection; raw event text and owner identity are absent |
-| `send_event_recommendation(event_id)` | send the scan-bound event to the current authenticated proactive recipient using fixed server-composed copy; lifecycle, event suppression, and ledger deduplication are rechecked |
+| `send_event_recommendation(event_id)` | send the scan-bound event to the current authenticated proactive recipient using fixed server-composed copy; event version, lifecycle, event suppression, and ledger deduplication are rechecked |
 | `stop_event_recommendations()` | suppress event FYIs only for the authenticated sender |
 | `resume_event_recommendations()` | remove only the authenticated sender's event-FYI suppression |
 

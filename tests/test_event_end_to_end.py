@@ -16,7 +16,9 @@ from thenetwork.agent.deps import AgentDeps
 from thenetwork.agent.tools import (
     FIRST_EVENT_RECOMMENDATION_NOTICE,
     create_event,
+    send_event_recommendation,
     stop_event_recommendations,
+    update_event,
 )
 from thenetwork.db.models import Event, EventRecommendation, EventSuppression
 from thenetwork.db.session import get_session
@@ -27,12 +29,21 @@ from thenetwork.worker.proactive import scan_for_matches
 from thenetwork.worker.tasks import process_email
 
 
-def _ctx(*, email: str, person_id: str) -> SimpleNamespace:
+def _ctx(
+    *,
+    email: str,
+    person_id: str,
+    event_id: str | None = None,
+    event_version: int | None = None,
+) -> SimpleNamespace:
     return SimpleNamespace(
         deps=AgentDeps(
             sender_email=email,
             sender_user_id=person_id,
             sender_authenticated=True,
+            is_proactive=event_id is not None,
+            proactive_event_id=event_id,
+            proactive_event_version=event_version,
         )
     )
 
@@ -281,3 +292,111 @@ async def test_submit_scan_send_suppress_and_people_match_remains_eligible(seede
         and call.kwargs["proactive_candidate_id"] == owner_id
         for call in people_deferred.defer.call_args_list
     )
+
+
+@pytest.mark.integration
+async def test_updated_event_requires_a_fresh_version_bound_evaluation(seeded_db):
+    owner_id = seeded_db["alice_id"]
+    recipient_id = seeded_db["bob_id"]
+    recipient_embedding = [0.0] * 1536
+    recipient_embedding[1] = 1.0
+    expiry = datetime.now(timezone.utc) + timedelta(days=30)
+
+    with (
+        patch(
+            "thenetwork.agent.tools.sanitize_text_high_fidelity",
+            new=AsyncMock(return_value="relevant compiler engineering circle"),
+        ),
+        patch(
+            "thenetwork.agent.tools.embed_text",
+            new=AsyncMock(return_value=recipient_embedding),
+        ),
+    ):
+        created = await create_event(
+            _ctx(email="alice@test.com", person_id=owner_id),
+            text="original relevant event",
+            expires_at=expiry.isoformat(),
+        )
+
+    event_id = created["event_id"]
+    with (
+        patch(
+            "thenetwork.worker.event_scan.get_settings",
+            return_value=_event_scan_settings(),
+        ),
+        patch("thenetwork.worker.event_scan.process_email") as first_deferred,
+    ):
+        await scan_for_event_recommendations.func(0)
+
+    stale_job = first_deferred.defer.call_args.kwargs
+    assert stale_job["proactive_event_version"] == 1
+    assert "relevant compiler engineering circle" in stale_job["body"]
+
+    with (
+        patch(
+            "thenetwork.agent.tools.sanitize_text_high_fidelity",
+            new=AsyncMock(return_value="unrelated online cooking webinar"),
+        ),
+        patch(
+            "thenetwork.agent.tools.embed_text",
+            new=AsyncMock(return_value=recipient_embedding),
+        ),
+    ):
+        updated = await update_event(
+            _ctx(email="alice@test.com", person_id=owner_id),
+            event_id=event_id,
+            text="replacement unrelated event",
+            expires_at=expiry.isoformat(),
+        )
+    assert updated["status"] == "updated"
+
+    stale_ctx = _ctx(
+        email="bob@test.com",
+        person_id=recipient_id,
+        event_id=event_id,
+        event_version=stale_job["proactive_event_version"],
+    )
+    with patch(
+        "thenetwork.agent.tools._send_email", new_callable=AsyncMock
+    ) as stale_send:
+        stale_result = await send_event_recommendation(stale_ctx, event_id)
+
+    assert stale_result == {
+        "status": "suppressed",
+        "reason": "event_version_changed",
+    }
+    stale_send.assert_not_awaited()
+
+    with get_session() as session:
+        event = session.get(Event, event_id)
+        recommendation = session.exec(
+            select(EventRecommendation).where(
+                EventRecommendation.event_id == event_id,
+                EventRecommendation.person_id == recipient_id,
+            )
+        ).one()
+        assert event is not None and event.version == 2
+        assert recommendation.event_version == 1
+        assert recommendation.notified_at is None
+
+    with (
+        patch(
+            "thenetwork.worker.event_scan.get_settings",
+            return_value=_event_scan_settings(),
+        ),
+        patch("thenetwork.worker.event_scan.process_email") as refreshed_deferred,
+    ):
+        await scan_for_event_recommendations.func(1)
+
+    refreshed_job = refreshed_deferred.defer.call_args.kwargs
+    assert refreshed_job["proactive_event_version"] == 2
+    assert "unrelated online cooking webinar" in refreshed_job["body"]
+    with get_session() as session:
+        refreshed = session.exec(
+            select(EventRecommendation).where(
+                EventRecommendation.event_id == event_id,
+                EventRecommendation.person_id == recipient_id,
+            )
+        ).one()
+        assert refreshed.event_version == 2
+        assert refreshed.notified_at is None

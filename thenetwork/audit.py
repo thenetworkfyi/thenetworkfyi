@@ -176,6 +176,7 @@ _SAFE_CATEGORIES = {
             "event_not_found",
             "event_recommendations_stopped",
             "event_text_too_long",
+            "event_version_changed",
             "introduced",
             "invalid_event_expiry",
             "invalid_person_id",
