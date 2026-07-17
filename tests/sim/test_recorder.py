@@ -549,6 +549,7 @@ async def test_run_recorder_logs_delivery_metadata_without_public_message_bodies
         email_from="agent@example.test",
         imap_account="join@example.test",
         growth_footer_enabled=False,
+        html_email_enabled=True,
     )
 
     async def reply(**kwargs):
@@ -580,11 +581,15 @@ async def test_run_recorder_logs_delivery_metadata_without_public_message_bodies
         "persona->agent",
         "agent->persona",
     ]
+    canonical_plain_reply = (
+        "Here is why you may fit.\n\n"
+        "--\nThe Network\nAn automated connection service\nReply anytime.\n"
+    )
     assert [
         (delivery["subject"], delivery["body_chars"]) for delivery in deliveries
     ] == [
         ("Simulation tick 1", len("Inbound details.\n")),
-        ("A possible connection", len("Here is why you may fit.\n")),
+        ("A possible connection", len(canonical_plain_reply)),
     ]
     assert "Inbound details." not in artifacts.events_path.read_text()
     assert "Here is why you may fit." not in artifacts.events_path.read_text()
