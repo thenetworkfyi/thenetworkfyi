@@ -135,6 +135,11 @@ class Settings(BaseSettings):
     remember_text_max_chars: int = 8_000
     search_query_max_chars: int = 1_000
     person_memory_limit: int = 500
+    # Recent sender-owned gist projections injected into each registered
+    # sender's agent run. Both limits apply before model invocation; search
+    # remains available for older or semantically targeted recall.
+    recent_memory_context_max_count: int = 20
+    recent_memory_context_max_chars: int = 4_000
 
     # Introduction consent pacing. These limits are enforced at the server-side
     # proposal boundary, never by agent prompt wording. A proposal sends one
