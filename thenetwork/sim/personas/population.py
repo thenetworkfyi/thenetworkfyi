@@ -546,15 +546,21 @@ def default_population(
                 name="Omar Feld",
                 email="omar.sim@example.test",
                 goal=(
-                    "Meet ML infrastructure peers. If The Network proposes an introduction, "
-                    "reply 'Yes' with the [intro:...] token line, and after that never send "
-                    "another email no matter what arrives."
+                    "Meet peers who run production ML infrastructure on factory floors, "
+                    "especially engineers responsible for deployment and reliability. In "
+                    "your first email, state that specific focus and do not substitute a "
+                    "different ML specialty. If The Network proposes an introduction, reply "
+                    "'Yes' with the [intro:...] token line, and after that never send another "
+                    "email no matter what arrives."
                 ),
                 stop_condition="Stop permanently after you have consented once.",
                 message_budget=5,
                 agent_address=agent_address,
             ),
-            opening_body="I work on ML infrastructure and want to meet experienced peers.",
+            opening_body=(
+                "I run production ML infrastructure on factory floors and want peers with "
+                "deployment and reliability experience."
+            ),
             interruptions=(
                 MechanicalInterruption(
                     persona_email="omar.sim@example.test",

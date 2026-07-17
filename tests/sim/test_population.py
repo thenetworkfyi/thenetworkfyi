@@ -174,11 +174,18 @@ def test_default_population_has_authored_personas_and_schedule():
         == "Stop after your message budget runs out."
     )
     assert additions["Dana Roe"].config.message_budget == 5
-    assert "after that never send another email" in additions["Omar Feld"].config.goal
-    assert additions["Omar Feld"].config.stop_condition == (
+    omar = additions["Omar Feld"]
+    assert "production ML infrastructure on factory floors" in omar.config.goal
+    assert "do not substitute a different ML specialty" in omar.config.goal
+    assert "after that never send another email" in omar.config.goal
+    assert omar.opening_body == (
+        "I run production ML infrastructure on factory floors and want peers with "
+        "deployment and reliability experience."
+    )
+    assert omar.config.stop_condition == (
         "Stop permanently after you have consented once."
     )
-    assert additions["Omar Feld"].config.message_budget == 5
+    assert omar.config.message_budget == 5
     assert (
         "when it does, tell The Network plainly and redirect"
         in additions["Nadia Reyes"].config.goal
