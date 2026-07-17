@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from sqlalchemy import update
+from sqlalchemy.dialects.postgresql import insert
 from sqlmodel import col, select
 
 from thenetwork.db.models import (
@@ -189,23 +191,49 @@ async def scan_for_event_recommendations(timestamp: int) -> None:
         if not selected:
             return
 
+        claimed: list[_SemanticCandidate] = []
         for candidate in selected:
             key = (candidate.event_id, candidate.person_id)
             recommendation = recommendations_by_key.get(key)
             if recommendation is None:
-                recommendation = EventRecommendation(
-                    event_id=candidate.event_id,
-                    person_id=candidate.person_id,
-                    event_version=candidate.event_version,
-                    considered_at=now,
+                # The availability read above is only an optimisation. Two
+                # periodic workers can reach it before either commits, so the
+                # durable ledger must be the admission gate. PostgreSQL's
+                # conflict target is the event/person invariant itself; only
+                # its winner is allowed to enqueue a proactive trigger.
+                claim = (
+                    insert(EventRecommendation)
+                    .values(
+                        event_id=candidate.event_id,
+                        person_id=candidate.person_id,
+                        event_version=candidate.event_version,
+                        considered_at=now,
+                    )
+                    .on_conflict_do_nothing(index_elements=("event_id", "person_id"))
+                    .returning(EventRecommendation.id)
                 )
             else:
-                recommendation.event_version = candidate.event_version
-                recommendation.considered_at = now
-            session.add(recommendation)
+                # A changed event version gets precisely one fresh
+                # consideration. The conditional update prevents concurrent
+                # scans from refreshing the same stale row twice.
+                claim = (
+                    update(EventRecommendation)
+                    .where(EventRecommendation.event_id == candidate.event_id)
+                    .where(EventRecommendation.person_id == candidate.person_id)
+                    .where(EventRecommendation.notified_at.is_(None))
+                    .where(EventRecommendation.event_version != candidate.event_version)
+                    .values(
+                        event_version=candidate.event_version,
+                        considered_at=now,
+                    )
+                    .returning(EventRecommendation.id)
+                )
+            if session.exec(claim).first() is not None:
+                claimed.append(candidate)
 
-        # Consideration is durable before any job can run. The unique
-        # event/person constraint is the final guard against concurrent scans.
+        # A claim is durable before any job can run. The unique event/person
+        # constraint and conditional stale-version update are the final guards
+        # against concurrent scans.
         session.commit()
         payloads = [
             {
@@ -229,7 +257,7 @@ async def scan_for_event_recommendations(timestamp: int) -> None:
                 "proactive_event_id": candidate.event_id,
                 "proactive_event_version": candidate.event_version,
             }
-            for candidate in selected
+            for candidate in claimed
         ]
 
     for payload in payloads:

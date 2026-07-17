@@ -359,6 +359,36 @@ async def test_event_send_records_notified_only_after_successful_one_way_fyi():
 
 
 @pytest.mark.asyncio
+async def test_duplicate_event_trigger_sends_one_fyi_and_records_one_delivery():
+    event = _active_event()
+    recommendation = EventRecommendation(event_id="event-1", person_id="person-1")
+    session = _delivery_session(event, recommendation, prior=0)
+    ctx = _ctx(session, event_id="event-1")
+
+    with (
+        patch(
+            "thenetwork.agent.tools._send_event_fyi",
+            new=AsyncMock(return_value={"status": "sent"}),
+        ) as send,
+        patch("thenetwork.agent.tools.audit_event") as audit,
+    ):
+        first = await send_event_recommendation(ctx, event_id="event-1")
+        duplicate = await send_event_recommendation(ctx, event_id="event-1")
+
+    assert first == {"status": "sent"}
+    assert duplicate == {"status": "suppressed", "reason": "event_already_notified"}
+    send.assert_awaited_once()
+    assert recommendation.notified_at is not None
+    session.commit.assert_called_once()
+    assert [call.args for call in audit.call_args_list] == [("database.action",)]
+    assert audit.call_args.kwargs == {
+        "action": "update",
+        "record_type": "event_recommendation",
+        "outcome": "success",
+    }
+
+
+@pytest.mark.asyncio
 async def test_failed_event_send_does_not_record_delivery():
     event = _active_event()
     recommendation = EventRecommendation(event_id="event-1", person_id="person-1")

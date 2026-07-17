@@ -44,15 +44,24 @@ def _event_row(
     )
 
 
-def _scan_session(*, events, people, suppressed=(), considered=(), timeline=None):
+def _scan_session(
+    *, events, people, suppressed=(), considered=(), timeline=None, claim_results=()
+):
     session = MagicMock()
     session.__enter__ = MagicMock(return_value=session)
     session.__exit__ = MagicMock(return_value=False)
 
+    claim_results = iter(claim_results)
+
     def execute(statement):
         query = str(statement).lower()
         result = MagicMock()
-        if "from events" in query:
+        if query.startswith(
+            ("insert into event_recommendations", "update event_recommendations")
+        ):
+            result.first.return_value = next(claim_results, "claimed")
+            return result
+        elif "from events" in query:
             rows = events
         elif "from people" in query:
             rows = people
@@ -126,12 +135,8 @@ async def test_event_scan_selects_only_semantically_relevant_eligible_audience()
     assert "proactive_candidate_id" not in job
     assert timeline == ["commit", "defer"]
 
-    recommendation = session.add.call_args.args[0]
-    assert isinstance(recommendation, EventRecommendation)
-    assert (recommendation.event_id, recommendation.person_id) == (
-        "event-1",
-        "relevant",
-    )
+    claim = session.exec.call_args_list[-1].args[0]
+    assert "on conflict (event_id, person_id) do nothing" in str(claim).lower()
 
     event_query = str(session.exec.call_args_list[0].args[0]).lower()
     assert "cancelled_at is null" in event_query
@@ -245,7 +250,12 @@ async def test_event_scan_orders_stably_and_applies_per_person_and_global_caps()
         ("event-1", "p3@example.com"),
         ("event-2", "p2@example.com"),
     ]
-    assert session.add.call_count == 4
+    claims = [
+        call.args[0]
+        for call in session.exec.call_args_list
+        if str(call.args[0]).lower().startswith("insert into event_recommendations")
+    ]
+    assert len(claims) == 4
 
 
 @pytest.mark.asyncio
@@ -270,9 +280,13 @@ async def test_event_scan_refreshes_a_pending_consideration_for_an_updated_event
     ):
         await scan_for_event_recommendations.func(0)
 
-    assert stale.event_version == 2
     assert deferred.defer.call_args.kwargs["proactive_event_version"] == 2
     assert "sealed updated event" in deferred.defer.call_args.kwargs["body"]
+    claim = session.exec.call_args_list[-1].args[0]
+    rendered = str(claim).lower()
+    assert rendered.startswith("update event_recommendations")
+    assert "notified_at is null" in rendered
+    assert "event_version !=" in rendered
 
 
 @pytest.mark.asyncio
@@ -303,9 +317,8 @@ async def test_recurring_series_is_considered_once_per_person_at_best_match():
     body = deferred.defer.call_args.kwargs["body"]
     assert "stronger sealed signal" in body
     assert "weaker sealed signal" not in body
-    recommendation = session.add.call_args.args[0]
-    assert recommendation.event_id == "stable-series-id"
-    assert recommendation.person_id == "person-1"
+    claim = session.exec.call_args_list[-1].args[0]
+    assert "on conflict (event_id, person_id) do nothing" in str(claim).lower()
     event_query = str(session.exec.call_args_list[0].args[0]).lower()
     assert "recurrence" not in event_query
     assert not {
@@ -316,6 +329,33 @@ async def test_recurring_series_is_considered_once_per_person_at_best_match():
         "attendance",
         "calendar",
     }.intersection(deferred.defer.call_args.kwargs)
+
+
+@pytest.mark.asyncio
+async def test_event_scan_enqueues_only_the_atomic_ledger_claim_winner():
+    from thenetwork.worker.event_scan import scan_for_event_recommendations
+
+    session = _scan_session(
+        events=[_event_row("event-1")],
+        people=[("person-1", "person@example.com")],
+        # The second scan is a concurrent loser at INSERT ... ON CONFLICT.
+        claim_results=("recommendation-1", None),
+    )
+    matches = [MemoryMatch("memory-1", "person-1", "sealed interest", 0.9)]
+
+    with (
+        patch("thenetwork.worker.event_scan.get_settings", return_value=_settings()),
+        patch("thenetwork.worker.event_scan.get_session", return_value=session),
+        patch("thenetwork.worker.event_scan.match_memories", return_value=matches),
+        patch("thenetwork.worker.event_scan.process_email") as deferred,
+    ):
+        await scan_for_event_recommendations.func(0)
+        await scan_for_event_recommendations.func(1)
+
+    deferred.defer.assert_called_once()
+    assert deferred.defer.call_args.kwargs["proactive_event_id"] == "event-1"
+    assert deferred.defer.call_args.kwargs["proactive_event_version"] == 1
+    assert session.commit.call_count == 2
 
 
 @pytest.mark.asyncio
