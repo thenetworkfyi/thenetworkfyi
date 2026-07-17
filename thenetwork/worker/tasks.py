@@ -51,6 +51,7 @@ from thenetwork.email.render import (
     InfrastructureRejectionReason,
 )
 from thenetwork.memory.sanitize import assert_presidio_ready
+from thenetwork.memory.sent_email import record_sent_email_memories
 from thenetwork.introductions import process_consent_reply
 from thenetwork.security.content_scan import scan_content
 from thenetwork.security.rate_limit import (
@@ -399,6 +400,7 @@ async def process_email(
             body=body,
             trace_id=trace_id,
         )
+        await record_sent_email_memories(consent_result.sent_email_memories)
         email_body = body
         if consent_result.handled:
             # The decision is fully consumed; forward only an authenticated

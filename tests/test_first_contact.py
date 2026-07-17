@@ -40,6 +40,10 @@ async def test_near_empty_authenticated_unknown_sender_gets_welcome_after_rate_l
         ) as check_rate_limit,
         patch("thenetwork.worker.tasks.scan_content") as scan_content,
         patch("thenetwork.worker.tasks.send_reply") as send_reply,
+        patch(
+            "thenetwork.worker.tasks.record_sent_email_memories",
+            new_callable=AsyncMock,
+        ) as record_memories,
         patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()) as mock_agent,
     ):
         await process_email.func(
@@ -61,6 +65,7 @@ async def test_near_empty_authenticated_unknown_sender_gets_welcome_after_rate_l
         fixed_context=FirstContactWelcomeEmailContext(),
     )
     mock_agent.assert_not_called()
+    record_memories.assert_not_awaited()
 
 
 @pytest.mark.asyncio
