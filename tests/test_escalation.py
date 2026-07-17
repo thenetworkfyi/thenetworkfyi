@@ -244,7 +244,10 @@ async def test_escalate_notification_includes_sender_and_reason():
 @pytest.mark.asyncio
 async def test_escalate_welcomes_and_notifies_admins_for_authenticated_unknown_sender():
     from thenetwork.agent.tools import escalate
-    from thenetwork.email.outbound import FIRST_CONTACT_WELCOME_REPLY
+    from thenetwork.email.render import (
+        FirstContactWelcomeEmailContext,
+        FixedEmailTemplate,
+    )
 
     with (
         patch(
@@ -274,8 +277,8 @@ async def test_escalate_welcomes_and_notifies_admins_for_authenticated_unknown_s
     mock_send.assert_called_once_with(
         to_address="new@example.com",
         subject="Re: Question",
-        body_text=FIRST_CONTACT_WELCOME_REPLY,
-        include_footer=False,
+        fixed_template=FixedEmailTemplate.FIRST_CONTACT_WELCOME,
+        fixed_context=FirstContactWelcomeEmailContext(),
         trace_id="trace-test-123",
     )
     mock_get_session.assert_not_called()

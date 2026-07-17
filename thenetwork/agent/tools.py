@@ -36,14 +36,17 @@ from thenetwork.db.session import get_session
 from thenetwork.embed.embeddings import embed_text
 from thenetwork.email.outbound import (
     EVENT_RECOMMENDATION_SUBJECT,
-    FIRST_CONTACT_WELCOME_REPLY,
     _direct_reply_kwargs,
     notify_admins,
     reply_subject,
     send_event_fyi,
     send_reply,
 )
-from thenetwork.email.render import EventRecommendationNotice
+from thenetwork.email.render import (
+    EventRecommendationNotice,
+    FirstContactWelcomeEmailContext,
+    FixedEmailTemplate,
+)
 from thenetwork.memory.sanitize import (
     sanitize_memory_high_fidelity,
     sanitize_text_high_fidelity,
@@ -705,8 +708,8 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
             send_reply(
                 to_address=sender,
                 subject=reply_subject(ctx.deps.inbound_subject, fallback="How to join"),
-                body_text=FIRST_CONTACT_WELCOME_REPLY,
-                include_footer=False,
+                fixed_template=FixedEmailTemplate.FIRST_CONTACT_WELCOME,
+                fixed_context=FirstContactWelcomeEmailContext(),
                 **_trace_kwargs(ctx.deps.trace_id),
                 **_direct_reply_kwargs(
                     inbound_message_id=ctx.deps.inbound_message_id,

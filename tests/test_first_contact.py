@@ -57,7 +57,6 @@ async def test_near_empty_authenticated_unknown_sender_gets_welcome_after_rate_l
     send_reply.assert_called_once_with(
         to_address="new@example.com",
         subject="How to join",
-        include_footer=False,
         fixed_template=FixedEmailTemplate.FIRST_CONTACT_WELCOME,
         fixed_context=FirstContactWelcomeEmailContext(),
     )
@@ -93,7 +92,6 @@ async def test_first_contact_welcome_threads_reply_when_message_id_present():
     send_reply.assert_called_once_with(
         to_address="new@example.com",
         subject="How to join",
-        include_footer=False,
         fixed_template=FixedEmailTemplate.FIRST_CONTACT_WELCOME,
         fixed_context=FirstContactWelcomeEmailContext(),
         in_reply_to="<abc123@example.com>",
@@ -133,7 +131,6 @@ async def test_first_contact_welcome_appends_to_references_chain():
     send_reply.assert_called_once_with(
         to_address="new@example.com",
         subject="How to join",
-        include_footer=False,
         fixed_template=FixedEmailTemplate.FIRST_CONTACT_WELCOME,
         fixed_context=FirstContactWelcomeEmailContext(),
         in_reply_to="<abc123@example.com>",
@@ -173,7 +170,6 @@ async def test_first_contact_welcome_drops_unsafe_message_id():
     send_reply.assert_called_once_with(
         to_address="new@example.com",
         subject="How to join",
-        include_footer=False,
         fixed_template=FixedEmailTemplate.FIRST_CONTACT_WELCOME,
         fixed_context=FirstContactWelcomeEmailContext(),
     )

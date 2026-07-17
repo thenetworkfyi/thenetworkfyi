@@ -98,8 +98,101 @@ def test_admin_notifications_remain_plain_only():
     assert captured[0].get_content() == "Internal detail\n"
 
 
+def test_internal_plain_delivery_is_unsigned_and_audited_separately(caplog):
+    from thenetwork.email.outbound import send_reply
+
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+    captured = []
+    smtp_instance = _mock_smtp()
+    smtp_instance.send_message.side_effect = captured.append
+    mock_mailbox, _ = _mock_mailbox_success()
+
+    with (
+        patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()),
+        patch("smtplib.SMTP", return_value=smtp_instance),
+        patch("thenetwork.email.outbound.MailBox", mock_mailbox),
+    ):
+        send_reply(
+            to_address="admin@example.com",
+            subject="Internal",
+            body_text="Operational detail",
+            audience="internal",
+        )
+
+    assert not captured[0].is_multipart()
+    assert "The Network" not in captured[0].get_content()
+    rendered = [
+        event for event in _events(caplog) if event["event"] == "email.rendered"
+    ]
+    assert len(rendered) == 1
+    assert rendered[0]["html_present"] is False
+    assert rendered[0]["rendering_mode"] == "internal_plain"
+
+
+def test_user_delivery_keeps_standard_signature_when_footer_is_disabled():
+    from thenetwork.email.outbound import send_reply
+
+    captured = []
+    smtp_instance = _mock_smtp()
+    smtp_instance.send_message.side_effect = captured.append
+    mock_mailbox, _ = _mock_mailbox_success()
+
+    with (
+        patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()),
+        patch("smtplib.SMTP", return_value=smtp_instance),
+        patch("thenetwork.email.outbound.MailBox", mock_mailbox),
+    ):
+        send_reply(
+            to_address="recipient@example.com",
+            subject="Hi",
+            body_text="Body",
+            include_footer=False,
+        )
+
+    assert (
+        captured[0]
+        .get_body(preferencelist=("plain",))
+        .get_content()
+        .count("The Network")
+        == 1
+    )
+
+
+def test_user_renderer_fallback_is_audited_without_content(caplog):
+    from thenetwork.email.outbound import send_reply
+
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+    mock_mailbox, _ = _mock_mailbox_success()
+    fallback = RenderedEmail(text="safe fallback", html=None)
+
+    with (
+        patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()),
+        patch(
+            "thenetwork.email.outbound.render_conversational_email",
+            return_value=fallback,
+        ),
+        patch("smtplib.SMTP", return_value=_mock_smtp()),
+        patch("thenetwork.email.outbound.MailBox", mock_mailbox),
+    ):
+        send_reply(
+            to_address="recipient@example.com",
+            subject="Hi",
+            body_text="private source text",
+        )
+
+    rendered = [
+        event for event in _events(caplog) if event["event"] == "email.rendered"
+    ]
+    assert len(rendered) == 1
+    assert rendered[0]["html_present"] is False
+    assert rendered[0]["rendering_mode"] == "plain_fallback"
+    assert "private source text" not in "\n".join(
+        record.message for record in caplog.records
+    )
+
+
 def test_fixed_worker_reply_is_multipart_and_preserves_threading():
-    from thenetwork.email.outbound import FIRST_CONTACT_WELCOME_REPLY, send_reply
+    from thenetwork.email.outbound import send_reply
     from thenetwork.email.render import (
         FirstContactWelcomeEmailContext,
         FixedEmailTemplate,
@@ -118,7 +211,6 @@ def test_fixed_worker_reply_is_multipart_and_preserves_threading():
         send_reply(
             to_address="new@example.com",
             subject="How to join",
-            include_footer=False,
             fixed_template=FixedEmailTemplate.FIRST_CONTACT_WELCOME,
             fixed_context=FirstContactWelcomeEmailContext(),
             in_reply_to="<original@example.com>",
@@ -128,8 +220,10 @@ def test_fixed_worker_reply_is_multipart_and_preserves_threading():
     message = captured[0]
     assert message["In-Reply-To"] == "<original@example.com>"
     assert message["References"] == "<root@example.com> <original@example.com>"
-    assert message.get_body(preferencelist=("plain",)).get_content().strip() == (
-        FIRST_CONTACT_WELCOME_REPLY
+    assert "Welcome," in message.get_body(preferencelist=("plain",)).get_content()
+    assert (
+        message.get_body(preferencelist=("plain",)).get_content().count("The Network")
+        == 1
     )
     assert [part.get_content_type() for part in message.iter_parts()] == [
         "text/plain",
@@ -182,6 +276,7 @@ def test_group_introduction_addresses_both_consented_people():
     body = captured[0].get_body(preferencelist=("plain",)).get_content()
     assert "Alice and Bob" in body
     assert "both opted in" in body
+    assert body.count("The Network") == 1
 
 
 def test_group_introduction_audits_rendering_metadata_only(caplog):

@@ -341,7 +341,10 @@ async def test_send_outreach_limited_once_run_cap_exhausted():
 async def test_escalate_sends_welcome_and_notifies_admin_for_unregistered_sender():
     """First contact from an authenticated unknown sender: welcome + admin escalation."""
     from thenetwork.agent.tools import escalate
-    from thenetwork.email.outbound import FIRST_CONTACT_WELCOME_REPLY
+    from thenetwork.email.render import (
+        FirstContactWelcomeEmailContext,
+        FixedEmailTemplate,
+    )
     from unittest.mock import patch
 
     class FakeCtx:
@@ -365,7 +368,8 @@ async def test_escalate_sends_welcome_and_notifies_admin_for_unregistered_sender
     mock_send.assert_called_once()
     send_kwargs = mock_send.call_args.kwargs
     assert send_kwargs["to_address"] == "stranger@example.com"
-    assert send_kwargs["body_text"] == FIRST_CONTACT_WELCOME_REPLY
+    assert send_kwargs["fixed_template"] is FixedEmailTemplate.FIRST_CONTACT_WELCOME
+    assert send_kwargs["fixed_context"] == FirstContactWelcomeEmailContext()
 
     mock_notify.assert_called_once()
     notify_args = mock_notify.call_args.args

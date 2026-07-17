@@ -88,6 +88,7 @@ _SAFE_FIELDS = frozenset(
         "recipient_id_present",
         "recipient_count",
         "record_type",
+        "rendering_mode",
         "refs_count",
         "result_count",
         "retry_count",
@@ -237,6 +238,7 @@ _SAFE_CATEGORIES = {
     "consent_state": frozenset(
         {"declined", "introduced", "one_consented", "proposed", "revoked"}
     ),
+    "rendering_mode": frozenset({"html", "internal_plain", "plain_fallback"}),
     "tool_name": frozenset(
         {
             "escalate",
