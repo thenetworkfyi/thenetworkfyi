@@ -42,6 +42,10 @@ _HIDDEN_STYLE_MARKERS = (
     "mso-hide:all",
     "mso-hide: all",
 )
+_QUOTED_TRAIL_RE = re.compile(
+    r"(?s)(?P<prefix>(?:^|\n)On [^\n]+, you wrote:\n)"
+    r"(?P<quoted>(?:[ \t]*>[^\n]*(?:\n|$))+)$"
+)
 _QUOTE_MARKER_RE = re.compile(r"(?m)^[ \t]*>[ \t]?")
 _CSS_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
 _CSS_HIDDEN_RE = re.compile(
@@ -99,9 +103,11 @@ def inspect_html_email(
     visible_html_text = html_to_visible_text(html) if html is not None else None
 
     if plain_text is not None and visible_html_text is not None:
-        if _normalize_semantic_text(plain_text) != _normalize_semantic_text(
-            visible_html_text
-        ):
+        plain_semantic_text = _normalize_semantic_text(
+            plain_text,
+            normalize_quoted_trail=_has_server_rendered_quoted_trail(html),
+        )
+        if plain_semantic_text != _normalize_semantic_text(visible_html_text):
             violations.append("plain text and visible HTML text differ")
     for text in required_text:
         normalized = _normalize(text)
@@ -208,9 +214,40 @@ def _normalize(text: str) -> str:
     return " ".join(text.split())
 
 
-def _normalize_semantic_text(text: str) -> str:
-    """Treat plain quote and signature markers as their HTML equivalents."""
-    return _normalize(_QUOTE_MARKER_RE.sub("", text.replace("\n--\n", "\n")))
+def _normalize_semantic_text(text: str, *, normalize_quoted_trail: bool = False) -> str:
+    """Normalize signature syntax and an explicitly rendered trailing quote."""
+    text = text.replace("\n--\n", "\n")
+    if normalize_quoted_trail:
+        text = _normalize_quoted_trail(text)
+    return _normalize(text)
+
+
+def _has_server_rendered_quoted_trail(html: str) -> bool:
+    """Identify the final ``On …, you wrote:`` plus blockquote template shape."""
+    try:
+        soup = BeautifulSoup(html, "html.parser")
+    except Exception:
+        return False
+    blockquotes = soup.find_all("blockquote")
+    if not blockquotes:
+        return False
+    quote = blockquotes[-1]
+    if quote.find_next_sibling(lambda node: getattr(node, "name", None)) is not None:
+        return False
+    prefix = quote.find_previous_sibling("p")
+    return prefix is not None and bool(
+        re.fullmatch(r"On .+, you wrote:", prefix.get_text(" ", strip=True))
+    )
+
+
+def _normalize_quoted_trail(text: str) -> str:
+    """Remove plain quote markers only from the server's terminal quote trail."""
+    match = _QUOTED_TRAIL_RE.search(text)
+    if match is None:
+        return text
+    return text[: match.start("quoted")] + _QUOTE_MARKER_RE.sub(
+        "", match.group("quoted")
+    )
 
 
 def _css_safety_violations(css: str) -> list[str]:
