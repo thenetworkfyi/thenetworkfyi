@@ -29,7 +29,14 @@ def _session_context(session):
     return lambda: session
 
 
-def _ctx(session, *, person_id="person-1", authenticated=True, event_id=None):
+def _ctx(
+    session,
+    *,
+    person_id="person-1",
+    authenticated=True,
+    event_id=None,
+    event_version=1,
+):
     return SimpleNamespace(
         deps=AgentDeps(
             settings=Settings(
@@ -43,6 +50,7 @@ def _ctx(session, *, person_id="person-1", authenticated=True, event_id=None):
             sender_authenticated=authenticated,
             is_proactive=event_id is not None,
             proactive_event_id=event_id,
+            proactive_event_version=(event_version if event_id is not None else None),
             session_factory=_session_context(session),
         )
     )
@@ -185,6 +193,7 @@ async def test_owner_update_preserves_event_id_and_rebuilds_sealed_embedding():
     assert event.text == "raw replacement"
     assert event.gist == "sealed replacement"
     assert event.recurrence == "weekly"
+    assert event.version == 2
     assert result["event_id"] == "event-1"
     assert "text" not in result and "submitter_id" not in result
     session.commit.assert_called_once()
@@ -300,6 +309,24 @@ async def test_event_send_requires_scan_ledger_and_bound_opaque_event_id():
 
     assert wrong == {"status": "forbidden", "reason": "outside_event_trigger"}
     assert unconsidered == {"status": "forbidden", "reason": "event_not_considered"}
+    session.commit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_event_send_rejects_a_trigger_for_an_older_event_version():
+    event = _active_event(version=2, gist="unrelated replacement event")
+    recommendation = EventRecommendation(
+        event_id="event-1", person_id="person-1", event_version=1
+    )
+    session = _delivery_session(event, recommendation)
+    ctx = _ctx(session, event_id="event-1", event_version=1)
+
+    with patch("thenetwork.agent.tools._send_email", new_callable=AsyncMock) as send:
+        result = await send_event_recommendation(ctx, event_id="event-1")
+
+    assert result == {"status": "suppressed", "reason": "event_version_changed"}
+    send.assert_not_awaited()
+    assert recommendation.notified_at is None
     session.commit.assert_not_called()
 
 

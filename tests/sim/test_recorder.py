@@ -532,6 +532,18 @@ async def test_real_process_run_logs_each_deferred_proactive_trigger(tmp_path):
             trace_id="match-trace",
         )
 
+    async def event_scan(_timestamp: int) -> None:
+        from thenetwork.worker import proactive
+
+        proactive.process_email.defer(
+            sender_email="alice@example.test",
+            subject="[Proactive] Possible event",
+            body="[System event match] Event event-1: sanitized event gist.",
+            proactive_event_id="event-1",
+            proactive_event_version=1,
+            trace_id="event-trace",
+        )
+
     with (
         app.replace_connector(InMemoryConnector()),
         patch("thenetwork.sim.run.recorder.process_email.func", new=AsyncMock()),
@@ -542,6 +554,10 @@ async def test_real_process_run_logs_each_deferred_proactive_trigger(tmp_path):
         patch(
             "thenetwork.sim.run.loop.proactive.scan_for_matches",
             new=match_scan,
+        ),
+        patch(
+            "thenetwork.sim.run.loop.event_scan.scan_for_event_recommendations",
+            new=event_scan,
         ),
     ):
         artifacts = await SimRunRecorder(runs_dir=tmp_path).run(
@@ -573,6 +589,12 @@ async def test_real_process_run_logs_each_deferred_proactive_trigger(tmp_path):
             "event": "sim.proactive_job_deferred",
             "subject": "[Proactive] New matching signal",
             "trace_id": "match-trace",
+        },
+        {
+            "body": "[System event match] Event event-1: sanitized event gist.",
+            "event": "sim.proactive_job_deferred",
+            "subject": "[Proactive] Possible event",
+            "trace_id": "event-trace",
         },
     ]
 

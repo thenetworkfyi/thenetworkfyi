@@ -34,6 +34,11 @@ UNAUTHENTICATED_RATE_LIMIT_PER_HOUR=3
 GLOBAL_EMAIL_RATE_LIMIT_PER_HOUR=100
 CONTENT_SCAN_ENABLED=false
 SANITIZE_LLM_TIER_ENABLED=true    # higher-fidelity gist pass, see docs/security.md layer 4; on by default
+EVENT_MATCH_THRESHOLD=0.6         # independent event-to-person semantic relevance floor
+EVENT_MATCH_TOP_K=20
+EVENT_SCAN_ACTIVE_EVENT_LIMIT=100
+EVENT_SCAN_MAX_CANDIDATES=50      # whole-scan bounded fan-out
+EVENT_SCAN_MAX_PER_PERSON=1
 ```
 
 The producer never deletes or moves inbound mail - it only flips the IMAP `\Seen` flag,
@@ -130,7 +135,8 @@ under `alembic/versions/`.
     test DB. Read its docstring before asserting on similarity ordering - the embedding
     geometry (`e0`/`e1` axes) is deliberate.
 - Suites: `tests/security/` (the SEAL), `tests/scenarios/` (emergent-behavior evals via
-  pydantic-evals), `tests/test_match_pipeline.py` (semantic match), `tests/test_proactive.py`.
+  pydantic-evals), `tests/test_match_pipeline.py` (semantic match), `tests/test_proactive.py`,
+  and `tests/test_event_end_to_end.py` (the assembled database-backed event lifecycle).
 - `asyncio_mode = "auto"` - async tests need no decorator.
 - `tests/scenarios/test_live_archetypes.py` - a pydantic-evals `Dataset` of five archetype
   emails (onboarding, weak match, strong match, prompt-injection attempt, ambiguous intent)
@@ -237,9 +243,11 @@ For a user-run end-to-end evaluation against a local pgvector PostgreSQL instanc
 uv run sim run --real-process --llm-personas --ticks 10 --message-budget 6 --proactive-every 1
 ```
 
-`--proactive-every` defaults to `0` (disabled). Omitting it means the hourly proactive
-scans never fire during the run, so dormant-user outcomes that depend on them (e.g. Omar
-Feld's rematch) will not be exercised.
+`--proactive-every` defaults to `0` (disabled). When enabled, each simulation interval runs
+all production discovery paths: graph people matching, semantic people rematching, and the
+independent semantic event scan. Their deferred jobs are captured and processed in the same
+loop. Omitting it means none of those periodic scans fire, so dormant-user outcomes that
+depend on them (e.g. Omar Feld's rematch) and event recommendation delivery are not exercised.
 
 Use [simulation-review.md](simulation-review.md) to conduct either an isolated run review or
 a comparison with a compatible baseline, interpret the artifacts and score tiers, inspect
@@ -270,9 +278,11 @@ via the `db` container - wire it as a host cron job.
 
 ## Proactive outreach
 
-`thenetwork/worker/proactive.py` holds two hourly periodic scan tasks. They only
-surface candidates - the agent run decides whether and how to introduce, so the SEAL
-still governs what leaves the system. Unit-tested in `tests/test_proactive.py`.
+Periodic discovery has three independent hourly tasks. They only surface candidates; the
+agent decides whether the match is useful, while server-owned capabilities enforce what can
+leave the system. The people scans live in `thenetwork/worker/proactive.py` and are covered by
+`tests/test_proactive.py`. Event discovery lives in `thenetwork/worker/event_scan.py` and is
+covered by `tests/test_event_scan.py` plus the assembled database test.
 
 `scan_for_opportunities` (`cron="0 * * * *"`, graph proximity). Builds the NetworkX
 graph, scores person pairs by Jaccard proximity over shared neighbours, and for each pair
@@ -296,6 +306,32 @@ Pairs handed to either scan are also recorded by opaque ids in `proactive_surfac
 They are not re-deferred for `proactive_surface_cooldown_seconds` (24 hours by default),
 even when the agent chose not to propose an introduction, so later scans rotate to the
 next eligible candidate.
+
+`scan_for_event_recommendations` (`cron="45 * * * *"`) is separate from both people scans.
+It loads only active, embedded events through a server-side projection that omits raw event
+text and recurrence, semantically matches each sealed event gist against sealed person
+memories, and excludes the submitter, missing people, event-suppressed people, delivered
+event/person ledger rows, and pending rows for the current event version. A pending row for
+an older version is refreshed so the edited event receives a new relevance evaluation.
+Selection is deterministic and bounded by the active-event, top-k, whole-scan, and
+per-person settings above.
+
+Before deferring a synthetic `process_email` job, the scan commits one
+`event_recommendations` row for the stable event/series id and person. The trigger contains
+only opaque ids, sealed gists, expiry, and similarity and binds both the event id and its
+monotonic content version. The agent may then call only `send_event_recommendation` for that
+bound id. The capability rechecks authentication, the bound version, expiry, cancellation,
+self-delivery, event-only suppression, and deduplication under a row lock; it resolves the
+address and composes the FYI from the stored gist server-side only if the evaluated version
+is still current, then records `notified_at` only after SMTP succeeds. The first delivered
+event FYI asks whether occasional event recommendations are welcome; later FYIs carry only
+a concise event-specific stop instruction.
+
+A recurring series is one stable event id and therefore produces at most one FYI per person.
+Expired or cancelled events cannot be selected or sent. There are no occurrence jobs,
+reminders, RSVP or attendance tracking, post-event follow-up, calendar integration, or
+people-recommendation opt-out. `event_suppressions` is not read by either people scan, so a
+person who stops event FYIs remains eligible for introductions and people matching.
 
 ## Sharp edges
 

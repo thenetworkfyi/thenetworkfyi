@@ -39,9 +39,10 @@ prompt-injection exfiltrate it, so the privacy boundary cannot be "withhold a co
    recipient argument and derives its only recipient from the inbound sender.
    `send_outreach` takes an opaque `recipient_user_id`; the address is resolved
    server-side at send time. `send_event_recommendation` accepts only the opaque event
-   id bound into a server-authored trigger, derives the recipient from authenticated
-   context, and composes fixed mail from the stored sanitized event gist. The LLM never
-   sees or supplies a raw address, submitter identity, subject, or event body.
+   id and content version bound into a server-authored trigger, derives the recipient
+   from authenticated context, and composes fixed mail from the stored sanitized event
+   gist only when that version is still current. The LLM never sees or supplies a raw
+   address, submitter identity, subject, or event body.
 6. **Double-opt-in identity reveal.** The model can propose an unordered pair but cannot
    record consent or compose the revealing message. A random reply token associates an
    explicit `YES`, `NO`, or `REVOKE` reply with the pair; the worker accepts it only from

@@ -175,6 +175,16 @@ class Settings(BaseSettings):
     proactive_rematch_top_k: int = 5
     proactive_surface_cooldown_seconds: int = 86_400
 
+    # Event recommendation discovery is independent of introduction matching.
+    # The scan compares active event embeddings with sanitized person-memory
+    # embeddings, then applies both per-person and whole-scan fan-out bounds
+    # before recording consideration and enqueueing agent jobs.
+    event_match_threshold: float = 0.6
+    event_match_top_k: int = 20
+    event_scan_active_event_limit: int = 100
+    event_scan_max_candidates: int = 50
+    event_scan_max_per_person: int = 1
+
 
 _settings: Settings | None = None
 
