@@ -126,9 +126,24 @@ def prepare_private_artifacts(artifacts: SimRunArtifacts) -> None:
 def write_redacted_json(path: Path, value: Any) -> None:
     """Write a normal simulation artifact only after fail-closed redaction."""
     path.write_text(
-        json.dumps(redact_structured_values(value), indent=2, sort_keys=True) + "\n",
+        json.dumps(_redact_public_values(value), indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+
+
+def _redact_public_values(value: Any) -> Any:
+    """Redact values and remove markup, which is never a public artifact format."""
+    return _omit_markup(redact_structured_values(value))
+
+
+def _omit_markup(value: Any) -> Any:
+    if isinstance(value, str):
+        return "[markup-omitted]" if "<" in value and ">" in value else value
+    if isinstance(value, dict):
+        return {key: _omit_markup(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_omit_markup(item) for item in value]
+    return value
 
 
 class EventsLog:
@@ -137,7 +152,7 @@ class EventsLog:
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def write(self, event: str, **fields: Any) -> None:
-        redacted_fields = redact_structured_values(fields)
+        redacted_fields = _redact_public_values(fields)
         payload = {"event": event, **redacted_fields}
         with self.path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(payload, sort_keys=True) + "\n")

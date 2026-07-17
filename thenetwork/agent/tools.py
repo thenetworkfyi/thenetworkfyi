@@ -14,6 +14,7 @@ are final for this run. Pydantic AI gets one retry only for argument validation.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any
 
@@ -34,12 +35,15 @@ from thenetwork.db.models import (
 from thenetwork.db.session import get_session
 from thenetwork.embed.embeddings import embed_text
 from thenetwork.email.outbound import (
+    EVENT_RECOMMENDATION_SUBJECT,
     FIRST_CONTACT_WELCOME_REPLY,
     _direct_reply_kwargs,
     notify_admins,
     reply_subject,
+    send_event_fyi,
     send_reply,
 )
+from thenetwork.email.render import EventRecommendationNotice
 from thenetwork.memory.sanitize import (
     sanitize_memory_high_fidelity,
     sanitize_text_high_fidelity,
@@ -59,14 +63,8 @@ _dispatch_storage: PostgresFixedWindowStorage | None = None
 _registration_limiter: strategies.FixedWindowRateLimiter | None = None
 _registration_storage: PostgresFixedWindowStorage | None = None
 
-FIRST_EVENT_RECOMMENDATION_NOTICE = (
-    "Would you like occasional event recommendations like this? Reply yes or no. "
-    "A no stops only event recommendations."
-)
-EVENT_RECOMMENDATION_STOP_NOTICE = (
-    'To stop event recommendations, reply "stop event recommendations."'
-)
-EVENT_RECOMMENDATION_SUBJECT = "An event you might care about"
+FIRST_EVENT_RECOMMENDATION_NOTICE = EventRecommendationNotice.FIRST.value
+EVENT_RECOMMENDATION_STOP_NOTICE = EventRecommendationNotice.STOP.value
 
 
 class _SanitizationFailed(Exception):
@@ -871,12 +869,74 @@ async def _send_email(
     is_sender_reply: bool,
     tool_name: str,
 ) -> dict[str, Any]:
+    def deliver(to_address: str) -> None:
+        thread_headers = {}
+        if is_sender_reply and ctx.deps.inbound_message_id:
+            thread_headers = _direct_reply_kwargs(
+                inbound_message_id=ctx.deps.inbound_message_id,
+                inbound_body_for_quote=ctx.deps.inbound_body_for_quote,
+                inbound_date=ctx.deps.inbound_date,
+                inbound_references=ctx.deps.inbound_references,
+            )
+        send_reply(
+            to_address=to_address,
+            subject=subject,
+            body_text=body_text,
+            **_trace_kwargs(ctx.deps.trace_id),
+            **thread_headers,
+        )
+
+    return await _dispatch_email(
+        ctx,
+        recipient_user_id=recipient_user_id,
+        is_sender_reply=is_sender_reply,
+        tool_name=tool_name,
+        subject_chars=len(subject),
+        body_chars=len(body_text),
+        deliver=deliver,
+    )
+
+
+async def _send_event_fyi(
+    ctx: RunContext[AgentDeps],
+    *,
+    recipient_user_id: str,
+    event_gist: str,
+    notice: EventRecommendationNotice,
+) -> dict[str, Any]:
+    """Dispatch one fixed event template after the ordinary capability gates."""
+    return await _dispatch_email(
+        ctx,
+        recipient_user_id=recipient_user_id,
+        is_sender_reply=False,
+        tool_name="send_event_recommendation",
+        subject_chars=len(EVENT_RECOMMENDATION_SUBJECT),
+        body_chars=len(event_gist) + len(notice.value),
+        deliver=lambda to_address: send_event_fyi(
+            to_address=to_address,
+            event_gist=event_gist,
+            notice=notice,
+            **_trace_kwargs(ctx.deps.trace_id),
+        ),
+    )
+
+
+async def _dispatch_email(
+    ctx: RunContext[AgentDeps],
+    *,
+    recipient_user_id: str,
+    is_sender_reply: bool,
+    tool_name: str,
+    subject_chars: int,
+    body_chars: int,
+    deliver: Callable[[str], None],
+) -> dict[str, Any]:
     with audit_span(
         "agent.tool",
         tool_name=tool_name,
         recipient_id_present=bool(recipient_user_id),
-        subject_chars=len(subject),
-        body_chars=len(body_text),
+        subject_chars=subject_chars,
+        body_chars=body_chars,
     ):
         s = ctx.deps.settings
         if ctx.deps.sender_user_id is None:
@@ -929,22 +989,7 @@ async def _send_email(
                 _limited("sender_reply_daily_cap", sender_reply_daily_cap)
             )
 
-        thread_headers = {}
-        if is_sender_reply and ctx.deps.inbound_message_id:
-            thread_headers = _direct_reply_kwargs(
-                inbound_message_id=ctx.deps.inbound_message_id,
-                inbound_body_for_quote=ctx.deps.inbound_body_for_quote,
-                inbound_date=ctx.deps.inbound_date,
-                inbound_references=ctx.deps.inbound_references,
-            )
-
-        send_reply(
-            to_address=to_address,
-            subject=subject,
-            body_text=body_text,
-            **_trace_kwargs(ctx.deps.trace_id),
-            **thread_headers,
-        )
+        deliver(to_address)
 
         # Only burn cap quota once the send has actually succeeded, so a
         # failed attempt (and its Procrastinate retry) isn't rate-limited
@@ -1104,19 +1149,15 @@ async def send_event_recommendation(
                 )
             ).one()
             notice = (
-                FIRST_EVENT_RECOMMENDATION_NOTICE
+                EventRecommendationNotice.FIRST
                 if prior_delivery_count == 0
-                else EVENT_RECOMMENDATION_STOP_NOTICE
+                else EventRecommendationNotice.STOP
             )
-            result = await _send_email(
+            result = await _send_event_fyi(
                 ctx,
                 recipient_user_id=recipient_id,
-                subject=EVENT_RECOMMENDATION_SUBJECT,
-                body_text=(
-                    f"An event that may be relevant:\n\n{event.gist}\n\n{notice}"
-                ),
-                is_sender_reply=False,
-                tool_name="send_event_recommendation",
+                event_gist=event.gist,
+                notice=notice,
             )
             if result.get("status") != "sent":
                 return result

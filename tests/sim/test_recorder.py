@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import mailbox
 from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
@@ -38,6 +39,7 @@ from thenetwork.sim.run.recorder import (
     _database_outcome_state,
     _event_correlation_key,
     _recording_process,
+    write_redacted_json,
 )
 from thenetwork.sim.scenarios import default_strong_match_configs
 from thenetwork.sim.scoring.scoring import (
@@ -188,6 +190,53 @@ def test_public_simulation_mbox_redacts_untrusted_headers_and_envelope(tmp_path)
     assert "From MAILER-DAEMON" in public_artifact
     assert "X-Client-Secret:" in public_artifact
     assert "[redacted-text chars=10]" in public_artifact
+
+
+def test_public_simulation_json_artifacts_omit_raw_markup_and_message_content(tmp_path):
+    config_path = tmp_path / "config.json"
+    events_path = tmp_path / "events.jsonl"
+    markup = "<p>Untrusted message content</p>"
+
+    write_redacted_json(config_path, {"body": markup})
+    EventsLog(events_path).write("sim.fixture", subject=markup)
+
+    public_artifact = config_path.read_text() + events_path.read_text()
+    assert markup not in public_artifact
+    assert "Untrusted message content" not in public_artifact
+    assert public_artifact.count("[markup-omitted]") == 2
+
+
+def test_public_simulation_mbox_redacts_both_alternatives_and_keeps_safe_order(
+    tmp_path,
+):
+    raw_mbox_path = tmp_path / "private" / "all-mail.mbox"
+    public_mbox_path = tmp_path / "all-mail.mbox"
+    message = EmailMessage()
+    message["From"] = "Alice <alice@example.test>"
+    message["To"] = "join@example.test"
+    message.set_content("Alice private plain text")
+    message.add_alternative(
+        "<p>Alice private <strong>HTML</strong> text</p>", subtype="html"
+    )
+    SimPostOffice(mbox_path=raw_mbox_path).deliver(message)
+
+    publish_redacted_mbox(raw_mbox_path, public_mbox_path)
+
+    public_box = mailbox.mbox(public_mbox_path)
+    try:
+        (redacted,) = tuple(public_box)
+    finally:
+        public_box.close()
+    assert redacted.get_content_type() == "multipart/alternative"
+    assert [part.get_content_type() for part in redacted.get_payload()] == [
+        "text/plain",
+        "text/html",
+    ]
+    public_artifact = public_mbox_path.read_text(encoding="utf-8")
+    assert "Alice private plain text" not in public_artifact
+    assert "Alice private" not in public_artifact
+    assert "<strong>HTML</strong>" not in public_artifact
+    assert public_artifact.count("[redacted-text chars=") == 2
 
 
 @pytest.mark.asyncio

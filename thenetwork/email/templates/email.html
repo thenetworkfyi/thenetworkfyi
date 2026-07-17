@@ -18,12 +18,24 @@
   </head>
   <body>
     <div class="message">
-      {% if fixed_template == "introduction" %}
+      {% if fixed_template == "consent_request" %}
+        {% include "fixed/consent_request.html" %}
+      {% elif fixed_template == "consent_clarification" %}
+        {% include "fixed/consent_clarification.html" %}
+      {% elif fixed_template == "consent_acknowledgment" %}
+        {% include "fixed/consent_acknowledgment.html" %}
+      {% elif fixed_template == "consent_declined" %}
+        {% include "fixed/consent_declined.html" %}
+      {% elif fixed_template == "consent_already_declined" %}
+        {% include "fixed/consent_already_declined.html" %}
+      {% elif fixed_template == "introduction" %}
         {% include "fixed/introduction.html" %}
       {% elif fixed_template == "first_contact_welcome" %}
         {% include "fixed/first_contact_welcome.html" %}
       {% elif fixed_template == "infrastructure_rejection" %}
         {% include "fixed/infrastructure_rejection.html" %}
+      {% elif fixed_template == "event_recommendation" %}
+        {% include "fixed/event_recommendation.html" %}
       {% else %}
         {% for paragraph in body_paragraphs %}
           <p>{% for line in paragraph %}{{ line }}{% if not loop.last %}<br>{% endif %}{% endfor %}</p>

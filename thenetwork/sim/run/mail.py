@@ -19,11 +19,10 @@ from typing import Any
 from unittest.mock import patch
 from uuid import uuid4
 
-from bs4 import BeautifulSoup
-
 from thenetwork.email.inbound import cap_body, cap_sender_name, cap_subject
 from thenetwork.email.threading import clean_message_id, clean_references
 from thenetwork.security.log_redaction import redact_structured_log
+from thenetwork.sim.html_validation import html_to_visible_text
 from thenetwork.worker.tasks import process_email
 
 
@@ -38,6 +37,7 @@ _SAFE_MIME_HEADERS = frozenset(
     {"content-transfer-encoding", "content-type", "mime-version"}
 )
 _SAFE_TEXT_SUBTYPES = frozenset({"html", "plain"})
+_SAFE_MULTIPART_SUBTYPES = frozenset({"alternative", "mixed"})
 
 
 @dataclass(frozen=True)
@@ -144,9 +144,13 @@ def _redact_message(message: EmailMessage) -> None:
     for index, part in enumerate(message.walk()):
         if part.is_multipart():
             # Mailbox boundary values originate with the message sender.  A
-            # fresh deterministic value preserves the MIME structure without
-            # publishing an arbitrary raw header parameter.
-            part.replace_header("Content-Type", "multipart/mixed")
+            # fresh deterministic value preserves the safe multipart shape
+            # without publishing an arbitrary raw header parameter. Keep an
+            # alternative wrapper so public fixtures can still prove order.
+            subtype = part.get_content_subtype()
+            safe_subtype = subtype if subtype in _SAFE_MULTIPART_SUBTYPES else "mixed"
+            del part["Content-Type"]
+            part["Content-Type"] = f"multipart/{safe_subtype}"
             part.set_boundary(f"sim-redacted-{index}")
             _normalize_mime_headers(part)
             _redact_headers(part)
@@ -425,12 +429,4 @@ def _compat_payload_text(message) -> str:
 
 
 def _html_to_text(html: str) -> str:
-    if not html:
-        return ""
-    try:
-        soup = BeautifulSoup(html, "html.parser")
-    except Exception:
-        return ""
-    for tag in soup(("head", "script", "style", "template", "title")):
-        tag.decompose()
-    return " ".join(soup.get_text(separator=" ").split())
+    return html_to_visible_text(html)
