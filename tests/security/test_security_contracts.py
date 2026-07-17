@@ -104,6 +104,7 @@ async def test_reply_to_sender_has_no_model_selected_recipient():
     assert "recipient_user_id" not in params
     assert "to_address" not in params
     assert "email" not in params
+    assert "body_html" not in params
 
 
 @pytest.mark.asyncio
@@ -116,6 +117,7 @@ async def test_outreach_resolves_address_not_from_caller():
     assert "recipient_user_id" in params
     assert "to_address" not in params
     assert "email" not in params
+    assert "body_html" not in params
 
 
 @pytest.mark.asyncio

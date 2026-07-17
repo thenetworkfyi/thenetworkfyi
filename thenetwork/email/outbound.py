@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from html import escape
 import smtplib
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid
@@ -11,6 +10,14 @@ from time import monotonic
 from imap_tools import MailBox, MailMessageFlags
 
 from thenetwork.audit import audit_event, audit_span, audit_trace
+from thenetwork.email.render import (
+    FixedEmailTemplate,
+    IntroductionEmailContext,
+    QuotedMessage,
+    SignatureVariant,
+    render_conversational_email,
+    render_fixed_email,
+)
 from thenetwork.email.threading import clean_message_id, clean_references
 from thenetwork.settings import get_settings
 
@@ -36,23 +43,6 @@ to present itself.
 MAX_QUOTED_TRAIL_CHARS = 2_000
 
 
-def _growth_footer_text(account: str) -> str:
-    # "Reply" only reaches us for the direct recipient - a forward's reply
-    # goes back to whoever forwarded it, not to us. So the forwarded-to
-    # audience needs the address spelled out in plain text, since it has to
-    # survive being buried in someone else's quoted thread.
-    return f"\n\n--\nThe Network. Reply anytime. Know someone who should be on this? Forward this along - they can join by emailing {account} directly."
-
-
-def _growth_footer_html(account: str) -> str:
-    return (
-        '<p style="color:#888;font-size:12px">'
-        f"The Network. Reply anytime. Know someone who should be on this? Forward this along "
-        f"&mdash; they can join by emailing {account} directly."
-        "</p>"
-    )
-
-
 def _quoted_body_lines(body_text: str) -> tuple[list[str], bool]:
     body = body_text.replace("\r\n", "\n").replace("\r", "\n")
     body = "\n".join(
@@ -64,25 +54,12 @@ def _quoted_body_lines(body_text: str) -> tuple[list[str], bool]:
     return body.splitlines(), truncated
 
 
-def _quoted_trail_text(body_text: str, quoted_date: str | None = None) -> str:
-    """Return a one-level plain-text quote of the original inbound body."""
-    body_lines, truncated = _quoted_body_lines(body_text)
-    date = quoted_date or "an earlier message"
-    quote_lines = [f"On {date}, you wrote:"]
-    quote_lines.extend(f"> {line}" if line else ">" for line in body_lines)
-    if truncated:
-        quote_lines.append("> [quoted text truncated]")
-    return "\n\n" + "\n".join(quote_lines)
-
-
-def _quoted_trail_html(body_text: str, quoted_date: str | None = None) -> str:
-    """Return an escaped one-level HTML quote of the original inbound body."""
+def _quoted_message(body_text: str, quoted_date: str | None = None) -> QuotedMessage:
+    """Return the bounded, de-nested inbound text for the trusted renderer."""
     body_lines, truncated = _quoted_body_lines(body_text)
     if truncated:
         body_lines.append("[quoted text truncated]")
-    date = escape(quoted_date or "an earlier message")
-    quote = "<br>\n".join(escape(line) if line else "<br>" for line in body_lines)
-    return f"\n\n<p>On {date}, you wrote:</p><blockquote>{quote}</blockquote>"
+    return QuotedMessage(body_text="\n".join(body_lines), date=quoted_date)
 
 
 def _append_to_sent(msg: EmailMessage, trace_id: str | None = None) -> None:
@@ -193,7 +170,6 @@ def send_reply(
     to_address: str,
     subject: str,
     body_text: str,
-    body_html: str | None = None,
     in_reply_to: str | None = None,
     references: str | None = None,
     quoted_body_text: str | None = None,
@@ -206,37 +182,42 @@ def send_reply(
     Uses Auto-Submitted: auto-replied header (RFC 3834) so recipients'
     IMAP pollers skip our outbound replies and don't create a loop.
 
-    The growth footer is appended here, at the mailer level, rather than by
-    the agent composing it in `body_text` - that way prompt injection in the
-    inbound message can't alter or suppress it. Set include_footer=False for
-    internal/ops mail (admin replies, escalation notices) that isn't a
-    user-facing growth surface.
+    The trusted renderer, rather than any caller, owns the HTML alternative,
+    signature, referral footer, and quoted-message markup. Set
+    ``include_footer=False`` for internal/ops mail that should have no
+    signature or referral copy.
     """
     with (
         audit_trace(trace_id),
         audit_span(
             "email.smtp_send",
-            recipient_id_present=bool(to_address),
-            subject_chars=len(subject),
-            body_chars=len(body_text),
-            html_present=body_html is not None,
+            recipient_count=1,
+            template_id="conversational",
         ),
     ):
         s = get_settings()
-
-        if include_footer and s.growth_footer_enabled:
-            # The footer points new senders at the polled inbound address,
-            # not the (possibly different) SMTP sending identity.
-            body_text = body_text + _growth_footer_text(s.imap_account)
-            if body_html:
-                body_html = body_html + _growth_footer_html(s.imap_account)
-
-        if quoted_body_text:
-            body_text = body_text + _quoted_trail_text(quoted_body_text, quoted_date)
-            if body_html:
-                body_html = body_html + _quoted_trail_html(
-                    quoted_body_text, quoted_date
-                )
+        signature_variant = (
+            SignatureVariant.STANDARD_WITH_REFERRAL
+            if include_footer and s.growth_footer_enabled
+            else SignatureVariant.NONE
+        )
+        quoted_message = (
+            _quoted_message(quoted_body_text, quoted_date) if quoted_body_text else None
+        )
+        rendered = render_conversational_email(
+            body_text,
+            signature_variant=signature_variant,
+            quoted_message=quoted_message,
+            html_enabled=s.html_email_enabled,
+            referral_account=s.imap_account,
+        )
+        audit_event(
+            "email.rendered",
+            html_present=rendered.html is not None,
+            template_id="conversational",
+            recipient_count=1,
+            outcome="success",
+        )
 
         msg = EmailMessage()
         msg["From"] = s.email_from
@@ -252,9 +233,9 @@ def send_reply(
         if references:
             msg["References"] = references
 
-        msg.set_content(body_text)
-        if body_html:
-            msg.add_alternative(body_html, subtype="html")
+        msg.set_content(rendered.text)
+        if rendered.html is not None:
+            msg.add_alternative(rendered.html, subtype="html")
 
         with smtplib.SMTP(s.smtp_host, s.smtp_port) as smtp:
             smtp.ehlo()
@@ -274,22 +255,31 @@ def send_group_introduction(
     trace_id: str | None = None,
 ) -> None:
     """Send the fixed identity-revealing email after server-verified consent."""
-    body = (
-        f"{person_a_name} and {person_b_name},\n\n"
-        "You both opted in to this introduction. Your addresses are included "
-        "on this message so you can take it from here."
-    )
     with (
         audit_trace(trace_id),
         audit_span(
             "email.smtp_send",
-            recipient_id_present=True,
-            subject_chars=len("Your introduction"),
-            body_chars=len(body),
-            html_present=False,
+            recipient_count=2,
+            template_id=FixedEmailTemplate.INTRODUCTION.value,
         ),
     ):
         settings = get_settings()
+        rendered = render_fixed_email(
+            FixedEmailTemplate.INTRODUCTION,
+            IntroductionEmailContext(
+                person_a_name=person_a_name,
+                person_b_name=person_b_name,
+            ),
+            signature_variant=SignatureVariant.NONE,
+            html_enabled=settings.html_email_enabled,
+        )
+        audit_event(
+            "email.rendered",
+            html_present=rendered.html is not None,
+            template_id=FixedEmailTemplate.INTRODUCTION.value,
+            recipient_count=2,
+            outcome="success",
+        )
         msg = EmailMessage()
         msg["From"] = settings.email_from
         msg["To"] = (person_a_email, person_b_email)
@@ -297,7 +287,9 @@ def send_group_introduction(
         msg["Date"] = formatdate(localtime=True)
         msg["Message-ID"] = make_msgid()
         msg["Auto-Submitted"] = "auto-replied"
-        msg.set_content(body)
+        msg.set_content(rendered.text)
+        if rendered.html is not None:
+            msg.add_alternative(rendered.html, subtype="html")
 
         with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as smtp:
             smtp.ehlo()
