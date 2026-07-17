@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from thenetwork.agent.deps import AgentDeps
+from thenetwork.agent.tools import reply_to_sender, send_outreach
 from thenetwork.db.models import Memory, Person
+from thenetwork.memory.recent_context import load_recent_sender_memory_context
 from thenetwork.memory.sent_email import (
     SENT_EMAIL_SUMMARY_MAX_CHARS,
     SentEmailMemory,
@@ -227,4 +231,213 @@ async def test_event_delivery_uses_only_sealed_gist_in_deterministic_summary():
     assert dispatch.await_args.kwargs["recipient_user_id"] == "person-bob"
     assert dispatch.await_args.kwargs["sent_email_summary"] == (
         f"an event recommendation about {sealed_gist}"
+    )
+
+
+class StoreResult:
+    def __init__(self, *, one=None, values=None):
+        self.one_value = one
+        self.values = values or []
+
+    def one(self):
+        return self.one_value
+
+    def all(self):
+        return self.values
+
+
+class MemoryStoreSession:
+    def __init__(self):
+        self.people = {
+            "person-alice": Person(
+                id="person-alice",
+                name="Alice",
+                email="alice@example.com",
+            ),
+            "person-bob": Person(
+                id="person-bob",
+                name="Bob",
+                email="bob@example.com",
+            ),
+            "person-carol": Person(
+                id="person-carol",
+                name="Carol",
+                email="carol@example.com",
+            ),
+        }
+        self.memories: list[Memory] = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def get(self, model, record_id):
+        if model is Person:
+            return self.people.get(record_id)
+        raise AssertionError(f"unexpected model lookup: {model}")
+
+    def exec(self, query):
+        sql = str(query)
+        params = query.compile().params
+        person_id = next(
+            (
+                value[0]
+                for value in params.values()
+                if isinstance(value, list) and len(value) == 1
+            ),
+            None,
+        )
+        owned = [
+            memory
+            for memory in self.memories
+            if person_id is not None and person_id in memory.refs
+        ]
+        if "count(" in sql.lower():
+            return StoreResult(one=len(owned))
+        if "memories.gist" in sql:
+            limit = next(
+                (value for value in params.values() if isinstance(value, int)),
+                len(owned),
+            )
+            ordered = sorted(
+                owned,
+                key=lambda memory: (memory.created_at, memory.id),
+                reverse=True,
+            )
+            return StoreResult(
+                values=[memory.gist for memory in ordered[:limit] if memory.gist]
+            )
+        raise AssertionError(f"unexpected query: {sql}")
+
+    def add(self, memory):
+        self.memories.append(memory)
+
+    def commit(self):
+        return None
+
+    def rollback(self):
+        return None
+
+
+def _tool_context(store: MemoryStoreSession, *, sender_id: str):
+    return SimpleNamespace(
+        deps=AgentDeps(
+            settings=_settings(
+                dispatch_recipient_daily_cap=99,
+                dispatch_sender_reply_daily_cap=99,
+            ),
+            sender_email=store.people[sender_id].email,
+            sender_user_id=sender_id,
+            sender_authenticated=True,
+            session_factory=lambda: store,
+        )
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("delivery_kind", ["reply", "outreach"])
+async def test_successful_agent_delivery_is_injected_into_the_recipient_next_run(
+    delivery_kind,
+):
+    from thenetwork.agent.core import run_agent_for_email
+
+    store = MemoryStoreSession()
+    sender_id = "person-alice"
+    recipient_id = "person-alice" if delivery_kind == "reply" else "person-bob"
+    ctx = _tool_context(store, sender_id=sender_id)
+    summary = "an answer about a specific manufacturing introduction"
+
+    async def sanitize(memory, _session):
+        return memory.text
+
+    with (
+        patch("thenetwork.agent.tools._check_daily_dispatch_cap", return_value=True),
+        patch("thenetwork.agent.tools._consume_daily_dispatch_cap"),
+        patch("thenetwork.agent.tools.send_reply"),
+        patch(
+            "thenetwork.memory.sent_email.sanitize_memory_high_fidelity",
+            new=AsyncMock(side_effect=sanitize),
+        ),
+        patch(
+            "thenetwork.memory.sent_email.embed_text",
+            new=AsyncMock(return_value=[0.0] * 1536),
+        ),
+    ):
+        if delivery_kind == "reply":
+            result = await reply_to_sender(
+                ctx,
+                subject="Private subject",
+                body_text="Private body",
+                sent_email_summary=summary,
+            )
+        else:
+            result = await send_outreach(
+                ctx,
+                recipient_user_id=recipient_id,
+                subject="Private subject",
+                body_text="Private body",
+                sent_email_summary=summary,
+            )
+
+    assert result == {"status": "sent"}
+    assert len(store.memories) == 1
+
+    fake_result = SimpleNamespace(output="", all_messages=lambda: [])
+    fake_agent = SimpleNamespace(run=AsyncMock(return_value=fake_result))
+    with (
+        patch("thenetwork.agent.core.get_settings", return_value=_settings()),
+        patch("thenetwork.agent.core.build_agent", return_value=fake_agent),
+    ):
+        await run_agent_for_email(
+            sender_email=store.people[recipient_id].email,
+            sender_user_id=recipient_id,
+            email_subject="Later message",
+            email_body="What happened earlier?",
+            session_factory=lambda: store,
+        )
+
+    user_message = fake_agent.run.await_args.args[0]
+    assert f"Sent email: {summary}" in user_message
+    assert "Private subject" not in user_message
+    assert "Private body" not in user_message
+    assert store.people[recipient_id].email not in user_message
+
+    other_context = load_recent_sender_memory_context(
+        "person-carol",
+        session_factory=lambda: store,
+    )
+    assert other_context.text == ""
+
+
+@pytest.mark.asyncio
+async def test_failed_agent_delivery_is_absent_from_later_context():
+    store = MemoryStoreSession()
+    ctx = _tool_context(store, sender_id="person-alice")
+
+    with (
+        patch("thenetwork.agent.tools._check_daily_dispatch_cap", return_value=True),
+        patch(
+            "thenetwork.agent.tools.send_reply",
+            side_effect=RuntimeError("smtp unavailable"),
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="smtp unavailable"):
+            await send_outreach(
+                ctx,
+                recipient_user_id="person-bob",
+                subject="Private subject",
+                body_text="Private body",
+                sent_email_summary="a relevant update",
+            )
+
+    assert store.memories == []
+    context = load_recent_sender_memory_context(
+        "person-bob",
+        session_factory=lambda: store,
+    )
+    assert context == load_recent_sender_memory_context(
+        None,
+        session_factory=lambda: store,
     )

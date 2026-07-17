@@ -84,6 +84,8 @@ _SAFE_FIELDS = frozenset(
         "part_kinds",
         "consent_state",
         "query_chars",
+        "recent_memory_context_chars",
+        "recent_memory_gist_count",
         "reason",
         "recipient_id_present",
         "recipient_count",

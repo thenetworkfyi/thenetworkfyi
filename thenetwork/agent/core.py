@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from pydantic_ai import Agent, ToolOutput
@@ -37,8 +38,14 @@ from thenetwork.audit import (
     audit_span,
     audit_trace,
 )
+from thenetwork.db.session import get_session
 from thenetwork.email.outbound import notify_admins
 from thenetwork.model_config import model_with_api_key
+from thenetwork.memory.recent_context import (
+    RECENT_MEMORY_CONTEXT_MAX_CHARS,
+    RECENT_MEMORY_CONTEXT_MAX_COUNT,
+    load_recent_sender_memory_context,
+)
 from thenetwork.security.sender_identifier import optional_sender_identifier
 from thenetwork.settings import get_settings
 
@@ -115,11 +122,13 @@ async def run_agent_for_email(
     proactive_candidate_id: str | None = None,
     proactive_event_id: str | None = None,
     proactive_event_version: int | None = None,
+    session_factory: Callable | None = None,
 ) -> str:
     """Run the agent for one inbound email.
 
-    The untrusted email body is passed as user-role message content - it is
-    NEVER concatenated into the system prompt (role separation, THE SEAL).
+    The untrusted email body and bounded sender-memory gist projection are
+    passed as user-role message content. Neither is ever concatenated into the
+    system prompt (role separation, THE SEAL).
     """
     with (
         audit_run(),
@@ -146,6 +155,7 @@ async def run_agent_for_email(
             proactive_candidate_id=proactive_candidate_id,
             proactive_event_id=proactive_event_id,
             proactive_event_version=proactive_event_version,
+            session_factory=session_factory,
         )
         settings = get_settings()
         agent = build_agent(model=settings.agent_model)
@@ -156,12 +166,33 @@ async def run_agent_for_email(
         sender_name_line = (
             f"From display name: {sender_display_name}\n" if sender_display_name else ""
         )
-        user_message = f"{sender_name_line}Subject: {email_subject}\n\n{email_body}"
+        memory_context = load_recent_sender_memory_context(
+            sender_user_id,
+            session_factory=session_factory or get_session,
+            max_count=getattr(
+                settings,
+                "recent_memory_context_max_count",
+                RECENT_MEMORY_CONTEXT_MAX_COUNT,
+            ),
+            max_chars=getattr(
+                settings,
+                "recent_memory_context_max_chars",
+                RECENT_MEMORY_CONTEXT_MAX_CHARS,
+            ),
+        )
+        inbound_message = f"{sender_name_line}Subject: {email_subject}\n\n{email_body}"
+        user_message = (
+            f"{memory_context.text}\n\n{inbound_message}"
+            if memory_context.text
+            else inbound_message
+        )
         audit_event(
             "agent.prompt_constructed",
             sender_known=sender_user_id is not None,
             subject_chars=len(email_subject),
             body_chars=len(email_body),
+            recent_memory_gist_count=memory_context.gist_count,
+            recent_memory_context_chars=len(memory_context.text),
             user_message_chars=len(user_message),
         )
         try:
