@@ -154,7 +154,6 @@ def _send_infrastructure_rejection_reply(
     send_reply(
         to_address=sender_email,
         subject=f"Re: {subject}",
-        include_footer=False,
         fixed_template=FixedEmailTemplate.INFRASTRUCTURE_REJECTION,
         fixed_context=InfrastructureRejectionEmailContext(
             InfrastructureRejectionReason(reason)
@@ -193,7 +192,6 @@ def _send_first_contact_welcome_reply(
     send_reply(
         to_address=sender_email,
         subject=reply_subject(subject, fallback="How to join"),
-        include_footer=False,
         fixed_template=FixedEmailTemplate.FIRST_CONTACT_WELCOME,
         fixed_context=FirstContactWelcomeEmailContext(),
         **_trace_kwargs(trace_id),
@@ -376,7 +374,7 @@ async def process_email(
                 to_address=sender_email,
                 subject=f"Re: {subject}",
                 body_text=reply,
-                include_footer=False,
+                audience="internal",
                 **_trace_kwargs(trace_id),
                 **_thread_headers(inbound_message_id, inbound_references),
             )

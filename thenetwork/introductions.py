@@ -325,7 +325,6 @@ def _send_fixed_reply(
     send_reply(
         to_address=to_address,
         subject=f"Re: {subject}",
-        include_footer=False,
         trace_id=trace_id,
         fixed_template=template,
         fixed_context=EmptyEmailContext(),

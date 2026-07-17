@@ -14,7 +14,6 @@ from thenetwork.audit import audit_event, audit_span, audit_trace
 from thenetwork.email.render import (
     EventRecommendationEmailContext,
     EventRecommendationNotice,
-    FirstContactWelcomeEmailContext,
     FixedEmailContext,
     FixedEmailTemplate,
     IntroductionEmailContext,
@@ -25,18 +24,6 @@ from thenetwork.email.render import (
 )
 from thenetwork.email.threading import clean_message_id, clean_references
 from thenetwork.settings import get_settings
-
-# The one deterministic explanation of what this address is and how to use
-# it - injection-proof by construction since it's fixed copy, not model
-# output. Sent both for near-empty first contact (worker/tasks.py) and when
-# escalate() routes an authenticated first contact to a standard welcome
-# instead of human escalation (agent/tools.py) - in both cases the sender
-# doesn't yet know how to join.
-FIRST_CONTACT_WELCOME_REPLY = render_fixed_email(
-    FixedEmailTemplate.FIRST_CONTACT_WELCOME,
-    FirstContactWelcomeEmailContext(),
-    signature_variant=SignatureVariant.NONE,
-).text
 
 MAX_QUOTED_TRAIL_CHARS = 2_000
 EVENT_RECOMMENDATION_SUBJECT = "An event you might care about"
@@ -61,12 +48,8 @@ def _quoted_message(body_text: str, quoted_date: str | None = None) -> QuotedMes
     return QuotedMessage(body_text="\n".join(body_lines), date=quoted_date)
 
 
-def _user_facing_signature_variant(
-    settings, *, include_footer: bool = True
-) -> SignatureVariant:
+def _user_facing_signature_variant(settings) -> SignatureVariant:
     """Choose the server-owned signature; only configured mail gets referral copy."""
-    if not include_footer:
-        return SignatureVariant.NONE
     if settings.growth_footer_enabled:
         return SignatureVariant.STANDARD_WITH_REFERRAL
     return SignatureVariant.STANDARD
@@ -116,8 +99,8 @@ def notify_admins(
 
     Shared by `agent/tools.py::escalate` and `agent/core.py`'s
     usage-limit-exceeded handler - both need to alert a human operator
-    without routing through the user-facing growth surface, so this wraps
-    `send_reply` with `include_footer=False` and a no-op when no admin
+    without routing through the user-facing growth surface, so this uses the
+    closed internal plain-only delivery path and is a no-op when no admin
     addresses are configured.
     """
     if not settings.admin_emails:
@@ -127,7 +110,6 @@ def notify_admins(
             to_address=admin_email,
             subject=subject,
             body_text=body,
-            include_footer=False,
             audience="internal",
             trace_id=trace_id,
         )
@@ -202,7 +184,9 @@ def send_reply(
     only a named server-owned template with its matching typed context, never
     caller-authored markup.
     ``audience="internal"`` is the closed server-side path for operational
-    notifications that must remain plain-only.
+    notifications that remain plain-only and unsigned. ``include_footer`` is
+    retained for source compatibility, but cannot remove the signature from a
+    user-facing delivery.
     """
     if fixed_template is not None and fixed_context is None:
         raise TypeError("fixed_template requires fixed_context")
@@ -226,33 +210,44 @@ def send_reply(
         ),
     ):
         s = get_settings()
-        signature_variant = _user_facing_signature_variant(
-            s, include_footer=include_footer
-        )
-        quoted_message = (
-            _quoted_message(quoted_body_text, quoted_date) if quoted_body_text else None
-        )
-        if fixed_template is None:
-            rendered = render_conversational_email(
-                body_text,
-                signature_variant=signature_variant,
-                quoted_message=quoted_message,
-                referral_account=s.imap_account,
-            )
+        if audience == "internal":
+            if fixed_template is not None:
+                raise ValueError("internal replies do not support fixed templates")
+            rendered_text = body_text
+            rendered_html = None
+            rendering_mode = "internal_plain"
         else:
-            rendered = render_fixed_email(
-                fixed_template,
-                fixed_context,
-                signature_variant=signature_variant,
-                quoted_message=quoted_message,
-                referral_account=s.imap_account,
+            signature_variant = _user_facing_signature_variant(s)
+            quoted_message = (
+                _quoted_message(quoted_body_text, quoted_date)
+                if quoted_body_text
+                else None
             )
+            if fixed_template is None:
+                rendered = render_conversational_email(
+                    body_text,
+                    signature_variant=signature_variant,
+                    quoted_message=quoted_message,
+                    referral_account=s.imap_account,
+                )
+            else:
+                rendered = render_fixed_email(
+                    fixed_template,
+                    fixed_context,
+                    signature_variant=signature_variant,
+                    quoted_message=quoted_message,
+                    referral_account=s.imap_account,
+                )
+            rendered_text = rendered.text
+            rendered_html = rendered.html
+            rendering_mode = "html" if rendered_html is not None else "plain_fallback"
         audit_event(
             "email.rendered",
-            html_present=audience == "user" and rendered.html is not None,
+            html_present=rendered_html is not None,
             template_id=template_id,
             recipient_count=1,
             outcome="success",
+            rendering_mode=rendering_mode,
         )
 
         msg = EmailMessage()
@@ -269,9 +264,9 @@ def send_reply(
         if references:
             msg["References"] = references
 
-        msg.set_content(rendered.text)
-        if audience == "user" and rendered.html is not None:
-            msg.add_alternative(rendered.html, subtype="html")
+        msg.set_content(rendered_text)
+        if rendered_html is not None:
+            msg.add_alternative(rendered_html, subtype="html")
 
         with smtplib.SMTP(s.smtp_host, s.smtp_port) as smtp:
             smtp.ehlo()
@@ -316,6 +311,7 @@ def send_event_fyi(
             template_id=FixedEmailTemplate.EVENT_RECOMMENDATION.value,
             recipient_count=1,
             outcome="success",
+            rendering_mode="html" if rendered.html is not None else "plain_fallback",
         )
 
         msg = EmailMessage()
@@ -362,7 +358,7 @@ def send_group_introduction(
                 person_a_name=person_a_name,
                 person_b_name=person_b_name,
             ),
-            signature_variant=SignatureVariant.NONE,
+            signature_variant=_user_facing_signature_variant(settings),
         )
         audit_event(
             "email.rendered",
@@ -370,6 +366,7 @@ def send_group_introduction(
             template_id=FixedEmailTemplate.INTRODUCTION.value,
             recipient_count=2,
             outcome="success",
+            rendering_mode="html" if rendered.html is not None else "plain_fallback",
         )
         msg = EmailMessage()
         msg["From"] = settings.email_from

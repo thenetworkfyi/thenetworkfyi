@@ -1506,7 +1506,6 @@ async def test_worker_replies_to_known_authenticated_sender_on_infrastructure_re
     send_reply.assert_called_once_with(
         to_address="alice@example.com",
         subject="Re: Hello",
-        include_footer=False,
         fixed_template=FixedEmailTemplate.INFRASTRUCTURE_REJECTION,
         fixed_context=InfrastructureRejectionEmailContext(
             InfrastructureRejectionReason(reason)
@@ -1550,7 +1549,6 @@ async def test_worker_threads_infrastructure_rejection_reply():
     send_reply.assert_called_once_with(
         to_address="alice@example.com",
         subject="Re: Hello",
-        include_footer=False,
         fixed_template=FixedEmailTemplate.INFRASTRUCTURE_REJECTION,
         fixed_context=InfrastructureRejectionEmailContext(
             InfrastructureRejectionReason.RATE_LIMIT
@@ -1559,6 +1557,44 @@ async def test_worker_threads_infrastructure_rejection_reply():
         references="<root@example.com> <parent@example.com> <abc123@example.com>",
         quoted_body_text="Project Finch closes Friday",
         quoted_date="Sat, 04 Jul 2026 12:00:00 -0700",
+    )
+
+
+@pytest.mark.asyncio
+async def test_worker_sends_verified_admin_command_reply_as_internal_plain_mail():
+    from thenetwork.worker.tasks import process_email
+
+    with (
+        patch(
+            "thenetwork.worker.tasks.get_session",
+            return_value=_mock_sender_lookup(None),
+        ),
+        patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
+        patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)),
+        patch(
+            "thenetwork.worker.tasks.verify_admin_request",
+            return_value="COMMAND: status",
+        ),
+        patch("thenetwork.worker.tasks.extract_command", return_value="status"),
+        patch("thenetwork.worker.tasks.extract_body_text", return_value=""),
+        patch(
+            "thenetwork.worker.tasks.handle_admin_command",
+            new=AsyncMock(return_value="admin result"),
+        ),
+        patch("thenetwork.worker.tasks.send_reply") as send_reply,
+    ):
+        await process_email.func(
+            sender_email="admin@example.com",
+            subject="ADMIN: status",
+            body="signed command",
+            raw_message_b64="c2lnbmVk",
+        )
+
+    send_reply.assert_called_once_with(
+        to_address="admin@example.com",
+        subject="Re: ADMIN: status",
+        body_text="admin result",
+        audience="internal",
     )
 
 
