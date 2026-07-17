@@ -549,7 +549,6 @@ async def test_run_recorder_logs_delivery_metadata_without_public_message_bodies
         email_from="agent@example.test",
         imap_account="join@example.test",
         growth_footer_enabled=False,
-        html_email_enabled=True,
     )
 
     async def reply(**kwargs):

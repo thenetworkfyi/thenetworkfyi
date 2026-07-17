@@ -58,7 +58,6 @@ def _production_conversational_multipart() -> EmailMessage:
         imap_password="secret",
         imap_sent_folder="Sent",
         growth_footer_enabled=False,
-        html_email_enabled=True,
     )
 
     with (
@@ -175,5 +174,24 @@ def test_fixture_rejects_real_semantic_drift():
             html="<html><body><p>This says something else.</p></body></html>"
         )
     )
+
+    assert "plain text and visible HTML text differ" in inspection.violations
+
+
+def test_fixture_rejects_ordinary_leading_quote_marker_drift():
+    message = EmailMessage()
+    message.set_content(
+        "> ordinary canonical body text\n\n"
+        "A second paragraph.\n\n"
+        "On Tuesday, you wrote:\n"
+        "> quoted trailing text"
+    )
+    message.add_alternative(
+        "<p>ordinary canonical body text</p><p>A second paragraph.</p>"
+        "<p>On Tuesday, you wrote:</p><blockquote>quoted trailing text</blockquote>",
+        subtype="html",
+    )
+
+    inspection = inspect_html_email(message)
 
     assert "plain text and visible HTML text differ" in inspection.violations
