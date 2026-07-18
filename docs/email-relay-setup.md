@@ -94,27 +94,29 @@ prioritizes a bounded `hidden-*` candidate on the configured relay domain over t
 catch-all mailbox address. Invalid hidden aliases are intentionally preserved long
 enough for the worker to reject them before any agent execution.
 
-### Preserve sender-authentication results
+### Check third-party sender-authentication results
 
 Relay authorization does not trust the user-controlled `From` header by itself. The
-receiving mail stack must evaluate inbound SPF, DKIM, or authenticated submission and
-prepend its own `Authentication-Results` header before the message reaches Dovecot.
+application cannot configure or change the third-party IMAP provider's mail-processing
+stack. Compatibility depends on the `Authentication-Results` header that provider
+already writes into delivered messages.
 
-Inspect a message received from an external participant. Its first result should
-look similar to:
+Send a probe message from an external participant, then inspect its raw source in the
+IMAP mailbox. Its first result should look similar to:
 
 ```text
 Authentication-Results: mx1.example.com; dkim=pass ...; spf=pass ...
 ```
 
 The application considers only the first `Authentication-Results` header and accepts a
-passing `dkim`, `spf`, or `auth` result from it. Ensure the receiving stack prepends its
-own result so any lower, sender-supplied header is ignored. The authserv-id before the
-first semicolon (`mx1.example.com` above) is informational and is not a trust boundary.
+passing `dkim`, `spf`, or `auth` result from it. Any lower, sender-supplied result is
+ignored. The authserv-id before the first semicolon (`mx1.example.com` above) is
+informational and is not a trust boundary.
 
-Keep `REQUIRE_SENDER_AUTH=true` in production. If the receiving host does not add a
-usable result, authenticated participants will be rejected and relay delivery will not
-occur. Fix the receiving stack instead of disabling this control.
+With `REQUIRE_SENDER_AUTH=true`, relay mail is rejected when the provider supplies no
+usable first verdict. Treat the raw-message check as a provider compatibility check
+before enabling relay delivery; there is no application setting that can add a missing
+provider verdict.
 
 ### Email-host acceptance checks
 
@@ -124,8 +126,9 @@ Before changing the application, verify all of the following:
 - Mail to a previously nonexistent address at the relay domain arrives in
   `IMAP_ACCOUNT`.
 - Raw message source preserves the original recipient in a recognized header.
-- The first `Authentication-Results` header is added by the receiving server and has a
-  passing `dkim`, `spf`, or `auth` result for a legitimate external sender.
+- A raw message confirms that the third-party provider supplies a first
+  `Authentication-Results` header with a passing `dkim`, `spf`, or `auth` result for a
+  legitimate external sender.
 - IMAP TLS login works with the exact host, port, account, and password that the worker
   will use.
 
@@ -294,7 +297,8 @@ agent path. A non-hidden address at the relay domain is not a pair alias.
 - [ ] Relay-domain MX points to the existing mail host.
 - [ ] Domain catch-all delivers to `IMAP_ACCOUNT`.
 - [ ] Original hidden recipient survives delivery in a recognized header.
-- [ ] Receiving server adds a trusted passing `Authentication-Results` header.
+- [ ] Raw source confirms that the third-party IMAP provider supplies a usable first
+      `Authentication-Results` verdict.
 - [ ] SES domain identity and DKIM are verified in the selected Region.
 - [ ] SES production access and SMTP credentials are active in that Region.
 - [ ] Optional custom MAIL FROM uses a separate bounce subdomain.
