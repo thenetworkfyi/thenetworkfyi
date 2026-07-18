@@ -3,6 +3,12 @@
 from __future__ import annotations
 
 import uuid
+from typing import Callable
+
+from sqlmodel import select
+
+from thenetwork.db.models import IntroductionConsent, Person
+from thenetwork.db.session import get_session
 
 _PREFIX = "hidden-"
 
@@ -49,3 +55,40 @@ def parse_relay_address(address: str, relay_domain: str) -> str | None:
     except (ValueError, AttributeError):
         return None
     return canonical if token == canonical else None
+
+
+def resolve_relay_destination(
+    *,
+    recipient_address: str,
+    sender_email: str,
+    sender_authenticated: bool,
+    relay_domain: str,
+    session_factory: Callable = get_session,
+) -> str | None:
+    """Resolve an introduced pair to only its opposite participant's address."""
+
+    if not sender_authenticated:
+        return None
+    token = parse_relay_address(recipient_address, relay_domain)
+    if token is None:
+        return None
+
+    with session_factory() as session:
+        consent = session.exec(
+            select(IntroductionConsent).where(
+                IntroductionConsent.reply_token == token,
+                IntroductionConsent.status == "introduced",
+            )
+        ).first()
+        if consent is None or consent.status != "introduced":
+            return None
+
+        person_a = session.get(Person, consent.person_a_id)
+        person_b = session.get(Person, consent.person_b_id)
+        if person_a is None or person_b is None:
+            return None
+        if sender_email == person_a.email:
+            return person_b.email
+        if sender_email == person_b.email:
+            return person_a.email
+        return None
