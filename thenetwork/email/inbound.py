@@ -12,7 +12,7 @@ from imap_tools import AND, MailBox, MailMessageFlags
 from imap_tools.message import MailMessage
 
 from thenetwork.audit import audit_warning_event
-from thenetwork.email.relay import parse_relay_address
+from thenetwork.email.relay import is_relay_address_candidate
 from thenetwork.email.threading import clean_message_id, clean_references
 from thenetwork.settings import get_settings
 
@@ -124,7 +124,7 @@ def _delivery_recipient(msg, relay_domain: str) -> str | None:
         if address and len(address) <= MAX_RECIPIENT_CHARS
     ]
     for address in addresses:
-        if parse_relay_address(address, relay_domain) is not None:
+        if is_relay_address_candidate(address, relay_domain):
             return address
     return addresses[0] if addresses else None
 

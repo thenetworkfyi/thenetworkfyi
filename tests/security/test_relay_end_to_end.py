@@ -213,6 +213,54 @@ async def test_invalid_relay_attempts_send_nothing_and_never_run_agent(
     agent.assert_not_awaited()
 
 
+@pytest.mark.parametrize(
+    "hidden_candidate",
+    [
+        f"hidden-not-a-token@{DOMAIN}",
+        f"hidden-AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA@{DOMAIN}",
+    ],
+)
+@pytest.mark.asyncio
+async def test_dovecot_catchall_preserves_invalid_relay_for_fail_closed_worker(
+    hidden_candidate,
+):
+    from thenetwork.email.inbound import _delivery_recipient
+    from thenetwork.worker.tasks import process_email
+
+    recipient = _delivery_recipient(
+        SimpleNamespace(
+            headers={
+                "delivered-to": [f"catchall@{DOMAIN}"],
+                "to": [hidden_candidate],
+            }
+        ),
+        DOMAIN,
+    )
+    agent = AsyncMock()
+    with (
+        patch("thenetwork.worker.tasks.get_settings", return_value=_settings()),
+        patch("thenetwork.worker.tasks.get_session", return_value=_worker_session()),
+        patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
+        patch("thenetwork.worker.tasks.scan_content") as scan,
+        patch("thenetwork.worker.tasks.process_consent_reply") as consent,
+        patch("thenetwork.worker.tasks.run_agent_for_email", agent),
+        patch("thenetwork.worker.tasks.send_relay_email") as relay_send,
+    ):
+        await process_email.func(
+            sender_email="alice.private@example.com",
+            sender_authenticated=True,
+            recipient_address=recipient,
+            subject="Invalid relay attempt",
+            body="This must not reach the agent",
+        )
+
+    assert recipient == hidden_candidate
+    relay_send.assert_not_called()
+    scan.assert_not_called()
+    consent.assert_not_called()
+    agent.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 async def test_ordinary_mail_recipient_still_runs_existing_agent_path():
     from thenetwork.introductions import ConsentReplyResult
