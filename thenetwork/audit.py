@@ -217,7 +217,11 @@ _SAFE_CATEGORIES = {
             "body_empty",
             "body_oversize",
             "content_scan",
+            "invalid_summary",
+            "memory_text_too_long",
+            "person_memory_limit_exceeded",
             "rate_limit",
+            "recipient_not_found",
             "scanner_error",
             "unauthenticated_unknown_sender",
             "banned",
@@ -235,6 +239,7 @@ _SAFE_CATEGORIES = {
             "introduction_consent",
             "memory",
             "person",
+            "sent_email_memory",
         }
     ),
     "consent_state": frozenset(
