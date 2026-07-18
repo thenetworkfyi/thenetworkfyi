@@ -346,7 +346,10 @@ async def test_tick_loop_captures_replies_without_touching_real_smtp(tmp_path):
     real_smtp.assert_not_called()
     (captured,) = result.post_office.messages_for("priya@example.test")
     assert captured["From"] == "agent@example.com"
-    assert captured.get_content().strip() == "Reply from the agent."
+    assert (
+        captured.get_body(preferencelist=("plain",)).get_content().splitlines()[0]
+        == "Reply from the agent."
+    )
 
 
 @pytest.mark.asyncio

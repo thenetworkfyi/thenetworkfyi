@@ -27,6 +27,7 @@ SMTP_ACCOUNT=agent@example.com  # SMTP login credential; can be a different acco
 SMTP_PASSWORD=...
 SMTP_HOST=smtp.gmail.com
 EMAIL_FROM=agent@example.com    # address used in the outbound From: header
+RELAY_DOMAIN=relay.example.com  # Dovecot catch-all domain for pair reply aliases
 IMAP_SENT_FOLDER=Sent       # outbound replies are IMAP-appended here after SMTP send
 WORKER_CONCURRENCY=4        # worker concurrency ceiling
 RATE_LIMIT_PER_HOUR=10      # authenticated sender bucket
@@ -53,13 +54,31 @@ SMTP send succeeds, so the account reads like a normal mailbox with both receive
 sent mail visible end-to-end; the append is best-effort and its failure never fails the
 send job.
 
+`RELAY_DOMAIN` must be a bare domain already handled by the deployment's Dovecot
+catch-all. Deliver every address at that domain into `IMAP_ACCOUNT`; the producer reads
+the original `hidden-...` recipient from Dovecot's delivery headers/`To` header and puts
+it in the durable job. Configure SES/SMTP to send from the same domain. No application
+port, webhook, SES inbound rule, or separate receiving process is required.
+
+After mutual consent, the existing `IntroductionConsent.reply_token` formats the stable
+pair address as `hidden-<token>@RELAY_DOMAIN`. Each participant receives a separate
+introduction from that proxy. Replies take this path:
+
+```text
+Dovecot catch-all -> IMAP poll -> process_email pair authorization -> SES/SMTP -> counterpart
+```
+
+Only real email addresses are hidden. The fixed introduction names both participants,
+and relay subject/body content passes through unchanged within the normal intake bounds.
+Revocation immediately makes subsequent lookups fail closed.
+
 Provider selection is by model-string prefix, not by code paths - there is no LiteLLM /
 proxy layer.
 
 ## Optional dependencies
 
 - `uv pip install -e ".[content-scan]"` - optional inbound content scanner (`llm-guard`),
-  defense-in-depth per `docs/security.md` layer 12.
+  defense-in-depth per `docs/security.md` layer 13.
 
 Presidio (`presidio-analyzer` + `spacy`) is a core dependency. It powers
 `thenetwork/memory/sanitize.py`'s deterministic `sanitize_memory`, which redacts person
@@ -167,8 +186,9 @@ VPS suffices.
 The deterministic introduction simulation exercises the production
 `propose_introduction` tool and `process_email` consent path without calling an LLM or
 an external mail service. It provisions and migrates a disposable database, sends both
-`YES` replies, verifies the identity-revealing group message with the tier 1 SEAL scorer,
-then sends `REVOKE` and verifies that another proposal for the pair is suppressed.
+`YES` replies, verifies two separate proxy-addressed introduction messages, relays a
+message in each direction, then sends `REVOKE` and verifies that later relay delivery and
+another proposal for the pair are suppressed.
 
 Run it against any local pgvector PostgreSQL instance:
 

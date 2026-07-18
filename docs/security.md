@@ -47,15 +47,25 @@ prompt-injection exfiltrate it, so the privacy boundary cannot be "withhold a co
    record consent or compose the revealing message. A random reply token associates an
    explicit `YES`, `NO`, or `REVOKE` reply with the pair; the worker accepts it only from
    an authenticated participant before model execution. After both participants consent,
-   server code resolves both identities and sends the fixed group email. `NO` records a
-   temporary declined state (90-day configurable cooldown); `REVOKE` is permanent and
-   revoked pairs remain structurally suppressed.
-7. **Role separation.** Untrusted inbound body is user-role message content, never in the
+   server code resolves both identities and sends two fixed, proxy-addressed messages,
+   one to each participant. Their real email addresses are never placed together in a
+   message. `NO` records a temporary declined state (90-day configurable cooldown);
+   `REVOKE` is permanent and revoked pairs remain structurally suppressed.
+7. **Server-only address relay.** After introduction, both directions use the pair's
+   `hidden-<reply-token>@RELAY_DOMAIN` address. The Dovecot catch-all feeds the ordinary
+   IMAP worker; before any model, consent parser, memory write, or agent content scan,
+   server code verifies the authenticated sender and current `introduced` state, resolves
+   only the other participant, and sends through SES/SMTP. Relay mail always uses
+   `From: The Network <proxy>` and the same `Reply-To`; it never copies the inbound display
+   name or sender address. This is address privacy only: participant names and message
+   content are not masked, inspected by the agent, or rewritten.
+8. **Role separation.** Untrusted inbound body is user-role message content, never in the
    system prompt (`agent/core.py`).
-8. **Mail-loop prevention (RFC 3834).** Inbound carrying `Auto-Submitted` /
-   `Precedence: bulk|list` / `List-*` is skipped; all outbound sets
-   `Auto-Submitted: auto-replied`.
-9. **Rate limiting / anti-DoS.** Per-sender quota plus registration, outbound-recipient,
+9. **Mail-loop prevention (RFC 3834).** Inbound carrying `Auto-Submitted` /
+   `Precedence: bulk|list` / `List-*` is skipped; automated agent replies set
+   `Auto-Submitted: auto-replied`. Human-to-human relay messages omit it so normal mail
+   clients treat them as correspondence.
+10. **Rate limiting / anti-DoS.** Per-sender quota plus registration, outbound-recipient,
    outbound sender-reply, and first-contact welcome quotas use `limits` with Postgres-backed
    state so counters survive restarts. Keys are normalized and split by
    authentication state: authenticated senders use the normal bucket, while
@@ -65,7 +75,7 @@ prompt-injection exfiltrate it, so the privacy boundary cannot be "withhold a co
    bounded Procrastinate worker concurrency remains an additional ceiling. Outbound
    quota checks occur before SMTP and are consumed after a successful send, leaving a
    bounded cross-worker check-versus-consume race rather than charging failed sends.
-10. **Audit correlation without PII.** Per-message `trace_id` values are minted as
+11. **Audit correlation without PII.** Per-message `trace_id` values are minted as
    opaque UUIDv4-style tokens at IMAP intake and threaded through the Procrastinate
    job, worker, agent run, outbound SMTP send, and IMAP Sent append. Sender-level
    audit correlation must use `security/sender_identifier.py`, which derives
@@ -75,8 +85,8 @@ prompt-injection exfiltrate it, so the privacy boundary cannot be "withhold a co
    keyed digests. If the secret is unset, no sender pseudonym is logged. Never log
    raw sender addresses, and never replace this with a bare `sha256(email)`:
    candidate-address dictionary lookup would make that reversible.
-11. **Credentials.** Loaded from env / `.env` via pydantic-settings; never hardcoded.
-12. **Optional content scanner.** Provider moderation / LLM Guard as opt-in
+12. **Credentials.** Loaded from env / `.env` via pydantic-settings; never hardcoded.
+13. **Optional content scanner.** Provider moderation / LLM Guard as opt-in
     defense-in-depth, never the primary defense (`security/content_scan.py`).
 
 ## The admin channel
