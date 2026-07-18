@@ -255,7 +255,6 @@ EMAIL_FROM=agent@example.com
 # Dovecot catch-all domain; SES must be allowed to send From this domain
 RELAY_DOMAIN=relay.example.com
 REQUIRE_SENDER_AUTH=true
-TRUSTED_AUTHSERV_ID=mx1.example.com
 
 # Tuning
 WORKER_CONCURRENCY=4
