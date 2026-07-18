@@ -88,6 +88,12 @@ prompt-injection exfiltrate it, so the privacy boundary cannot be "withhold a co
 12. **Credentials.** Loaded from env / `.env` via pydantic-settings; never hardcoded.
 13. **Optional content scanner.** Provider moderation / LLM Guard as opt-in
     defense-in-depth, never the primary defense (`security/content_scan.py`).
+14. **Server-owned mutating-tool replay boundary.** Within one agent run, validated
+    mutating-tool names and arguments are canonically fingerprinted in memory and indexed
+    by their occurrence before each Pydantic retry prompt. A later retry generation receives
+    a structured replay of the completed result instead of repeating database, SMTP, quota,
+    or sent-memory effects. The model supplies no idempotency key, raw arguments and their
+    fingerprints are never audited, and distinct argument sets in the same trace still run.
 
 ## The admin channel
 

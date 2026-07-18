@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
-from typing import Callable
+from typing import Any, Callable
 
 from thenetwork.settings import Settings, get_settings
 
@@ -46,3 +47,13 @@ class AgentDeps:
     outbound_send_count: int = 0
     server_side_send_count: int = 0
     introduction_proposal_count: int = 0
+    # Server-owned replay state for mutating tools within one model run. Keys
+    # are canonical argument fingerprints plus their occurrence in the first
+    # generation; raw tool arguments are never retained here or audited.
+    mutating_tool_results: dict[tuple[str, int], dict[str, Any]] = field(
+        default_factory=dict, repr=False
+    )
+    mutating_tool_generation_counts: dict[tuple[int, str], int] = field(
+        default_factory=dict, repr=False
+    )
+    mutating_tool_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)

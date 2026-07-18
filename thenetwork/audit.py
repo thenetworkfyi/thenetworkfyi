@@ -141,6 +141,7 @@ _SAFE_CATEGORIES = {
             "rejected_already_registered",
             "rejected_forbidden",
             "rejected_unauthenticated",
+            "replayed",
             "success",
         }
     ),
@@ -161,6 +162,7 @@ _SAFE_CATEGORIES = {
             "not_found",
             "no_action",
             "proposed",
+            "replayed",
             "sent",
             "success",
             "suppressed",
