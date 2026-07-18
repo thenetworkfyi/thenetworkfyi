@@ -162,13 +162,9 @@ class Settings(BaseSettings):
     # registration only when the receiving mail server's own
     # Authentication-Results header reports dkim=pass, spf=pass, or auth=pass.
     # Disable only for dev/test environments where inbound mail carries no such
-    # header. If trusted_authserv_id is set, only an Authentication-Results
-    # header whose authserv-id matches is considered (defense against an
-    # untrusted intermediate relay forging the header); left blank, the header
-    # closest to the top of the message (added last, i.e. by your own receiving
-    # server) is trusted.
+    # header. Only the header closest to the top of the message (added last,
+    # i.e. by your own receiving server) is trusted.
     require_sender_auth: bool = True
-    trusted_authserv_id: str = ""
 
     # Growth: footer appended to outbound user-facing replies (mailer-level,
     # not agent-composed, so prompt injection can't alter or suppress it)

@@ -26,7 +26,6 @@ from thenetwork.settings import Settings
 def _settings(
     *,
     require_sender_auth: bool = False,
-    trusted_authserv_id: str = "",
 ) -> Settings:
     return Settings(
         agent_model="test:model",
@@ -37,7 +36,6 @@ def _settings(
         imap_host="imap.example.com",
         imap_port=993,
         require_sender_auth=require_sender_auth,
-        trusted_authserv_id=trusted_authserv_id,
     )
 
 
@@ -339,9 +337,7 @@ def test_poll_unseen_accepts_purelymail_auth_pass(
     monkeypatch.setattr(
         inbound,
         "get_settings",
-        lambda: _settings(
-            require_sender_auth=True, trusted_authserv_id="purelymail.com"
-        ),
+        lambda: _settings(require_sender_auth=True),
     )
     fake_mailbox.fetch.return_value = [
         _fake_message(headers={"authentication-results": ["purelymail.com; auth=pass"]})

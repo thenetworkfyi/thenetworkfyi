@@ -29,7 +29,6 @@ SMTP_HOST=smtp.gmail.com
 EMAIL_FROM=agent@example.com    # address used in the outbound From: header
 RELAY_DOMAIN=relay.example.com  # Dovecot catch-all domain for pair reply aliases
 REQUIRE_SENDER_AUTH=true        # require the receiving server's sender-auth verdict
-TRUSTED_AUTHSERV_ID=mx1.example.com  # exact authserv-id in Authentication-Results
 IMAP_SENT_FOLDER=Sent       # outbound replies are IMAP-appended here after SMTP send
 WORKER_CONCURRENCY=4        # worker concurrency ceiling
 RATE_LIMIT_PER_HOUR=10      # authenticated sender bucket

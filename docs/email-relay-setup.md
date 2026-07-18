@@ -24,7 +24,6 @@ Choose these values before changing either system:
 |---|---|---|
 | Primary mailbox | `agent@example.com` | Existing mailbox polled over IMAP |
 | Relay domain | `relay.example.com` | Catch-all domain used for pair aliases |
-| Receiving authserv-id | `mx1.example.com` | Trusted identifier in the receiving server's `Authentication-Results` header |
 | SES Region | `us-west-2` | Region containing the verified identity and SMTP credentials |
 | SES SMTP endpoint | `email-smtp.us-west-2.amazonaws.com` | Regional STARTTLS endpoint |
 
@@ -101,17 +100,17 @@ Relay authorization does not trust the user-controlled `From` header by itself. 
 receiving mail stack must evaluate inbound SPF, DKIM, or authenticated submission and
 prepend its own `Authentication-Results` header before the message reaches Dovecot.
 
-Inspect a message received from an external participant. Its first trusted result should
+Inspect a message received from an external participant. Its first result should
 look similar to:
 
 ```text
 Authentication-Results: mx1.example.com; dkim=pass ...; spf=pass ...
 ```
 
-Record the exact authserv-id before the first semicolon (`mx1.example.com` above). Set it
-as `TRUSTED_AUTHSERV_ID` in the application. Do not copy an authserv-id from a lower,
-sender-supplied header. The application considers only the first `Authentication-Results`
-header and, when configured, requires its authserv-id to match.
+The application considers only the first `Authentication-Results` header and accepts a
+passing `dkim`, `spf`, or `auth` result from it. Ensure the receiving stack prepends its
+own result so any lower, sender-supplied header is ignored. The authserv-id before the
+first semicolon (`mx1.example.com` above) is informational and is not a trust boundary.
 
 Keep `REQUIRE_SENDER_AUTH=true` in production. If the receiving host does not add a
 usable result, authenticated participants will be rejected and relay delivery will not
@@ -125,7 +124,7 @@ Before changing the application, verify all of the following:
 - Mail to a previously nonexistent address at the relay domain arrives in
   `IMAP_ACCOUNT`.
 - Raw message source preserves the original recipient in a recognized header.
-- The first trusted `Authentication-Results` header has the expected authserv-id and a
+- The first `Authentication-Results` header is added by the receiving server and has a
   passing `dkim`, `spf`, or `auth` result for a legitimate external sender.
 - IMAP TLS login works with the exact host, port, account, and password that the worker
   will use.
@@ -206,7 +205,6 @@ RELAY_DOMAIN=relay.example.com
 
 # Required for production relay authorization.
 REQUIRE_SENDER_AUTH=true
-TRUSTED_AUTHSERV_ID=mx1.example.com
 ```
 
 `RELAY_DOMAIN` is normalized to lowercase when addresses are generated. The application

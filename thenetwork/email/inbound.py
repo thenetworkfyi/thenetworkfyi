@@ -160,9 +160,7 @@ def _is_sender_authenticated(msg) -> bool:
     Trusts only the Authentication-Results header nearest the top of the
     message - the one added last, by our own receiving MTA - since every
     intermediate hop pushes prior (potentially attacker-forged) copies of
-    this header further down. If ``trusted_authserv_id`` is configured, that
-    header's authserv-id must also match, guarding against an untrusted
-    relay in between.
+    this header further down.
     """
     s = get_settings()
     if not s.require_sender_auth:
@@ -173,12 +171,6 @@ def _is_sender_authenticated(msg) -> bool:
         return False
 
     header_value = values[0]
-    if s.trusted_authserv_id:
-        m = _AUTHSERV_ID_RE.match(header_value)
-        authserv_id = m.group(1).strip() if m else ""
-        if authserv_id.lower() != s.trusted_authserv_id.lower():
-            return False
-
     verdicts = {
         mech.lower(): result.lower()
         for mech, result in _AUTH_RESULT_RE.findall(header_value)
