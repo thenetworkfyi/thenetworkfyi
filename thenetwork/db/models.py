@@ -133,6 +133,12 @@ class IntroductionConsent(SQLModel, table=True):
     reply_token: str = Field(default_factory=_new_uuid, unique=True, index=True)
     person_a_consented: bool = Field(default=False, nullable=False)
     person_b_consented: bool = Field(default=False, nullable=False)
+    person_a_gist: Optional[str] = Field(
+        default=None, sa_column=Column(Text(), nullable=True)
+    )
+    person_b_gist: Optional[str] = Field(
+        default=None, sa_column=Column(Text(), nullable=True)
+    )
     status: str = Field(default="proposed", nullable=False, index=True)
     created_at: datetime = Field(
         default_factory=_utcnow,
