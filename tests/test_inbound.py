@@ -136,6 +136,38 @@ def test_poll_unseen_caps_subject(fake_mailbox: _FakeMailBox):
     assert messages[0].subject == "s" * inbound.MAX_SUBJECT_CHARS
 
 
+def test_poll_unseen_captures_dovecot_catchall_recipient(
+    fake_mailbox: _FakeMailBox,
+):
+    token = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    proxy = f"hidden-{token}@relay.example.com"
+    fake_mailbox.fetch.return_value = [
+        _fake_message(
+            headers={
+                "to": ["public@example.com, " + proxy],
+                "x-original-to": [proxy],
+            }
+        )
+    ]
+    settings = _settings()
+    settings.relay_domain = "relay.example.com"
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(inbound, "get_settings", lambda: settings)
+        messages = inbound.poll_unseen()
+
+    assert messages[0].recipient_address == proxy
+
+
+def test_poll_unseen_drops_oversized_recipient(fake_mailbox: _FakeMailBox):
+    fake_mailbox.fetch.return_value = [
+        _fake_message(headers={"to": ["a" * 321 + "@example.com"]})
+    ]
+
+    messages = inbound.poll_unseen()
+
+    assert messages[0].recipient_address is None
+
+
 def test_poll_unseen_captures_message_id(fake_mailbox: _FakeMailBox):
     fake_mailbox.fetch.return_value = [
         _fake_message(headers={"message-id": ["<abc123@example.com>"]})

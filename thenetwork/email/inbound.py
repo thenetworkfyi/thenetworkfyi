@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from email.utils import getaddresses
 from uuid import uuid4
 
 from bs4 import BeautifulSoup
@@ -17,6 +18,7 @@ from thenetwork.settings import get_settings
 
 MAX_SUBJECT_CHARS = 300
 MAX_SENDER_NAME_CHARS = 300
+MAX_RECIPIENT_CHARS = 320
 MAX_BODY_CHARS = 10_000
 MAX_RAW_BODY_CHARS = 100_000
 MIN_BODY_TEXT_CHARS = 3
@@ -46,6 +48,9 @@ class InboundMessage:
     # envelope), so callers must not trust `sender` for identity resolution
     # unless this is True.
     sender_authenticated: bool
+    # Dovecot preserves the catch-all destination in a delivery/To header.
+    # This bounded value is queue data only and must not be audit-logged.
+    recipient_address: str | None = None
     # From: header display name (e.g. "First Last" in "First Last
     # <first.last@gmail.com>"), if any. Untrusted like the body/subject - the
     # From: header alone is spoofable and imap-tools does no verification of
@@ -103,6 +108,23 @@ def cap_sender_name(name: str | None) -> str | None:
     """
     name = (name or "").strip()
     return name[:MAX_SENDER_NAME_CHARS] or None
+
+
+def _delivery_recipient(msg, relay_domain: str) -> str | None:
+    """Extract one bounded destination, preferring this deployment's relay."""
+
+    header_values: list[str] = []
+    for name in ("x-original-to", "delivered-to", "envelope-to", "to"):
+        header_values.extend(msg.headers.get(name) or [])
+
+    addresses = [address for _, address in getaddresses(header_values) if address]
+    relay_suffix = f"@{relay_domain.strip().lower().rstrip('.')}"
+    if relay_domain.strip():
+        addresses.sort(key=lambda address: not address.lower().endswith(relay_suffix))
+    for address in addresses:
+        if len(address) <= MAX_RECIPIENT_CHARS:
+            return address
+    return None
 
 
 def is_near_empty_body(body: str) -> bool:
@@ -236,6 +258,7 @@ def poll_unseen() -> list[InboundMessage]:
             sender_display_name = cap_sender_name(
                 msg.from_values.name if msg.from_values else None
             )
+            recipient_address = _delivery_recipient(msg, s.relay_domain)
             # Only admin-looking subjects need the raw bytes (PGP/MIME
             # verification in admin/auth.py); everything else discards them
             # to avoid holding the full raw message in memory.
@@ -259,6 +282,7 @@ def poll_unseen() -> list[InboundMessage]:
                         message_date=message_date,
                         auto_submitted=auto_sub[0] if auto_sub else None,
                         sender_authenticated=_is_sender_authenticated(msg),
+                        recipient_address=recipient_address,
                         rejection_reason=REJECT_BODY_OVERSIZE,
                         body_chars=exc.body_chars,
                         raw_message=raw_message,
@@ -282,6 +306,7 @@ def poll_unseen() -> list[InboundMessage]:
                     message_date=message_date,
                     auto_submitted=auto_sub[0] if auto_sub else None,
                     sender_authenticated=_is_sender_authenticated(msg),
+                    recipient_address=recipient_address,
                     body_chars=len(body),
                     raw_message=raw_message,
                 )
