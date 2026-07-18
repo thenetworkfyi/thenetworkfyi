@@ -51,6 +51,13 @@ from thenetwork.memory.sanitize import (
     sanitize_memory_high_fidelity,
     sanitize_text_high_fidelity,
 )
+from thenetwork.memory.sent_email import (
+    CONSENT_REQUEST_SUMMARY,
+    SentEmailMemory,
+    event_recommendation_summary,
+    record_sent_email_memories,
+    record_sent_email_memory,
+)
 from thenetwork.security.rate_limit import PostgresFixedWindowStorage
 from thenetwork.introductions import propose_pair
 from thenetwork.search.match import MemoryMatch, match_memories
@@ -868,6 +875,7 @@ async def _send_email(
     recipient_user_id: str,
     subject: str,
     body_text: str,
+    sent_email_summary: str,
     *,
     is_sender_reply: bool,
     tool_name: str,
@@ -896,6 +904,7 @@ async def _send_email(
         tool_name=tool_name,
         subject_chars=len(subject),
         body_chars=len(body_text),
+        sent_email_summary=sent_email_summary,
         deliver=deliver,
     )
 
@@ -915,6 +924,7 @@ async def _send_event_fyi(
         tool_name="send_event_recommendation",
         subject_chars=len(EVENT_RECOMMENDATION_SUBJECT),
         body_chars=len(event_gist) + len(notice.value),
+        sent_email_summary=event_recommendation_summary(event_gist),
         deliver=lambda to_address: send_event_fyi(
             to_address=to_address,
             event_gist=event_gist,
@@ -932,6 +942,7 @@ async def _dispatch_email(
     tool_name: str,
     subject_chars: int,
     body_chars: int,
+    sent_email_summary: str,
     deliver: Callable[[str], None],
 ) -> dict[str, Any]:
     with audit_span(
@@ -1003,6 +1014,24 @@ async def _dispatch_email(
 
         ctx.deps.outbound_send_count += 1
         ctx.deps.server_side_send_count += 1
+        try:
+            await record_sent_email_memory(
+                SentEmailMemory(
+                    recipient_person_id=recipient_user_id,
+                    summary=sent_email_summary,
+                ),
+                session_factory=ctx.deps.session_factory or get_session,
+                settings=s,
+            )
+        except Exception as exc:
+            audit_event(
+                "database.action",
+                action="insert",
+                record_type="sent_email_memory",
+                refs_count=1,
+                outcome="error",
+                error_type=type(exc).__name__,
+            )
         return _tool_result({"status": "sent"})
 
 
@@ -1010,12 +1039,15 @@ async def reply_to_sender(
     ctx: RunContext[AgentDeps],
     subject: str,
     body_text: str,
+    sent_email_summary: str = "a response to the recipient's message",
 ) -> dict[str, Any]:
     """Reply to this inbound email's registered sender.
 
     The caller cannot select a recipient. The server derives the recipient
     solely from the inbound sender, and only this capability receives inbound
-    threading and quoted-message context.
+    threading and quoted-message context. ``sent_email_summary`` is a concise
+    description of the email's purpose for the recipient's private memory; it
+    must not repeat the subject, body, address, or headers.
     """
     if ctx.deps.sender_user_id is None:
         with audit_span("agent.tool", tool_name="reply_to_sender"):
@@ -1036,6 +1068,7 @@ async def reply_to_sender(
         recipient_user_id=ctx.deps.sender_user_id,
         subject=subject,
         body_text=body_text,
+        sent_email_summary=sent_email_summary,
         is_sender_reply=True,
         tool_name="reply_to_sender",
     )
@@ -1046,12 +1079,15 @@ async def send_outreach(
     recipient_user_id: str,
     subject: str,
     body_text: str,
+    sent_email_summary: str = "a new message relevant to the recipient",
 ) -> dict[str, Any]:
     """Send a new, unthreaded email to another user by opaque ID.
 
     This is deliberately separate from ``reply_to_sender``. It never receives
     inbound threading headers or quoted inbound content, and cannot be used to
-    reply to the current sender.
+    reply to the current sender. ``sent_email_summary`` is a concise description
+    of the email's purpose for the recipient's private memory; it must not repeat
+    the subject, body, address, or headers.
     """
     if recipient_user_id == ctx.deps.sender_user_id:
         with audit_span("agent.tool", tool_name="send_outreach"):
@@ -1066,6 +1102,7 @@ async def send_outreach(
         recipient_user_id=recipient_user_id,
         subject=subject,
         body_text=body_text,
+        sent_email_summary=sent_email_summary,
         is_sender_reply=False,
         tool_name="send_outreach",
     )
@@ -1256,6 +1293,20 @@ async def propose_introduction(
             decline_cooldown_days=ctx.deps.settings.consent_decline_cooldown_days,
         )
         if result.get("status") == "proposed":
+            await record_sent_email_memories(
+                (
+                    SentEmailMemory(
+                        recipient_person_id=ctx.deps.sender_user_id,
+                        summary=CONSENT_REQUEST_SUMMARY,
+                    ),
+                    SentEmailMemory(
+                        recipient_person_id=other_person_id,
+                        summary=CONSENT_REQUEST_SUMMARY,
+                    ),
+                ),
+                session_factory=ctx.deps.session_factory or get_session,
+                settings=ctx.deps.settings,
+            )
             ctx.deps.server_side_send_count += 2
             ctx.deps.introduction_proposal_count += 1
         return _introduction_result(result)

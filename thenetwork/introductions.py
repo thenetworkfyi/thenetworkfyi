@@ -27,6 +27,14 @@ from thenetwork.email.render import (
     EmptyEmailContext,
     FixedEmailTemplate,
 )
+from thenetwork.memory.sent_email import (
+    CONSENT_ACKNOWLEDGMENT_SUMMARY,
+    CONSENT_ALREADY_DECLINED_SUMMARY,
+    CONSENT_CLARIFICATION_SUMMARY,
+    CONSENT_DECLINED_SUMMARY,
+    INTRODUCTION_SUMMARY,
+    SentEmailMemory,
+)
 
 _TOKEN_RE = re.compile(
     r"\[intro:(?P<token>[0-9a-f]{8}-[0-9a-f-]{27,})\]",
@@ -340,6 +348,7 @@ class ConsentReplyResult:
     # empty on rejected outcomes: only text from a verified participant in the
     # pair may travel onward.
     remainder: str = ""
+    sent_email_memories: tuple[SentEmailMemory, ...] = ()
 
 
 def process_consent_reply(
@@ -405,7 +414,12 @@ def process_consent_reply(
                 consent_state=proposal.status,
             )
             return ConsentReplyResult(
-                handled=True, outcome="clarification_sent", remainder=remainder
+                handled=True,
+                outcome="clarification_sent",
+                remainder=remainder,
+                sent_email_memories=(
+                    SentEmailMemory(sender_person_id, CONSENT_CLARIFICATION_SUMMARY),
+                ),
             )
 
         if proposal.status == "revoked":
@@ -421,9 +435,15 @@ def process_consent_reply(
                 trace_id=trace_id,
             )
             return ConsentReplyResult(
-                handled=True, outcome=proposal.status, remainder=remainder
+                handled=True,
+                outcome=proposal.status,
+                remainder=remainder,
+                sent_email_memories=(
+                    SentEmailMemory(sender_person_id, CONSENT_ALREADY_DECLINED_SUMMARY),
+                ),
             )
 
+        sent_email_memories: tuple[SentEmailMemory, ...] = ()
         if action == "revoke":
             proposal.status = "revoked"
             proposal.updated_at = _utcnow()
@@ -442,6 +462,9 @@ def process_consent_reply(
                 subject=subject,
                 template=FixedEmailTemplate.CONSENT_DECLINED,
                 trace_id=trace_id,
+            )
+            sent_email_memories = (
+                SentEmailMemory(sender_person_id, CONSENT_DECLINED_SUMMARY),
             )
         elif proposal.status == "introduced":
             return ConsentReplyResult(
@@ -465,6 +488,10 @@ def process_consent_reply(
                     person_b_email=person_b.email,
                     trace_id=trace_id,
                 )
+                sent_email_memories = (
+                    SentEmailMemory(proposal.person_a_id, INTRODUCTION_SUMMARY),
+                    SentEmailMemory(proposal.person_b_id, INTRODUCTION_SUMMARY),
+                )
                 proposal.status = "introduced"
             else:
                 proposal.status = "one_consented"
@@ -478,6 +505,12 @@ def process_consent_reply(
                     template=FixedEmailTemplate.CONSENT_ACKNOWLEDGMENT,
                     trace_id=trace_id,
                 )
+                sent_email_memories = (
+                    SentEmailMemory(
+                        sender_person_id,
+                        CONSENT_ACKNOWLEDGMENT_SUMMARY,
+                    ),
+                )
 
     audit_event(
         "introduction.consent_transition",
@@ -486,4 +519,9 @@ def process_consent_reply(
         outcome="success",
         consent_state=state,
     )
-    return ConsentReplyResult(handled=True, outcome=state, remainder=remainder)
+    return ConsentReplyResult(
+        handled=True,
+        outcome=state,
+        remainder=remainder,
+        sent_email_memories=sent_email_memories,
+    )

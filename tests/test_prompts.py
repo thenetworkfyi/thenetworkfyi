@@ -1,6 +1,13 @@
 from thenetwork.agent.prompts import SYSTEM_PROMPT
 
 
+def test_agent_email_tools_require_content_free_sent_summary() -> None:
+    assert "Every `reply_to_sender` or `send_outreach` call" in SYSTEM_PROMPT
+    assert "`sent_email_summary`" in SYSTEM_PROMPT
+    assert "Do not copy the subject or body" in SYSTEM_PROMPT
+    assert "include an address or headers" in SYSTEM_PROMPT
+
+
 def test_possible_match_guidance_describes_current_email_capability() -> None:
     intro_guidance = SYSTEM_PROMPT.split("- A possible match:", 1)[1].split(
         "- A one-way share", 1

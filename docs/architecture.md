@@ -55,9 +55,11 @@ is required; `thenetwork-producer` is just a manual one-shot poll for cron/debug
   (`email.imap_append.completed`, outcome `success`/`error`) but never fails the job or
   retries the send.
 - **Agent** (`agent/core.py`): pydantic-ai ReAct agent. The untrusted email body is
-  passed as **user-role** content (`f"Subject: {subject}\n\n{body}"`), never concatenated
-  into the system prompt. Tools registered in `build_agent`; deps in `agent/deps.py`
-  carry `sender_email` + `sender_user_id` (None on first contact).
+  passed as **user-role** content, never concatenated into the system prompt. For a
+  registered sender, a bounded newest-first projection of that person's sanitized
+  memory gists is prepended inside an explicit untrusted-data delimiter; the query
+  selects no raw memory text. Tools registered in `build_agent`; deps in
+  `agent/deps.py` carry `sender_email` + `sender_user_id` (None on first contact).
 
 ## Data model
 
@@ -124,8 +126,8 @@ mapping at write time. Semantic match over memories lives in `search/match.py`.
 | `remember(text, refs)` | write a chunk; a PII-stripped gist is auto-produced for any memory with refs |
 | `forget(memory_id)` | delete a sender-owned, single-ref chunk (edit = forget + remember, so embeddings never go stale) |
 | `search(query) -> [{person_id, gist, similarity}]` | semantic recall returning **opaque ids + gist only** for other people |
-| `reply_to_sender(subject, body_text, …)` | reply only to the registered inbound sender; the model cannot select a recipient, and only this tool receives inbound threading and quoted-message context |
-| `send_outreach(recipient_user_id, subject, body_text, …)` | send a new, unthreaded message to another user by opaque id; the address is resolved server-side |
+| `reply_to_sender(subject, body_text, sent_email_summary)` | reply only to the registered inbound sender; the model cannot select a recipient, and only this tool receives inbound threading and quoted-message context. After SMTP succeeds, the separate concise summary becomes a normal sealed memory for that recipient |
+| `send_outreach(recipient_user_id, subject, body_text, sent_email_summary)` | send a new, unthreaded message to another user by opaque id; the address is resolved server-side, and the post-SMTP summary is remembered without storing the subject, body, address, or headers |
 | `propose_introduction(other_person_id, sender_gist, other_gist)` | creates a pairwise proposal and sends fixed anonymous opt-in requests; authenticated replies are handled server-side before the model runs |
 | `register_person(name)` | onboard an authenticated sender on first contact; self-registration only, with the address supplied from the verified inbound sender - the id it returns is what later `remember` calls key off |
 | `escalate(reason)` | flag this email for human review and notify `admin_emails`; no auto-reply is sent for true escalations. For authenticated unknown senders, it sends the fixed first-contact welcome instead of escalating. The fallback when no safe, useful action is clear (e.g. an unauthenticated first contact) |
