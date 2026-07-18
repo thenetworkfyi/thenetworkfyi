@@ -158,6 +158,29 @@ def test_poll_unseen_captures_dovecot_catchall_recipient(
     assert messages[0].recipient_address == proxy
 
 
+def test_poll_unseen_prefers_hidden_alias_over_same_domain_catchall(
+    fake_mailbox: _FakeMailBox,
+):
+    token = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    proxy = f"hidden-{token}@relay.example.com"
+    fake_mailbox.fetch.return_value = [
+        _fake_message(
+            headers={
+                "delivered-to": ["catchall@relay.example.com"],
+                "envelope-to": ["mailbox@relay.example.com"],
+                "to": [f"The Network <{proxy}>"],
+            }
+        )
+    ]
+    settings = _settings()
+    settings.relay_domain = "relay.example.com"
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(inbound, "get_settings", lambda: settings)
+        messages = inbound.poll_unseen()
+
+    assert messages[0].recipient_address == proxy
+
+
 def test_poll_unseen_drops_oversized_recipient(fake_mailbox: _FakeMailBox):
     fake_mailbox.fetch.return_value = [
         _fake_message(headers={"to": ["a" * 321 + "@example.com"]})
