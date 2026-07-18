@@ -22,6 +22,11 @@ The "big picture" that requires reading several files to reconstruct. See
                     | append to IMAP Sent folder (best-effort, post-send)
                     v
               [Sent folder]
+
+[hidden-<pair-token>@RELAY_DOMAIN]
+                    | existing Dovecot catch-all -> same IMAP inbox/job
+                    v
+          Worker pair resolver --SES/SMTP--> [Opposite participant]
 ```
 
 There is **one** long-lived process (`thenetwork-worker` → `worker/tasks.py:main`). It
@@ -47,6 +52,14 @@ is required; `thenetwork-producer` is just a manual one-shot poll for cron/debug
   `SKIP LOCKED`, no Redis/broker). Enforces per-sender rate limit and optional content
   scan, resolves whether the sender is a known `Person`, then calls
   `agent/core.py:run_agent_for_email`. Worker concurrency is the global LLM-spend ceiling.
+- **Introduction relay** (`email/relay.py`, `worker/tasks.py`): a recipient matching
+  `hidden-<reply-token>@RELAY_DOMAIN` is handled before the agent path. Server code
+  requires sender authentication, an `introduced` consent row, and exact membership in
+  that pair, then resolves only the opposite participant. It sends one plain message
+  through the existing SES/SMTP connection with `From: The Network <proxy>` and
+  `Reply-To: proxy`. Subject and bounded extracted body are copied without name/content
+  rewriting. Invalid tokens, nonparticipants, non-introduced states, and revoked pairs
+  fail closed. The existing sender rate limit still applies.
 - **Outbound** (`email/outbound.py`): after the SMTP send succeeds, `send_reply` also
   appends the sent message to an IMAP folder (`imap_sent_folder`, default `Sent`),
   flagged `\Seen`, so the account looks like a normal end-to-end mailbox with both
@@ -82,6 +95,12 @@ is required; `thenetwork-producer` is just a manual one-shot poll for cron/debug
 - server-written consent flags and state (`proposed`, `one_consented`,
   `introduced`, `declined` (temporary cooldown), or `revoked` (permanent)
 - opaque reply token used to associate authenticated inbound replies with a pair
+
+The same token becomes the pair's stable hidden reply address after mutual consent; no
+relay table or migration is needed. Mutual consent sends two separate introduction
+messages, one per participant, rather than a group `To` header containing both real
+addresses. Dovecot catch-all delivery, IMAP polling, and SES/SMTP sending remain the only
+mail infrastructure; the application exposes no receiving endpoint.
 
 This table is security/capability state, not a domain schema over memories. The model
 cannot write consent or read identities from it.

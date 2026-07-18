@@ -80,7 +80,7 @@ def resolve_relay_destination(
     sender_email: str,
     sender_authenticated: bool,
     relay_domain: str,
-    session_factory: Callable = get_session,
+    session_factory: Callable | None = None,
 ) -> str | None:
     """Resolve an introduced pair to only its opposite participant's address."""
 
@@ -90,6 +90,7 @@ def resolve_relay_destination(
     if token is None:
         return None
 
+    session_factory = session_factory or get_session
     with session_factory() as session:
         consent = session.exec(
             select(IntroductionConsent).where(

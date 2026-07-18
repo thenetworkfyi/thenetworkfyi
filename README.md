@@ -37,6 +37,11 @@ The whole thing runs on a single VPS against Postgres.
                       |        register_person
                       v
                   Reply --SMTP--> [Sender]
+
+[Dovecot catch-all: hidden-*@RELAY_DOMAIN]
+                      | same IMAP producer/job path
+                      v
+              server-owned pair resolver --SES/SMTP--> [Other participant]
 ```
 
 1. **Producer** (`thenetwork/worker/producer.py`) polls the IMAP inbox for unseen
@@ -51,6 +56,15 @@ The whole thing runs on a single VPS against Postgres.
    ReAct agent. The untrusted email body is passed as **user-role** content and
    never concatenated into the system prompt. It loops over its tools and produces
    a reply, which goes out over SMTP with the appropriate auto-reply headers.
+
+Introduced pairs communicate through one stable
+`hidden-<reply-token>@RELAY_DOMAIN` address. The existing Dovecot catch-all puts
+mail for those addresses into the same IMAP mailbox. The worker authenticates the
+sender, requires the pair to remain `introduced`, resolves only the other
+participant, and resends through the existing SES/SMTP connection before any agent
+execution. This hides participant email addresses only: names, subject, and message
+body are not anonymized or rewritten. It adds no webhook, inbound HTTP endpoint, or
+separate receiving service.
 
 ---
 
@@ -154,8 +168,8 @@ column." Instead:
 6. **Role separation.** The untrusted inbound body is passed as user-role message
    content, never into the system prompt (`thenetwork/agent/core.py`).
 7. **Mail-loop prevention (RFC 3834).** Inbound carrying `Auto-Submitted` /
-   `Precedence: bulk|list` / `List-*` is skipped; all outbound sets
-   `Auto-Submitted: auto-replied`.
+   `Precedence: bulk|list` / `List-*` is skipped; automated agent replies set
+   `Auto-Submitted: auto-replied`, while human-to-human relay mail omits it.
 8. **Rate limiting / anti-DoS.** Per-sender quota via
    [`limits`](https://limits.readthedocs.io/) (Postgres-backed), plus bounded
    Procrastinate worker concurrency as the global LLM-spend ceiling.
@@ -202,6 +216,7 @@ the database's `Vector(1536)` column.
 - Docker (for local Postgres) or a managed Postgres with the `vector` extension
 - API keys for the configured agent, small-agent, and embedding models
 - An IMAP/SMTP mailbox for the agent
+- A Dovecot catch-all for the relay domain, delivered into that IMAP mailbox
 
 ### 1. Configure
 
@@ -234,6 +249,8 @@ SMTP_PASSWORD=...
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
 EMAIL_FROM=agent@example.com
+# Dovecot catch-all domain; SES must be allowed to send From this domain
+RELAY_DOMAIN=relay.example.com
 
 # Tuning
 WORKER_CONCURRENCY=4
@@ -277,10 +294,11 @@ uv run thenetwork-producer          # optional: one manual IMAP poll cycle
 
 ## Deployment
 
-This service needs **no inbound network access** - it polls IMAP (outbound),
+This service needs **no application-owned inbound network access** - it polls IMAP (outbound),
 pulls jobs from local Postgres, and calls LLM/SMTP APIs (outbound). So there's
 no web server, reverse proxy, or public port to expose. A single small VPS with
-SSH access is enough.
+SSH access is enough. Hidden-address replies arrive through the existing
+Dovecot catch-all mailbox, not an application endpoint.
 
 ### Single-VPS Docker Compose
 
