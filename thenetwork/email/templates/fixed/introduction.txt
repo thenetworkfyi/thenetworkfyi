@@ -1,3 +1,3 @@
 {{ person_a_name }} and {{ person_b_name }},
 
-You both opted in to this introduction. Your addresses are included on this message so you can take it from here.
+You both opted in to this introduction. Reply to this message to continue the conversation without sharing your email address.

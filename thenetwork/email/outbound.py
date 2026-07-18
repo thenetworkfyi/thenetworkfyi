@@ -22,6 +22,7 @@ from thenetwork.email.render import (
     render_conversational_email,
     render_fixed_email,
 )
+from thenetwork.email.relay import build_relay_address
 from thenetwork.email.threading import clean_message_id, clean_references
 from thenetwork.settings import get_settings
 
@@ -385,55 +386,31 @@ def send_relay_email(
         _append_to_sent(msg, trace_id=trace_id)
 
 
-def send_group_introduction(
+def send_proxy_introduction(
     *,
     person_a_name: str,
     person_a_email: str,
     person_b_name: str,
     person_b_email: str,
+    reply_token: str,
     trace_id: str | None = None,
 ) -> None:
-    """Send the fixed identity-revealing email after server-verified consent."""
-    with (
-        audit_trace(trace_id),
-        audit_span(
-            "email.smtp_send",
-            recipient_count=2,
-            template_id=FixedEmailTemplate.INTRODUCTION.value,
+    """Send one proxy-addressed introduction to each consented participant."""
+    settings = get_settings()
+    proxy_address = build_relay_address(reply_token, settings.relay_domain)
+    rendered = render_fixed_email(
+        FixedEmailTemplate.INTRODUCTION,
+        IntroductionEmailContext(
+            person_a_name=person_a_name,
+            person_b_name=person_b_name,
         ),
-    ):
-        settings = get_settings()
-        rendered = render_fixed_email(
-            FixedEmailTemplate.INTRODUCTION,
-            IntroductionEmailContext(
-                person_a_name=person_a_name,
-                person_b_name=person_b_name,
-            ),
-            signature_variant=_user_facing_signature_variant(settings),
+        signature_variant=SignatureVariant.STANDARD,
+    )
+    for destination in (person_a_email, person_b_email):
+        send_relay_email(
+            to_address=destination,
+            proxy_address=proxy_address,
+            subject="Your introduction",
+            body_text=rendered.text,
+            trace_id=trace_id,
         )
-        audit_event(
-            "email.rendered",
-            html_present=rendered.html is not None,
-            template_id=FixedEmailTemplate.INTRODUCTION.value,
-            recipient_count=2,
-            outcome="success",
-            rendering_mode="html" if rendered.html is not None else "plain_fallback",
-        )
-        msg = EmailMessage()
-        msg["From"] = settings.email_from
-        msg["To"] = (person_a_email, person_b_email)
-        msg["Subject"] = "Your introduction"
-        msg["Date"] = formatdate(localtime=True)
-        msg["Message-ID"] = make_msgid()
-        msg["Auto-Submitted"] = "auto-replied"
-        msg.set_content(rendered.text)
-        if rendered.html is not None:
-            msg.add_alternative(rendered.html, subtype="html")
-
-        with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as smtp:
-            smtp.ehlo()
-            smtp.starttls()
-            smtp.login(settings.smtp_account, settings.smtp_password)
-            smtp.send_message(msg)
-
-        _append_to_sent(msg, trace_id=trace_id)

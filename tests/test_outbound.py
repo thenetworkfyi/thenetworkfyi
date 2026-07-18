@@ -31,6 +31,7 @@ def _mock_settings(**overrides):
     s.smtp_account = "agent@example.com"
     s.smtp_password = "secret"
     s.email_from = "agent@example.com"
+    s.relay_domain = "relay.example.com"
     s.imap_host = "imap.example.com"
     s.imap_port = 993
     s.imap_sent_folder = "Sent"
@@ -296,8 +297,8 @@ def test_fixed_worker_reply_rejects_callers_providing_freeform_body_text():
         )
 
 
-def test_group_introduction_addresses_both_consented_people():
-    from thenetwork.email.outbound import send_group_introduction
+def test_proxy_introduction_sends_one_message_to_each_consented_person():
+    from thenetwork.email.outbound import send_proxy_introduction
 
     captured = []
     smtp_instance = _mock_smtp()
@@ -309,26 +310,35 @@ def test_group_introduction_addresses_both_consented_people():
         patch("smtplib.SMTP", return_value=smtp_instance),
         patch("thenetwork.email.outbound.MailBox", mock_mailbox),
     ):
-        send_group_introduction(
+        send_proxy_introduction(
             person_a_name="Alice",
             person_a_email="alice@example.com",
             person_b_name="Bob",
             person_b_email="bob@example.com",
+            reply_token="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         )
 
-    assert len(captured) == 1
-    assert [address for _, address in getaddresses(captured[0].get_all("To", []))] == [
+    assert len(captured) == 2
+    assert [str(message["To"]) for message in captured] == [
         "alice@example.com",
         "bob@example.com",
     ]
-    body = captured[0].get_body(preferencelist=("plain",)).get_content()
-    assert "Alice and Bob" in body
-    assert "both opted in" in body
-    assert body.count("The Network") == 1
+    proxy = "hidden-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa@relay.example.com"
+    for message in captured:
+        assert str(message["From"]) == f"The Network <{proxy}>"
+        assert str(message["Reply-To"]) == proxy
+        assert getaddresses(message.get_all("To", [])) == [("", str(message["To"]))]
+        body = message.get_content()
+        assert "Alice and Bob" in body
+        assert "both opted in" in body
+        assert "Reply to this message" in body
+        assert "addresses are included" not in body
+        assert "alice@example.com" not in body
+        assert "bob@example.com" not in body
 
 
-def test_group_introduction_audits_rendering_metadata_only(caplog):
-    from thenetwork.email.outbound import send_group_introduction
+def test_proxy_introduction_audits_rendering_metadata_only(caplog):
+    from thenetwork.email.outbound import send_proxy_introduction
 
     caplog.set_level(logging.INFO, logger=LOGGER_NAME)
     mock_mailbox, _ = _mock_mailbox_success()
@@ -338,11 +348,12 @@ def test_group_introduction_audits_rendering_metadata_only(caplog):
         patch("smtplib.SMTP", return_value=_mock_smtp()),
         patch("thenetwork.email.outbound.MailBox", mock_mailbox),
     ):
-        send_group_introduction(
+        send_proxy_introduction(
             person_a_name="Alice",
             person_a_email="alice@example.com",
             person_b_name="Bob",
             person_b_email="bob@example.com",
+            reply_token="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         )
 
     smtp_events = [
@@ -350,26 +361,29 @@ def test_group_introduction_audits_rendering_metadata_only(caplog):
         for event in _events(caplog)
         if event["event"] in {"email.smtp_send.started", "email.smtp_send.completed"}
     ]
-    assert len(smtp_events) == 2
-    assert {event["recipient_count"] for event in smtp_events} == {2}
-    assert {event["template_id"] for event in smtp_events} == {"introduction"}
+    assert len(smtp_events) == 4
+    assert {event["recipient_count"] for event in smtp_events} == {1}
+    assert {event["template_id"] for event in smtp_events} == {"introduction_relay"}
     assert all("body_chars" not in event for event in smtp_events)
     assert all("subject_chars" not in event for event in smtp_events)
 
     rendered_events = [
         event for event in _events(caplog) if event["event"] == "email.rendered"
     ]
-    assert len(rendered_events) == 1
+    assert len(rendered_events) == 2
     assert {
-        "html_present": True,
+        "html_present": False,
         "outcome": "success",
-        "recipient_count": 2,
-        "template_id": "introduction",
+        "recipient_count": 1,
+        "template_id": "introduction_relay",
     }.items() <= rendered_events[0].items()
+    serialized = json.dumps(_events(caplog))
+    assert "alice@example.com" not in serialized
+    assert "bob@example.com" not in serialized
 
 
-def test_group_introduction_builds_plain_first_multipart_alternative():
-    from thenetwork.email.outbound import send_group_introduction
+def test_proxy_introduction_messages_are_plain_only():
+    from thenetwork.email.outbound import send_proxy_introduction
 
     captured = []
     smtp_instance = _mock_smtp()
@@ -381,17 +395,16 @@ def test_group_introduction_builds_plain_first_multipart_alternative():
         patch("smtplib.SMTP", return_value=smtp_instance),
         patch("thenetwork.email.outbound.MailBox", mock_mailbox),
     ):
-        send_group_introduction(
+        send_proxy_introduction(
             person_a_name="Alice",
             person_a_email="alice@example.com",
             person_b_name="Bob",
             person_b_email="bob@example.com",
+            reply_token="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         )
 
-    assert [part.get_content_type() for part in captured[0].iter_parts()] == [
-        "text/plain",
-        "text/html",
-    ]
+    assert len(captured) == 2
+    assert all(not message.is_multipart() for message in captured)
 
 
 def test_event_fyi_uses_fixed_subject_template_and_one_referral_signature():

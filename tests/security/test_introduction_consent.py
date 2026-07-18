@@ -135,7 +135,7 @@ def people():
 def test_model_assertion_cannot_create_unauthenticated_consent():
     session = FakeSession(proposal=proposal(), people=people())
 
-    with patch("thenetwork.introductions.send_group_introduction") as group_send:
+    with patch("thenetwork.introductions.send_proxy_introduction") as group_send:
         result = process_consent_reply(
             sender_person_id="alice",
             sender_authenticated=False,
@@ -155,7 +155,7 @@ def test_tolerant_yes_reply_consents_without_revealing_identity(body):
     session = FakeSession(proposal=proposal(), people=people())
 
     with (
-        patch("thenetwork.introductions.send_group_introduction") as group_send,
+        patch("thenetwork.introductions.send_proxy_introduction") as group_send,
         patch("thenetwork.introductions.send_reply") as send,
     ):
         result = process_consent_reply(
@@ -269,7 +269,7 @@ def test_declined_pair_refuses_later_consent_without_lifting_cooldown(late_sende
 
     with (
         patch("thenetwork.introductions.send_reply") as send,
-        patch("thenetwork.introductions.send_group_introduction") as group_send,
+        patch("thenetwork.introductions.send_proxy_introduction") as group_send,
     ):
         result = process_consent_reply(
             sender_person_id=late_sender,
@@ -291,13 +291,13 @@ def test_declined_pair_refuses_later_consent_without_lifting_cooldown(late_sende
     group_send.assert_not_called()
 
 
-def test_both_authenticated_consents_trigger_server_composed_group_email():
+def test_both_authenticated_consents_trigger_server_composed_proxy_email():
     session = FakeSession(
         proposal=proposal(person_a_consented=True, status="one_consented"),
         people=people(),
     )
 
-    with patch("thenetwork.introductions.send_group_introduction") as group_send:
+    with patch("thenetwork.introductions.send_proxy_introduction") as group_send:
         result = process_consent_reply(
             sender_person_id="bob",
             sender_authenticated=True,
@@ -317,14 +317,15 @@ def test_both_authenticated_consents_trigger_server_composed_group_email():
         person_a_email="alice@example.com",
         person_b_name="Bob",
         person_b_email="bob@example.com",
+        reply_token="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
         trace_id=None,
     )
 
 
-def test_revoked_pair_refuses_later_consent_and_group_send():
+def test_revoked_pair_refuses_later_consent_and_proxy_send():
     session = FakeSession(proposal=proposal(status="revoked"), people=people())
 
-    with patch("thenetwork.introductions.send_group_introduction") as group_send:
+    with patch("thenetwork.introductions.send_proxy_introduction") as group_send:
         result = process_consent_reply(
             sender_person_id="alice",
             sender_authenticated=True,
@@ -347,7 +348,7 @@ def test_post_introduction_revocation_is_persisted():
         people=people(),
     )
 
-    with patch("thenetwork.introductions.send_group_introduction") as group_send:
+    with patch("thenetwork.introductions.send_proxy_introduction") as group_send:
         result = process_consent_reply(
             sender_person_id="alice",
             sender_authenticated=True,
