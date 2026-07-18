@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -7,6 +9,7 @@ import pytest
 
 from thenetwork.agent.deps import AgentDeps
 from thenetwork.agent.tools import reply_to_sender, send_outreach
+from thenetwork.audit import LOGGER_NAME, audit_event
 from thenetwork.db.models import Memory, Person
 from thenetwork.memory.recent_context import load_recent_sender_memory_context
 from thenetwork.memory.sent_email import (
@@ -64,8 +67,49 @@ def _settings(**overrides) -> Settings:
     )
 
 
+@pytest.mark.parametrize(
+    ("outcome", "reason", "error_type"),
+    [
+        ("success", None, None),
+        ("blocked", "invalid_summary", None),
+        ("blocked", "memory_text_too_long", None),
+        ("blocked", "recipient_not_found", None),
+        ("blocked", "person_memory_limit_exceeded", None),
+        ("error", None, "RuntimeError"),
+    ],
+)
+def test_sent_email_audit_preserves_bounded_categories(
+    caplog,
+    outcome,
+    reason,
+    error_type,
+):
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+    fields = {
+        "action": "insert",
+        "record_type": "sent_email_memory",
+        "refs_count": 1,
+        "outcome": outcome,
+    }
+    if reason is not None:
+        fields["reason"] = reason
+    if error_type is not None:
+        fields["error_type"] = error_type
+
+    audit_event("database.action", **fields)
+
+    event = json.loads(caplog.records[0].message)
+    assert event["record_type"] == "sent_email_memory"
+    assert event["outcome"] == outcome
+    if reason is not None:
+        assert event["reason"] == reason
+    if error_type is not None:
+        assert event["error_type"] == error_type
+
+
 @pytest.mark.asyncio
-async def test_successful_delivery_persists_one_sealed_summary_memory():
+async def test_successful_delivery_persists_one_sealed_summary_memory(caplog):
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
     session = FakeSession()
     private_subject = "Re: Confidential acquisition"
     private_body = "The complete message body must never be stored"
@@ -102,6 +146,18 @@ async def test_successful_delivery_persists_one_sealed_summary_memory():
     assert private_subject not in serialized
     assert private_body not in serialized
     assert recipient_address not in serialized
+    audit_json = "\n".join(record.message for record in caplog.records)
+    assert summary not in audit_json
+    assert private_subject not in audit_json
+    assert private_body not in audit_json
+    assert recipient_address not in audit_json
+    audit_events = [
+        json.loads(record.message)
+        for record in caplog.records
+        if json.loads(record.message)["event"] == "database.action"
+    ]
+    assert audit_events[-1]["record_type"] == "sent_email_memory"
+    assert audit_events[-1]["outcome"] == "success"
 
 
 @pytest.mark.asyncio
