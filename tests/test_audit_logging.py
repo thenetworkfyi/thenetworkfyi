@@ -1107,6 +1107,33 @@ def test_intake_enqueues_inbound_message_id_when_present(caplog):
     mark_processed.assert_called_once_with(message.message_id)
 
 
+def test_intake_enqueues_recipient_without_audit_logging_it(caplog):
+    from thenetwork.email.inbound import InboundMessage
+    from thenetwork.worker.producer import _poll_and_enqueue
+
+    recipient = "hidden-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa@relay.private.example"
+    message = InboundMessage(
+        uid="123",
+        sender="alice.private@example.com",
+        subject="Relay reply",
+        body="Private reply body",
+        auto_submitted=None,
+        sender_authenticated=True,
+        recipient_address=recipient,
+    )
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    with (
+        patch("thenetwork.worker.producer.poll_unseen", return_value=[message]),
+        patch("thenetwork.worker.producer.process_email") as process_email,
+        patch("thenetwork.worker.producer.mark_messages_seen"),
+    ):
+        assert _poll_and_enqueue() == 1
+
+    assert process_email.defer.call_args.kwargs["recipient_address"] == recipient
+    assert recipient not in "\n".join(record.message for record in caplog.records)
+
+
 def test_intake_reserves_message_id_before_defer_and_releases_on_defer_failure():
     from thenetwork.email.inbound import InboundMessage
     from thenetwork.worker.producer import _poll_and_enqueue

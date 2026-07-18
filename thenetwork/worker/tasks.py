@@ -243,6 +243,7 @@ async def process_email(
     body: str,
     sender_authenticated: bool = False,
     sender_display_name: str | None = None,
+    recipient_address: str | None = None,
     raw_message_b64: str | None = None,
     inbound_message_id: str | None = None,
     inbound_references: str | None = None,

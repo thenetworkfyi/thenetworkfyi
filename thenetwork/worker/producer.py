@@ -94,6 +94,8 @@ def _poll_and_enqueue() -> int:
                     "raw_message_b64": raw_message_b64,
                     "trace_id": msg.trace_id,
                 }
+                if msg.recipient_address:
+                    job_kwargs["recipient_address"] = msg.recipient_address
                 if msg.message_id:
                     job_kwargs["inbound_message_id"] = msg.message_id
                     job_kwargs["inbound_references"] = msg.message_references
