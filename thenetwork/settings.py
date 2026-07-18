@@ -81,6 +81,11 @@ class Settings(BaseSettings):
     imap_password: str = ""
     imap_host: str = "imap.gmail.com"
     imap_port: int = 993
+    # Optional separate mailbox for relay-domain catch-all delivery. It uses
+    # the same IMAP host/port as the primary mailbox; when unset, relay mail is
+    # expected to arrive in the primary mailbox for backward compatibility.
+    relay_imap_account: str = ""
+    relay_imap_password: str = ""
     smtp_account: str = ""
     smtp_password: str = ""
     smtp_host: str = "smtp.gmail.com"

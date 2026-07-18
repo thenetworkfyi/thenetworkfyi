@@ -24,7 +24,7 @@ The "big picture" that requires reading several files to reconstruct. See
               [Sent folder]
 
 [hidden-<pair-token>@RELAY_DOMAIN]
-                    | existing Dovecot catch-all -> same IMAP inbox/job
+                    | Dovecot catch-all -> configured IMAP inbox/job
                     v
           Worker pair resolver --SES/SMTP--> [Opposite participant]
 ```
@@ -35,12 +35,13 @@ drains the Procrastinate queue *and*, via periodic tasks, polls IMAP every minut
 semantic people matching plus semantic event recommendations. No separate producer daemon
 is required; `thenetwork-producer` is just a manual one-shot poll for cron/debugging.
 
-- **Producer** (`worker/producer.py`): polls IMAP for unseen mail, enqueues exactly one
-  durable job per message, and marks the message seen *only after* enqueue. Durability
-  lives in the Postgres job row, not the IMAP seen-flag - a mid-run crash means the job
-  retries (`max_attempts=3`) and nothing is lost. The producer only ever flips `\Seen`;
-  it never deletes or moves inbound mail, so everything the account has received stays
-  in INBOX permanently, the same as a normal mailbox.
+- **Producer** (`worker/producer.py`): polls the primary and, when configured, separate
+  relay IMAP inboxes for unseen mail, enqueues exactly one durable job per message, and
+  marks each message seen in its source mailbox *only after* enqueue. Durability lives
+  in the Postgres job row, not the IMAP seen-flag - a mid-run crash means the job retries
+  (`max_attempts=3`) and nothing is lost. The producer only ever flips `\Seen`; it never
+  deletes or moves inbound mail, so everything each account has received stays in INBOX
+  permanently, the same as a normal mailbox.
 - **Inbound body extraction** (`email/inbound.py`): prefers imap-tools'
   `MailMessage.text`, falling back to `MailMessage.html` run through BeautifulSoup to
   recover visible text when a message has no plain-text part. No hand-rolled MIME

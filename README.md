@@ -39,7 +39,7 @@ The whole thing runs on a single VPS against Postgres.
                   Reply --SMTP--> [Sender]
 
 [Dovecot catch-all: hidden-*@RELAY_DOMAIN]
-                      | same IMAP producer/job path
+                      | configured IMAP inbox/job path
                       v
               server-owned pair resolver --SES/SMTP--> [Other participant]
 ```
@@ -59,12 +59,12 @@ The whole thing runs on a single VPS against Postgres.
 
 Introduced pairs communicate through one stable
 `hidden-<reply-token>@RELAY_DOMAIN` address. The existing Dovecot catch-all puts
-mail for those addresses into the same IMAP mailbox. The worker authenticates the
-sender, requires the pair to remain `introduced`, resolves only the other
-participant, and resends through the existing SES/SMTP connection before any agent
-execution. This hides participant email addresses only: names, subject, and message
-body are not anonymized or rewritten. It adds no webhook, inbound HTTP endpoint, or
-separate receiving service.
+mail for those addresses into either the primary IMAP mailbox or an optional
+separately authenticated relay mailbox. The worker authenticates the sender, requires
+the pair to remain `introduced`, resolves only the other participant, and resends
+through the existing SES/SMTP connection before any agent execution. This hides
+participant email addresses only: names, subject, and message body are not anonymized
+or rewritten. It adds no webhook, inbound HTTP endpoint, or separate receiving service.
 
 ---
 
@@ -247,6 +247,9 @@ IMAP_ACCOUNT=agent@example.com
 IMAP_PASSWORD=...
 IMAP_HOST=imap.gmail.com
 IMAP_PORT=993
+# Optional; both use the same IMAP host/port above
+RELAY_IMAP_ACCOUNT=relay-inbox@relay.example.com
+RELAY_IMAP_PASSWORD=...
 SMTP_ACCOUNT=agent@example.com
 SMTP_PASSWORD=...
 SMTP_HOST=smtp.gmail.com
