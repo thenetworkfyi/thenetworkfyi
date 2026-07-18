@@ -181,6 +181,34 @@ def test_poll_unseen_prefers_hidden_alias_over_same_domain_catchall(
     assert messages[0].recipient_address == proxy
 
 
+@pytest.mark.parametrize(
+    "proxy",
+    [
+        "hidden-not-a-token@relay.example.com",
+        "hidden-AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA@relay.example.com",
+    ],
+)
+def test_poll_unseen_preserves_invalid_hidden_candidate_for_fail_closed_worker(
+    fake_mailbox: _FakeMailBox,
+    proxy: str,
+):
+    fake_mailbox.fetch.return_value = [
+        _fake_message(
+            headers={
+                "delivered-to": ["catchall@relay.example.com"],
+                "to": [proxy],
+            }
+        )
+    ]
+    settings = _settings()
+    settings.relay_domain = "relay.example.com"
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(inbound, "get_settings", lambda: settings)
+        messages = inbound.poll_unseen()
+
+    assert messages[0].recipient_address == proxy
+
+
 def test_poll_unseen_drops_oversized_recipient(fake_mailbox: _FakeMailBox):
     fake_mailbox.fetch.return_value = [
         _fake_message(headers={"to": ["a" * 321 + "@example.com"]})
