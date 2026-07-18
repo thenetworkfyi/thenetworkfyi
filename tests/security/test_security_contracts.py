@@ -37,6 +37,18 @@ def _use_in_memory_registration_limiter():
     )
 
 
+@pytest.fixture(autouse=True)
+def _stub_sent_email_memory(monkeypatch):
+    """Keep unrelated capability tests focused on dispatch behavior."""
+    from thenetwork.agent import tools
+
+    record_one = AsyncMock(return_value=True)
+    record_many = AsyncMock()
+    monkeypatch.setattr(tools, "record_sent_email_memory", record_one)
+    monkeypatch.setattr(tools, "record_sent_email_memories", record_many)
+    return record_one, record_many
+
+
 # ---------------------------------------------------------------------------
 # Capability email tool: opaque IDs only, address never exposed to caller
 # ---------------------------------------------------------------------------
@@ -134,7 +146,7 @@ async def test_register_person_resolves_address_not_from_caller():
 
 
 @pytest.mark.asyncio
-async def test_dispatch_sends_to_resolved_address():
+async def test_dispatch_sends_to_resolved_address(_stub_sent_email_memory):
     """Address must come from DB lookup, not from any agent-supplied argument."""
     _reset_dispatch_limiter()
     fake_person = _fake_person()
@@ -144,13 +156,23 @@ async def test_dispatch_sends_to_resolved_address():
 
     with patch("thenetwork.agent.tools.send_reply") as mock_send:
         result = await send_outreach(
-            ctx, recipient_user_id="user-bob", subject="Hi", body_text="Hello"
+            ctx,
+            recipient_user_id="user-bob",
+            subject="Hi",
+            body_text="Hello",
+            sent_email_summary="an update about a relevant opportunity",
         )
 
     mock_send.assert_called_once()
     assert mock_send.call_args.kwargs["to_address"] == "bob@example.com"
     assert result["status"] == "sent"
     assert ctx.deps.server_side_send_count == 1
+    record_one, _ = _stub_sent_email_memory
+    delivery = record_one.await_args.args[0]
+    assert delivery.recipient_person_id == "user-bob"
+    assert delivery.summary == "an update about a relevant opportunity"
+    assert "bob@example.com" not in repr(delivery)
+    assert "Hello" not in repr(delivery)
 
 
 @pytest.mark.asyncio
@@ -571,6 +593,54 @@ async def test_dispatch_failed_send_does_not_consume_recipient_daily_cap():
 
 
 @pytest.mark.asyncio
+async def test_failed_smtp_send_creates_no_sent_email_memory(
+    _stub_sent_email_memory,
+):
+    _reset_dispatch_limiter()
+    ctx = FakeCtx()
+    ctx._mock_sess.get.return_value = _fake_person()
+    record_one, _ = _stub_sent_email_memory
+
+    with patch(
+        "thenetwork.agent.tools.send_reply", side_effect=RuntimeError("smtp down")
+    ):
+        with pytest.raises(RuntimeError, match="smtp down"):
+            await send_outreach(
+                ctx,
+                recipient_user_id="user-bob",
+                subject="Private subject",
+                body_text="Private body",
+                sent_email_summary="a relevant update",
+            )
+
+    record_one.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_post_send_memory_failure_cannot_retry_or_duplicate_delivery(
+    _stub_sent_email_memory,
+):
+    _reset_dispatch_limiter()
+    ctx = FakeCtx()
+    ctx._mock_sess.get.return_value = _fake_person()
+    record_one, _ = _stub_sent_email_memory
+    record_one.side_effect = RuntimeError("memory unavailable")
+
+    with patch("thenetwork.agent.tools.send_reply") as send:
+        result = await send_outreach(
+            ctx,
+            recipient_user_id="user-bob",
+            subject="Private subject",
+            body_text="Private body",
+            sent_email_summary="a relevant update",
+        )
+
+    assert result == {"status": "sent"}
+    send.assert_called_once()
+    record_one.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_dispatch_failed_send_does_not_consume_sender_reply_daily_cap():
     """Same as above for the sender-reply cap (limit 1 by default) - this is
     the exact production failure: a crashed reply attempt must not leave the
@@ -639,7 +709,9 @@ async def test_propose_introduction_rejects_invalid_target_without_raising(
 
 
 @pytest.mark.asyncio
-async def test_propose_introduction_marks_fixed_consent_sends_as_egress():
+async def test_propose_introduction_marks_fixed_consent_sends_as_egress(
+    _stub_sent_email_memory,
+):
     ctx = FakeCtx(sender_authenticated=True)
 
     with patch(
@@ -655,6 +727,13 @@ async def test_propose_introduction_marks_fixed_consent_sends_as_egress():
 
     assert result == {"status": "proposed"}
     assert ctx.deps.server_side_send_count == 2
+    _, record_many = _stub_sent_email_memory
+    deliveries = record_many.await_args.args[0]
+    assert [delivery.recipient_person_id for delivery in deliveries] == [
+        "user-alice",
+        "user-bob",
+    ]
+    assert len({delivery.summary for delivery in deliveries}) == 1
 
 
 @pytest.mark.asyncio

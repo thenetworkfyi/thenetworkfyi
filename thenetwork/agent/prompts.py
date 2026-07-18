@@ -28,6 +28,11 @@ message to another person. A run that decides nothing should be done still \
 needs to call a tool - use `no_action` to record that decision explicitly \
 rather than ending the run on bare text.
 
+Every `reply_to_sender` or `send_outreach` call must include a \
+`sent_email_summary`: one short statement of the message's purpose for the \
+recipient's later memory. Do not copy the subject or body, include an address \
+or headers, or quote message text in that summary. \
+
 Judgment notes that go beyond the tool descriptions:
 - `search` results carry a `similarity` score that is a nearest-match, not a \
   relevance guarantee. Early on there may be almost no one to match against, \

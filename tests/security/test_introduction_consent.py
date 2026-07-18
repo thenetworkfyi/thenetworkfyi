@@ -175,6 +175,9 @@ def test_tolerant_yes_reply_consents_without_revealing_identity(body):
         send.call_args.kwargs["fixed_template"]
         is FixedEmailTemplate.CONSENT_ACKNOWLEDGMENT
     )
+    assert [memory.recipient_person_id for memory in result.sent_email_memories] == [
+        "alice"
+    ]
 
 
 @pytest.mark.parametrize(
@@ -227,6 +230,9 @@ def test_tokened_prose_reply_gets_clarification_without_revoking_pair():
         send.call_args.kwargs["fixed_template"]
         is FixedEmailTemplate.CONSENT_CLARIFICATION
     )
+    assert [memory.recipient_person_id for memory in result.sent_email_memories] == [
+        "alice"
+    ]
 
 
 def test_punctuated_no_reply_creates_temporary_decline():
@@ -247,6 +253,9 @@ def test_punctuated_no_reply_creates_temporary_decline():
     assert (
         send.call_args.kwargs["fixed_template"] is FixedEmailTemplate.CONSENT_DECLINED
     )
+    assert [memory.recipient_person_id for memory in result.sent_email_memories] == [
+        "alice"
+    ]
 
 
 @pytest.mark.parametrize("late_sender", ["alice", "bob"])
@@ -298,6 +307,11 @@ def test_both_authenticated_consents_trigger_server_composed_group_email():
         )
 
     assert result.outcome == "introduced"
+    assert [memory.recipient_person_id for memory in result.sent_email_memories] == [
+        "alice",
+        "bob",
+    ]
+    assert len({memory.summary for memory in result.sent_email_memories}) == 1
     group_send.assert_called_once_with(
         person_a_name="Alice",
         person_a_email="alice@example.com",
@@ -680,6 +694,10 @@ async def test_unparseable_tokened_reply_gets_clarification_before_model():
             "thenetwork.worker.tasks.process_consent_reply",
             side_effect=real_handler,
         ),
+        patch(
+            "thenetwork.worker.tasks.record_sent_email_memories",
+            new_callable=AsyncMock,
+        ) as record_memories,
         patch("thenetwork.introductions.send_reply") as send,
         patch(
             "thenetwork.worker.tasks.run_agent_for_email",
@@ -697,6 +715,8 @@ async def test_unparseable_tokened_reply_gets_clarification_before_model():
     # runs; the sender's own prose then reaches the agent as a framed
     # remainder so the question is not simply discarded.
     send.assert_called_once()
+    record_memories.assert_awaited_once()
+    assert record_memories.await_args.args[0][0].recipient_person_id == "alice"
     assert (
         send.call_args.kwargs["fixed_template"]
         is FixedEmailTemplate.CONSENT_CLARIFICATION
@@ -812,6 +832,10 @@ async def test_consent_remainder_reaches_agent_after_server_handling():
         patch(
             "thenetwork.worker.tasks.process_consent_reply",
             side_effect=real_handler,
+        ),
+        patch(
+            "thenetwork.worker.tasks.record_sent_email_memories",
+            new_callable=AsyncMock,
         ),
         patch("thenetwork.introductions.send_reply") as send,
         patch(

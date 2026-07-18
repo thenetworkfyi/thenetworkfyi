@@ -18,6 +18,17 @@ from thenetwork.audit import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _empty_recent_sender_memory_context(monkeypatch):
+    """Audit tests inject no DB history unless they explicitly exercise it."""
+    from thenetwork.memory.recent_context import RecentSenderMemoryContext
+
+    monkeypatch.setattr(
+        "thenetwork.agent.core.load_recent_sender_memory_context",
+        lambda *_args, **_kwargs: RecentSenderMemoryContext(),
+    )
+
+
 def _events(caplog) -> list[dict]:
     return [
         json.loads(record.message)
