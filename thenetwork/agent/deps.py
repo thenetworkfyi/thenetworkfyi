@@ -22,7 +22,7 @@ class AgentDeps:
     inbound_body_for_quote: str | None = None
     inbound_date: str | None = None
     trace_id: str | None = None
-    # True only when the receiving mail server's Authentication-Results
+    # True only when the third-party IMAP provider's Authentication-Results
     # header vouched for this sender's DKIM/SPF (see email/inbound.py).
     # Tools that can create or mutate identity (e.g. register_person) must
     # gate on this - the From: header alone is spoofable.
