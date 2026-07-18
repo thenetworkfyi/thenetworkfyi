@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import smtplib
 from email.message import EmailMessage
-from email.utils import formatdate, make_msgid
+from email.utils import formataddr, formatdate, make_msgid
 from time import monotonic
 from typing import Literal
 
@@ -27,6 +27,7 @@ from thenetwork.settings import get_settings
 
 MAX_QUOTED_TRAIL_CHARS = 2_000
 EVENT_RECOMMENDATION_SUBJECT = "An event you might care about"
+RELAY_TEMPLATE_ID = "introduction_relay"
 
 
 def _quoted_body_lines(body_text: str) -> tuple[list[str], bool]:
@@ -324,6 +325,56 @@ def send_event_fyi(
         msg.set_content(rendered.text)
         if rendered.html is not None:
             msg.add_alternative(rendered.html, subtype="html")
+
+        with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as smtp:
+            smtp.ehlo()
+            smtp.starttls()
+            smtp.login(settings.smtp_account, settings.smtp_password)
+            smtp.send_message(msg)
+
+        _append_to_sent(msg, trace_id=trace_id)
+
+
+def send_relay_email(
+    *,
+    to_address: str,
+    proxy_address: str,
+    subject: str,
+    body_text: str,
+    trace_id: str | None = None,
+) -> None:
+    """Relay one participant's message without exposing either real address.
+
+    Every address is supplied by trusted server-side routing code. This path is
+    deliberately plain-only and does not invoke the user-facing renderer,
+    append a signature/footer, or copy an inbound display name.
+    """
+    with (
+        audit_trace(trace_id),
+        audit_span(
+            "email.smtp_send",
+            recipient_count=1,
+            template_id=RELAY_TEMPLATE_ID,
+        ),
+    ):
+        settings = get_settings()
+        audit_event(
+            "email.rendered",
+            html_present=False,
+            template_id=RELAY_TEMPLATE_ID,
+            recipient_count=1,
+            outcome="success",
+            rendering_mode="relay_plain",
+        )
+
+        msg = EmailMessage()
+        msg["From"] = formataddr(("The Network", proxy_address))
+        msg["Reply-To"] = proxy_address
+        msg["To"] = to_address
+        msg["Subject"] = subject
+        msg["Date"] = formatdate(localtime=True)
+        msg["Message-ID"] = make_msgid()
+        msg.set_content(body_text)
 
         with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as smtp:
             smtp.ehlo()

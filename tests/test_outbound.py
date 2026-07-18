@@ -98,6 +98,54 @@ def test_admin_notifications_remain_plain_only():
     assert captured[0].get_content() == "Internal detail\n"
 
 
+def test_send_relay_email_uses_only_server_selected_addresses(caplog):
+    from thenetwork.email.outbound import send_relay_email
+
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+    captured = []
+    smtp_instance = _mock_smtp()
+    smtp_instance.send_message.side_effect = captured.append
+    mock_mailbox, mb_instance = _mock_mailbox_success()
+    proxy = "hidden-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa@relay.example.com"
+
+    with (
+        patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()),
+        patch("smtplib.SMTP", return_value=smtp_instance),
+        patch("thenetwork.email.outbound.MailBox", mock_mailbox),
+    ):
+        send_relay_email(
+            to_address="bob@example.com",
+            proxy_address=proxy,
+            subject="Re: project",
+            body_text="Exact extracted body\nwith a second line",
+            trace_id="relay-trace",
+        )
+
+    assert len(captured) == 1
+    message = captured[0]
+    assert str(message["From"]) == f"The Network <{proxy}>"
+    assert str(message["Reply-To"]) == proxy
+    assert getaddresses(message.get_all("To", [])) == [("", "bob@example.com")]
+    assert str(message["Subject"]) == "Re: project"
+    assert message.get_content() == "Exact extracted body\nwith a second line\n"
+    assert not message.is_multipart()
+    assert "Auto-Submitted" not in message
+    assert "agent@example.com" not in message.as_string()
+    mb_instance.append.assert_called_once()
+    assert mb_instance.append.call_args.args[0] == message.as_bytes()
+
+    events = _events(caplog)
+    relay_events = [event for event in events if event.get("trace_id") == "relay-trace"]
+    assert relay_events
+    serialized = json.dumps(relay_events)
+    assert "bob@example.com" not in serialized
+    assert proxy not in serialized
+    assert "Exact extracted body" not in serialized
+    assert any(
+        event.get("template_id") == "introduction_relay" for event in relay_events
+    )
+
+
 def test_internal_plain_delivery_is_unsigned_and_audited_separately(caplog):
     from thenetwork.email.outbound import send_reply
 
