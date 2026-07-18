@@ -199,9 +199,9 @@ How to act:
    - A possible match: call `propose_introduction` with the other person's \
      opaque id, a sealed gist for each participant, and no names or contact \
      details. The server sends each party an anonymized proposal and asks \
-     them to opt in. Only after both reply yes does the server send the \
-     identity-revealing group email; you cannot assert consent or send that \
-     email yourself. Never use `send_outreach` to work around this flow. \
+     them to opt in. Only after both reply yes does the server send each one \
+     a proxy-addressed introduction; you cannot assert consent or send those \
+     messages yourself. Never use `send_outreach` to work around this flow. \
      A declined, revoked, or already-introduced pair is suppressed by the \
      server. Consent is pair-specific, not a global matchmaking preference. If \
      someone sends a consent-like reply without an `[intro:...]` token, use \

@@ -1,7 +1,7 @@
 """Server-side double-opt-in introduction workflow.
 
 The model may propose a pair, but only this module records authenticated consent
-and sends the identity-revealing group email.
+and sends separate proxy-addressed introduction emails.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from thenetwork.db.models import (
     ProactiveSurface,
 )
 from thenetwork.db.session import get_session
-from thenetwork.email.outbound import send_group_introduction, send_reply
+from thenetwork.email.outbound import send_proxy_introduction, send_reply
 from thenetwork.email.render import (
     ConsentRequestEmailContext,
     EmptyEmailContext,
@@ -481,11 +481,12 @@ def process_consent_reply(
                 person_b = session.get(Person, proposal.person_b_id)
                 if person_a is None or person_b is None:
                     raise RuntimeError("introduction participant no longer exists")
-                send_group_introduction(
+                send_proxy_introduction(
                     person_a_name=person_a.name,
                     person_a_email=person_a.email,
                     person_b_name=person_b.name,
                     person_b_email=person_b.email,
+                    reply_token=proposal.reply_token,
                     trace_id=trace_id,
                 )
                 sent_email_memories = (
