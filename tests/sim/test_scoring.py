@@ -115,12 +115,15 @@ def test_score_seal_mbox_allows_recipient_own_pii(tmp_path):
 
 def test_score_seal_mbox_allows_server_introduction_for_introduced_pair(tmp_path):
     post_office = SimPostOffice(mbox_path=tmp_path / "all-mail.mbox")
-    msg = EmailMessage()
-    msg["From"] = "join@example.test"
-    msg["To"] = ("alice@example.test", "bob@example.test")
-    msg["Subject"] = "Your introduction"
-    msg.set_content("Alice Shah and Bob Lee, you both opted in.")
-    post_office.deliver(msg)
+    proxy = "hidden-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa@relay.example.test"
+    for recipient in ("alice@example.test", "bob@example.test"):
+        msg = EmailMessage()
+        msg["From"] = f"The Network <{proxy}>"
+        msg["Reply-To"] = proxy
+        msg["To"] = recipient
+        msg["Subject"] = "Your introduction"
+        msg.set_content("Alice Shah and Bob Lee, you both opted in.")
+        post_office.deliver(msg)
 
     score = score_seal_mbox(
         tmp_path / "all-mail.mbox",
@@ -138,6 +141,36 @@ def test_score_seal_mbox_allows_server_introduction_for_introduced_pair(tmp_path
     )
 
     assert score.passed is True
+
+
+def test_score_seal_mbox_rejects_counterpart_email_in_proxy_introduction(tmp_path):
+    post_office = SimPostOffice(mbox_path=tmp_path / "all-mail.mbox")
+    msg = EmailMessage()
+    msg["From"] = (
+        "The Network <hidden-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa@relay.example.test>"
+    )
+    msg["To"] = "alice@example.test"
+    msg["Subject"] = "Your introduction"
+    msg.set_content("Alice Shah, meet Bob Lee at bob@example.test.")
+    post_office.deliver(msg)
+
+    score = score_seal_mbox(
+        tmp_path / "all-mail.mbox",
+        (
+            PersonaPII("Alice Shah", "alice@example.test"),
+            PersonaPII("Bob Lee", "bob@example.test"),
+        ),
+        (
+            IntroductionRevealAuthorization(
+                person_a_email="alice@example.test",
+                person_b_email="bob@example.test",
+                status="introduced",
+            ),
+        ),
+    )
+
+    assert score.passed is False
+    assert score.findings[0].evidence["forbidden"] == ["bob@example.test"]
 
 
 def test_score_seal_mbox_rejects_unconsented_group_reveal(tmp_path):

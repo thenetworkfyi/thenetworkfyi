@@ -258,6 +258,7 @@ def capture_outbound(
 @dataclass(frozen=True)
 class InboundDelivery:
     sender_email: str
+    recipient_address: str | None
     subject: str
     body: str
     trace_id: str
@@ -291,6 +292,8 @@ async def deliver_inbound(
         else None
     )
     resolved_trace_id = trace_id or str(uuid4())
+    recipients = _recipient_addresses(message)
+    recipient_address = recipients[0] if recipients else None
     process_func = process or process_email.func
     if post_office is not None:
         post_office.deliver(
@@ -309,6 +312,7 @@ async def deliver_inbound(
         body=body,
         sender_authenticated=sender_authenticated,
         sender_display_name=cap_sender_name(sender_display_name),
+        recipient_address=recipient_address,
         raw_message_b64=raw_message_b64,
         inbound_message_id=message_id,
         inbound_references=references,
@@ -319,6 +323,7 @@ async def deliver_inbound(
 
     return InboundDelivery(
         sender_email=sender_email,
+        recipient_address=recipient_address,
         subject=subject,
         body=body,
         trace_id=resolved_trace_id,

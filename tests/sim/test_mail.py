@@ -47,7 +47,9 @@ def test_post_office_captures_send_reply_at_smtp_seam():
     assert captured["References"] == "<root@example.com>"
     assert captured["Auto-Submitted"] == "auto-replied"
     assert captured["Message-ID"]
-    assert "The Network. Reply anytime." in captured.get_content()
+    plain_body = captured.get_body(preferencelist=("plain",)).get_content()
+    assert "The Network" in plain_body
+    assert "Reply anytime." in plain_body
 
 
 def test_post_office_appends_delivered_messages_to_mbox(tmp_path):
@@ -144,6 +146,7 @@ async def test_deliver_inbound_calls_process_email_func_with_threading_fields():
         body="I work on ML infrastructure.\n",
         sender_authenticated=True,
         sender_display_name="Priya Shah",
+        recipient_address="join@example.com",
         raw_message_b64=None,
         inbound_message_id="<msg-1@example.com>",
         inbound_references="<root@example.com>",
@@ -152,6 +155,7 @@ async def test_deliver_inbound_calls_process_email_func_with_threading_fields():
         trace_id="399005c4-1494-4c94-bc5c-cc1036666679",
     )
     assert delivery.sender_email == "priya@example.com"
+    assert delivery.recipient_address == "join@example.com"
     assert delivery.trace_id == "399005c4-1494-4c94-bc5c-cc1036666679"
 
 

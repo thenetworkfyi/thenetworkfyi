@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from email.message import EmailMessage
-from email.utils import formatdate, make_msgid
+from email.utils import formatdate, make_msgid, parseaddr
 from typing import Any, Protocol
 
 from thenetwork.email.threading import clean_message_id, clean_references
@@ -110,7 +110,10 @@ class TinyPersonEmailAdapter:
     ) -> EmailMessage:
         msg = EmailMessage()
         msg["From"] = f"{self.config.name} <{self.config.email}>"
-        msg["To"] = self.config.agent_address
+        reply_address = (
+            parseaddr(reply_to.get("Reply-To", ""))[1] if reply_to is not None else ""
+        )
+        msg["To"] = reply_address or self.config.agent_address
         msg["Subject"] = _reply_subject(reply_to, fallback=subject)
         msg["Date"] = formatdate(localtime=True)
         msg["Message-ID"] = make_msgid()
