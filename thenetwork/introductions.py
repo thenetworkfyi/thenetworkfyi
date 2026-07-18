@@ -35,6 +35,7 @@ from thenetwork.memory.sent_email import (
     INTRODUCTION_SUMMARY,
     SentEmailMemory,
 )
+from thenetwork.memory.sanitize import sanitize_text
 
 _TOKEN_RE = re.compile(
     r"\[intro:(?P<token>[0-9a-f]{8}-[0-9a-f-]{27,})\]",
@@ -226,8 +227,25 @@ def propose_pair(
         if sender is None or other is None:
             return {"status": "error", "reason": "person_not_found"}
 
+        # Treat tool-supplied gists as untrusted even though the agent is
+        # instructed to pass sealed search results. Re-sanitizing here keeps
+        # names and contact details out of both consent mail and the eventual
+        # recap under a fully hijacked model.
+        sender_gist = sanitize_text(sender_gist)
+        other_gist = sanitize_text(other_gist)
+
+        if low == sender_person_id:
+            person_a_gist, person_b_gist = sender_gist, other_gist
+        else:
+            person_a_gist, person_b_gist = other_gist, sender_gist
+
         if proposal is None:
-            proposal = IntroductionConsent(person_a_id=low, person_b_id=high)
+            proposal = IntroductionConsent(
+                person_a_id=low,
+                person_b_id=high,
+                person_a_gist=person_a_gist,
+                person_b_gist=person_b_gist,
+            )
             session.add(proposal)
             session.commit()
             session.refresh(proposal)
@@ -235,6 +253,8 @@ def propose_pair(
             proposal.status = "proposed"
             proposal.person_a_consented = False
             proposal.person_b_consented = False
+            proposal.person_a_gist = person_a_gist
+            proposal.person_b_gist = person_b_gist
             proposal.declined_at = None
             proposal.reply_token = str(uuid.uuid4())
             proposal.updated_at = _utcnow()
@@ -482,10 +502,10 @@ def process_consent_reply(
                 if person_a is None or person_b is None:
                     raise RuntimeError("introduction participant no longer exists")
                 send_proxy_introduction(
-                    person_a_name=person_a.name,
                     person_a_email=person_a.email,
-                    person_b_name=person_b.name,
                     person_b_email=person_b.email,
+                    person_a_gist=proposal.person_a_gist,
+                    person_b_gist=proposal.person_b_gist,
                     reply_token=proposal.reply_token,
                     trace_id=trace_id,
                 )

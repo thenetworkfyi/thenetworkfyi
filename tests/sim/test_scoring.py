@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from email.message import EmailMessage
 
+import pytest
+
 from thenetwork.db.models import Memory
 from thenetwork.sim.run.mail import SimMessageMeta, SimPostOffice
 from thenetwork.sim.scoring.scoring import (
@@ -113,7 +115,9 @@ def test_score_seal_mbox_allows_recipient_own_pii(tmp_path):
     assert score.passed is True
 
 
-def test_score_seal_mbox_allows_server_introduction_for_introduced_pair(tmp_path):
+def test_score_seal_mbox_allows_anonymous_server_introduction_for_introduced_pair(
+    tmp_path,
+):
     post_office = SimPostOffice(mbox_path=tmp_path / "all-mail.mbox")
     proxy = "hidden-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa@relay.example.test"
     for recipient in ("alice@example.test", "bob@example.test"):
@@ -122,7 +126,7 @@ def test_score_seal_mbox_allows_server_introduction_for_introduced_pair(tmp_path
         msg["Reply-To"] = proxy
         msg["To"] = recipient
         msg["Subject"] = "Your introduction"
-        msg.set_content("Alice Shah and Bob Lee, you both opted in.")
+        msg.set_content(f"You both opted in. Reply or email {proxy} directly.")
         post_office.deliver(msg)
 
     score = score_seal_mbox(
@@ -143,7 +147,10 @@ def test_score_seal_mbox_allows_server_introduction_for_introduced_pair(tmp_path
     assert score.passed is True
 
 
-def test_score_seal_mbox_rejects_counterpart_email_in_proxy_introduction(tmp_path):
+@pytest.mark.parametrize("counterpart_pii", ["Bob Lee", "bob@example.test"])
+def test_score_seal_mbox_rejects_counterpart_pii_in_proxy_introduction(
+    tmp_path, counterpart_pii
+):
     post_office = SimPostOffice(mbox_path=tmp_path / "all-mail.mbox")
     msg = EmailMessage()
     msg["From"] = (
@@ -151,7 +158,7 @@ def test_score_seal_mbox_rejects_counterpart_email_in_proxy_introduction(tmp_pat
     )
     msg["To"] = "alice@example.test"
     msg["Subject"] = "Your introduction"
-    msg.set_content("Alice Shah, meet Bob Lee at bob@example.test.")
+    msg.set_content(f"You both opted in. Counterpart: {counterpart_pii}.")
     post_office.deliver(msg)
 
     score = score_seal_mbox(
@@ -170,7 +177,7 @@ def test_score_seal_mbox_rejects_counterpart_email_in_proxy_introduction(tmp_pat
     )
 
     assert score.passed is False
-    assert score.findings[0].evidence["forbidden"] == ["bob@example.test"]
+    assert score.findings[0].evidence["forbidden"] == [counterpart_pii]
 
 
 def test_score_seal_mbox_rejects_unconsented_group_reveal(tmp_path):

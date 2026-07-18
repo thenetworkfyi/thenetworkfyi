@@ -119,6 +119,8 @@ def proposal(**overrides):
     values = {
         "person_a_id": "alice",
         "person_b_id": "bob",
+        "person_a_gist": "builds storage systems",
+        "person_b_gist": "operates distributed databases",
         "reply_token": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
     }
     values.update(overrides)
@@ -313,10 +315,10 @@ def test_both_authenticated_consents_trigger_server_composed_proxy_email():
     ]
     assert len({memory.summary for memory in result.sent_email_memories}) == 1
     group_send.assert_called_once_with(
-        person_a_name="Alice",
         person_a_email="alice@example.com",
-        person_b_name="Bob",
         person_b_email="bob@example.com",
+        person_a_gist="builds storage systems",
+        person_b_gist="operates distributed databases",
         reply_token="aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
         trace_id=None,
     )
@@ -396,6 +398,8 @@ def test_declined_pair_is_reproposed_after_cooldown():
         )
 
     assert result == {"status": "proposed"}
+    assert session.proposal.person_a_gist == "builds storage systems"
+    assert session.proposal.person_b_gist == "operates distributed databases"
     assert session.proposal.status == "proposed"
     assert session.proposal.declined_at is None
     assert session.proposal.reply_token != original_token
@@ -611,6 +615,34 @@ def test_proposal_notifications_contain_only_supplied_gists_not_identity_data():
         call.kwargs["fixed_template"] is FixedEmailTemplate.CONSENT_REQUEST
         for call in send.call_args_list
     )
+
+
+def test_proposal_resanitizes_gists_before_persisting_or_sending(monkeypatch):
+    session = FakeSession(people=people())
+
+    def redact(text):
+        return (
+            text.replace("Alice", "[name]")
+            .replace("Bob", "[name]")
+            .replace("bob@example.com", "[email]")
+        )
+
+    monkeypatch.setattr("thenetwork.introductions.sanitize_text", redact)
+    with patch("thenetwork.introductions.send_reply") as send:
+        result = propose_pair(
+            sender_person_id="alice",
+            other_person_id="bob",
+            sender_gist="Alice builds storage systems",
+            other_gist="Bob operates databases at bob@example.com",
+            session_factory=factory(session),
+        )
+
+    assert result == {"status": "proposed"}
+    assert session.proposal.person_a_gist == "[name] builds storage systems"
+    assert session.proposal.person_b_gist == "[name] operates databases at [email]"
+    contexts = [call.kwargs["fixed_context"] for call in send.call_args_list]
+    assert contexts[0].counterpart_gist == session.proposal.person_b_gist
+    assert contexts[1].counterpart_gist == session.proposal.person_a_gist
 
 
 def test_body_token_consents_when_subject_is_from_another_thread():

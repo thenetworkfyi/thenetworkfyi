@@ -74,9 +74,10 @@ introduction from that proxy. Replies take this path:
 Dovecot catch-all -> IMAP poll -> process_email pair authorization -> SES/SMTP -> counterpart
 ```
 
-Only real email addresses are hidden. The fixed introduction names both participants,
-and relay subject/body content passes through unchanged within the normal intake bounds.
-Revocation immediately makes subsequent lookups fail closed.
+The fixed introduction omits participant names and real addresses, prints the relay
+address in the body, and includes a recap made from the proposal's sanitized gist
+snapshots. Relay subject/body content passes through unchanged within the normal intake
+bounds. Revocation immediately makes subsequent lookups fail closed.
 
 The full production procedure, including catch-all delivery, original-recipient headers,
 sender-authentication results, SES identity/DKIM/SMTP setup, and deployment probes, is in
