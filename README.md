@@ -218,6 +218,9 @@ the database's `Vector(1536)` column.
 - An IMAP/SMTP mailbox for the agent
 - A Dovecot catch-all for the relay domain, delivered into that IMAP mailbox
 
+For the complete mail-host, SES, application, and deployment validation procedure, see
+[Hidden-address email relay setup](docs/email-relay-setup.md).
+
 ### 1. Configure
 
 Create a `.env` in the project root. Defaults live in `thenetwork/settings.py`;
@@ -251,6 +254,8 @@ SMTP_PORT=587
 EMAIL_FROM=agent@example.com
 # Dovecot catch-all domain; SES must be allowed to send From this domain
 RELAY_DOMAIN=relay.example.com
+REQUIRE_SENDER_AUTH=true
+TRUSTED_AUTHSERV_ID=mx1.example.com
 
 # Tuning
 WORKER_CONCURRENCY=4
