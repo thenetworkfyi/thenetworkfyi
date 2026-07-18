@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from email.utils import getaddresses
+from typing import Literal
 from uuid import uuid4
 
 from bs4 import BeautifulSoup
@@ -33,6 +34,7 @@ _SAFE_AUTHSERV_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
 _WARNED_UNRECOGNIZED_AUTH_RESULTS: set[tuple[str, tuple[str, ...]]] = set()
 
 _HTML_HIDDEN_ELEMENTS = ("head", "script", "style", "template", "title")
+MailboxKind = Literal["primary", "relay"]
 
 
 @dataclass
@@ -222,7 +224,30 @@ def _first_header(msg, name: str) -> str | None:
     return values[0]
 
 
-def poll_unseen() -> list[InboundMessage]:
+def _mailbox_credentials(mailbox: MailboxKind) -> tuple[str, str]:
+    settings = get_settings()
+    if mailbox == "relay":
+        if not settings.relay_imap_account or not settings.relay_imap_password:
+            raise ValueError(
+                "RELAY_IMAP_ACCOUNT and RELAY_IMAP_PASSWORD must both be configured"
+            )
+        return settings.relay_imap_account, settings.relay_imap_password
+    return settings.imap_account, settings.imap_password
+
+
+def relay_mailbox_configured() -> bool:
+    """Return whether a distinct relay inbox has been configured."""
+    settings = get_settings()
+    account_set = bool(settings.relay_imap_account)
+    password_set = bool(settings.relay_imap_password)
+    if account_set != password_set:
+        raise ValueError(
+            "RELAY_IMAP_ACCOUNT and RELAY_IMAP_PASSWORD must both be configured"
+        )
+    return account_set
+
+
+def poll_unseen(*, mailbox: MailboxKind = "primary") -> list[InboundMessage]:
     """Fetch unseen messages WITHOUT marking them seen.
 
     Caller is responsible for calling mark_messages_seen() after successfully
@@ -231,12 +256,17 @@ def poll_unseen() -> list[InboundMessage]:
     Skips automatic messages and self-sends to prevent mail loops.
     """
     s = get_settings()
+    account, password = _mailbox_credentials(mailbox)
     messages: list[InboundMessage] = []
     # Outbound replies carry From: email_from, not the polled imap_account,
     # so that's the address to match to skip our own replies bouncing back.
-    own_addresses = {s.imap_account.lower(), s.email_from.lower()}
+    own_addresses = {
+        address.lower()
+        for address in (s.imap_account, s.relay_imap_account, s.email_from)
+        if address
+    }
 
-    with MailBox(s.imap_host, s.imap_port).login(s.imap_account, s.imap_password) as mb:
+    with MailBox(s.imap_host, s.imap_port).login(account, password) as mb:
         mb.email_message_class = _RawCapturingMailMessage
         for msg in mb.fetch(AND(seen=False), mark_seen=False, bulk=True):
             if _is_auto_message(msg):
@@ -308,10 +338,11 @@ def poll_unseen() -> list[InboundMessage]:
     return messages
 
 
-def mark_messages_seen(uids: list[str]) -> None:
+def mark_messages_seen(uids: list[str], *, mailbox: MailboxKind = "primary") -> None:
     """Mark specific message UIDs as seen. Call after successful job enqueue."""
     if not uids:
         return
     s = get_settings()
-    with MailBox(s.imap_host, s.imap_port).login(s.imap_account, s.imap_password) as mb:
+    account, password = _mailbox_credentials(mailbox)
+    with MailBox(s.imap_host, s.imap_port).login(account, password) as mb:
         mb.flag(uids, [MailMessageFlags.SEEN], True)

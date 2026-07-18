@@ -23,6 +23,8 @@ TEST_LLM_JUDGE_API_KEY=     # rather than falling back to pydantic_evals' own op
 IMAP_ACCOUNT=agent@example.com  # polled for inbound
 IMAP_PASSWORD=...
 IMAP_HOST=imap.gmail.com
+RELAY_IMAP_ACCOUNT=             # optional separate relay inbox; same IMAP host/port
+RELAY_IMAP_PASSWORD=            # set both relay credentials together
 SMTP_ACCOUNT=agent@example.com  # SMTP login credential; can be a different account/provider
 SMTP_PASSWORD=...
 SMTP_HOST=smtp.gmail.com
@@ -56,10 +58,13 @@ sent mail visible end-to-end; the append is best-effort and its failure never fa
 send job.
 
 `RELAY_DOMAIN` must be a bare domain already handled by the deployment's Dovecot
-catch-all. Deliver every address at that domain into `IMAP_ACCOUNT`; the producer reads
-the original `hidden-...` recipient from Dovecot's delivery headers/`To` header and puts
-it in the durable job. Configure SES/SMTP to send from the same domain. No application
-port, webhook, SES inbound rule, or separate receiving process is required.
+catch-all. Deliver every address at that domain into `RELAY_IMAP_ACCOUNT` when the
+separate relay credentials are configured, otherwise into `IMAP_ACCOUNT`. The producer
+polls each configured inbox, reads the original `hidden-...` recipient from Dovecot's
+delivery headers/`To` header, and puts it in the durable job. The separate relay inbox
+uses the same `IMAP_HOST` and `IMAP_PORT`. Configure SES/SMTP to send from the same
+domain. No application port, webhook, SES inbound rule, or separate receiving process
+is required.
 
 After mutual consent, the existing `IntroductionConsent.reply_token` formats the stable
 pair address as `hidden-<token>@RELAY_DOMAIN`. Each participant receives a separate

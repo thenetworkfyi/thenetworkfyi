@@ -7,11 +7,12 @@ introduction. Each pair receives one stable address:
 hidden-<introduction-reply-token>@relay.example.com
 ```
 
-The existing mail host accepts every address at `relay.example.com` into the agent's
-normal IMAP mailbox. The existing worker polls that mailbox, authorizes the sender and
-pair in server code, and sends one message to the other participant through SES SMTP.
-SES is outbound-only. There is no SES receiving rule, webhook, public application port,
-or separate inbound service.
+The existing mail host accepts every address at `relay.example.com` into either the
+agent's normal IMAP mailbox or a separate relay mailbox on the same IMAP host. The
+worker polls each configured mailbox, authorizes the sender and pair in server code, and
+sends one message to the other participant through SES SMTP. SES is outbound-only.
+There is no SES receiving rule, webhook, public application port, or separate inbound
+service.
 
 This feature hides participant email addresses from each other. It does not hide names
 or rewrite the subject or body.
@@ -23,6 +24,7 @@ Choose these values before changing either system:
 | Name | Example | Purpose |
 |---|---|---|
 | Primary mailbox | `agent@example.com` | Existing mailbox polled over IMAP |
+| Relay mailbox | `relay-inbox@relay.example.com` | Optional separate catch-all destination |
 | Relay domain | `relay.example.com` | Catch-all domain used for pair aliases |
 | SES Region | `us-west-2` | Region containing the verified identity and SMTP credentials |
 | SES SMTP endpoint | `email-smtp.us-west-2.amazonaws.com` | Regional STARTTLS endpoint |
@@ -40,15 +42,16 @@ whole subdomain, including dynamically generated `hidden-*` addresses.
 2. Configure one domain catch-all/default mailbox mapping:
 
    ```text
-   *@relay.example.com -> agent@example.com
+   *@relay.example.com -> relay-inbox@relay.example.com
    ```
 
 3. Do not create one mailbox or alias per `hidden-*` address. The application creates
    pair addresses from existing database tokens; the mail host only needs the wildcard
    delivery rule.
-4. Deliver catch-all messages into the same INBOX read by `IMAP_ACCOUNT`. Do not forward
-   them to a second mailbox if forwarding would replace authentication results or lose
-   the original recipient.
+4. Deliver catch-all messages directly into the INBOX read by
+   `RELAY_IMAP_ACCOUNT`. If separate relay credentials are not configured, deliver them
+   into `IMAP_ACCOUNT` instead. Do not forward between mailboxes if forwarding would
+   replace authentication results or lose the original recipient.
 
 The exact catch-all control belongs to the existing mail-host configuration. For a
 hosted Dovecot service, use its default-address/catch-all control. A common self-managed
@@ -56,7 +59,7 @@ Postfix-to-Dovecot installation expresses the equivalent rule in its existing vi
 alias backend, for example:
 
 ```text
-@relay.example.com    agent@example.com
+@relay.example.com    relay-inbox@relay.example.com
 ```
 
 After changing a file-backed Postfix map, rebuild that map and reload Postfix using the
@@ -123,8 +126,9 @@ provider verdict.
 Before changing the application, verify all of the following:
 
 - `dig +short MX relay.example.com` resolves to the intended existing mail host.
-- Mail to a previously nonexistent address at the relay domain arrives in
-  `IMAP_ACCOUNT`.
+- Mail to a previously nonexistent address at the relay domain arrives in the
+  configured relay inbox (`RELAY_IMAP_ACCOUNT`, or `IMAP_ACCOUNT` when no separate
+  relay mailbox is configured).
 - Raw message source preserves the original recipient in a recognized header.
 - A raw message confirms that the third-party provider supplies a first
   `Authentication-Results` header with a passing `dkim`, `spf`, or `auth` result for a
@@ -186,12 +190,17 @@ Add the relay and sender-authentication values to the production `.env` alongsid
 existing mailbox configuration:
 
 ```dotenv
-# Existing Dovecot mailbox used for all inbound agent and relay mail.
+# Existing Dovecot mailbox used for ordinary inbound agent mail.
 IMAP_ACCOUNT=agent@example.com
 IMAP_PASSWORD=...
 IMAP_HOST=imap.example.com
 IMAP_PORT=993
 IMAP_SENT_FOLDER=Sent
+
+# Optional separate relay catch-all mailbox on the same IMAP host/port. Set both
+# values together; leave both empty when relay mail is delivered to IMAP_ACCOUNT.
+RELAY_IMAP_ACCOUNT=relay-inbox@relay.example.com
+RELAY_IMAP_PASSWORD=...
 
 # Amazon SES SMTP credentials and regional endpoint.
 SMTP_ACCOUNT=...
@@ -216,8 +225,8 @@ domain. It still recognizes malformed `hidden-*` addresses as relay attempts so 
 fail closed instead of reaching the agent.
 
 No schema migration or new service is required for this feature. Pair aliases reuse
-`IntroductionConsent.reply_token`; the worker already polls IMAP and sends through SMTP.
-For a normal deployment:
+`IntroductionConsent.reply_token`; the worker polls each configured IMAP inbox and sends
+through SMTP. For a normal deployment:
 
 ```bash
 docker compose up -d --build
@@ -295,7 +304,8 @@ agent path. A non-hidden address at the relay domain is not a pair alias.
 ## Completion checklist
 
 - [ ] Relay-domain MX points to the existing mail host.
-- [ ] Domain catch-all delivers to `IMAP_ACCOUNT`.
+- [ ] Domain catch-all delivers to `RELAY_IMAP_ACCOUNT`, or to `IMAP_ACCOUNT` when no
+      separate relay mailbox is configured.
 - [ ] Original hidden recipient survives delivery in a recognized header.
 - [ ] Raw source confirms that the third-party IMAP provider supplies a usable first
       `Authentication-Results` verdict.

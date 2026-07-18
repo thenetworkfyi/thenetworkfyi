@@ -1051,7 +1051,7 @@ def test_intake_logs_header_metadata_without_values(caplog):
         raw_message_b64=None,
         trace_id=message.trace_id,
     )
-    mark_seen.assert_called_once_with(["123"])
+    mark_seen.assert_called_once_with(["123"], mailbox="primary")
     serialized = "\n".join(record.message for record in caplog.records)
     assert message.sender not in serialized
     assert message.subject not in serialized
@@ -1239,7 +1239,7 @@ def test_intake_skips_duplicate_message_id_without_reenqueueing(caplog):
 
     process_email.defer.assert_not_called()
     mark_processed.assert_not_called()
-    mark_seen.assert_called_once_with(["123"])
+    mark_seen.assert_called_once_with(["123"], mailbox="primary")
     serialized = "\n".join(record.message for record in caplog.records)
     assert message.sender not in serialized
     assert message.subject not in serialized
@@ -1275,7 +1275,7 @@ def test_intake_rejects_bad_shape_without_enqueueing_or_replying(caplog):
         assert _poll_and_enqueue() == 0
 
     process_email.defer.assert_not_called()
-    mark_seen.assert_called_once_with(["123"])
+    mark_seen.assert_called_once_with(["123"], mailbox="primary")
     serialized = "\n".join(record.message for record in caplog.records)
     assert message.sender not in serialized
     assert message.subject not in serialized

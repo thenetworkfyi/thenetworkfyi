@@ -78,9 +78,7 @@ class _FakeMailBox:
         self.delete = MagicMock()
         self.expunge = MagicMock()
         self.copy = MagicMock()
-
-    def login(self, user: str, password: str) -> "_FakeMailBox":
-        return self
+        self.login = MagicMock(return_value=self)
 
     def __enter__(self) -> "_FakeMailBox":
         return self
@@ -121,6 +119,34 @@ def test_poll_unseen_fetches_with_mark_seen_false(fake_mailbox: _FakeMailBox):
     fake_mailbox.fetch.assert_called_once()
     _, kwargs = fake_mailbox.fetch.call_args
     assert kwargs["mark_seen"] is False
+
+
+def test_poll_unseen_uses_separate_relay_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    settings = _settings()
+    settings.relay_imap_account = "relay@relay.example.com"
+    settings.relay_imap_password = "relay-secret"
+    box = _FakeMailBox(settings.imap_host, settings.imap_port)
+    monkeypatch.setattr(inbound, "MailBox", lambda host, port: box)
+    monkeypatch.setattr(inbound, "get_settings", lambda: settings)
+
+    inbound.poll_unseen(mailbox="relay")
+
+    box.login.assert_called_once_with(
+        settings.relay_imap_account, settings.relay_imap_password
+    )
+
+
+def test_relay_mailbox_configuration_requires_both_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    settings = _settings()
+    settings.relay_imap_account = "relay@relay.example.com"
+    monkeypatch.setattr(inbound, "get_settings", lambda: settings)
+
+    with pytest.raises(ValueError, match="must both be configured"):
+        inbound.relay_mailbox_configured()
 
 
 def test_poll_unseen_caps_subject(fake_mailbox: _FakeMailBox):

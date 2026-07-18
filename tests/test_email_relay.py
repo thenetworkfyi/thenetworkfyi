@@ -61,6 +61,21 @@ def test_settings_exposes_relay_domain(monkeypatch):
     assert settings.relay_domain == DOMAIN
 
 
+def test_settings_exposes_relay_imap_credentials(monkeypatch):
+    from thenetwork.settings import Settings
+
+    monkeypatch.setenv("RELAY_IMAP_ACCOUNT", "relay@relay.example.com")
+    monkeypatch.setenv("RELAY_IMAP_PASSWORD", "relay-secret")
+    settings = Settings(
+        agent_model="test:model",
+        small_agent_model="test:model",
+        embed_model="test:embed",
+    )
+
+    assert settings.relay_imap_account == "relay@relay.example.com"
+    assert settings.relay_imap_password == "relay-secret"
+
+
 class _Result:
     def __init__(self, value):
         self.value = value
