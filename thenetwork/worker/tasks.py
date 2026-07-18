@@ -268,7 +268,7 @@ async def process_email(
     Admin requests are handled directly; regular mail goes to the agent.
     Agent runs with sender's existing user_id (None if first contact).
 
-    ``sender_authenticated`` reflects the receiving server's DKIM/SPF
+    ``sender_authenticated`` reflects the third-party IMAP provider's DKIM/SPF
     verdict on the From: header (see email/inbound.py). An unauthenticated
     From is never resolved to an existing Person - that header alone is
     spoofable, and treating a spoofed sender as a known identity would let

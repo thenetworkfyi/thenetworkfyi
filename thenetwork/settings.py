@@ -159,11 +159,11 @@ class Settings(BaseSettings):
 
     # Sender authentication: the From: header alone is spoofable (no envelope
     # check happens over IMAP), so trust it for Person resolution / self-
-    # registration only when the receiving mail server's own
+    # registration only when the third-party IMAP provider's first
     # Authentication-Results header reports dkim=pass, spf=pass, or auth=pass.
     # Disable only for dev/test environments where inbound mail carries no such
-    # header. Only the header closest to the top of the message (added last,
-    # i.e. by your own receiving server) is trusted.
+    # header. Only the header closest to the top of the message is evaluated;
+    # deployments must confirm that the provider adds its verdict there.
     require_sender_auth: bool = True
 
     # Growth: footer appended to outbound user-facing replies (mailer-level,

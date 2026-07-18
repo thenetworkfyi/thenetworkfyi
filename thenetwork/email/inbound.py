@@ -43,9 +43,9 @@ class InboundMessage:
     body: str
     # RFC 3834 loop prevention headers, if present
     auto_submitted: str | None
-    # True if the receiving mail server's own Authentication-Results header
-    # reports dkim=pass, spf=pass, or auth=pass for this message. The From:
-    # header alone is spoofable (imap-tools has no access to the SMTP
+    # True if the third-party IMAP provider's first Authentication-Results
+    # header reports dkim=pass, spf=pass, or auth=pass for this message. The
+    # From: header alone is spoofable (imap-tools has no access to the SMTP
     # envelope), so callers must not trust `sender` for identity resolution
     # unless this is True.
     sender_authenticated: bool
@@ -155,12 +155,12 @@ def _html_to_text(html: str) -> str:
 
 
 def _is_sender_authenticated(msg) -> bool:
-    """True if the receiving server vouches for this message's sender auth.
+    """True if the third-party IMAP provider vouches for the sender auth.
 
     Trusts only the Authentication-Results header nearest the top of the
-    message - the one added last, by our own receiving MTA - since every
-    intermediate hop pushes prior (potentially attacker-forged) copies of
-    this header further down.
+    message - the one the deployment compatibility check expects the
+    provider's receiving MTA to add last - since every intermediate hop pushes
+    prior (potentially attacker-forged) copies of this header further down.
     """
     s = get_settings()
     if not s.require_sender_auth:
