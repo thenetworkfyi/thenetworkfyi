@@ -47,6 +47,11 @@ thin wrapper over a well-adopted library, swappable by config.
   world-state outcomes are not exceptions for the model to retry; pydantic-ai
   gets one retry solely for argument validation. This keeps rate limits,
   suppression, ownership checks, and exhausted caps explicit and bounded.
+- **Mutating tool replay is scoped to one model run and keyed server-side.** Pydantic retry
+  prompts can cause a model to repeat already-completed calls, so the dependency container
+  caches completed results by canonical validated arguments and occurrence. Do not accept a
+  model-supplied idempotency key, and do not turn this narrow retry boundary into a general
+  domain operation table.
 - **Events are a narrow operational exception to the freeform-only substrate.** Event
   meaning remains freeform, but recommendations require server-enforced stable identity,
   ownership, expiry/cancellation, delivery deduplication, and an event-only opt-out. The

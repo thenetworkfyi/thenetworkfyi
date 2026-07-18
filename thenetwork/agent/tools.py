@@ -14,12 +14,17 @@ are final for this run. Pydantic AI gets one retry only for argument validation.
 
 from __future__ import annotations
 
+import hashlib
+import inspect
+import json
 from collections.abc import Callable
 from datetime import datetime, timezone
+from functools import wraps
 from typing import Any
 
 from limits import parse, strategies
 from pydantic_ai import RunContext
+from pydantic_ai.messages import RetryPromptPart
 from sqlalchemy import func
 from sqlmodel import select
 
@@ -110,6 +115,86 @@ def _tool_result(result: dict[str, Any]) -> dict[str, Any]:
         audit_fields["tool_reason"] = result["reason"]
     audit_span_completion(**audit_fields)
     return result
+
+
+def _retry_generation(ctx: RunContext[AgentDeps]) -> int:
+    """Count server-created retry prompts visible before this tool call."""
+    return sum(
+        isinstance(part, RetryPromptPart)
+        for message in getattr(ctx, "messages", ())
+        for part in getattr(message, "parts", ())
+    )
+
+
+def _tool_argument_fingerprint(
+    tool_name: str,
+    signature: inspect.Signature,
+    ctx: RunContext[AgentDeps],
+    args: tuple[Any, ...],
+    kwargs: dict[str, Any],
+) -> str:
+    """Hash validated arguments without retaining or logging their raw values."""
+    bound = signature.bind(ctx, *args, **kwargs)
+    bound.apply_defaults()
+    arguments = {
+        name: value for name, value in bound.arguments.items() if name != "ctx"
+    }
+    payload = json.dumps(
+        {"tool_name": tool_name, "arguments": arguments},
+        sort_keys=True,
+        separators=(",", ":"),
+        default=_replay_json_default,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _replay_json_default(value: Any) -> str:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    raise TypeError(f"unsupported replay argument: {type(value).__name__}")
+
+
+def _idempotent_mutation(function):
+    """Replay completed mutating calls after a model retry prompt.
+
+    Occurrence numbers preserve intentionally repeated identical calls in the
+    original generation. A later retry generation maps the same ordered calls
+    back to their completed results while differently shaped calls still run.
+    The lock also prevents concurrent duplicate calls from racing the cache.
+    """
+    signature = inspect.signature(function)
+    tool_name = function.__name__
+
+    @wraps(function)
+    async def wrapped(ctx: RunContext[AgentDeps], *args, **kwargs):
+        fingerprint = _tool_argument_fingerprint(
+            tool_name, signature, ctx, args, kwargs
+        )
+        generation = _retry_generation(ctx)
+        async with ctx.deps.mutating_tool_lock:
+            count_key = (generation, fingerprint)
+            occurrence = ctx.deps.mutating_tool_generation_counts.get(count_key, 0)
+            ctx.deps.mutating_tool_generation_counts[count_key] = occurrence + 1
+            replay_key = (fingerprint, occurrence)
+            if generation > 0 and replay_key in ctx.deps.mutating_tool_results:
+                replay = {
+                    "status": "replayed",
+                    "tool_name": tool_name,
+                    "original_result": ctx.deps.mutating_tool_results[replay_key],
+                }
+                with audit_span("agent.tool", tool_name=tool_name):
+                    audit_event(
+                        "agent.tool.replayed",
+                        tool_name=tool_name,
+                        outcome="replayed",
+                    )
+                    return _tool_result(replay)
+
+            result = await function(ctx, *args, **kwargs)
+            ctx.deps.mutating_tool_results[replay_key] = result
+            return result
+
+    return wrapped
 
 
 def _introduction_result(result: dict[str, Any]) -> dict[str, Any]:
@@ -260,6 +345,7 @@ async def _embed_memory_for_write(memory: Memory, session) -> None:
     memory.embedding = await embed_text(memory.text)
 
 
+@_idempotent_mutation
 async def remember(
     ctx: RunContext[AgentDeps],
     text: str,
@@ -353,6 +439,7 @@ async def remember(
         )
 
 
+@_idempotent_mutation
 async def forget(ctx: RunContext[AgentDeps], memory_id: str) -> dict[str, str]:
     """Delete a memory by ID.
 
@@ -454,6 +541,7 @@ async def search(
         return results
 
 
+@_idempotent_mutation
 async def create_event(
     ctx: RunContext[AgentDeps],
     text: str,
@@ -512,6 +600,7 @@ async def create_event(
         return _tool_result({"status": "created", **projection})
 
 
+@_idempotent_mutation
 async def update_event(
     ctx: RunContext[AgentDeps],
     event_id: str,
@@ -579,6 +668,7 @@ async def update_event(
         return _tool_result({"status": "updated", **projection})
 
 
+@_idempotent_mutation
 async def cancel_event(ctx: RunContext[AgentDeps], event_id: str) -> dict[str, Any]:
     """Cancel an authenticated sender's event; other users cannot mutate it."""
     with audit_span("agent.tool", tool_name="cancel_event"):
@@ -642,6 +732,7 @@ async def search_events(
         ]
 
 
+@_idempotent_mutation
 async def stop_event_recommendations(
     ctx: RunContext[AgentDeps],
 ) -> dict[str, Any]:
@@ -669,6 +760,7 @@ async def stop_event_recommendations(
         return _tool_result({"status": status})
 
 
+@_idempotent_mutation
 async def resume_event_recommendations(
     ctx: RunContext[AgentDeps],
 ) -> dict[str, Any]:
@@ -696,6 +788,7 @@ async def resume_event_recommendations(
         return _tool_result({"status": status})
 
 
+@_idempotent_mutation
 async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
     """Flag this email for human review and notify admin.
 
@@ -780,6 +873,7 @@ async def no_action(ctx: RunContext[AgentDeps], reason: str) -> str:
         return ""
 
 
+@_idempotent_mutation
 async def register_person(
     ctx: RunContext[AgentDeps],
     name: str,
@@ -1035,6 +1129,7 @@ async def _dispatch_email(
         return _tool_result({"status": "sent"})
 
 
+@_idempotent_mutation
 async def reply_to_sender(
     ctx: RunContext[AgentDeps],
     subject: str,
@@ -1074,6 +1169,7 @@ async def reply_to_sender(
     )
 
 
+@_idempotent_mutation
 async def send_outreach(
     ctx: RunContext[AgentDeps],
     recipient_user_id: str,
@@ -1108,6 +1204,7 @@ async def send_outreach(
     )
 
 
+@_idempotent_mutation
 async def send_event_recommendation(
     ctx: RunContext[AgentDeps],
     event_id: str,
@@ -1214,6 +1311,7 @@ async def send_event_recommendation(
         return result
 
 
+@_idempotent_mutation
 async def propose_introduction(
     ctx: RunContext[AgentDeps],
     other_person_id: str,
