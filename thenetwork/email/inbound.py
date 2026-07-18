@@ -12,6 +12,7 @@ from imap_tools import AND, MailBox, MailMessageFlags
 from imap_tools.message import MailMessage
 
 from thenetwork.audit import audit_warning_event
+from thenetwork.email.relay import parse_relay_address
 from thenetwork.email.threading import clean_message_id, clean_references
 from thenetwork.settings import get_settings
 
@@ -117,14 +118,15 @@ def _delivery_recipient(msg, relay_domain: str) -> str | None:
     for name in ("x-original-to", "delivered-to", "envelope-to", "to"):
         header_values.extend(msg.headers.get(name) or [])
 
-    addresses = [address for _, address in getaddresses(header_values) if address]
-    relay_suffix = f"@{relay_domain.strip().lower().rstrip('.')}"
-    if relay_domain.strip():
-        addresses.sort(key=lambda address: not address.lower().endswith(relay_suffix))
+    addresses = [
+        address
+        for _, address in getaddresses(header_values)
+        if address and len(address) <= MAX_RECIPIENT_CHARS
+    ]
     for address in addresses:
-        if len(address) <= MAX_RECIPIENT_CHARS:
+        if parse_relay_address(address, relay_domain) is not None:
             return address
-    return None
+    return addresses[0] if addresses else None
 
 
 def is_near_empty_body(body: str) -> bool:
