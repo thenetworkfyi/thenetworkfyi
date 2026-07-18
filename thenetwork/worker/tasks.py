@@ -42,7 +42,14 @@ from thenetwork.email.outbound import (
     _thread_headers,
     notify_admins,
     reply_subject,
+    send_relay_email,
     send_reply,
+)
+from thenetwork.email.relay import (
+    build_relay_address,
+    is_relay_address_candidate,
+    parse_relay_address,
+    resolve_relay_destination,
 )
 from thenetwork.email.render import (
     FirstContactWelcomeEmailContext,
@@ -290,10 +297,15 @@ async def process_email(
                 audit_event("worker.message_rejected", reason="banned")
                 return
 
+        relay_domain = get_settings().relay_domain if recipient_address else ""
+        relay_candidate = is_relay_address_candidate(recipient_address, relay_domain)
+
         try:
             body = cap_body(body)
         except BodyTooLargeError:
             audit_event("worker.message_rejected", reason=REJECT_BODY_OVERSIZE)
+            if relay_candidate:
+                return
             _send_infrastructure_rejection_reply(
                 sender_email=sender_email,
                 subject=subject,
@@ -305,6 +317,35 @@ async def process_email(
                 inbound_date=inbound_date,
                 trace_id=trace_id,
             )
+            return
+
+        if relay_candidate:
+            if not check_rate_limit(
+                sender_email, sender_authenticated=sender_authenticated
+            ):
+                audit_event("worker.message_rejected", reason=REJECT_RATE_LIMIT)
+                return
+            token = parse_relay_address(recipient_address or "", relay_domain)
+            if token is None:
+                audit_event("worker.message_rejected", reason="relay_invalid")
+                return
+            destination = resolve_relay_destination(
+                recipient_address=recipient_address or "",
+                sender_email=sender_email,
+                sender_authenticated=sender_authenticated,
+                relay_domain=relay_domain,
+            )
+            if destination is None:
+                audit_event("worker.message_rejected", reason="relay_forbidden")
+                return
+            send_relay_email(
+                to_address=destination,
+                proxy_address=build_relay_address(token, relay_domain),
+                subject=subject,
+                body_text=body,
+                trace_id=trace_id,
+            )
+            audit_event("worker.relay_forwarded", outcome="success")
             return
 
         if is_near_empty_body(body):

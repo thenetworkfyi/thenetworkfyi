@@ -57,6 +57,23 @@ def parse_relay_address(address: str, relay_domain: str) -> str | None:
     return canonical if token == canonical else None
 
 
+def is_relay_address_candidate(address: str | None, relay_domain: str) -> bool:
+    """Identify catch-all traffic that must fail closed as a relay attempt."""
+
+    if not address:
+        return False
+    try:
+        domain = _normalise_domain(relay_domain)
+    except ValueError:
+        return False
+    if address != address.strip() or address.count("@") != 1:
+        return False
+    local_part, candidate_domain = address.rsplit("@", 1)
+    return local_part.lower().startswith(_PREFIX) and (
+        candidate_domain.lower().rstrip(".") == domain
+    )
+
+
 def resolve_relay_destination(
     *,
     recipient_address: str,
