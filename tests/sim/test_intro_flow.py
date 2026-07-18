@@ -39,6 +39,8 @@ async def test_real_process_intro_flow_records_consent_reveal_and_revocation(tmp
     completed = events[-1]
     assert completed["event"] == "sim.run_completed"
     assert completed["final_consent_state"] == "revoked"
+    assert completed["relay_bidirectional"] is True
+    assert completed["revoked_relay_blocked"] is True
     assert completed["reproposal_blocked"] is True
     assert completed["tier1_passed"] is True
 
@@ -47,14 +49,41 @@ async def test_real_process_intro_flow_records_consent_reveal_and_revocation(tmp
         messages = list(box)
     finally:
         box.close()
-    group_messages = [
+    introduction_messages = [
         message for message in messages if message.get("Subject") == "Your introduction"
     ]
-    assert len(group_messages) == 1
-    assert {address.strip() for address in str(group_messages[0]["To"]).split(",")} == {
+    assert len(introduction_messages) == 2
+    assert {str(message["To"]) for message in introduction_messages} == {
         "alice.intro@example.test",
         "bob.intro@example.test",
     }
+    proxy_addresses = {str(message["Reply-To"]) for message in introduction_messages}
+    assert len(proxy_addresses) == 1
+    (proxy_address,) = proxy_addresses
+    assert proxy_address.startswith("hidden-")
+    assert proxy_address.endswith("@relay.thenetwork.test")
+    assert {str(message["From"]) for message in introduction_messages} == {
+        f"The Network <{proxy_address}>"
+    }
+
+    relay_events = [event for event in events if event["event"] == "sim.relay_delivery"]
+    assert relay_events == [
+        {
+            "delivered": True,
+            "direction": "alice_to_bob",
+            "event": "sim.relay_delivery",
+        },
+        {
+            "delivered": True,
+            "direction": "bob_to_alice",
+            "event": "sim.relay_delivery",
+        },
+        {
+            "delivered": False,
+            "direction": "alice_to_bob_after_revoke",
+            "event": "sim.relay_delivery",
+        },
+    ]
 
     audit_events = [
         json.loads(line) for line in artifacts.audit_path.read_text().splitlines()

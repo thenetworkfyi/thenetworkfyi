@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import mailbox
 from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid
@@ -42,6 +43,7 @@ from thenetwork.sim.scoring.scoring import (
     PersonaPII,
     score_seal_mbox,
 )
+from thenetwork.settings import get_settings
 from thenetwork.worker.tasks import process_email
 
 
@@ -64,6 +66,7 @@ INTRO_FLOW_PERSONAS = (
 
 _ALICE_GIST = "Builds privacy-preserving developer tools and seeks a collaborator."
 _BOB_GIST = "Builds secure developer infrastructure and seeks a collaborator."
+_RELAY_DOMAIN = "relay.thenetwork.test"
 
 
 @dataclass(frozen=True)
@@ -138,6 +141,7 @@ async def _record_intro_flow(
     with (
         audit_jsonl_file(artifacts.audit_path),
         override_rate_limits(10_000),
+        _override_relay_domain(),
         capture_outbound(post_office),
     ):
         _report(progress, "proposing anonymous match")
@@ -185,6 +189,51 @@ async def _record_intro_flow(
             )
             events.write("sim.introduction_state", status=_consent_status())
 
+        alice_intro = _introduction_message(post_office, alice.email)
+        bob_intro = _introduction_message(post_office, bob.email)
+        proxy_address = str(alice_intro.get("Reply-To", ""))
+        if not proxy_address or str(bob_intro.get("Reply-To", "")) != proxy_address:
+            raise RuntimeError("introduction messages did not share one proxy address")
+
+        relay_exchanges = (
+            (
+                4,
+                INTRO_FLOW_PERSONAS[0],
+                bob.email,
+                "I would like to compare our approaches to secure developer tools.",
+            ),
+            (
+                5,
+                INTRO_FLOW_PERSONAS[1],
+                alice.email,
+                "Agreed. I can share notes on the infrastructure tradeoffs.",
+            ),
+        )
+        for tick, persona, destination, relay_body in relay_exchanges:
+            before = len(post_office.messages_for(destination))
+            _report(progress, f"{persona.name} replying through the proxy")
+            await _deliver_real_process(
+                post_office=post_office,
+                events=events,
+                persona=persona,
+                to_address=proxy_address,
+                subject="Re: Your introduction",
+                body=relay_body,
+                tick=tick,
+            )
+            delivered = len(post_office.messages_for(destination)) == before + 1
+            events.write(
+                "sim.relay_delivery",
+                delivered=delivered,
+                direction=(
+                    "alice_to_bob"
+                    if persona is INTRO_FLOW_PERSONAS[0]
+                    else "bob_to_alice"
+                ),
+            )
+            if not delivered:
+                raise RuntimeError("introduced pair relay delivery failed")
+
         tier1 = score_seal_mbox(
             artifacts.raw_mbox_path,
             (PersonaPII.from_config(persona) for persona in INTRO_FLOW_PERSONAS),
@@ -219,12 +268,33 @@ async def _record_intro_flow(
             persona=INTRO_FLOW_PERSONAS[0],
             subject=f"Re: {token_subject}",
             body="REVOKE",
-            tick=4,
+            tick=6,
         )
         final_status = _consent_status()
         events.write("sim.introduction_state", status=final_status)
         if final_status != "revoked":
             raise RuntimeError(f"expected revoked introduction, got {final_status}")
+
+        bob_messages_before = len(post_office.messages_for(bob.email))
+        await _deliver_real_process(
+            post_office=post_office,
+            events=events,
+            persona=INTRO_FLOW_PERSONAS[0],
+            to_address=proxy_address,
+            subject="Re: Your introduction",
+            body="This message must not be delivered after revocation.",
+            tick=7,
+        )
+        revoked_delivery_blocked = (
+            len(post_office.messages_for(bob.email)) == bob_messages_before
+        )
+        events.write(
+            "sim.relay_delivery",
+            delivered=not revoked_delivery_blocked,
+            direction="alice_to_bob_after_revoke",
+        )
+        if not revoked_delivery_blocked:
+            raise RuntimeError("revoked pair relayed a new message")
 
         outbound_before = _mbox_message_count(artifacts.raw_mbox_path)
         reproposal = await propose_introduction(
@@ -262,6 +332,8 @@ async def _record_intro_flow(
     events.write(
         "sim.run_completed",
         final_consent_state="revoked",
+        relay_bidirectional=True,
+        revoked_relay_blocked=True,
         reproposal_blocked=True,
         tier1_passed=True,
     )
@@ -289,6 +361,7 @@ async def _deliver_real_process(
     post_office: SimPostOffice,
     events: EventsLog,
     persona: PersonaConfig,
+    to_address: str | None = None,
     subject: str,
     body: str,
     tick: int,
@@ -301,7 +374,12 @@ async def _deliver_real_process(
         trace_id=trace_id,
     )
     await deliver_inbound(
-        _persona_message(persona, subject=subject, body=body),
+        _persona_message(
+            persona,
+            to_address=to_address,
+            subject=subject,
+            body=body,
+        ),
         process=process_email.func,
         trace_id=trace_id,
         post_office=post_office,
@@ -318,12 +396,13 @@ async def _deliver_real_process(
 def _persona_message(
     persona: PersonaConfig,
     *,
+    to_address: str | None = None,
     subject: str,
     body: str,
 ) -> EmailMessage:
     message = EmailMessage()
     message["From"] = f"{persona.name} <{persona.email}>"
-    message["To"] = persona.agent_address
+    message["To"] = to_address or persona.agent_address
     message["Subject"] = subject
     message["Date"] = formatdate(localtime=True)
     message["Message-ID"] = make_msgid()
@@ -337,6 +416,28 @@ def _proposal_subject(post_office: SimPostOffice, email: str) -> str:
         if subject.startswith("Possible introduction [intro:"):
             return subject
     raise RuntimeError(f"no consent request delivered to {email}")
+
+
+def _introduction_message(post_office: SimPostOffice, email: str) -> EmailMessage:
+    matches = [
+        message
+        for message in post_office.messages_for(email)
+        if str(message.get("Subject", "")) == "Your introduction"
+    ]
+    if len(matches) != 1:
+        raise RuntimeError(f"expected one introduction message for {email}")
+    return matches[0]
+
+
+@contextmanager
+def _override_relay_domain():
+    settings = get_settings()
+    previous = settings.relay_domain
+    settings.relay_domain = _RELAY_DOMAIN
+    try:
+        yield
+    finally:
+        settings.relay_domain = previous
 
 
 def _consent_status() -> str:

@@ -78,6 +78,37 @@ def test_tinyperson_adapter_builds_threaded_reply_with_quoted_original():
     )
 
 
+def test_tinyperson_adapter_replies_to_proxy_reply_to_address():
+    person = ScriptedTinyPerson("Priya", ["Thanks, I would like to compare notes."])
+    adapter = TinyPersonEmailAdapter(
+        person,
+        PersonaConfig(
+            name="Priya Shah",
+            email="priya@example.test",
+            goal="Find ML infrastructure operators.",
+            stop_condition="Stop after one exchange.",
+            agent_address="join@example.test",
+        ),
+    )
+    introduction = EmailMessage()
+    introduction["From"] = (
+        "The Network <hidden-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa@relay.example.test>"
+    )
+    introduction["Reply-To"] = (
+        "hidden-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa@relay.example.test"
+    )
+    introduction["To"] = "priya@example.test"
+    introduction["Subject"] = "Your introduction"
+    introduction.set_content("Priya and Samir, you both opted in.")
+
+    reply = adapter.next_email("write", tick=4, reply_to=introduction)
+
+    assert reply is not None
+    assert reply["To"] == (
+        "hidden-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa@relay.example.test"
+    )
+
+
 @pytest.mark.asyncio
 async def test_strong_match_scenario_replays_two_personas_to_process_email(tmp_path):
     configs = default_strong_match_configs(agent_address="join@example.test")
