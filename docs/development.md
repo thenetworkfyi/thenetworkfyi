@@ -232,7 +232,7 @@ prompt-emergent when `--llm-personas` is enabled, so the checks describe observa
 outcomes rather than force a particular conversation.
 
 - **Ruth Calder** declines an offered introduction. Outcome scoring checks that a pair
-  involving Ruth is declined (and temporarily cooled down) and that no identity-revealing
+  involving Ruth is declined (and temporarily cooled down) and that no unauthorized
   group introduction reaches her.
 - **Ines Duarte** asks why an introduction was chosen before deciding. The real consent
   path currently treats that as an unrecognized decision and sends the fixed clarification

@@ -17,7 +17,7 @@ from thenetwork.sim.personas.population import (
 from thenetwork.sim.scoring.scoring import (
     EventOutcomeFact,
     EventRecommendationOutcomeFact,
-    IntroductionRevealAuthorization,
+    IntroductionConsentState,
     MailFacts,
     OutcomeCheck,
     ProactiveEventTriggerOutcomeFact,
@@ -30,7 +30,7 @@ from thenetwork.sim.scoring.scoring import (
 def _outcome() -> ScenarioOutcome:
     return ScenarioOutcome(
         consent_rows=(
-            IntroductionRevealAuthorization(
+            IntroductionConsentState(
                 person_a_email="alice@example.test",
                 person_b_email="bob@example.test",
                 status="introduced",
@@ -157,18 +157,18 @@ def test_score_scenario_outcomes_empty_checks_are_a_deterministic_pass():
 def _default_outcome() -> ScenarioOutcome:
     return ScenarioOutcome(
         consent_rows=(
-            IntroductionRevealAuthorization(
+            IntroductionConsentState(
                 person_a_email="ruth.sim@example.test",
                 person_b_email="peer@example.test",
                 status="declined",
             ),
-            IntroductionRevealAuthorization(
+            IntroductionConsentState(
                 person_a_email="omar.sim@example.test",
                 person_b_email="waiting@example.test",
                 status="one_consented",
             ),
             *(
-                IntroductionRevealAuthorization(
+                IntroductionConsentState(
                     person_a_email="vic.sim@example.test",
                     person_b_email=f"vic-peer-{index}@example.test",
                     status="proposed",
@@ -275,7 +275,7 @@ def test_default_outcome_checks_cover_all_persona_situations():
             replace(
                 _default_outcome(),
                 consent_rows=(
-                    IntroductionRevealAuthorization(
+                    IntroductionConsentState(
                         person_a_email="ruth.sim@example.test",
                         person_b_email="peer@example.test",
                         status="proposed",
@@ -323,7 +323,7 @@ def test_default_outcome_checks_cover_all_persona_situations():
             replace(
                 _default_outcome(),
                 consent_rows=tuple(
-                    IntroductionRevealAuthorization(
+                    IntroductionConsentState(
                         person_a_email="vic.sim@example.test",
                         person_b_email=f"vic-peer-{index}@example.test",
                         status="proposed",
@@ -337,13 +337,13 @@ def test_default_outcome_checks_cover_all_persona_situations():
             replace(
                 _default_outcome(),
                 consent_rows=(
-                    IntroductionRevealAuthorization(
+                    IntroductionConsentState(
                         person_a_email="ruth.sim@example.test",
                         person_b_email="peer@example.test",
                         status="declined",
                     ),
                     *(
-                        IntroductionRevealAuthorization(
+                        IntroductionConsentState(
                             person_a_email="vic.sim@example.test",
                             person_b_email=f"vic-peer-{index}@example.test",
                             status="proposed",
@@ -537,12 +537,12 @@ def test_omar_outcome_uses_his_audited_action_not_final_pair_status():
     outcome = replace(
         _default_outcome(),
         consent_rows=(
-            IntroductionRevealAuthorization(
+            IntroductionConsentState(
                 person_a_email="omar.sim@example.test",
                 person_b_email="samir.sim@example.test",
                 status="revoked",
             ),
-            IntroductionRevealAuthorization(
+            IntroductionConsentState(
                 person_a_email="omar.sim@example.test",
                 person_b_email="ines.sim@example.test",
                 status="proposed",
@@ -569,11 +569,11 @@ def test_omar_outcome_uses_his_audited_action_not_final_pair_status():
     ]
 
 
-def test_omar_outcome_accepts_counterpart_first_consent_and_mutual_reveal():
+def test_omar_outcome_accepts_counterpart_first_consent_and_mutual_handoff():
     outcome = replace(
         _default_outcome(),
         consent_rows=(
-            IntroductionRevealAuthorization(
+            IntroductionConsentState(
                 person_a_email="omar.sim@example.test",
                 person_b_email="samir.sim@example.test",
                 status="introduced",
@@ -610,11 +610,11 @@ def test_omar_outcome_accepts_counterpart_first_consent_and_mutual_reveal():
     assert score.passed is True
 
 
-def test_omar_reveal_accepts_pair_revoked_after_mutual_consent():
+def test_omar_handoff_accepts_pair_revoked_after_mutual_consent():
     outcome = replace(
         _default_outcome(),
         consent_rows=(
-            IntroductionRevealAuthorization(
+            IntroductionConsentState(
                 person_a_email="omar.sim@example.test",
                 person_b_email="samir.sim@example.test",
                 status="revoked",
@@ -644,11 +644,11 @@ def test_omar_reveal_accepts_pair_revoked_after_mutual_consent():
     assert score.passed is True
 
 
-def test_omar_reveal_rejects_revoked_pair_without_mutual_consent():
+def test_omar_handoff_rejects_revoked_pair_without_mutual_consent():
     outcome = replace(
         _default_outcome(),
         consent_rows=(
-            IntroductionRevealAuthorization(
+            IntroductionConsentState(
                 person_a_email="omar.sim@example.test",
                 person_b_email="samir.sim@example.test",
                 status="revoked",

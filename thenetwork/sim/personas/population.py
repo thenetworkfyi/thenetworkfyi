@@ -111,31 +111,24 @@ def _has_pair_with_status(
     )
 
 
-def _has_no_revealing_introduction(outcome: ScenarioOutcome, email: str) -> bool:
+def _has_no_introduction(outcome: ScenarioOutcome, email: str) -> bool:
     return not any(
         message.subject == _INTRODUCTION_SUBJECT and email.lower() in message.recipients
         for message in outcome.mail_facts
     )
 
 
-def _has_no_premature_revealing_introduction(
-    outcome: ScenarioOutcome, email: str
-) -> bool:
+def _has_no_premature_introduction(outcome: ScenarioOutcome, email: str) -> bool:
     for message in outcome.mail_facts:
         if (
             message.subject != _INTRODUCTION_SUBJECT
             or email.lower() not in message.recipients
         ):
             continue
-        counterparts = message.recipients - {email.lower()}
-        if not all(
-            any(
-                _pair_involves(row, email)
-                and counterpart in row.participant_emails
-                and (row.status == "introduced" or row.both_consented)
-                for row in outcome.consent_rows
-            )
-            for counterpart in counterparts
+        if not any(
+            _pair_involves(row, email)
+            and (row.status == "introduced" or row.both_consented)
+            for row in outcome.consent_rows
         ):
             return False
     return True
@@ -177,9 +170,11 @@ def _pair_summary(outcome: ScenarioOutcome, email: str) -> dict[str, Any]:
     }
 
 
-def _reveal_summary(outcome: ScenarioOutcome, email: str) -> dict[str, Any]:
+def _introduction_delivery_summary(
+    outcome: ScenarioOutcome, email: str
+) -> dict[str, Any]:
     return {
-        "revealing_recipients": [
+        "introduction_recipients": [
             sorted(message.recipients)
             for message in outcome.mail_facts
             if message.subject == _INTRODUCTION_SUBJECT
@@ -427,11 +422,11 @@ DEFAULT_OUTCOME_CHECKS = (
         evidence=lambda outcome: _pair_summary(outcome, RUTH_EMAIL),
     ),
     OutcomeCheck(
-        description="Ruth's declined introduction never reveals a counterpart",
-        predicate=lambda outcome: _has_no_revealing_introduction(outcome, RUTH_EMAIL),
+        description="Ruth's declined introduction never sends the fixed handoff",
+        predicate=lambda outcome: _has_no_introduction(outcome, RUTH_EMAIL),
         requires_real_process=True,
         requires_llm_personas=True,
-        evidence=lambda outcome: _reveal_summary(outcome, RUTH_EMAIL),
+        evidence=lambda outcome: _introduction_delivery_summary(outcome, RUTH_EMAIL),
     ),
     OutcomeCheck(
         description="Ines receives a consent clarification",
@@ -492,15 +487,11 @@ DEFAULT_OUTCOME_CHECKS = (
         evidence=_omar_consent_summary,
     ),
     OutcomeCheck(
-        description=(
-            "Omar's introduction never reveals a counterpart before mutual consent"
-        ),
-        predicate=lambda outcome: _has_no_premature_revealing_introduction(
-            outcome, OMAR_EMAIL
-        ),
+        description="Omar receives no fixed introduction before mutual consent",
+        predicate=lambda outcome: _has_no_premature_introduction(outcome, OMAR_EMAIL),
         requires_real_process=True,
         requires_llm_personas=True,
-        evidence=lambda outcome: _reveal_summary(outcome, OMAR_EMAIL),
+        evidence=lambda outcome: _introduction_delivery_summary(outcome, OMAR_EMAIL),
     ),
     OutcomeCheck(
         description=(

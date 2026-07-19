@@ -43,8 +43,8 @@ prompt-injection exfiltrate it, so the privacy boundary cannot be "withhold a co
    from authenticated context, and composes fixed mail from the stored sanitized event
    gist only when that version is still current. The LLM never sees or supplies a raw
    address, submitter identity, subject, or event body.
-6. **Double-opt-in identity reveal.** The model can propose an unordered pair but cannot
-   record consent or compose the revealing message. A random reply token associates an
+6. **Double-opt-in anonymous handoff.** The model can propose an unordered pair but cannot
+   record consent or compose the fixed introduction message. A random reply token associates an
    explicit `YES`, `NO`, or `REVOKE` reply with the pair; the worker accepts it only from
    an authenticated participant before model execution. After both participants consent,
    server code resolves both identities and sends two fixed, proxy-addressed messages,

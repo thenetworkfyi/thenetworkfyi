@@ -126,7 +126,7 @@ The agent has eight tools (`thenetwork/agent/tools.py`):
 | `search(query) -> [{person_id, gist, similarity}]` | semantic recall returning **opaque ids + gist only** for other people |
 | `reply_to_sender(subject, body_text, …)` | reply only to the registered inbound sender; the model cannot select a recipient |
 | `send_outreach(recipient_user_id, subject, body_text, …)` | send a new, unthreaded message to another user by opaque id; the address is resolved server-side |
-| `propose_introduction(other_person_id, sender_gist, other_gist)` | create a sealed pairwise proposal; server-owned consent controls any identity reveal |
+| `propose_introduction(other_person_id, sender_gist, other_gist)` | create a sealed pairwise proposal; server-owned consent controls the anonymous relay handoff |
 | `escalate(reason)` | flag the inbound email for human review; authenticated unknown senders receive fixed first-contact guidance instead |
 | `register_person(name)` | self-register an authenticated first-contact sender; the server supplies the sender address |
 

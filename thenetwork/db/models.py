@@ -106,7 +106,7 @@ class BannedEmail(SQLModel, table=True):
 
 
 class IntroductionConsent(SQLModel, table=True):
-    """Server-owned pairwise consent state for identity-revealing introductions."""
+    """Server-owned pairwise consent state for anonymous relay introductions."""
 
     __tablename__ = "introduction_consents"
     __table_args__ = (

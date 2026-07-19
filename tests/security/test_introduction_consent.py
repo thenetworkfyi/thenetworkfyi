@@ -153,7 +153,7 @@ def test_model_assertion_cannot_create_unauthenticated_consent():
 
 
 @pytest.mark.parametrize("body", ["Yes.", "yes, please", "YES!"])
-def test_tolerant_yes_reply_consents_without_revealing_identity(body):
+def test_tolerant_yes_reply_records_one_sided_consent_without_introduction(body):
     session = FakeSession(proposal=proposal(), people=people())
 
     with (
