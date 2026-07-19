@@ -10,7 +10,7 @@ from thenetwork.sim.intro_flow import run_intro_flow_sim
 
 
 @pytest.mark.integration
-async def test_real_process_intro_flow_records_consent_reveal_and_revocation(tmp_path):
+async def test_real_process_intro_flow_records_consent_handoff_and_revocation(tmp_path):
     artifacts = await run_intro_flow_sim(runs_dir=tmp_path)
 
     events = [

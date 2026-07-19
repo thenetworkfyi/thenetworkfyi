@@ -388,10 +388,10 @@ def send_relay_email(
 
 def send_proxy_introduction(
     *,
-    person_a_name: str,
     person_a_email: str,
-    person_b_name: str,
     person_b_email: str,
+    person_a_gist: str | None,
+    person_b_gist: str | None,
     reply_token: str,
     trace_id: str | None = None,
 ) -> None:
@@ -401,8 +401,9 @@ def send_proxy_introduction(
     rendered = render_fixed_email(
         FixedEmailTemplate.INTRODUCTION,
         IntroductionEmailContext(
-            person_a_name=person_a_name,
-            person_b_name=person_b_name,
+            relay_address=proxy_address,
+            person_a_gist=person_a_gist,
+            person_b_gist=person_b_gist,
         ),
         signature_variant=SignatureVariant.STANDARD,
     )

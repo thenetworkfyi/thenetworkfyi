@@ -311,10 +311,10 @@ def test_proxy_introduction_sends_one_message_to_each_consented_person():
         patch("thenetwork.email.outbound.MailBox", mock_mailbox),
     ):
         send_proxy_introduction(
-            person_a_name="Alice",
             person_a_email="alice@example.com",
-            person_b_name="Bob",
             person_b_email="bob@example.com",
+            person_a_gist="Builds storage systems",
+            person_b_gist="Operates distributed databases",
             reply_token="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         )
 
@@ -329,12 +329,16 @@ def test_proxy_introduction_sends_one_message_to_each_consented_person():
         assert str(message["Reply-To"]) == proxy
         assert getaddresses(message.get_all("To", [])) == [("", str(message["To"]))]
         body = message.get_content()
-        assert "Alice and Bob" in body
         assert "both opted in" in body
+        assert "Why you were matched" in body
+        assert "Builds storage systems" in body
+        assert "Operates distributed databases" in body
         assert "Reply to this message" in body
-        assert "addresses are included" not in body
+        assert f"email {proxy} directly" in body
         assert "alice@example.com" not in body
         assert "bob@example.com" not in body
+        assert "Alice" not in body
+        assert "Bob" not in body
 
 
 def test_proxy_introduction_audits_rendering_metadata_only(caplog):
@@ -349,10 +353,10 @@ def test_proxy_introduction_audits_rendering_metadata_only(caplog):
         patch("thenetwork.email.outbound.MailBox", mock_mailbox),
     ):
         send_proxy_introduction(
-            person_a_name="Alice",
             person_a_email="alice@example.com",
-            person_b_name="Bob",
             person_b_email="bob@example.com",
+            person_a_gist="Builds storage systems",
+            person_b_gist="Operates distributed databases",
             reply_token="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         )
 
@@ -396,10 +400,10 @@ def test_proxy_introduction_messages_are_plain_only():
         patch("thenetwork.email.outbound.MailBox", mock_mailbox),
     ):
         send_proxy_introduction(
-            person_a_name="Alice",
             person_a_email="alice@example.com",
-            person_b_name="Bob",
             person_b_email="bob@example.com",
+            person_a_gist="Builds storage systems",
+            person_b_gist="Operates distributed databases",
             reply_token="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         )
 

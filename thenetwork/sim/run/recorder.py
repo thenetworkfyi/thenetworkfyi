@@ -44,7 +44,7 @@ from thenetwork.sim.personas.population import SimSchedule
 from thenetwork.sim.scoring.scoring import (
     EventOutcomeFact,
     EventRecommendationOutcomeFact,
-    IntroductionRevealAuthorization,
+    IntroductionConsentState,
     MailFacts,
     MemoryExpectation,
     OutcomeCheck,
@@ -261,9 +261,6 @@ class SimRunRecorder:
             tier1 = score_seal_mbox(
                 artifacts.raw_mbox_path,
                 personas_pii,
-                tuple(
-                    row for row in outcome.consent_rows if row.status == "introduced"
-                ),
             )
             events.write(
                 "sim.score.tier1",
@@ -420,7 +417,7 @@ def _assemble_scenario_outcome(
 
 
 def _database_outcome_state() -> tuple[
-    tuple[IntroductionRevealAuthorization, ...],
+    tuple[IntroductionConsentState, ...],
     tuple[Memory, ...],
     dict[str, int],
     dict[str, str],
@@ -442,7 +439,7 @@ def _database_outcome_state() -> tuple[
             if person_a_email is None or person_b_email is None:
                 continue
             consent_rows.append(
-                IntroductionRevealAuthorization(
+                IntroductionConsentState(
                     person_a_email=person_a_email,
                     person_b_email=person_b_email,
                     status=record.status,

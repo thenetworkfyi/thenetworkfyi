@@ -1,2 +1,9 @@
-<p>{{ fixed_context.person_a_name }} and {{ fixed_context.person_b_name }},</p>
-<p>You both opted in to this introduction. Reply to this message to continue the conversation without sharing your email address.</p>
+<p>You both opted in to this introduction.</p>
+{% if fixed_context.person_a_gist and fixed_context.person_b_gist %}
+<p>Why you were matched:</p>
+<ul>
+  <li>{{ fixed_context.person_a_gist }}</li>
+  <li>{{ fixed_context.person_b_gist }}</li>
+</ul>
+{% endif %}
+<p>Reply to this message, or email {{ fixed_context.relay_address }} directly, to continue the conversation without sharing your email address.</p>
