@@ -157,6 +157,7 @@ def test_send_relay_email_preserves_source_mime_body_and_replaces_headers():
     source["From"] = "Alice Private <alice.private@example.com>"
     source["To"] = "hidden-source@relay.example.com"
     source["Subject"] = "Sender subject"
+    source["Auto-Submitted"] = "auto-generated"
     source.set_content("Plain participant content")
     source.add_alternative(
         "<html><body><p>HTML <strong>participant</strong> content</p></body></html>",
@@ -192,6 +193,7 @@ def test_send_relay_email_preserves_source_mime_body_and_replaces_headers():
     assert str(message["Reply-To"]) == proxy
     assert str(message["To"]) == "bob.private@example.com"
     assert str(message["Subject"]) == "Re: Your introduction"
+    assert "Auto-Submitted" not in message
     assert "alice.private@example.com" not in "\n".join(
         str(value) for value in message.values()
     )
@@ -386,6 +388,7 @@ def test_proxy_introduction_sends_one_message_to_each_consented_person():
     ]
     proxy = "hidden-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa@relay.example.com"
     for message in captured:
+        assert message["Auto-Submitted"] == "auto-replied"
         assert str(message["From"]) == f"The Network <{proxy}>"
         assert str(message["Reply-To"]) == proxy
         assert getaddresses(message.get_all("To", [])) == [("", str(message["To"]))]

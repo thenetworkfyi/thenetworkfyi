@@ -162,6 +162,7 @@ async def test_introduced_pair_relay_preserves_sender_html_without_source_header
     source["From"] = f"Alice Private <{sender}>"
     source["To"] = PROXY
     source["Subject"] = "Re: Your introduction"
+    source["Auto-Submitted"] = "auto-replied"
     source.set_content("Plain participant content")
     source.add_alternative(
         "<html><body><p>HTML <strong>participant</strong> content</p></body></html>",
@@ -197,6 +198,7 @@ async def test_introduced_pair_relay_preserves_sender_html_without_source_header
     assert str(message["From"]) == f"The Network <{PROXY}>"
     assert str(message["Reply-To"]) == PROXY
     assert str(message["To"]) == destination
+    assert "Auto-Submitted" not in message
     assert sender not in "\n".join(str(value) for value in message.values())
     assert message.get_body(preferencelist=("plain",)).get_content().strip() == (
         "Plain participant content"
