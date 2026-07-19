@@ -96,7 +96,8 @@ Review artifacts in this order:
    conversation content.
 5. `private/all-mail.mbox` is the exact mail input used by deterministic scorers. It is
    owner-only, is not a normal review artifact, and must never be uploaded or supplied to an
-   LLM. Access it only under an approved incident or reproducibility procedure, then delete it.
+   LLM. Access it only under an approved incident or reproducibility procedure, or the
+   owner-only final-presentation procedure below, then delete it.
 6. `transcript.md` is a derived, human-readable rendering of the redacted mbox. Its `Message N`
    headings use the same one-based indices cited by mail score findings.
 
@@ -193,6 +194,137 @@ Always inspect the behavior the scenario or code change is intended to exercise,
 every score passes. Also inspect adjacent behavior that could be harmed. For example, a change
 that reduces proposal volume should be checked both for fewer consent bursts and for
 accidentally suppressing strong matches.
+
+## Perform the owner-only Evolution presentation review
+
+This is a narrow exception to the normal private-artifact policy. It exists so the owner can
+approve the presentation of the exact delivered messages at final simulation sign-off. It is
+not a way to make raw mail a shareable review artifact. Complete the automated and redacted
+artifact review first, and skip this procedure unless the owner is conducting final sign-off.
+
+Only the owner may perform this review, on an owner-controlled machine and Evolution profile
+whose data is not synchronized or backed up to a third party. Do not expose
+`private/all-mail.mbox`, an imported message, or a screenshot to an LLM, hosted analysis tool,
+issue tracker, pull request, chat, shared drive, or other upload. This prohibition includes
+asking an assistant to inspect the raw artifact. Keep `all-mail.mbox` and `transcript.md` as the
+normal shareable mail artifacts.
+
+### Prepare an owner-only copy
+
+Copy the private mbox rather than importing the run artifact in place. The staging directory
+and file must remain readable only by the owner:
+
+```bash
+RUN=runs/20260710T202053Z
+umask 077
+REVIEW_COPY_DIR="$(mktemp -d)"
+cp -- "$RUN/private/all-mail.mbox" "$REVIEW_COPY_DIR/all-mail.mbox"
+chmod 600 "$REVIEW_COPY_DIR/all-mail.mbox"
+test -s "$REVIEW_COPY_DIR/all-mail.mbox"
+```
+
+Do not print, search, transform, or preview this copy in a terminal command whose output may be
+captured. If the Evolution profile or its data directory is included in cloud sync, desktop
+search, or machine backups, use a different owner-only profile that is excluded from those
+services.
+
+Before selecting or opening any imported message:
+
+1. Start Evolution with `evolution --offline`, or choose **File > Work Offline**, and confirm
+   that the connection icon is disconnected and **Send/Receive** is unavailable.
+2. Under **Edit > Preferences > Mail Preferences > HTML Messages > Loading Remote Content**,
+   select the option that never loads remote content. Disable any contact or sender exception.
+   Do not use **View > Load Images** during the review.
+3. Do not rely on Evolution's offline switch as a network sandbox: it applies to mail, not all
+   Evolution components. Disconnect the machine from the network when practical. In every
+   case, keep remote content disabled and do not open links or attachments.
+
+### Import into a disposable local folder
+
+Under **On This Computer**, create a local folder named for this review, such as
+`sim-review-20260710T202053Z`. Do not choose a folder under an IMAP, Exchange, or other remote
+account. Then choose **File > Import > Import a single file**, select
+`$REVIEW_COPY_DIR/all-mail.mbox`, and choose the disposable local folder as the destination.
+Evolution detects the mbox type from the file.
+
+Review the message list, threads, plain-text and HTML alternatives, and the complete rendered
+body. Do not reply, forward, print, save an attachment, open a link, or load remote content.
+For each flow below, record `pass`, `fail`, or `N/A`; use `N/A` when `config.json`, the score
+events, or the transcript shows that the run did not exercise the flow, and state that reason.
+Never turn an unexercised flow into a pass.
+
+| Flow | Presentation and chronology to inspect |
+| --- | --- |
+| Onboarding | Welcome and follow-up messages are readable, correctly threaded, and give usable next steps. |
+| Clarification | Clarification requests and responses remain in the initiating thread and make the required action clear. |
+| Consent | Proposals, decision instructions, and capability tokens are legible in both alternatives and are not hidden or clipped. |
+| Decline | A decline is acknowledged without presenting it as consent or continuing the declined introduction. |
+| Introduction | Each post-consent introduction is readable and anonymous, preserves plain-text and HTML alternatives, and uses the proxy reply path. |
+| Relay and revoke | Relayed mail has coherent proxy headers and threading; revocation is clear, and no later relay is presented as delivered. |
+| Event recommendation | The recommendation is readable, specific enough to act on, and does not expose submitter identity or unrelated member data. |
+
+Across every exercised flow, also check alternative ordering and semantic parity, visible
+subjects and sender labels, quoted-reply layout, long-line wrapping, capability-token
+legibility, unexpected blank or hidden content, broken markup, and attempts to fetch remote
+resources. The security and chronology requirements elsewhere in this playbook still apply;
+attractive rendering cannot override a tier 1 or consent failure.
+
+### Record evidence without copying private content
+
+The shareable review report may contain the flow result, a short structural observation, and
+citations to one-based message numbers in the redacted `transcript.md` or to privacy-safe
+`events.jsonl` and `audit.jsonl` records. It must not contain raw names, addresses, subjects,
+bodies, tokens, attachments, HTML, or screenshots from Evolution. When redaction removes the
+detail needed to explain a presentation decision, record only a bounded owner attestation such
+as `owner-only Evolution review: consent presentation passed`; do not reproduce the missing
+content.
+
+Screenshots are unnecessary for a normal sign-off. If one is required to diagnose a defect,
+keep it owner-only outside the repository and all synchronized directories, give it owner-only
+permissions, and delete it after the finding is resolved. Create a synthetic or redacted
+reproduction for any issue, pull request, or shared report. Never use the private screenshot
+itself as a public artifact.
+
+Add this section to the report:
+
+```markdown
+## Owner-only presentation review
+
+- Reviewer: `owner`
+- Evolution offline and remote content blocked: `<yes or no>`
+- Onboarding: `<pass, fail, or N/A; redacted evidence or bounded owner attestation>`
+- Clarification: `<pass, fail, or N/A; redacted evidence or bounded owner attestation>`
+- Consent: `<pass, fail, or N/A; redacted evidence or bounded owner attestation>`
+- Decline: `<pass, fail, or N/A; redacted evidence or bounded owner attestation>`
+- Introduction: `<pass, fail, or N/A; redacted evidence or bounded owner attestation>`
+- Relay and revoke: `<pass, fail, or N/A; redacted evidence or bounded owner attestation>`
+- Event recommendation: `<pass, fail, or N/A; redacted evidence or bounded owner attestation>`
+- Imported copies removed: `<yes or no>`
+```
+
+### Remove every imported copy
+
+Cleanup is part of sign-off, even when the verdict is reject or inconclusive:
+
+1. Close all message windows. Delete the disposable folder under **On This Computer**, empty
+   its local Trash, and use **Folder > Expunge** where available. Confirm that neither the
+   folder nor its messages remain visible.
+2. Quit Evolution so it releases the local store, then delete only the staged copy and its now
+   empty directory:
+
+   ```bash
+   rm -- "$REVIEW_COPY_DIR/all-mail.mbox"
+   rmdir -- "$REVIEW_COPY_DIR"
+   ```
+
+3. Delete any owner-only screenshots or temporary notes containing private content. Restore
+   Evolution's normal online or remote-content settings only after the imported data is gone.
+4. Apply the run retention policy to the original `private/` directory: delete it immediately
+   after review unless a separately approved incident or reproducibility procedure requires
+   temporary retention. Do not delete the redacted mbox or transcript used by the report.
+
+If any imported copy cannot be accounted for and removed, record cleanup as failed and do not
+approve final sign-off.
 
 ## Review an isolated run
 
