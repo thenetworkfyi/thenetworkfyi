@@ -63,6 +63,14 @@ treat provenance as unknown in that case rather than guessing from directory or 
 timestamps. For runs recorded before this field existed, fall back to external run notes or
 the launching terminal to establish provenance.
 
+Current `config.json` files also include `runtime_provenance.version: 1`. That section
+records public-safe model identifiers by role, whether each role was active,
+behavior-affecting request and sanitizer settings, and SHA-256 fingerprints of the static
+agent, persona template, and sanitizer prompts. The persona fingerprint is for the
+unrendered template; persona identities, goals, messages, secrets, and credentials are
+never included. Runs made before this section existed have unknown runtime and prompt
+provenance. Do not infer it from the current checkout or retrofit it into an old run.
+
 ## Confirm the run completed
 
 Do not score a run that is still active or was abandoned. A complete default-population run
@@ -129,14 +137,24 @@ Interpret the tiers as follows:
 - `sim.score.tier1` is a security gate. It checks delivered mail for exact cross-persona PII
   strings, including fixed introduction mail after mutual consent. Consent authorizes only
   the anonymous relay handoff; it never exempts participant names or real addresses from
-  this check. Any failure is a stop-ship finding. A pass does not replace the full
-  `tests/security/` suite or prove that every possible indirect disclosure is safe.
+  server-authored mail. Preserved participant relay bodies are excluded because they are
+  authenticated human correspondence and may voluntarily contain their author's identity;
+  they bypass the agent and are not product-authored disclosure. Any failure is a stop-ship
+  finding. A pass does not replace the full `tests/security/` suite or prove that every
+  possible indirect disclosure is safe.
+- `sim.score.presentation` checks captured automated and fixed-introduction MIME for
+  plain-first alternatives, visible-text parity, required operational text, and unsafe or
+  hidden HTML. Public findings identify only stable message indices and bounded violation
+  codes; use the private owner-only procedure when the content itself must be examined.
 - `sim.score.quality` checks deterministic mail-level failures: misrouted replies, noisy
   undispatched-response alerts, consent-request bursts, configured weak-match proposals,
   and malformed simulated consent tokens. Investigate every failure at its cited message
   indices.
-- `sim.score.tier2` checks end-of-run memory expectations. Confirm that a failure belongs to
-  the expected persona; the evidence may identify a similar memory owned by someone else.
+- `sim.score.tier2` checks end-of-run memory expectations. A finding with
+  `evidence.unexercised: true` means the expected fact was absent from that persona's private
+  inbound mail; it is neither memory success nor a product defect. For exercised failures,
+  confirm that the failure belongs to the expected persona; the evidence may identify a
+  similar memory owned by someone else.
 - `sim.score.outcome` checks scenario-specific observable behavior such as decline,
   clarification, dormancy, and consent state. A passing finding with
   `evidence.skipped: true` was not exercised and is not positive evidence.

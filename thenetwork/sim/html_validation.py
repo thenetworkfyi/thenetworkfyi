@@ -47,6 +47,7 @@ _QUOTED_TRAIL_RE = re.compile(
     r"(?P<quoted>(?:[ \t]*>[^\n]*(?:\n|$))+)$"
 )
 _QUOTE_MARKER_RE = re.compile(r"(?m)^[ \t]*>[ \t]?")
+_BULLET_MARKER_RE = re.compile(r"(?m)^[ \t]*[-*][ \t]+")
 _CSS_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
 _CSS_HIDDEN_RE = re.compile(
     r"(?:display\s*:\s*none\b|visibility\s*:\s*hidden\b|"
@@ -217,6 +218,7 @@ def _normalize(text: str) -> str:
 def _normalize_semantic_text(text: str, *, normalize_quoted_trail: bool = False) -> str:
     """Normalize signature syntax and an explicitly rendered trailing quote."""
     text = text.replace("\n--\n", "\n")
+    text = _BULLET_MARKER_RE.sub("", text)
     if normalize_quoted_trail:
         text = _normalize_quoted_trail(text)
     return _normalize(text)

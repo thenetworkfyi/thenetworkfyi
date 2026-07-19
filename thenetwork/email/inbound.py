@@ -283,12 +283,15 @@ def poll_unseen(*, mailbox: MailboxKind = "primary") -> list[InboundMessage]:
                 msg.from_values.name if msg.from_values else None
             )
             recipient_address = _delivery_recipient(msg, s.relay_domain)
-            # Only admin-looking subjects need the raw bytes (PGP/MIME
-            # verification in admin/auth.py); everything else discards them
-            # to avoid holding the full raw message in memory.
+            # Admin verification needs byte-exact MIME, while the server-only
+            # relay needs the original MIME body so participant-authored HTML
+            # and attachments survive address-header rewriting.
+            relay_candidate = is_relay_address_candidate(
+                recipient_address, s.relay_domain
+            )
             raw_message = (
                 msg.raw_message_bytes
-                if subject.strip().lower().startswith("admin:")
+                if subject.strip().lower().startswith("admin:") or relay_candidate
                 else None
             )
             try:

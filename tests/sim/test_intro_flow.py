@@ -25,6 +25,12 @@ async def test_real_process_intro_flow_records_consent_handoff_and_revocation(tm
 
     tier1 = next(event for event in events if event["event"] == "sim.score.tier1")
     assert tier1["passed"] is True
+    assert events.index(tier1) > max(
+        index
+        for index, event in enumerate(events)
+        if event.get("event") == "sim.introduction_state"
+        and event.get("status") == "revoked"
+    )
 
     reproposal = next(
         event for event in events if event["event"] == "sim.introduction_reproposal"

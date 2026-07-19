@@ -22,6 +22,7 @@ from procrastinate import utils as procrastinate_utils
 from thenetwork.audit import audit_jsonl_file
 from sqlmodel import select
 
+from thenetwork.agent.prompts import SYSTEM_PROMPT
 from thenetwork.db.models import (
     Event,
     EventRecommendation,
@@ -30,9 +31,11 @@ from thenetwork.db.models import (
     Person,
 )
 from thenetwork.db.session import get_session
-from thenetwork.settings import get_settings
-from thenetwork.security.sender_identifier import optional_sender_identifier
+from thenetwork.memory.sanitize import SANITIZER_SYSTEM_PROMPT
 from thenetwork.security.log_redaction import redact_structured_values
+from thenetwork.security.sender_identifier import optional_sender_identifier
+from thenetwork.settings import get_settings
+from thenetwork.sim.personas.llm_persona import _PERSONA_PROMPT
 from thenetwork.sim.run.loop import ProgressCallable, SimTickLoop
 from thenetwork.sim.run.mail import (
     SimMessageMeta,
@@ -53,6 +56,7 @@ from thenetwork.sim.scoring.scoring import (
     ResponseQualityThresholds,
     ScenarioOutcome,
     score_memory_expectations,
+    score_presentation_mbox,
     score_response_quality,
     score_scenario_outcomes,
     score_seal_mbox,
@@ -133,7 +137,47 @@ def write_redacted_json(path: Path, value: Any) -> None:
 
 def _redact_public_values(value: Any) -> Any:
     """Redact values and remove markup, which is never a public artifact format."""
-    return _omit_markup(redact_structured_values(value))
+    redacted = _omit_markup(redact_structured_values(value))
+    if isinstance(value, dict) and isinstance(redacted, dict):
+        _restore_public_model_identifiers(value, redacted)
+    return redacted
+
+
+def _restore_public_model_identifiers(
+    source: dict[str, Any], redacted: dict[str, Any]
+) -> None:
+    """Keep strict model identifiers readable despite PII recognizer false positives."""
+    source_provenance = source.get("runtime_provenance")
+    redacted_provenance = redacted.get("runtime_provenance")
+    if not isinstance(source_provenance, dict) or not isinstance(
+        redacted_provenance, dict
+    ):
+        return
+    source_models = source_provenance.get("models")
+    redacted_models = redacted_provenance.get("models")
+    if not isinstance(source_models, dict) or not isinstance(redacted_models, dict):
+        return
+    for role in ("agent", "persona", "sanitizer", "embedding"):
+        source_model = source_models.get(role)
+        redacted_model = redacted_models.get(role)
+        if not isinstance(source_model, dict) or not isinstance(redacted_model, dict):
+            continue
+        identifier = source_model.get("identifier")
+        if _is_public_model_identifier(identifier):
+            redacted_model["identifier"] = identifier
+        else:
+            redacted_model["identifier"] = "[redacted]"
+
+
+def _is_public_model_identifier(value: Any) -> bool:
+    if not isinstance(value, str) or not value or len(value) > 200:
+        return False
+    if not value.isascii() or not all(
+        character.isalnum() or character in "._:/+-" for character in value
+    ):
+        return False
+    lowered = value.lower()
+    return not lowered.startswith(("sk-", "api_key", "token", "secret", "password"))
 
 
 def _omit_markup(value: Any) -> Any:
@@ -267,6 +311,15 @@ class SimRunRecorder:
                 passed=tier1.passed,
                 findings=[asdict(finding) for finding in tier1.findings],
             )
+            presentation = score_presentation_mbox(
+                artifacts.raw_mbox_path,
+                (persona.email for persona in config.personas),
+            )
+            events.write(
+                "sim.score.presentation",
+                passed=presentation.passed,
+                findings=[asdict(finding) for finding in presentation.findings],
+            )
             quality = score_response_quality(
                 artifacts.raw_mbox_path,
                 thresholds=config.quality_thresholds,
@@ -281,6 +334,7 @@ class SimRunRecorder:
                     outcome_memories,
                     config.expectations,
                     emails_by_id,
+                    outcome.mail_facts,
                 )
                 events.write(
                     "sim.score.tier2",
@@ -342,6 +396,7 @@ def _config_payload(config: SimRunConfig, process_mode: str) -> dict[str, Any]:
     return {
         "scenario": config.scenario,
         "git": _git_provenance(),
+        "runtime_provenance": _runtime_provenance(config, process_mode),
         "ticks": config.ticks,
         "proactive_every": config.proactive_every,
         "personas": [asdict(persona) for persona in config.personas],
@@ -368,6 +423,55 @@ def _config_payload(config: SimRunConfig, process_mode: str) -> dict[str, Any]:
             ),
         },
     }
+
+
+def _runtime_provenance(config: SimRunConfig, process_mode: str) -> dict[str, Any]:
+    """Return versioned, public-safe settings and static prompt fingerprints."""
+    settings = get_settings()
+    real_process = process_mode == "real"
+    return {
+        "version": 1,
+        "models": {
+            "agent": {
+                "identifier": settings.agent_model,
+                "active": real_process,
+            },
+            "persona": {
+                "identifier": settings.small_agent_model,
+                "active": config.llm_personas,
+            },
+            "sanitizer": {
+                "identifier": settings.small_agent_model,
+                "active": real_process and settings.sanitize_llm_tier_enabled,
+            },
+            "embedding": {
+                "identifier": settings.embed_model,
+                "active": real_process,
+            },
+        },
+        "settings": {
+            "agent_thinking_level": (
+                str(settings.agent_thinking_level)
+                if settings.agent_thinking_level is not None
+                else None
+            ),
+            "agent_request_limit": settings.agent_request_limit,
+            "agent_total_tokens_limit": settings.agent_total_tokens_limit,
+            "model_request_timeout_seconds": settings.model_request_timeout_seconds,
+            "sanitizer_mode": (
+                "presidio+llm" if settings.sanitize_llm_tier_enabled else "presidio"
+            ),
+        },
+        "static_prompt_sha256": {
+            "agent": _sha256_text(SYSTEM_PROMPT),
+            "persona_template": _sha256_text(_PERSONA_PROMPT),
+            "sanitizer": _sha256_text(SANITIZER_SYSTEM_PROMPT),
+        },
+    }
+
+
+def _sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def _assemble_scenario_outcome(

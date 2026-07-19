@@ -343,6 +343,9 @@ async def process_email(
                 proxy_address=build_relay_address(token, relay_domain),
                 subject=subject,
                 body_text=body,
+                source_message=(
+                    base64.b64decode(raw_message_b64) if raw_message_b64 else None
+                ),
                 trace_id=trace_id,
             )
             audit_event("worker.relay_forwarded", outcome="success")

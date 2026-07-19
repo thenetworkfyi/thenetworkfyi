@@ -7,6 +7,7 @@ import pytest
 from thenetwork.db.models import Memory
 from thenetwork.sim.run.mail import SimMessageMeta, SimPostOffice
 from thenetwork.sim.scoring.scoring import (
+    MailFacts,
     MemoryExpectation,
     OutcomeCheck,
     PersonaPII,
@@ -14,6 +15,7 @@ from thenetwork.sim.scoring.scoring import (
     ScenarioOutcome,
     build_transcript_judge,
     score_memory_expectations,
+    score_presentation_mbox,
     score_response_quality,
     score_scenario_outcomes,
     score_seal_mbox,
@@ -125,6 +127,7 @@ def test_score_seal_mbox_allows_anonymous_server_introduction_for_introduced_pai
         msg["Reply-To"] = proxy
         msg["To"] = recipient
         msg["Subject"] = "Your introduction"
+        msg["Auto-Submitted"] = "auto-replied"
         msg.set_content(f"You both opted in. Reply or email {proxy} directly.")
         post_office.deliver(msg)
 
@@ -150,6 +153,7 @@ def test_score_seal_mbox_rejects_counterpart_pii_in_proxy_introduction(
     )
     msg["To"] = "alice@example.test"
     msg["Subject"] = "Your introduction"
+    msg["Auto-Submitted"] = "auto-replied"
     msg.set_content(f"You both opted in. Counterpart: {counterpart_pii}.")
     post_office.deliver(msg)
 
@@ -163,6 +167,29 @@ def test_score_seal_mbox_rejects_counterpart_pii_in_proxy_introduction(
 
     assert score.passed is False
     assert score.findings[0].evidence["forbidden"] == [counterpart_pii]
+
+
+def test_simulation_gates_exclude_preserved_human_relay_content(tmp_path):
+    path = tmp_path / "captured.mbox"
+    msg = EmailMessage()
+    msg["From"] = (
+        "The Network <hidden-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa@relay.example.test>"
+    )
+    msg["To"] = "alice@example.test"
+    msg["Subject"] = "Your introduction"
+    msg.set_content("Bob Lee is voluntarily identifying himself in correspondence.")
+    SimPostOffice(mbox_path=path).deliver(msg)
+
+    personas = (
+        PersonaPII("Alice Shah", "alice@example.test"),
+        PersonaPII("Bob Lee", "bob@example.test"),
+    )
+    tier1 = score_seal_mbox(path, personas)
+    presentation = score_presentation_mbox(path, ("alice@example.test",))
+
+    assert tier1.passed is True
+    assert presentation.passed is True
+    assert presentation.findings[0].evidence == {"messages_checked": 0}
 
 
 def test_score_seal_mbox_rejects_unconsented_group_disclosure(tmp_path):
@@ -189,6 +216,70 @@ def test_score_seal_mbox_rejects_unconsented_group_disclosure(tmp_path):
         "alice@example.test",
         "bob@example.test",
     ]
+
+
+def _presentation_message(*, html: str | None = None) -> EmailMessage:
+    token = "[intro:11111111-1111-1111-1111-111111111111]"
+    message = EmailMessage()
+    message["From"] = "join@example.test"
+    message["To"] = "alice@example.test"
+    message["Subject"] = f"Possible introduction {token}"
+    message["Auto-Submitted"] = "auto-replied"
+    message.set_content(
+        "Would you like an introduction?\n\n"
+        f"{token}\n\n"
+        "--\nThe Network\nAn automated connection service\nReply anytime."
+    )
+    message.add_alternative(
+        html
+        or (
+            "<html><body><p>Would you like an introduction?</p>"
+            f"<p>{token}</p><hr><p><strong>The Network</strong><br>"
+            "An automated connection service<br>Reply anytime.</p></body></html>"
+        ),
+        subtype="html",
+    )
+    return message
+
+
+def test_score_presentation_mbox_accepts_valid_captured_multipart(tmp_path):
+    path = tmp_path / "captured.mbox"
+    SimPostOffice(mbox_path=path).deliver(_presentation_message())
+
+    score = score_presentation_mbox(path, ("alice@example.test",))
+
+    assert score.passed is True
+    assert score.findings[0].evidence == {"messages_checked": 1}
+
+
+def test_score_presentation_mbox_reports_bounded_failure_at_stable_index(tmp_path):
+    path = tmp_path / "captured.mbox"
+    post_office = SimPostOffice(mbox_path=path)
+    inbound = EmailMessage()
+    inbound["From"] = "alice@example.test"
+    inbound["To"] = "join@example.test"
+    inbound.set_content("Private inbound content")
+    post_office.deliver(inbound)
+    post_office.deliver(
+        _presentation_message(
+            html="<html><body><p>Different words</p>"
+            "<img src='https://tracker.example.test/pixel'></body></html>"
+        )
+    )
+
+    score = score_presentation_mbox(path, ("alice@example.test",))
+
+    assert score.passed is False
+    assert score.findings[0].evidence == {
+        "message_index": 2,
+        "violations": [
+            "required_text_html",
+            "semantic_parity",
+            "unsafe_html",
+        ],
+    }
+    assert "11111111" not in str(score.findings[0].evidence)
+    assert "tracker.example.test" not in str(score.findings[0].evidence)
 
 
 def test_score_memory_expectations_checks_refs_and_gist():
@@ -434,9 +525,18 @@ def test_memory_expectation_persona_binding_fails_on_other_owner():
                 description="Petra provenance interest remembered",
                 gist_contains="provenance",
                 persona_email="petra.sim@example.test",
+                inbound_contains_any=("provenance",),
             )
         ],
         emails_by_id={"elise-id": "elise.sim@example.test"},
+        mail_facts=(
+            MailFacts(
+                sender="Petra <petra.sim@example.test>",
+                recipients=frozenset({"join@example.test"}),
+                subject="A note",
+                body="I am studying provenance for museum archives.",
+            ),
+        ),
     )
 
     assert score.passed is False
@@ -445,6 +545,126 @@ def test_memory_expectation_persona_binding_fails_on_other_owner():
     assert finding.evidence["gist_matches_other_owners"] == [
         {"memory_id": "mem-elise", "owner_emails": ["elise.sim@example.test"]}
     ]
+
+
+def test_memory_expectation_marks_absent_inbound_fact_unexercised():
+    score = score_memory_expectations(
+        (),
+        (
+            MemoryExpectation(
+                description="Petra provenance interest remembered",
+                gist_contains="provenance",
+                persona_email="petra.sim@example.test",
+                inbound_contains_any=("provenance",),
+            ),
+        ),
+        mail_facts=(
+            MailFacts(
+                sender="Petra <petra.sim@example.test>",
+                recipients=frozenset({"join@example.test"}),
+                subject="A note",
+                body="I am interested in archival science and data management.",
+            ),
+            MailFacts(
+                sender="Elise <elise.sim@example.test>",
+                recipients=frozenset({"join@example.test"}),
+                subject="A note",
+                body="I study provenance for museum archives.",
+            ),
+        ),
+    )
+
+    assert score.passed is True
+    finding = score.findings[0]
+    assert "unexercised" in finding.message
+    assert finding.evidence == {
+        "unexercised": True,
+        "persona_inbound_messages_checked": 1,
+    }
+    assert "petra.sim@example.test" not in str(finding.evidence)
+    assert "provenance" not in str(finding.evidence)
+
+
+def test_memory_expectation_does_not_count_quoted_agent_fact_as_exercised():
+    score = score_memory_expectations(
+        (),
+        (
+            MemoryExpectation(
+                description="Petra provenance interest remembered",
+                persona_email="petra.sim@example.test",
+                inbound_contains_any=("provenance",),
+            ),
+        ),
+        mail_facts=(
+            MailFacts(
+                sender="Petra <petra.sim@example.test>",
+                recipients=frozenset({"join@example.test"}),
+                subject="Re: A note",
+                body="I am still deciding.\n> You mentioned provenance systems.",
+            ),
+        ),
+    )
+
+    assert score.findings[0].evidence["unexercised"] is True
+
+
+def test_memory_expectation_fails_when_stated_fact_was_not_remembered():
+    score = score_memory_expectations(
+        (),
+        (
+            MemoryExpectation(
+                description="Petra provenance interest remembered",
+                gist_contains="provenance",
+                persona_email="petra.sim@example.test",
+                inbound_contains_any=("provenance",),
+            ),
+        ),
+        mail_facts=(
+            MailFacts(
+                sender="Petra <petra.sim@example.test>",
+                recipients=frozenset({"join@example.test"}),
+                subject="A note",
+                body="I am studying provenance for museum archives.",
+            ),
+        ),
+    )
+
+    assert score.passed is False
+    assert score.findings[0].evidence == {}
+    assert "unexercised" not in score.findings[0].message
+
+
+def test_memory_expectation_passes_when_stated_fact_is_owner_bound():
+    score = score_memory_expectations(
+        (
+            Memory(
+                id="mem-petra",
+                text="raw",
+                refs=["petra-id"],
+                gist="interested in museum-archive provenance systems",
+            ),
+        ),
+        (
+            MemoryExpectation(
+                description="Petra provenance interest remembered",
+                gist_contains="provenance",
+                persona_email="petra.sim@example.test",
+                inbound_contains_any=("provenance",),
+            ),
+        ),
+        emails_by_id={"petra-id": "petra.sim@example.test"},
+        mail_facts=(
+            MailFacts(
+                sender="Petra <petra.sim@example.test>",
+                recipients=frozenset({"join@example.test"}),
+                subject="A note",
+                body="I am studying provenance for museum archives.",
+            ),
+        ),
+    )
+
+    assert score.passed is True
+    assert score.findings[0].evidence == {"memory_id": "mem-petra"}
 
 
 def test_memory_expectation_persona_binding_resolves_refs_via_emails_by_id():
