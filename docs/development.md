@@ -199,7 +199,9 @@ The deterministic introduction simulation exercises the production
 an external mail service. It provisions and migrates a disposable database, sends both
 `YES` replies, verifies two separate proxy-addressed introduction messages, relays a
 message in each direction, then sends `REVOKE` and verifies that later relay delivery and
-another proposal for the pair are suppressed.
+another proposal for the pair are suppressed. Tier 1 runs after revocation over the whole
+mailbox and continues to reject every exact cross-persona PII disclosure; anonymous fixed
+introductions need no consent-based scoring exception.
 
 Run it against any local pgvector PostgreSQL instance:
 
@@ -264,6 +266,10 @@ outcomes rather than force a particular conversation.
 
 The recorder emits three score-event tiers: tier 1 for delivered-mail SEAL checks, tier 2
 for memory expectations, and `sim.score.outcome` for the persona outcome predicates. The
+Tier 2 scorer first checks the private exact inbound mail for each expectation's declared
+fact signal. If the persona never stated that fact, the finding is explicitly unexercised
+instead of passing memory retention or reporting a product failure; public evidence contains
+only the unexercised flag and the bounded number of persona messages checked. The
 default outcome predicates depend on both the real process and LLM personas; a run without
 either mode records each unavailable predicate as a passing skipped finding with its reason.
 This makes offline/mock runs useful without presenting unexercised behavior as a failure.

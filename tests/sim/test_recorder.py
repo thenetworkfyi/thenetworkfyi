@@ -22,6 +22,7 @@ from thenetwork.db.models import (
     Memory,
     Person,
 )
+from thenetwork.email.outbound import send_relay_email
 from thenetwork.security import log_redaction
 from thenetwork.sim.cli import main, run_sim
 from thenetwork.sim.scoring.compare import compare_runs, load_run_metrics
@@ -46,6 +47,7 @@ from thenetwork.sim.scoring.scoring import (
     EventOutcomeFact,
     EventRecommendationOutcomeFact,
     IntroductionConsentState,
+    MemoryExpectation,
     OutcomeCheck,
     ProactiveEventTriggerOutcomeFact,
 )
@@ -152,6 +154,160 @@ async def test_public_simulation_artifacts_redact_content_and_keep_raw_mail_priv
         assert sensitive not in public_artifacts
         assert sensitive in artifacts.raw_mbox_path.read_text(encoding="utf-8")
     assert artifacts.private_dir.stat().st_mode & 0o777 == 0o700
+
+
+@pytest.mark.asyncio
+async def test_recorder_marks_absent_memory_fact_unexercised_with_bounded_evidence(
+    tmp_path,
+):
+    persona = PersonaConfig(
+        name="Petra",
+        email="petra.sim@example.test",
+        goal="Explore archival science.",
+        stop_condition="Wait for a useful connection.",
+        agent_address="join@example.test",
+    )
+    body = "I am interested in archival science and data management."
+    artifacts = await SimRunRecorder(runs_dir=tmp_path).run(
+        (TinyPersonEmailAdapter(ScriptedTinyPerson(body), persona),),
+        SimRunConfig(
+            scenario="memory-exercise",
+            ticks=1,
+            proactive_every=None,
+            personas=(persona,),
+            expectations=(
+                MemoryExpectation(
+                    description="Petra provenance interest remembered",
+                    gist_contains="provenance",
+                    persona_email=persona.email,
+                    inbound_contains_any=("provenance",),
+                ),
+            ),
+        ),
+    )
+
+    tier2 = next(
+        json.loads(line)
+        for line in artifacts.events_path.read_text().splitlines()
+        if json.loads(line)["event"] == "sim.score.tier2"
+    )
+    assert tier2["passed"] is True
+    assert tier2["findings"][0]["evidence"] == {
+        "unexercised": True,
+        "persona_inbound_messages_checked": 1,
+    }
+    assert "unexercised" in tier2["findings"][0]["message"]
+
+    public_artifacts = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            artifacts.config_path,
+            artifacts.events_path,
+            artifacts.mbox_path,
+            artifacts.transcript_path,
+        )
+    )
+    assert body not in public_artifacts
+    assert persona.email not in public_artifacts
+    assert body in artifacts.raw_mbox_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_recorder_combines_anonymous_tier1_and_persona_bound_tier2(tmp_path):
+    alice = PersonaConfig(
+        name="Alice Shah",
+        email="alice.sim@example.test",
+        goal="Record my provenance work.",
+        stop_condition="Wait for a useful connection.",
+        agent_address="join@example.test",
+    )
+    bob = PersonaConfig(
+        name="Bob Lee",
+        email="bob.sim@example.test",
+        goal="Say hello without discussing bakery work.",
+        stop_condition="Wait for a useful connection.",
+        agent_address="join@example.test",
+    )
+    private_fact = "I work on museum provenance systems."
+    memories = (
+        Memory(
+            id="memory-alice",
+            text="raw",
+            refs=[alice.email],
+            gist="works on museum provenance systems",
+        ),
+    )
+
+    async def process(**kwargs):
+        if kwargs["sender_email"] != alice.email:
+            return
+        send_relay_email(
+            to_address=alice.email,
+            proxy_address="hidden-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa@relay.example.test",
+            subject="Your introduction",
+            body_text=(
+                "You both opted in. Reply to this message or use the relay address "
+                "to start the conversation."
+            ),
+        )
+
+    artifacts = await SimRunRecorder(runs_dir=tmp_path).run(
+        (
+            TinyPersonEmailAdapter(ScriptedTinyPerson(private_fact), alice),
+            TinyPersonEmailAdapter(ScriptedTinyPerson("Hello."), bob),
+        ),
+        SimRunConfig(
+            scenario="assembled-scoring",
+            ticks=1,
+            proactive_every=None,
+            personas=(alice, bob),
+            expectations=(
+                MemoryExpectation(
+                    description="Alice provenance work is remembered",
+                    gist_contains="provenance",
+                    persona_email=alice.email,
+                    inbound_contains_any=("provenance",),
+                ),
+                MemoryExpectation(
+                    description="Bob bakery work is remembered",
+                    gist_contains="bakery",
+                    persona_email=bob.email,
+                    inbound_contains_any=("bakery",),
+                ),
+            ),
+        ),
+        process=process,
+        memories=memories,
+    )
+
+    events = [
+        json.loads(line) for line in artifacts.events_path.read_text().splitlines()
+    ]
+    tier1 = next(event for event in events if event["event"] == "sim.score.tier1")
+    tier2 = next(event for event in events if event["event"] == "sim.score.tier2")
+    assert tier1["passed"] is True
+    assert tier2["passed"] is True
+    assert tier2["findings"][0]["evidence"] == {"memory_id": "memory-alice"}
+    assert tier2["findings"][1]["evidence"] == {
+        "persona_inbound_messages_checked": 1,
+        "unexercised": True,
+    }
+
+    raw_mail = artifacts.raw_mbox_path.read_text(encoding="utf-8")
+    assert private_fact in raw_mail
+    assert "Alice Shah and Bob Lee" not in raw_mail
+
+    public_artifacts = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            artifacts.config_path,
+            artifacts.events_path,
+            artifacts.mbox_path,
+            artifacts.transcript_path,
+        )
+    )
+    for private_value in (alice.name, alice.email, bob.name, bob.email, private_fact):
+        assert private_value not in public_artifacts
 
 
 def test_public_simulation_mbox_redacts_untrusted_headers_and_envelope(tmp_path):

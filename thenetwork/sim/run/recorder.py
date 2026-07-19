@@ -281,6 +281,7 @@ class SimRunRecorder:
                     outcome_memories,
                     config.expectations,
                     emails_by_id,
+                    outcome.mail_facts,
                 )
                 events.write(
                     "sim.score.tier2",

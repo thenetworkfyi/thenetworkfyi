@@ -134,8 +134,11 @@ Interpret the tiers as follows:
   undispatched-response alerts, consent-request bursts, configured weak-match proposals,
   and malformed simulated consent tokens. Investigate every failure at its cited message
   indices.
-- `sim.score.tier2` checks end-of-run memory expectations. Confirm that a failure belongs to
-  the expected persona; the evidence may identify a similar memory owned by someone else.
+- `sim.score.tier2` checks end-of-run memory expectations. A finding with
+  `evidence.unexercised: true` means the expected fact was absent from that persona's private
+  inbound mail; it is neither memory success nor a product defect. For exercised failures,
+  confirm that the failure belongs to the expected persona; the evidence may identify a
+  similar memory owned by someone else.
 - `sim.score.outcome` checks scenario-specific observable behavior such as decline,
   clarification, dormancy, and consent state. A passing finding with
   `evidence.skipped: true` was not exercised and is not positive evidence.

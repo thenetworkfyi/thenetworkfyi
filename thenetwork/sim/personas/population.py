@@ -540,11 +540,13 @@ DEFAULT_EXPECTATIONS = (
         description="Nadia's bakery-supply or food-logistics update is remembered",
         gist_contains="bakery",
         persona_email=NADIA_EMAIL,
+        inbound_contains_any=("bakery", "food-logistics"),
     ),
     MemoryExpectation(
         description="Petra's museum-archive provenance interest is remembered",
         gist_contains="provenance",
         persona_email=PETRA_EMAIL,
+        inbound_contains_any=("provenance",),
     ),
 )
 

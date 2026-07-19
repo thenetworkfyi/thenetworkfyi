@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from thenetwork.db.models import Memory
-from thenetwork.sim.scoring.scoring import score_memory_expectations
+from thenetwork.sim.scoring.scoring import MailFacts, score_memory_expectations
 from thenetwork.sim.run.loop import SimTickLoop
 from thenetwork.sim.personas.persona import TinyPersonEmailAdapter
 from thenetwork.sim.personas.population import (
@@ -366,5 +366,16 @@ async def test_petra_qualification_turn_precedes_specific_interest_memory(tmp_pa
 
     assert len(person.stimuli) == 2
     assert "Which part of archival science" in person.stimuli[1]
-    score = score_memory_expectations(memories, (DEFAULT_EXPECTATIONS[1],))
+    score = score_memory_expectations(
+        memories,
+        (DEFAULT_EXPECTATIONS[1],),
+        mail_facts=(
+            MailFacts(
+                sender=PETRA_EMAIL,
+                recipients=frozenset({"join@example.test"}),
+                subject="A note",
+                body=memories[0].text,
+            ),
+        ),
+    )
     assert score.passed is True

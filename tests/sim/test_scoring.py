@@ -7,6 +7,7 @@ import pytest
 from thenetwork.db.models import Memory
 from thenetwork.sim.run.mail import SimMessageMeta, SimPostOffice
 from thenetwork.sim.scoring.scoring import (
+    MailFacts,
     MemoryExpectation,
     OutcomeCheck,
     PersonaPII,
@@ -434,9 +435,18 @@ def test_memory_expectation_persona_binding_fails_on_other_owner():
                 description="Petra provenance interest remembered",
                 gist_contains="provenance",
                 persona_email="petra.sim@example.test",
+                inbound_contains_any=("provenance",),
             )
         ],
         emails_by_id={"elise-id": "elise.sim@example.test"},
+        mail_facts=(
+            MailFacts(
+                sender="Petra <petra.sim@example.test>",
+                recipients=frozenset({"join@example.test"}),
+                subject="A note",
+                body="I am studying provenance for museum archives.",
+            ),
+        ),
     )
 
     assert score.passed is False
@@ -445,6 +455,126 @@ def test_memory_expectation_persona_binding_fails_on_other_owner():
     assert finding.evidence["gist_matches_other_owners"] == [
         {"memory_id": "mem-elise", "owner_emails": ["elise.sim@example.test"]}
     ]
+
+
+def test_memory_expectation_marks_absent_inbound_fact_unexercised():
+    score = score_memory_expectations(
+        (),
+        (
+            MemoryExpectation(
+                description="Petra provenance interest remembered",
+                gist_contains="provenance",
+                persona_email="petra.sim@example.test",
+                inbound_contains_any=("provenance",),
+            ),
+        ),
+        mail_facts=(
+            MailFacts(
+                sender="Petra <petra.sim@example.test>",
+                recipients=frozenset({"join@example.test"}),
+                subject="A note",
+                body="I am interested in archival science and data management.",
+            ),
+            MailFacts(
+                sender="Elise <elise.sim@example.test>",
+                recipients=frozenset({"join@example.test"}),
+                subject="A note",
+                body="I study provenance for museum archives.",
+            ),
+        ),
+    )
+
+    assert score.passed is True
+    finding = score.findings[0]
+    assert "unexercised" in finding.message
+    assert finding.evidence == {
+        "unexercised": True,
+        "persona_inbound_messages_checked": 1,
+    }
+    assert "petra.sim@example.test" not in str(finding.evidence)
+    assert "provenance" not in str(finding.evidence)
+
+
+def test_memory_expectation_does_not_count_quoted_agent_fact_as_exercised():
+    score = score_memory_expectations(
+        (),
+        (
+            MemoryExpectation(
+                description="Petra provenance interest remembered",
+                persona_email="petra.sim@example.test",
+                inbound_contains_any=("provenance",),
+            ),
+        ),
+        mail_facts=(
+            MailFacts(
+                sender="Petra <petra.sim@example.test>",
+                recipients=frozenset({"join@example.test"}),
+                subject="Re: A note",
+                body="I am still deciding.\n> You mentioned provenance systems.",
+            ),
+        ),
+    )
+
+    assert score.findings[0].evidence["unexercised"] is True
+
+
+def test_memory_expectation_fails_when_stated_fact_was_not_remembered():
+    score = score_memory_expectations(
+        (),
+        (
+            MemoryExpectation(
+                description="Petra provenance interest remembered",
+                gist_contains="provenance",
+                persona_email="petra.sim@example.test",
+                inbound_contains_any=("provenance",),
+            ),
+        ),
+        mail_facts=(
+            MailFacts(
+                sender="Petra <petra.sim@example.test>",
+                recipients=frozenset({"join@example.test"}),
+                subject="A note",
+                body="I am studying provenance for museum archives.",
+            ),
+        ),
+    )
+
+    assert score.passed is False
+    assert score.findings[0].evidence == {}
+    assert "unexercised" not in score.findings[0].message
+
+
+def test_memory_expectation_passes_when_stated_fact_is_owner_bound():
+    score = score_memory_expectations(
+        (
+            Memory(
+                id="mem-petra",
+                text="raw",
+                refs=["petra-id"],
+                gist="interested in museum-archive provenance systems",
+            ),
+        ),
+        (
+            MemoryExpectation(
+                description="Petra provenance interest remembered",
+                gist_contains="provenance",
+                persona_email="petra.sim@example.test",
+                inbound_contains_any=("provenance",),
+            ),
+        ),
+        emails_by_id={"petra-id": "petra.sim@example.test"},
+        mail_facts=(
+            MailFacts(
+                sender="Petra <petra.sim@example.test>",
+                recipients=frozenset({"join@example.test"}),
+                subject="A note",
+                body="I am studying provenance for museum archives.",
+            ),
+        ),
+    )
+
+    assert score.passed is True
+    assert score.findings[0].evidence == {"memory_id": "mem-petra"}
 
 
 def test_memory_expectation_persona_binding_resolves_refs_via_emails_by_id():

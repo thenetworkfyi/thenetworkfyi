@@ -739,6 +739,14 @@ def test_default_memory_expectations_have_pass_and_fail_fixtures(
     score = score_memory_expectations(
         (Memory(id="memory-1", text="raw", refs=[owner_email], gist=gist),),
         (DEFAULT_EXPECTATIONS[expectation_index],),
+        mail_facts=(
+            MailFacts(
+                sender=owner_email,
+                recipients=frozenset({"join@example.test"}),
+                subject="A note",
+                body=DEFAULT_EXPECTATIONS[expectation_index].inbound_contains_any[0],
+            ),
+        ),
     )
 
     assert score.passed is expected
@@ -756,6 +764,14 @@ def test_default_memory_expectations_reject_wrong_persona_owner():
         ),
         (DEFAULT_EXPECTATIONS[1],),
         emails_by_id={"elise-id": "elise.sim@example.test"},
+        mail_facts=(
+            MailFacts(
+                sender=PETRA_EMAIL,
+                recipients=frozenset({"join@example.test"}),
+                subject="A note",
+                body="I study provenance for museum archives.",
+            ),
+        ),
     )
 
     assert score.passed is False
