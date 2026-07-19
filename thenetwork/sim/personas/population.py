@@ -26,8 +26,7 @@ EVENT_CONTROL_EMAIL = "theo.sim@example.test"
 _INTRODUCTION_SUBJECT = "Your introduction"
 _EVENT_RECOMMENDATION_SUBJECT = "An event you might care about"
 _FIRST_EVENT_PERMISSION_NOTICE = (
-    "Would you like occasional event recommendations like this? Reply yes or no. "
-    "A no stops only event recommendations."
+    "If you don't want more event recommendations, reply no to opt out."
 )
 _INES_CANNED_CLARIFICATION = "I could not determine your response."
 _VIC_MAX_MEMORIES = 6
