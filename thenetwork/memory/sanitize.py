@@ -15,6 +15,19 @@ _PRESIDIO_ENTITY_LABELS = {
     "PHONE_NUMBER": "[phone]",
 }
 
+SANITIZER_SYSTEM_PROMPT = (
+    "You are a PII sanitizer. You will receive freeform content that may "
+    "be shown outside its owner's privacy boundary. Return a version with "
+    "all personally-identifying information removed: replace names with "
+    "[name], email addresses with [email], phone numbers with [phone], "
+    "specific street addresses with [address], employers or other "
+    "organizations with [org], social media handles or platform usernames "
+    "with [handle], and URLs or links with [url]. Also watch for "
+    "quasi-identifying combinations: generalize details that together "
+    "would single out one person. Keep non-identifying factual content "
+    "useful for semantic matching. Return only the sanitized text."
+)
+
 
 @lru_cache(maxsize=1)
 def _get_presidio_analyzer():
@@ -101,18 +114,7 @@ async def sanitize_text_llm(text: str) -> str:
         model=model_with_api_key(
             s.small_agent_model, s.small_agent_api_key, s.model_request_timeout_seconds
         ),
-        system_prompt=(
-            "You are a PII sanitizer. You will receive freeform content that may "
-            "be shown outside its owner's privacy boundary. Return a version with "
-            "all personally-identifying information removed: replace names with "
-            "[name], email addresses with [email], phone numbers with [phone], "
-            "specific street addresses with [address], employers or other "
-            "organizations with [org], social media handles or platform usernames "
-            "with [handle], and URLs or links with [url]. Also watch for "
-            "quasi-identifying combinations: generalize details that together "
-            "would single out one person. Keep non-identifying factual content "
-            "useful for semantic matching. Return only the sanitized text."
-        ),
+        system_prompt=SANITIZER_SYSTEM_PROMPT,
         output_type=str,
     )
     result = await sanitizer.run(text)

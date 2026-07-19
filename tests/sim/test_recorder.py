@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import mailbox
 from contextlib import contextmanager, nullcontext
@@ -15,6 +16,7 @@ from procrastinate.testing import InMemoryConnector
 from pydantic_ai.exceptions import ModelHTTPError
 
 from thenetwork.audit import audit_event, audit_model_trace
+from thenetwork.agent.prompts import SYSTEM_PROMPT
 from thenetwork.db.models import (
     Event,
     EventRecommendation,
@@ -23,11 +25,13 @@ from thenetwork.db.models import (
     Person,
 )
 from thenetwork.email.outbound import send_proxy_introduction, send_relay_email
+from thenetwork.memory.sanitize import SANITIZER_SYSTEM_PROMPT
 from thenetwork.security import log_redaction
 from thenetwork.sim.cli import main, run_sim
 from thenetwork.sim.scoring.compare import compare_runs, load_run_metrics
 from thenetwork.sim.run.mail import SimPostOffice, publish_redacted_mbox
 from thenetwork.sim.personas.persona import PersonaConfig, TinyPersonEmailAdapter
+from thenetwork.sim.personas.llm_persona import _PERSONA_PROMPT
 from thenetwork.sim.personas.population import DEFAULT_OUTCOME_CHECKS
 from thenetwork.sim.run.recorder import (
     EventsLog,
@@ -1309,6 +1313,138 @@ def test_config_payload_git_provenance_fails_closed_to_none_when_git_unavailable
         payload = _config_payload(config, "mock")
 
     assert payload["git"] == {"commit": None, "dirty": None}
+
+
+def _runtime_settings(*, sanitizer_enabled: bool = True):
+    return SimpleNamespace(
+        agent_model="anthropic:claude-sonnet-5",
+        small_agent_model="anthropic:claude-haiku-4-5",
+        embed_model="text-embedding-3-small",
+        agent_thinking_level="high",
+        agent_request_limit=7,
+        agent_total_tokens_limit=4321,
+        model_request_timeout_seconds=45.5,
+        sanitize_llm_tier_enabled=sanitizer_enabled,
+        agent_api_key="agent-secret-value",
+        small_agent_api_key="small-secret-value",
+        embed_api_key="embed-secret-value",
+        postgres_password="database-secret-value",
+    )
+
+
+@pytest.mark.parametrize(
+    ("process_mode", "llm_personas", "active_roles"),
+    [
+        ("mock", False, set()),
+        ("mock", True, {"persona"}),
+        ("real", False, {"agent", "sanitizer", "embedding"}),
+        ("real", True, {"agent", "persona", "sanitizer", "embedding"}),
+    ],
+)
+def test_runtime_provenance_records_models_settings_and_active_modes(
+    process_mode, llm_personas, active_roles
+):
+    config = SimRunConfig(
+        scenario="runtime-provenance",
+        ticks=1,
+        proactive_every=None,
+        personas=(),
+        mock_process=process_mode != "real",
+        llm_personas=llm_personas,
+    )
+
+    with patch(
+        "thenetwork.sim.run.recorder.get_settings",
+        return_value=_runtime_settings(),
+    ):
+        provenance = _config_payload(config, process_mode)["runtime_provenance"]
+
+    assert provenance["version"] == 1
+    assert {
+        role for role, model in provenance["models"].items() if model["active"]
+    } == active_roles
+    assert provenance["models"] == {
+        "agent": {
+            "identifier": "anthropic:claude-sonnet-5",
+            "active": "agent" in active_roles,
+        },
+        "persona": {
+            "identifier": "anthropic:claude-haiku-4-5",
+            "active": "persona" in active_roles,
+        },
+        "sanitizer": {
+            "identifier": "anthropic:claude-haiku-4-5",
+            "active": "sanitizer" in active_roles,
+        },
+        "embedding": {
+            "identifier": "text-embedding-3-small",
+            "active": "embedding" in active_roles,
+        },
+    }
+    assert provenance["settings"] == {
+        "agent_thinking_level": "high",
+        "agent_request_limit": 7,
+        "agent_total_tokens_limit": 4321,
+        "model_request_timeout_seconds": 45.5,
+        "sanitizer_mode": "presidio+llm",
+    }
+
+
+def test_runtime_provenance_hashes_only_static_prompt_templates(tmp_path):
+    private_persona = PersonaConfig(
+        name="Private Persona Name",
+        email="private-persona@example.test",
+        goal="Private owner goal text",
+        stop_condition="Private stop condition text",
+        agent_address="private-agent@example.test",
+    )
+    config = SimRunConfig(
+        scenario="runtime-provenance",
+        ticks=1,
+        proactive_every=None,
+        personas=(private_persona,),
+        llm_personas=True,
+    )
+
+    with patch(
+        "thenetwork.sim.run.recorder.get_settings",
+        return_value=_runtime_settings(sanitizer_enabled=False),
+    ):
+        provenance = _config_payload(config, "mock")["runtime_provenance"]
+
+    assert provenance["static_prompt_sha256"] == {
+        "agent": hashlib.sha256(SYSTEM_PROMPT.encode("utf-8")).hexdigest(),
+        "persona_template": hashlib.sha256(_PERSONA_PROMPT.encode("utf-8")).hexdigest(),
+        "sanitizer": hashlib.sha256(
+            SANITIZER_SYSTEM_PROMPT.encode("utf-8")
+        ).hexdigest(),
+    }
+    assert provenance["settings"]["sanitizer_mode"] == "presidio"
+    assert provenance["models"]["sanitizer"]["active"] is False
+
+    serialized = json.dumps(provenance, sort_keys=True)
+    for private_value in (
+        "Private Persona Name",
+        "private-persona@example.test",
+        "Private owner goal text",
+        "Private stop condition text",
+        "agent-secret-value",
+        "small-secret-value",
+        "embed-secret-value",
+        "database-secret-value",
+        SYSTEM_PROMPT,
+        _PERSONA_PROMPT,
+        SANITIZER_SYSTEM_PROMPT,
+    ):
+        assert private_value not in serialized
+
+    path = tmp_path / "config.json"
+    write_redacted_json(path, {"runtime_provenance": provenance})
+    assert json.loads(path.read_text())["runtime_provenance"] == provenance
+
+    provenance["models"]["agent"]["identifier"] = "sk-secret-model-setting"
+    write_redacted_json(path, {"runtime_provenance": provenance})
+    assert "sk-secret-model-setting" not in path.read_text()
 
 
 @pytest.mark.asyncio
