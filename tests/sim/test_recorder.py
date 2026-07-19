@@ -360,6 +360,7 @@ async def test_recorder_presentation_failure_has_bounded_stable_evidence(tmp_pat
             ),
             subject="Your introduction",
             body_text=private_body,
+            automated=True,
         )
 
     artifacts = await SimRunRecorder(runs_dir=tmp_path).run(

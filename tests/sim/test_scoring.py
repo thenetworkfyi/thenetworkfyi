@@ -127,6 +127,7 @@ def test_score_seal_mbox_allows_anonymous_server_introduction_for_introduced_pai
         msg["Reply-To"] = proxy
         msg["To"] = recipient
         msg["Subject"] = "Your introduction"
+        msg["Auto-Submitted"] = "auto-replied"
         msg.set_content(f"You both opted in. Reply or email {proxy} directly.")
         post_office.deliver(msg)
 
@@ -152,6 +153,7 @@ def test_score_seal_mbox_rejects_counterpart_pii_in_proxy_introduction(
     )
     msg["To"] = "alice@example.test"
     msg["Subject"] = "Your introduction"
+    msg["Auto-Submitted"] = "auto-replied"
     msg.set_content(f"You both opted in. Counterpart: {counterpart_pii}.")
     post_office.deliver(msg)
 
@@ -165,6 +167,29 @@ def test_score_seal_mbox_rejects_counterpart_pii_in_proxy_introduction(
 
     assert score.passed is False
     assert score.findings[0].evidence["forbidden"] == [counterpart_pii]
+
+
+def test_simulation_gates_exclude_preserved_human_relay_content(tmp_path):
+    path = tmp_path / "captured.mbox"
+    msg = EmailMessage()
+    msg["From"] = (
+        "The Network <hidden-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa@relay.example.test>"
+    )
+    msg["To"] = "alice@example.test"
+    msg["Subject"] = "Your introduction"
+    msg.set_content("Bob Lee is voluntarily identifying himself in correspondence.")
+    SimPostOffice(mbox_path=path).deliver(msg)
+
+    personas = (
+        PersonaPII("Alice Shah", "alice@example.test"),
+        PersonaPII("Bob Lee", "bob@example.test"),
+    )
+    tier1 = score_seal_mbox(path, personas)
+    presentation = score_presentation_mbox(path, ("alice@example.test",))
+
+    assert tier1.passed is True
+    assert presentation.passed is True
+    assert presentation.findings[0].evidence == {"messages_checked": 0}
 
 
 def test_score_seal_mbox_rejects_unconsented_group_disclosure(tmp_path):

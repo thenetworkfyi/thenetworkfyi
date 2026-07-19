@@ -349,6 +349,7 @@ def send_relay_email(
     source_message: bytes | None = None,
     trace_id: str | None = None,
     template_id: str = RELAY_TEMPLATE_ID,
+    automated: bool = False,
 ) -> None:
     """Relay one participant's message without exposing either real address.
 
@@ -395,6 +396,8 @@ def send_relay_email(
         msg["Subject"] = subject
         msg["Date"] = formatdate(localtime=True)
         msg["Message-ID"] = make_msgid()
+        if automated:
+            msg["Auto-Submitted"] = "auto-replied"
         if parsed_source is not None:
             _copy_mime_body(msg, parsed_source)
         else:
@@ -455,4 +458,5 @@ def send_proxy_introduction(
             body_html=rendered.html,
             trace_id=trace_id,
             template_id=FixedEmailTemplate.INTRODUCTION.value,
+            automated=True,
         )

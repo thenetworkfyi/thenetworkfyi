@@ -265,6 +265,8 @@ def score_seal_mbox(
         }
         if not recipient_personas:
             continue
+        if _is_preserved_human_relay(message):
+            continue
         body = _extract_body(message)
         header_blob = "\n".join(
             str(message.get(name, "")) for name in ("From", "To", "Cc", "Subject")
@@ -360,10 +362,19 @@ def score_presentation_mbox(
 
 
 def _is_presentation_candidate(message: Message) -> bool:
-    return (
-        str(message.get("Auto-Submitted", "")).casefold() == "auto-replied"
-        or str(message.get("Subject", "")) == "Your introduction"
-    )
+    return _is_automated_message(message)
+
+
+def _is_automated_message(message: Message) -> bool:
+    return str(message.get("Auto-Submitted", "")).casefold() == "auto-replied"
+
+
+def _is_preserved_human_relay(message: Message) -> bool:
+    """Identify server-routed participant mail without trusting its subject or body."""
+    if _is_automated_message(message):
+        return False
+    sender_address = parseaddr(str(message.get("From", "")))[1]
+    return _RELAY_ADDRESS_RE.fullmatch(sender_address) is not None
 
 
 def _presentation_violation_codes(violations: Iterable[str]) -> list[str]:

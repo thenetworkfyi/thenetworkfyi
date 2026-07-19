@@ -136,8 +136,11 @@ Interpret the tiers as follows:
 - `sim.score.tier1` is a security gate. It checks delivered mail for exact cross-persona PII
   strings, including fixed introduction mail after mutual consent. Consent authorizes only
   the anonymous relay handoff; it never exempts participant names or real addresses from
-  this check. Any failure is a stop-ship finding. A pass does not replace the full
-  `tests/security/` suite or prove that every possible indirect disclosure is safe.
+  server-authored mail. Preserved participant relay bodies are excluded because they are
+  authenticated human correspondence and may voluntarily contain their author's identity;
+  they bypass the agent and are not product-authored disclosure. Any failure is a stop-ship
+  finding. A pass does not replace the full `tests/security/` suite or prove that every
+  possible indirect disclosure is safe.
 - `sim.score.presentation` checks captured automated and fixed-introduction MIME for
   plain-first alternatives, visible-text parity, required operational text, and unsafe or
   hidden HTML. Public findings identify only stable message indices and bounded violation
