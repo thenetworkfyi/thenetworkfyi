@@ -81,6 +81,7 @@ async def test_process_email_relays_both_directions_before_agent_paths(
         proxy_address=PROXY,
         subject="Re: Project details",
         body_text="Unchanged reply body\nsecond line",
+        source_message=None,
         trace_id="relay-trace",
     )
     scan.assert_not_called()

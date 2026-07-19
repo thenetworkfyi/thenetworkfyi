@@ -20,8 +20,10 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from thenetwork.email.inbound import cap_body, cap_sender_name, cap_subject
+from thenetwork.email.relay import is_relay_address_candidate
 from thenetwork.email.threading import clean_message_id, clean_references
 from thenetwork.security.log_redaction import redact_structured_log
+from thenetwork.settings import get_settings
 from thenetwork.sim.html_validation import html_to_visible_text
 from thenetwork.worker.tasks import process_email
 
@@ -286,14 +288,15 @@ async def deliver_inbound(
     message_id = clean_message_id(message.get("Message-ID"))
     references = clean_references(message.get("References"))
     message_date = message.get("Date")
-    raw_message_b64 = (
-        base64.b64encode(message.as_bytes()).decode("ascii")
-        if subject.strip().lower().startswith("admin:")
-        else None
-    )
     resolved_trace_id = trace_id or str(uuid4())
     recipients = _recipient_addresses(message)
     recipient_address = recipients[0] if recipients else None
+    raw_message_b64 = (
+        base64.b64encode(message.as_bytes()).decode("ascii")
+        if subject.strip().lower().startswith("admin:")
+        or is_relay_address_candidate(recipient_address, get_settings().relay_domain)
+        else None
+    )
     process_func = process or process_email.func
     if post_office is not None:
         post_office.deliver(

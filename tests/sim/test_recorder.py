@@ -22,7 +22,7 @@ from thenetwork.db.models import (
     Memory,
     Person,
 )
-from thenetwork.email.outbound import send_relay_email
+from thenetwork.email.outbound import send_proxy_introduction, send_relay_email
 from thenetwork.security import log_redaction
 from thenetwork.sim.cli import main, run_sim
 from thenetwork.sim.scoring.compare import compare_runs, load_run_metrics
@@ -241,51 +241,74 @@ async def test_recorder_combines_anonymous_tier1_and_persona_bound_tier2(tmp_pat
     async def process(**kwargs):
         if kwargs["sender_email"] != alice.email:
             return
-        send_relay_email(
-            to_address=alice.email,
-            proxy_address="hidden-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa@relay.example.test",
-            subject="Your introduction",
-            body_text=(
-                "You both opted in. Reply to this message or use the relay address "
-                "to start the conversation."
-            ),
+        send_proxy_introduction(
+            person_a_email=alice.email,
+            person_b_email=bob.email,
+            person_a_gist="Works on museum provenance systems",
+            person_b_gist="Explores archival data management",
+            reply_token="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         )
 
-    artifacts = await SimRunRecorder(runs_dir=tmp_path).run(
-        (
-            TinyPersonEmailAdapter(ScriptedTinyPerson(private_fact), alice),
-            TinyPersonEmailAdapter(ScriptedTinyPerson("Hello."), bob),
-        ),
-        SimRunConfig(
-            scenario="assembled-scoring",
-            ticks=1,
-            proactive_every=None,
-            personas=(alice, bob),
-            expectations=(
-                MemoryExpectation(
-                    description="Alice provenance work is remembered",
-                    gist_contains="provenance",
-                    persona_email=alice.email,
-                    inbound_contains_any=("provenance",),
-                ),
-                MemoryExpectation(
-                    description="Bob bakery work is remembered",
-                    gist_contains="bakery",
-                    persona_email=bob.email,
-                    inbound_contains_any=("bakery",),
+    outbound_settings = SimpleNamespace(
+        relay_domain="relay.example.test",
+        smtp_host="smtp.example.test",
+        smtp_port=587,
+        smtp_account="join@example.test",
+        smtp_password="secret",
+    )
+    with patch(
+        "thenetwork.email.outbound.get_settings", return_value=outbound_settings
+    ):
+        artifacts = await SimRunRecorder(runs_dir=tmp_path).run(
+            (
+                TinyPersonEmailAdapter(ScriptedTinyPerson(private_fact), alice),
+                TinyPersonEmailAdapter(ScriptedTinyPerson("Hello."), bob),
+            ),
+            SimRunConfig(
+                scenario="assembled-scoring",
+                ticks=1,
+                proactive_every=None,
+                personas=(alice, bob),
+                expectations=(
+                    MemoryExpectation(
+                        description="Alice provenance work is remembered",
+                        gist_contains="provenance",
+                        persona_email=alice.email,
+                        inbound_contains_any=("provenance",),
+                    ),
+                    MemoryExpectation(
+                        description="Bob bakery work is remembered",
+                        gist_contains="bakery",
+                        persona_email=bob.email,
+                        inbound_contains_any=("bakery",),
+                    ),
                 ),
             ),
-        ),
-        process=process,
-        memories=memories,
-    )
+            process=process,
+            memories=memories,
+        )
 
     events = [
         json.loads(line) for line in artifacts.events_path.read_text().splitlines()
     ]
     tier1 = next(event for event in events if event["event"] == "sim.score.tier1")
+    presentation = next(
+        event for event in events if event["event"] == "sim.score.presentation"
+    )
     tier2 = next(event for event in events if event["event"] == "sim.score.tier2")
     assert tier1["passed"] is True
+    assert presentation == {
+        "event": "sim.score.presentation",
+        "findings": [
+            {
+                "evidence": {"messages_checked": 2},
+                "message": "Captured user-facing MIME passed presentation checks",
+                "passed": True,
+                "tier": "presentation",
+            }
+        ],
+        "passed": True,
+    }
     assert tier2["passed"] is True
     assert tier2["findings"][0]["evidence"] == {"memory_id": "memory-alice"}
     assert tier2["findings"][1]["evidence"] == {
@@ -308,6 +331,75 @@ async def test_recorder_combines_anonymous_tier1_and_persona_bound_tier2(tmp_pat
     )
     for private_value in (alice.name, alice.email, bob.name, bob.email, private_fact):
         assert private_value not in public_artifacts
+
+
+@pytest.mark.asyncio
+async def test_recorder_presentation_failure_has_bounded_stable_evidence(tmp_path):
+    persona = PersonaConfig(
+        name="Alice Shah",
+        email="alice.sim@example.test",
+        goal="Wait for a connection.",
+        stop_condition="Wait.",
+        agent_address="join@example.test",
+    )
+    token = "[intro:11111111-1111-1111-1111-111111111111]"
+    private_body = (
+        f"Malformed presentation {token}\n\n"
+        "--\nThe Network\nAn automated connection service\nReply anytime."
+    )
+
+    async def process(**_kwargs):
+        send_relay_email(
+            to_address=persona.email,
+            proxy_address=(
+                "hidden-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa@relay.example.test"
+            ),
+            subject="Your introduction",
+            body_text=private_body,
+        )
+
+    artifacts = await SimRunRecorder(runs_dir=tmp_path).run(
+        (TinyPersonEmailAdapter(ScriptedTinyPerson("Hello."), persona),),
+        SimRunConfig(
+            scenario="presentation-failure",
+            ticks=1,
+            proactive_every=None,
+            personas=(persona,),
+        ),
+        process=process,
+    )
+
+    presentation = next(
+        json.loads(line)
+        for line in artifacts.events_path.read_text().splitlines()
+        if json.loads(line)["event"] == "sim.score.presentation"
+    )
+    assert presentation == {
+        "event": "sim.score.presentation",
+        "findings": [
+            {
+                "evidence": {
+                    "message_index": 2,
+                    "violations": [
+                        "alternative_order",
+                        "mime_type",
+                        "required_text_html",
+                        "required_text_plain",
+                    ],
+                },
+                "message": "Captured user-facing MIME failed presentation checks",
+                "passed": False,
+                "tier": "presentation",
+            }
+        ],
+        "passed": False,
+    }
+    public_artifacts = (
+        artifacts.events_path.read_text() + artifacts.mbox_path.read_text()
+    )
+    assert private_body not in public_artifacts
+    assert token not in public_artifacts
+    assert persona.email not in public_artifacts
 
 
 def test_public_simulation_mbox_redacts_untrusted_headers_and_envelope(tmp_path):
