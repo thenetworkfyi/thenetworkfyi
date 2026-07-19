@@ -49,7 +49,7 @@ def test_post_office_captures_send_reply_at_smtp_seam():
     assert captured["Message-ID"]
     plain_body = captured.get_body(preferencelist=("plain",)).get_content()
     assert "The Network" in plain_body
-    assert "Reply anytime." in plain_body
+    assert "join@thenetwork.fyi" in plain_body
 
 
 def test_post_office_appends_delivered_messages_to_mbox(tmp_path):

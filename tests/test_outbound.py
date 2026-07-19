@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from email.utils import getaddresses, parsedate_to_datetime
+from html import unescape
 from unittest.mock import MagicMock, patch
 
 from imap_tools import MailMessageFlags
@@ -479,14 +480,13 @@ def test_proxy_introduction_messages_preserve_valid_multipart_alternatives():
             required_text=(
                 proxy,
                 "The Network",
-                "An automated connection service",
-                "Reply anytime.",
+                "join@thenetwork.fyi",
             ),
         )
         assert inspection.part_types == ("text/plain", "text/html")
 
 
-def test_event_fyi_uses_fixed_subject_template_and_one_referral_signature():
+def test_event_fyi_uses_fixed_subject_template_and_standard_signature():
     from thenetwork.email.outbound import EVENT_RECOMMENDATION_SUBJECT, send_event_fyi
     from thenetwork.email.render import EventRecommendationNotice
 
@@ -517,14 +517,15 @@ def test_event_fyi_uses_fixed_subject_template_and_one_referral_signature():
         "text/plain",
         "text/html",
     ]
-    for body in (plain, html):
+    for body in (plain, unescape(html)):
         assert body.count("A sealed event gist") == 1
         assert body.count(EventRecommendationNotice.FIRST.value) == 1
         assert body.count("The Network") == 1
-        assert body.count("agent@example.com") == 1
+        assert body.count("join@thenetwork.fyi") == 1
+        assert "agent@example.com" not in body
 
 
-def test_send_reply_without_referral_keeps_standard_signature():
+def test_send_reply_uses_short_standard_signature():
     from thenetwork.email.outbound import send_reply
 
     captured = []
@@ -541,7 +542,16 @@ def test_send_reply_without_referral_keeps_standard_signature():
 
     body = captured[0].get_body(preferencelist=("plain",)).get_content()
     assert body.count("The Network") == 1
-    assert "Know someone who should be on this?" not in body
+    assert body.count("join@thenetwork.fyi") == 1
+    assert body.endswith("The Network\njoin@thenetwork.fyi\n")
+    for removed_text in (
+        "An automated connection service",
+        "Reply anytime.",
+        "Know someone who should be on this?",
+        "Forward this along",
+        "agent@example.com",
+    ):
+        assert removed_text not in body
 
 
 def test_append_uses_configured_folder_name():
@@ -752,7 +762,7 @@ def test_send_reply_quote_is_in_both_user_facing_alternatives():
         assert "On an earlier message, you wrote:" in part.get_content()
 
 
-def test_send_reply_places_growth_footer_before_quoted_trail():
+def test_send_reply_places_signature_before_quoted_trail():
     from thenetwork.email.outbound import send_reply
 
     captured = []
@@ -779,7 +789,7 @@ def test_send_reply_places_growth_footer_before_quoted_trail():
 
     plain = captured[0].get_body(preferencelist=("plain",)).get_content()
     reply_index = plain.index("Hello")
-    footer_index = plain.index("--\nThe Network\nAn automated connection service")
+    footer_index = plain.index("The Network\njoin@thenetwork.fyi")
     quote_index = plain.index("On Sat, 04 Jul 2026 12:00:00 -0700, you wrote:")
     assert reply_index < footer_index < quote_index
 

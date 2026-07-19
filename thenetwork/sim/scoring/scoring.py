@@ -28,8 +28,7 @@ _CONSENT_REQUEST_SUBJECT_PREFIX = "Possible introduction"
 _SIM_DIRECTION_PERSONA_TO_AGENT = "persona->agent"
 _PRESENTATION_SIGNATURE_TEXT = (
     "The Network",
-    "An automated connection service",
-    "Reply anytime.",
+    "join@thenetwork.fyi",
 )
 _RELAY_ADDRESS_RE = re.compile(
     r"\bhidden-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-"

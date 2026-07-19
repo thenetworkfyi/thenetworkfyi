@@ -19,14 +19,11 @@ from jinja2 import (
     select_autoescape,
 )
 
-from thenetwork.settings import get_settings
-
 
 class SignatureVariant(str, Enum):
     """Server-owned signature variants for user-facing mail."""
 
     STANDARD = "standard"
-    STANDARD_WITH_REFERRAL = "standard_with_referral"
     NONE = "none"
 
 
@@ -189,13 +186,7 @@ _INFRASTRUCTURE_REJECTION_COPY = {
     ),
 }
 
-_STANDARD_SIGNATURE_TEXT = (
-    "--\nThe Network\nAn automated connection service\nReply anytime."
-)
-_REFERRAL_TEXT = (
-    "Know someone who should be on this? Forward this along — they can join by "
-    "emailing {account} directly."
-)
+_STANDARD_SIGNATURE_TEXT = "The Network\njoin@thenetwork.fyi"
 
 
 def render_conversational_email(
@@ -203,7 +194,6 @@ def render_conversational_email(
     *,
     signature_variant: SignatureVariant = SignatureVariant.STANDARD,
     quoted_message: QuotedMessage | None = None,
-    referral_account: str | None = None,
 ) -> RenderedEmail:
     """Render canonical conversational text and its trusted HTML peer.
 
@@ -220,14 +210,12 @@ def render_conversational_email(
         plain_body,
         signature_variant=signature_variant,
         quoted_message=quoted_message,
-        referral_account=referral_account,
     )
     return _render_html_alternative(
         text,
         body_text=plain_body,
         signature_variant=signature_variant,
         quoted_message=quoted_message,
-        referral_account=referral_account,
     )
 
 
@@ -237,7 +225,6 @@ def render_fixed_email(
     *,
     signature_variant: SignatureVariant = SignatureVariant.STANDARD,
     quoted_message: QuotedMessage | None = None,
-    referral_account: str | None = None,
 ) -> RenderedEmail:
     """Render one named fixed template from its matching typed context.
 
@@ -254,7 +241,6 @@ def render_fixed_email(
         plain_body,
         signature_variant=signature_variant,
         quoted_message=quoted_message,
-        referral_account=referral_account,
     )
 
     try:
@@ -264,7 +250,6 @@ def render_fixed_email(
             fixed_context=template_context,
             signature_variant=signature_variant,
             quoted_message=quoted_message,
-            referral_account=referral_account,
         )
     except TemplateError:
         return RenderedEmail(text=text, html=None)
@@ -342,7 +327,6 @@ def _render_html_alternative(
     body_text: str,
     signature_variant: SignatureVariant,
     quoted_message: QuotedMessage | None,
-    referral_account: str | None,
 ) -> RenderedEmail:
     try:
         html = _render_document(
@@ -351,7 +335,6 @@ def _render_html_alternative(
             fixed_context=None,
             signature_variant=signature_variant,
             quoted_message=quoted_message,
-            referral_account=referral_account,
         )
     except TemplateError:
         return RenderedEmail(text=text, html=None)
@@ -365,9 +348,8 @@ def _render_document(
     fixed_context: dict[str, str] | None,
     signature_variant: SignatureVariant,
     quoted_message: QuotedMessage | None,
-    referral_account: str | None,
 ) -> str:
-    signature = _signature_context(signature_variant, referral_account)
+    signature = _signature_context(signature_variant)
     quote = _quote_context(quoted_message)
     return _ENVIRONMENT.get_template("email.html").render(
         body_paragraphs=body_paragraphs,
@@ -383,10 +365,9 @@ def _assemble_plain_text(
     *,
     signature_variant: SignatureVariant,
     quoted_message: QuotedMessage | None,
-    referral_account: str | None,
 ) -> str:
     text = body
-    signature = _signature_context(signature_variant, referral_account)
+    signature = _signature_context(signature_variant)
     if signature["plain"]:
         text = f"{text}\n\n{signature['plain']}"
     if quoted_message is not None:
@@ -402,26 +383,12 @@ def _assemble_plain_text(
     return text
 
 
-def _signature_context(
-    variant: SignatureVariant, referral_account: str | None
-) -> dict[str, str | bool]:
+def _signature_context(variant: SignatureVariant) -> dict[str, str | bool]:
     if not isinstance(variant, SignatureVariant):
         raise TypeError("signature_variant must be a SignatureVariant")
     if variant is SignatureVariant.NONE:
-        return {"plain": "", "show": False, "referral": ""}
-    referral = ""
-    if variant is SignatureVariant.STANDARD_WITH_REFERRAL:
-        account = (
-            referral_account
-            if referral_account is not None
-            else get_settings().imap_account
-        )
-        _require_text(account, "referral_account")
-        referral = _REFERRAL_TEXT.format(account=account)
-    plain = _STANDARD_SIGNATURE_TEXT
-    if referral:
-        plain = f"{plain}\n{referral}"
-    return {"plain": plain, "show": True, "referral": referral}
+        return {"plain": "", "show": False}
+    return {"plain": _STANDARD_SIGNATURE_TEXT, "show": True}
 
 
 def _quote_context(

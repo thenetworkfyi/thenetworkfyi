@@ -53,13 +53,6 @@ def _quoted_message(body_text: str, quoted_date: str | None = None) -> QuotedMes
     return QuotedMessage(body_text="\n".join(body_lines), date=quoted_date)
 
 
-def _user_facing_signature_variant(settings) -> SignatureVariant:
-    """Choose the server-owned signature; only configured mail gets referral copy."""
-    if settings.growth_footer_enabled:
-        return SignatureVariant.STANDARD_WITH_REFERRAL
-    return SignatureVariant.STANDARD
-
-
 def _append_to_sent(msg: EmailMessage, trace_id: str | None = None) -> None:
     """Append the just-sent message to the IMAP Sent folder, flagged \\Seen.
 
@@ -184,7 +177,7 @@ def send_reply(
     IMAP pollers skip our outbound replies and don't create a loop.
 
     The trusted renderer, rather than any caller, owns the HTML alternative,
-    signature, referral footer, and quoted-message markup. ``fixed_template``
+    signature and quoted-message markup. ``fixed_template``
     is an internal, closed server-selected path for fixed replies; it accepts
     only a named server-owned template with its matching typed context, never
     caller-authored markup.
@@ -222,7 +215,6 @@ def send_reply(
             rendered_html = None
             rendering_mode = "internal_plain"
         else:
-            signature_variant = _user_facing_signature_variant(s)
             quoted_message = (
                 _quoted_message(quoted_body_text, quoted_date)
                 if quoted_body_text
@@ -231,17 +223,15 @@ def send_reply(
             if fixed_template is None:
                 rendered = render_conversational_email(
                     body_text,
-                    signature_variant=signature_variant,
+                    signature_variant=SignatureVariant.STANDARD,
                     quoted_message=quoted_message,
-                    referral_account=s.imap_account,
                 )
             else:
                 rendered = render_fixed_email(
                     fixed_template,
                     fixed_context,
-                    signature_variant=signature_variant,
+                    signature_variant=SignatureVariant.STANDARD,
                     quoted_message=quoted_message,
-                    referral_account=s.imap_account,
                 )
             rendered_text = rendered.text
             rendered_html = rendered.html
@@ -307,8 +297,7 @@ def send_event_fyi(
         rendered = render_fixed_email(
             FixedEmailTemplate.EVENT_RECOMMENDATION,
             EventRecommendationEmailContext(event_gist=event_gist, notice=notice),
-            signature_variant=_user_facing_signature_variant(settings),
-            referral_account=settings.imap_account,
+            signature_variant=SignatureVariant.STANDARD,
         )
         audit_event(
             "email.rendered",
