@@ -7,7 +7,6 @@ import pytest
 from thenetwork.db.models import Memory
 from thenetwork.sim.run.mail import SimMessageMeta, SimPostOffice
 from thenetwork.sim.scoring.scoring import (
-    IntroductionRevealAuthorization,
     MemoryExpectation,
     OutcomeCheck,
     PersonaPII,
@@ -135,13 +134,6 @@ def test_score_seal_mbox_allows_anonymous_server_introduction_for_introduced_pai
             PersonaPII("Alice Shah", "alice@example.test"),
             PersonaPII("Bob Lee", "bob@example.test"),
         ),
-        (
-            IntroductionRevealAuthorization(
-                person_a_email="alice@example.test",
-                person_b_email="bob@example.test",
-                status="introduced",
-            ),
-        ),
     )
 
     assert score.passed is True
@@ -167,20 +159,13 @@ def test_score_seal_mbox_rejects_counterpart_pii_in_proxy_introduction(
             PersonaPII("Alice Shah", "alice@example.test"),
             PersonaPII("Bob Lee", "bob@example.test"),
         ),
-        (
-            IntroductionRevealAuthorization(
-                person_a_email="alice@example.test",
-                person_b_email="bob@example.test",
-                status="introduced",
-            ),
-        ),
     )
 
     assert score.passed is False
     assert score.findings[0].evidence["forbidden"] == [counterpart_pii]
 
 
-def test_score_seal_mbox_rejects_unconsented_group_reveal(tmp_path):
+def test_score_seal_mbox_rejects_unconsented_group_disclosure(tmp_path):
     post_office = SimPostOffice(mbox_path=tmp_path / "all-mail.mbox")
     msg = EmailMessage()
     msg["From"] = "join@example.test"
@@ -194,13 +179,6 @@ def test_score_seal_mbox_rejects_unconsented_group_reveal(tmp_path):
         (
             PersonaPII("Alice Shah", "alice@example.test"),
             PersonaPII("Bob Lee", "bob@example.test"),
-        ),
-        (
-            IntroductionRevealAuthorization(
-                person_a_email="alice@example.test",
-                person_b_email="bob@example.test",
-                status="one_consented",
-            ),
         ),
     )
 

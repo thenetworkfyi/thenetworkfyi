@@ -39,7 +39,7 @@ _BURST_TOKENS = tuple(f"{d}0000000-0000-0000-0000-00000000000{d}" for d in "1234
 _WEAK_PAIR_TOKEN = "77777777-7777-7777-7777-777777777777"
 _VIC_TOKEN_A = "88888888-8888-8888-8888-888888888888"
 _VIC_TOKEN_B = "99999999-9999-9999-9999-999999999999"
-_REVEAL_PAIR_TOKEN = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+_RELAY_PAIR_TOKEN = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 
 _WEAK_THRESHOLDS = ResponseQualityThresholds(
     weak_match_pairs=(frozenset({DANA, OMAR}),)
@@ -171,8 +171,8 @@ def _build_stacked_mbox(mbox_path: Path) -> None:
 
     # Paced proposals: at most one open consent request per recipient.
     post_office.deliver(_consent_request(INES, _BURST_TOKENS[0]))
-    post_office.deliver(_consent_request(DANA, _REVEAL_PAIR_TOKEN))
-    post_office.deliver(_consent_request(PRIYA, _REVEAL_PAIR_TOKEN))
+    post_office.deliver(_consent_request(DANA, _RELAY_PAIR_TOKEN))
+    post_office.deliver(_consent_request(PRIYA, _RELAY_PAIR_TOKEN))
 
     # Vic replies thread-faithfully, one decision per proposal thread.
     message, meta = _persona(
@@ -184,14 +184,16 @@ def _build_stacked_mbox(mbox_path: Path) -> None:
     )
     post_office.deliver(message, meta)
 
-    # The authorized dual-recipient reveal must not read as a misrouted reply.
-    post_office.deliver(
-        _agent(
-            (DANA, PRIYA),
-            "You both opted in, so here is your introduction.",
-            subject="Your introduction",
+    # The fixed handoff is one anonymous relay message per recipient.
+    proxy = f"hidden-{_RELAY_PAIR_TOKEN}@relay.example.test"
+    for recipient in (DANA, PRIYA):
+        post_office.deliver(
+            _agent(
+                recipient,
+                f"You both opted in. Reply or email {proxy} directly.",
+                subject="Your introduction",
+            )
         )
-    )
 
 
 def _legacy_memories() -> list[Memory]:

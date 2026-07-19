@@ -39,7 +39,6 @@ from thenetwork.sim.run.recorder import (
     write_redacted_json,
 )
 from thenetwork.sim.scoring.scoring import (
-    IntroductionRevealAuthorization,
     PersonaPII,
     score_seal_mbox,
 )
@@ -237,13 +236,6 @@ async def _record_intro_flow(
         tier1 = score_seal_mbox(
             artifacts.raw_mbox_path,
             (PersonaPII.from_config(persona) for persona in INTRO_FLOW_PERSONAS),
-            (
-                IntroductionRevealAuthorization(
-                    person_a_email=alice.email,
-                    person_b_email=bob.email,
-                    status=_consent_status(),
-                ),
-            ),
         )
         events.write(
             "sim.score.tier1",

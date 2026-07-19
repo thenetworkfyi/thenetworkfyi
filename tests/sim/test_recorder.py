@@ -45,7 +45,7 @@ from thenetwork.sim.scenarios import default_strong_match_configs
 from thenetwork.sim.scoring.scoring import (
     EventOutcomeFact,
     EventRecommendationOutcomeFact,
-    IntroductionRevealAuthorization,
+    IntroductionConsentState,
     OutcomeCheck,
     ProactiveEventTriggerOutcomeFact,
 )
@@ -800,7 +800,7 @@ def test_outcome_assembly_reads_fixture_mail_audit_and_database_state(tmp_path):
         encoding="utf-8",
     )
     rows = (
-        IntroductionRevealAuthorization(
+        IntroductionConsentState(
             person_a_email="omar.sim@example.test",
             person_b_email="peer@example.test",
             status="one_consented",
