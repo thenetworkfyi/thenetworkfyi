@@ -5,7 +5,15 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from thenetwork.sim.personas.persona import PersonaConfig, TinyPersonEmailAdapter
+from thenetwork.sim.personas.persona import (
+    EmailFormat,
+    EmailPresentation,
+    EmailSignature,
+    PersonaConfig,
+    SignatureLink,
+    TinyPersonEmailAdapter,
+)
+from thenetwork.sim.html_validation import html_to_visible_text
 from thenetwork.sim.scenarios import StrongMatchScenario, default_strong_match_configs
 
 
@@ -76,6 +84,123 @@ def test_tinyperson_adapter_builds_threaded_reply_with_quoted_original():
     assert msg.get_content() == (
         "YES\n\n> A possible match came up.\n>\n> Reply YES to opt in.\n"
     )
+
+
+def test_tinyperson_adapter_renders_plain_signature():
+    person = ScriptedTinyPerson("Priya", ["I want to meet ML infra operators."])
+    adapter = TinyPersonEmailAdapter(
+        person,
+        PersonaConfig(
+            name="Priya Shah",
+            email="priya@example.test",
+            goal="Find ML infrastructure operators.",
+            stop_condition="Stop after one message.",
+            presentation=EmailPresentation(
+                signature=EmailSignature(
+                    lines=("Priya Shah", "ML Platform Lead", "Northstar Labs")
+                )
+            ),
+        ),
+    )
+
+    msg = adapter.next_email("write", tick=1)
+
+    assert msg is not None
+    assert msg.get_content_type() == "text/plain"
+    assert msg.get_content() == (
+        "I want to meet ML infra operators.\n\n"
+        "-- \nPriya Shah\nML Platform Lead\nNorthstar Labs\n"
+    )
+
+
+def test_tinyperson_adapter_renders_escaped_multipart_linked_signature():
+    authored = "I work on <factory> ML & reliability.\nLet us compare notes."
+    person = ScriptedTinyPerson("Priya", [authored])
+    adapter = TinyPersonEmailAdapter(
+        person,
+        PersonaConfig(
+            name="Priya Shah",
+            email="priya@example.test",
+            goal="Find ML infrastructure operators.",
+            stop_condition="Stop after one message.",
+            presentation=EmailPresentation(
+                format=EmailFormat.MULTIPART_ALTERNATIVE,
+                signature=EmailSignature(
+                    lines=("Priya <Shah>", "ML & Platform Lead"),
+                    link=SignatureLink(
+                        text="Northstar R&D",
+                        url="https://northstar.example/about?team=ml&source=sim",
+                    ),
+                ),
+            ),
+        ),
+    )
+
+    msg = adapter.next_email("write", tick=1)
+
+    assert msg is not None
+    assert msg.get_content_type() == "multipart/alternative"
+    assert tuple(part.get_content_type() for part in msg.iter_parts()) == (
+        "text/plain",
+        "text/html",
+    )
+    plain = msg.get_body(preferencelist=("plain",)).get_content()
+    html = msg.get_body(preferencelist=("html",)).get_content()
+    assert authored in plain
+    assert "Priya <Shah>" in plain
+    assert "Northstar R&D" in plain
+    assert html_to_visible_text(html) == " ".join(plain.split())
+    assert "I work on &lt;factory&gt; ML &amp; reliability." in html
+    assert "Priya &lt;Shah&gt;" in html
+    assert 'href="https://northstar.example/about?team=ml&amp;source=sim"' in html
+    assert ">Northstar R&amp;D</a>" in html
+
+
+def test_tinyperson_adapter_renders_equivalent_multipart_reply_and_signature():
+    person = ScriptedTinyPerson("Priya", ["YES & thanks"])
+    adapter = TinyPersonEmailAdapter(
+        person,
+        PersonaConfig(
+            name="Priya Shah",
+            email="priya@example.test",
+            goal="Find ML infrastructure operators.",
+            stop_condition="Stop after one message.",
+            presentation=EmailPresentation(
+                format=EmailFormat.MULTIPART_ALTERNATIVE,
+                signature=EmailSignature(lines=("Priya Shah",)),
+            ),
+        ),
+    )
+    request = EmailMessage()
+    request["Subject"] = "Possible introduction"
+    request["Message-ID"] = "<proposal@example.test>"
+    request.set_content("A possible <match> came up.\n\nReply YES to opt in.")
+
+    msg = adapter.next_email("write", tick=2, reply_to=request)
+
+    assert msg is not None
+    plain = msg.get_body(preferencelist=("plain",)).get_content()
+    html = msg.get_body(preferencelist=("html",)).get_content()
+    assert plain == (
+        "YES & thanks\n\n-- \nPriya Shah\n\n"
+        "> A possible <match> came up.\n>\n> Reply YES to opt in.\n"
+    )
+    assert "<blockquote>" in html
+    assert "A possible &lt;match&gt; came up." in html
+    assert html_to_visible_text(html) == (
+        "YES & thanks -- Priya Shah A possible <match> came up. Reply YES to opt in."
+    )
+    assert msg["In-Reply-To"] == "<proposal@example.test>"
+    assert adapter.messages_sent == 1
+
+
+@pytest.mark.parametrize(
+    "url",
+    ("javascript:alert(1)", "//example.test/profile", "mailto:priya@example.test"),
+)
+def test_signature_link_rejects_non_http_urls(url):
+    with pytest.raises(ValueError, match="absolute http"):
+        SignatureLink(text="Profile", url=url)
 
 
 def test_tinyperson_adapter_replies_to_proxy_reply_to_address():
