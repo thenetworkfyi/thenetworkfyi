@@ -15,6 +15,7 @@ from thenetwork.sim.scoring.scoring import (
     ScenarioOutcome,
     build_transcript_judge,
     score_memory_expectations,
+    score_presentation_mbox,
     score_response_quality,
     score_scenario_outcomes,
     score_seal_mbox,
@@ -190,6 +191,70 @@ def test_score_seal_mbox_rejects_unconsented_group_disclosure(tmp_path):
         "alice@example.test",
         "bob@example.test",
     ]
+
+
+def _presentation_message(*, html: str | None = None) -> EmailMessage:
+    token = "[intro:11111111-1111-1111-1111-111111111111]"
+    message = EmailMessage()
+    message["From"] = "join@example.test"
+    message["To"] = "alice@example.test"
+    message["Subject"] = f"Possible introduction {token}"
+    message["Auto-Submitted"] = "auto-replied"
+    message.set_content(
+        "Would you like an introduction?\n\n"
+        f"{token}\n\n"
+        "--\nThe Network\nAn automated connection service\nReply anytime."
+    )
+    message.add_alternative(
+        html
+        or (
+            "<html><body><p>Would you like an introduction?</p>"
+            f"<p>{token}</p><hr><p><strong>The Network</strong><br>"
+            "An automated connection service<br>Reply anytime.</p></body></html>"
+        ),
+        subtype="html",
+    )
+    return message
+
+
+def test_score_presentation_mbox_accepts_valid_captured_multipart(tmp_path):
+    path = tmp_path / "captured.mbox"
+    SimPostOffice(mbox_path=path).deliver(_presentation_message())
+
+    score = score_presentation_mbox(path, ("alice@example.test",))
+
+    assert score.passed is True
+    assert score.findings[0].evidence == {"messages_checked": 1}
+
+
+def test_score_presentation_mbox_reports_bounded_failure_at_stable_index(tmp_path):
+    path = tmp_path / "captured.mbox"
+    post_office = SimPostOffice(mbox_path=path)
+    inbound = EmailMessage()
+    inbound["From"] = "alice@example.test"
+    inbound["To"] = "join@example.test"
+    inbound.set_content("Private inbound content")
+    post_office.deliver(inbound)
+    post_office.deliver(
+        _presentation_message(
+            html="<html><body><p>Different words</p>"
+            "<img src='https://tracker.example.test/pixel'></body></html>"
+        )
+    )
+
+    score = score_presentation_mbox(path, ("alice@example.test",))
+
+    assert score.passed is False
+    assert score.findings[0].evidence == {
+        "message_index": 2,
+        "violations": [
+            "required_text_html",
+            "semantic_parity",
+            "unsafe_html",
+        ],
+    }
+    assert "11111111" not in str(score.findings[0].evidence)
+    assert "tracker.example.test" not in str(score.findings[0].evidence)
 
 
 def test_score_memory_expectations_checks_refs_and_gist():

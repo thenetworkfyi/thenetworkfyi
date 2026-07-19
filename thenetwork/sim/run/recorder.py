@@ -53,6 +53,7 @@ from thenetwork.sim.scoring.scoring import (
     ResponseQualityThresholds,
     ScenarioOutcome,
     score_memory_expectations,
+    score_presentation_mbox,
     score_response_quality,
     score_scenario_outcomes,
     score_seal_mbox,
@@ -266,6 +267,15 @@ class SimRunRecorder:
                 "sim.score.tier1",
                 passed=tier1.passed,
                 findings=[asdict(finding) for finding in tier1.findings],
+            )
+            presentation = score_presentation_mbox(
+                artifacts.raw_mbox_path,
+                (persona.email for persona in config.personas),
+            )
+            events.write(
+                "sim.score.presentation",
+                passed=presentation.passed,
+                findings=[asdict(finding) for finding in presentation.findings],
             )
             quality = score_response_quality(
                 artifacts.raw_mbox_path,

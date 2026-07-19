@@ -130,6 +130,10 @@ Interpret the tiers as follows:
   the anonymous relay handoff; it never exempts participant names or real addresses from
   this check. Any failure is a stop-ship finding. A pass does not replace the full
   `tests/security/` suite or prove that every possible indirect disclosure is safe.
+- `sim.score.presentation` checks captured automated and fixed-introduction MIME for
+  plain-first alternatives, visible-text parity, required operational text, and unsafe or
+  hidden HTML. Public findings identify only stable message indices and bounded violation
+  codes; use the private owner-only procedure when the content itself must be examined.
 - `sim.score.quality` checks deterministic mail-level failures: misrouted replies, noisy
   undispatched-response alerts, consent-request bursts, configured weak-match proposals,
   and malformed simulated consent tokens. Investigate every failure at its cited message

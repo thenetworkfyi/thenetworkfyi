@@ -60,8 +60,10 @@ prompt-injection exfiltrate it, so the privacy boundary cannot be "withhold a co
    server code verifies the authenticated sender and current `introduced` state, resolves
    only the other participant, and sends through SES/SMTP. Relay mail always uses
    `From: The Network <proxy>` and the same `Reply-To`; it never copies the inbound display
-   name or sender address. This is address privacy only: participant names and message
-   content are not masked, inspected by the agent, or rewritten.
+   name or sender address. The original MIME body is preserved, including participant-authored
+   plain/HTML alternatives and attachments, while every source routing header is discarded.
+   This is address privacy only: participant names and message content are not masked,
+   inspected by the agent or content scanner, sanitized, or re-rendered.
 8. **Role separation.** Untrusted inbound body is user-role message content, never in the
    system prompt (`agent/core.py`).
 9. **Mail-loop prevention (RFC 3834).** Inbound carrying `Auto-Submitted` /

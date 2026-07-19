@@ -1,11 +1,14 @@
-"""Three-tier scoring for simulation runs."""
+"""Deterministic scoring for simulation runs."""
 
 from __future__ import annotations
 
 import mailbox
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from email import policy
 from email.message import Message
+from email.parser import BytesParser
 from email.utils import getaddresses, parseaddr
 from pathlib import Path
 from typing import Any, Iterable
@@ -15,6 +18,7 @@ from pydantic_evals.evaluators import LLMJudge
 from thenetwork.agent.core import _UNDISPATCHED_RESPONSE_SUBJECT
 from thenetwork.db.models import Memory
 from thenetwork.introductions import _TOKEN_RE
+from thenetwork.sim.html_validation import inspect_html_email
 from thenetwork.sim.personas.consent import _visible_lines
 from thenetwork.sim.run.mail import _extract_body
 from thenetwork.sim.personas.persona import PersonaConfig
@@ -22,6 +26,16 @@ from thenetwork.sim.personas.persona import PersonaConfig
 
 _CONSENT_REQUEST_SUBJECT_PREFIX = "Possible introduction"
 _SIM_DIRECTION_PERSONA_TO_AGENT = "persona->agent"
+_PRESENTATION_SIGNATURE_TEXT = (
+    "The Network",
+    "An automated connection service",
+    "Reply anytime.",
+)
+_RELAY_ADDRESS_RE = re.compile(
+    r"\bhidden-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-"
+    r"[0-9a-f]{12}@[a-z0-9.-]+\b",
+    re.IGNORECASE,
+)
 
 
 TRANSCRIPT_JUDGE_RUBRIC = (
@@ -287,6 +301,88 @@ def score_seal_mbox(
             )
         )
     return TierScore(tier="tier1", findings=tuple(findings))
+
+
+def score_presentation_mbox(
+    mbox_path: Path,
+    persona_emails: Iterable[str],
+) -> TierScore:
+    """Score captured automated user-facing MIME without publishing content."""
+    recipients_in_scope = {email.casefold() for email in persona_emails}
+    findings: list[ScoreFinding] = []
+    messages_checked = 0
+    box = mailbox.mbox(mbox_path)
+    try:
+        messages = list(box)
+    finally:
+        box.close()
+
+    for index, stored_message in enumerate(messages, start=1):
+        message = BytesParser(policy=policy.default).parsebytes(
+            stored_message.as_bytes()
+        )
+        if not (_recipient_emails(message) & recipients_in_scope):
+            continue
+        if not _is_presentation_candidate(message):
+            continue
+        messages_checked += 1
+        plain_text = _extract_body(message)
+        required_text = (
+            *_PRESENTATION_SIGNATURE_TEXT,
+            *(match.group(0) for match in _TOKEN_RE.finditer(plain_text)),
+            *(match.group(0) for match in _RELAY_ADDRESS_RE.finditer(plain_text)),
+        )
+        inspection = inspect_html_email(message, required_text=required_text)
+        violation_codes = _presentation_violation_codes(inspection.violations)
+        if violation_codes:
+            findings.append(
+                ScoreFinding(
+                    tier="presentation",
+                    passed=False,
+                    message="Captured user-facing MIME failed presentation checks",
+                    evidence={
+                        "message_index": index,
+                        "violations": violation_codes,
+                    },
+                )
+            )
+
+    if not findings:
+        findings.append(
+            ScoreFinding(
+                tier="presentation",
+                passed=True,
+                message="Captured user-facing MIME passed presentation checks",
+                evidence={"messages_checked": messages_checked},
+            )
+        )
+    return TierScore(tier="presentation", findings=tuple(findings))
+
+
+def _is_presentation_candidate(message: Message) -> bool:
+    return (
+        str(message.get("Auto-Submitted", "")).casefold() == "auto-replied"
+        or str(message.get("Subject", "")) == "Your introduction"
+    )
+
+
+def _presentation_violation_codes(violations: Iterable[str]) -> list[str]:
+    """Collapse detailed private inspection failures into bounded public codes."""
+    codes = set()
+    for violation in violations:
+        if violation == "message is not multipart/alternative":
+            codes.add("mime_type")
+        elif violation == "alternatives must be text/plain followed by text/html":
+            codes.add("alternative_order")
+        elif violation == "plain text and visible HTML text differ":
+            codes.add("semantic_parity")
+        elif violation.startswith("required text missing from plain part"):
+            codes.add("required_text_plain")
+        elif violation.startswith("required text missing from HTML part"):
+            codes.add("required_text_html")
+        else:
+            codes.add("unsafe_html")
+    return sorted(codes)
 
 
 def score_memory_expectations(

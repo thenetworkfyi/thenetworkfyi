@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import base64
 from contextlib import contextmanager
+from email.message import EmailMessage
 from email.utils import getaddresses
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -147,6 +149,63 @@ async def test_introduced_pair_relay_is_server_routed_without_agent(
     assert "Bob" not in str(message["From"])
     scan.assert_not_called()
     consent.assert_not_called()
+    agent.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_introduced_pair_relay_preserves_sender_html_without_source_headers():
+    from thenetwork.worker.tasks import process_email
+
+    sender = "alice.private@example.com"
+    destination = "bob.private@example.com"
+    source = EmailMessage()
+    source["From"] = f"Alice Private <{sender}>"
+    source["To"] = PROXY
+    source["Subject"] = "Re: Your introduction"
+    source.set_content("Plain participant content")
+    source.add_alternative(
+        "<html><body><p>HTML <strong>participant</strong> content</p></body></html>",
+        subtype="html",
+    )
+    relay_session = _RelaySession()
+    smtp, captured = _smtp_capture()
+    agent = AsyncMock()
+    scan = MagicMock()
+
+    with (
+        patch("thenetwork.worker.tasks.get_settings", return_value=_settings()),
+        patch("thenetwork.email.outbound.get_settings", return_value=_settings()),
+        patch("thenetwork.worker.tasks.get_session", return_value=_worker_session()),
+        patch("thenetwork.email.relay.get_session", _session_factory(relay_session)),
+        patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
+        patch("thenetwork.worker.tasks.scan_content", scan),
+        patch("thenetwork.worker.tasks.process_consent_reply"),
+        patch("thenetwork.worker.tasks.run_agent_for_email", agent),
+        patch("thenetwork.email.outbound.smtplib.SMTP", return_value=smtp),
+        patch("thenetwork.email.outbound._append_to_sent"),
+    ):
+        await process_email.func(
+            sender_email=sender,
+            sender_authenticated=True,
+            recipient_address=PROXY,
+            subject="Re: Your introduction",
+            body="Plain participant content",
+            raw_message_b64=base64.b64encode(source.as_bytes()).decode("ascii"),
+        )
+
+    (message,) = captured
+    assert str(message["From"]) == f"The Network <{PROXY}>"
+    assert str(message["Reply-To"]) == PROXY
+    assert str(message["To"]) == destination
+    assert sender not in "\n".join(str(value) for value in message.values())
+    assert message.get_body(preferencelist=("plain",)).get_content().strip() == (
+        "Plain participant content"
+    )
+    assert (
+        "<strong>participant</strong>"
+        in message.get_body(preferencelist=("html",)).get_content()
+    )
+    scan.assert_not_called()
     agent.assert_not_awaited()
 
 

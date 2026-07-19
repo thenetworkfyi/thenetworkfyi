@@ -12,6 +12,7 @@ import pytest
 
 from thenetwork.audit import LOGGER_NAME
 from thenetwork.email.render import RenderedEmail
+from thenetwork.sim.html_validation import assert_html_email_contract
 
 
 def _events(caplog) -> list[dict]:
@@ -145,6 +146,66 @@ def test_send_relay_email_uses_only_server_selected_addresses(caplog):
     assert any(
         event.get("template_id") == "introduction_relay" for event in relay_events
     )
+
+
+def test_send_relay_email_preserves_source_mime_body_and_replaces_headers():
+    from email.message import EmailMessage
+
+    from thenetwork.email.outbound import send_relay_email
+
+    source = EmailMessage()
+    source["From"] = "Alice Private <alice.private@example.com>"
+    source["To"] = "hidden-source@relay.example.com"
+    source["Subject"] = "Sender subject"
+    source.set_content("Plain participant content")
+    source.add_alternative(
+        "<html><body><p>HTML <strong>participant</strong> content</p></body></html>",
+        subtype="html",
+    )
+    source.add_attachment(
+        b"attachment bytes",
+        maintype="application",
+        subtype="octet-stream",
+        filename="notes.bin",
+    )
+    captured = []
+    smtp_instance = _mock_smtp()
+    smtp_instance.send_message.side_effect = captured.append
+    mock_mailbox, _mb_instance = _mock_mailbox_success()
+    proxy = "hidden-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa@relay.example.com"
+
+    with (
+        patch("thenetwork.email.outbound.get_settings", return_value=_mock_settings()),
+        patch("smtplib.SMTP", return_value=smtp_instance),
+        patch("thenetwork.email.outbound.MailBox", mock_mailbox),
+    ):
+        send_relay_email(
+            to_address="bob.private@example.com",
+            proxy_address=proxy,
+            subject="Re: Your introduction",
+            body_text="Plain participant content",
+            source_message=source.as_bytes(),
+        )
+
+    (message,) = captured
+    assert str(message["From"]) == f"The Network <{proxy}>"
+    assert str(message["Reply-To"]) == proxy
+    assert str(message["To"]) == "bob.private@example.com"
+    assert str(message["Subject"]) == "Re: Your introduction"
+    assert "alice.private@example.com" not in "\n".join(
+        str(value) for value in message.values()
+    )
+    assert message.get_content_type() == "multipart/mixed"
+    assert message.get_body(preferencelist=("plain",)).get_content().strip() == (
+        "Plain participant content"
+    )
+    assert (
+        "<strong>participant</strong>"
+        in message.get_body(preferencelist=("html",)).get_content()
+    )
+    attachment = next(message.iter_attachments())
+    assert attachment.get_filename() == "notes.bin"
+    assert attachment.get_payload(decode=True) == b"attachment bytes"
 
 
 def test_internal_plain_delivery_is_unsigned_and_audited_separately(caplog):
@@ -328,7 +389,7 @@ def test_proxy_introduction_sends_one_message_to_each_consented_person():
         assert str(message["From"]) == f"The Network <{proxy}>"
         assert str(message["Reply-To"]) == proxy
         assert getaddresses(message.get_all("To", [])) == [("", str(message["To"]))]
-        body = message.get_content()
+        body = message.get_body(preferencelist=("plain",)).get_content()
         assert "both opted in" in body
         assert "Why you were matched" in body
         assert "Builds storage systems" in body
@@ -367,7 +428,7 @@ def test_proxy_introduction_audits_rendering_metadata_only(caplog):
     ]
     assert len(smtp_events) == 4
     assert {event["recipient_count"] for event in smtp_events} == {1}
-    assert {event["template_id"] for event in smtp_events} == {"introduction_relay"}
+    assert {event["template_id"] for event in smtp_events} == {"introduction"}
     assert all("body_chars" not in event for event in smtp_events)
     assert all("subject_chars" not in event for event in smtp_events)
 
@@ -376,17 +437,17 @@ def test_proxy_introduction_audits_rendering_metadata_only(caplog):
     ]
     assert len(rendered_events) == 2
     assert {
-        "html_present": False,
+        "html_present": True,
         "outcome": "success",
         "recipient_count": 1,
-        "template_id": "introduction_relay",
+        "template_id": "introduction",
     }.items() <= rendered_events[0].items()
     serialized = json.dumps(_events(caplog))
     assert "alice@example.com" not in serialized
     assert "bob@example.com" not in serialized
 
 
-def test_proxy_introduction_messages_are_plain_only():
+def test_proxy_introduction_messages_preserve_valid_multipart_alternatives():
     from thenetwork.email.outbound import send_proxy_introduction
 
     captured = []
@@ -408,7 +469,18 @@ def test_proxy_introduction_messages_are_plain_only():
         )
 
     assert len(captured) == 2
-    assert all(not message.is_multipart() for message in captured)
+    proxy = "hidden-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa@relay.example.com"
+    for message in captured:
+        inspection = assert_html_email_contract(
+            message,
+            required_text=(
+                proxy,
+                "The Network",
+                "An automated connection service",
+                "Reply anytime.",
+            ),
+        )
+        assert inspection.part_types == ("text/plain", "text/html")
 
 
 def test_event_fyi_uses_fixed_subject_template_and_one_referral_signature():
