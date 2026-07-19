@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from email.message import EmailMessage
 from email.utils import formatdate, make_msgid, parseaddr
+from enum import StrEnum
+from html import escape
 from typing import Any, Protocol
+from urllib.parse import urlsplit
 
 from thenetwork.email.threading import clean_message_id, clean_references
 
@@ -16,6 +19,42 @@ class TinyPersonLike(Protocol):
 
     def listen_and_act(self, stimulus: str, *args: Any, **kwargs: Any) -> Any:
         """Receive a stimulus and return the persona's next action."""
+
+
+class EmailFormat(StrEnum):
+    """MIME formats supported by simulated persona mail."""
+
+    PLAIN = "plain"
+    MULTIPART_ALTERNATIVE = "multipart/alternative"
+
+
+@dataclass(frozen=True)
+class SignatureLink:
+    """Server-authored link rendered as signature text and an HTML anchor."""
+
+    text: str
+    url: str
+
+    def __post_init__(self) -> None:
+        parsed = urlsplit(self.url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("signature link must use an absolute http(s) URL")
+
+
+@dataclass(frozen=True)
+class EmailSignature:
+    """Structured signature content controlled by the simulation fixture."""
+
+    lines: tuple[str, ...]
+    link: SignatureLink | None = None
+
+
+@dataclass(frozen=True)
+class EmailPresentation:
+    """Server-authored MIME and signature choices for a persona."""
+
+    format: EmailFormat = EmailFormat.PLAIN
+    signature: EmailSignature | None = None
 
 
 @dataclass(frozen=True)
@@ -28,6 +67,7 @@ class PersonaConfig:
     stop_condition: str
     message_budget: int = 4
     agent_address: str = "join@thenetwork.test"
+    presentation: EmailPresentation = field(default_factory=EmailPresentation)
 
 
 class TinyPersonEmailAdapter:
@@ -128,7 +168,19 @@ class TinyPersonEmailAdapter:
                 msg["References"] = (
                     f"{references} {message_id}" if references else message_id
                 )
-        msg.set_content(_reply_body(body, reply_to))
+        authored_body, quoted_body = _message_parts(body, reply_to)
+        msg.set_content(
+            _plain_message(
+                authored_body, quoted_body, self.config.presentation.signature
+            )
+        )
+        if self.config.presentation.format == EmailFormat.MULTIPART_ALTERNATIVE:
+            msg.add_alternative(
+                _html_message(
+                    authored_body, quoted_body, self.config.presentation.signature
+                ),
+                subtype="html",
+            )
         self.messages_sent += 1
         return msg
 
@@ -140,17 +192,72 @@ def _reply_subject(reply_to: EmailMessage | None, *, fallback: str) -> str:
     return f"Re: {original_subject}" if original_subject else fallback
 
 
-def _reply_body(body: str, reply_to: EmailMessage | None) -> str:
-    reply = body.strip()
+def _message_parts(body: str, reply_to: EmailMessage | None) -> tuple[str, str | None]:
+    authored_body = body.strip()
     if reply_to is None:
-        return reply
+        return authored_body, None
     original_body = _plain_text_body(reply_to).strip()
     if not original_body:
-        return reply
-    quote = "\n".join(
-        f"> {line}" if line else ">" for line in original_body.splitlines()
-    )
-    return f"{reply}\n\n{quote}"
+        return authored_body, None
+    return authored_body, original_body
+
+
+def _plain_message(
+    authored_body: str,
+    quoted_body: str | None,
+    signature: EmailSignature | None,
+) -> str:
+    sections = [authored_body]
+    if signature is not None:
+        sections.append(_plain_signature(signature))
+    if quoted_body is not None:
+        sections.append(_plain_quote(quoted_body))
+    return "\n\n".join(section for section in sections if section)
+
+
+def _plain_signature(signature: EmailSignature) -> str:
+    lines = [*signature.lines]
+    if signature.link is not None:
+        lines.append(signature.link.text)
+    return "-- \n" + "\n".join(lines)
+
+
+def _plain_quote(body: str) -> str:
+    quote = "\n".join(f"> {line}" if line else ">" for line in body.splitlines())
+    return quote
+
+
+def _html_message(
+    authored_body: str,
+    quoted_body: str | None,
+    signature: EmailSignature | None,
+) -> str:
+    sections = [_html_text(authored_body)]
+    if signature is not None:
+        sections.append(_html_signature(signature))
+    if quoted_body is not None:
+        sections.append(f"<blockquote>{_html_text(quoted_body)}</blockquote>")
+    return "<!doctype html><html><body>" + "".join(sections) + "</body></html>"
+
+
+def _html_text(text: str) -> str:
+    paragraphs = []
+    for paragraph in text.split("\n\n"):
+        lines = "<br>".join(escape(line) for line in paragraph.splitlines())
+        if lines:
+            paragraphs.append(f"<p>{lines}</p>")
+    return "".join(paragraphs)
+
+
+def _html_signature(signature: EmailSignature) -> str:
+    lines = [escape(line) for line in signature.lines]
+    if signature.link is not None:
+        lines.append(
+            f'<a href="{escape(signature.link.url, quote=True)}">'
+            f"{escape(signature.link.text)}</a>"
+        )
+    content = "<br>".join(lines)
+    return f'<div class="signature"><p>--<br>{content}</p></div>'
 
 
 def _plain_text_body(message: EmailMessage) -> str:

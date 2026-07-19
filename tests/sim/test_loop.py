@@ -17,7 +17,13 @@ from thenetwork.sim.run.loop import (
     override_rate_limits,
     run_proactive_scans,
 )
-from thenetwork.sim.personas.persona import PersonaConfig, TinyPersonEmailAdapter
+from thenetwork.sim.personas.persona import (
+    EmailFormat,
+    EmailPresentation,
+    EmailSignature,
+    PersonaConfig,
+    TinyPersonEmailAdapter,
+)
 from thenetwork.worker import proactive
 
 
@@ -148,6 +154,45 @@ async def test_tick_loop_advances_time_and_processes_persona_messages(tmp_path):
     assert result.persona_messages == 2
     assert process.await_count == 2
     assert len(result.post_office.messages_for("join@example.test")) == 2
+
+
+@pytest.mark.asyncio
+async def test_tick_loop_delivers_plain_semantics_from_multipart_persona_mail(tmp_path):
+    process = AsyncMock()
+    adapter = TinyPersonEmailAdapter(
+        ScriptedTinyPerson(["I work on <factory> ML."]),
+        PersonaConfig(
+            name="Priya",
+            email="priya@example.test",
+            goal="Find a strong match.",
+            stop_condition="Stop when registered.",
+            message_budget=1,
+            agent_address="join@example.test",
+            presentation=EmailPresentation(
+                format=EmailFormat.MULTIPART_ALTERNATIVE,
+                signature=EmailSignature(lines=("Priya Shah", "Northstar Labs")),
+            ),
+        ),
+    )
+    loop = SimTickLoop(
+        [adapter],
+        run_dir=tmp_path,
+        process=process,
+        proactive_every=None,
+    )
+
+    await loop.run(ticks=1)
+
+    delivered = process.await_args.kwargs
+    assert delivered["body"] == (
+        "I work on <factory> ML.\n\n-- \nPriya Shah\nNorthstar Labs\n"
+    )
+    (raw_message,) = loop.post_office.messages_for("join@example.test")
+    assert raw_message.get_content_type() == "multipart/alternative"
+    assert (
+        "<p>I work on &lt;factory&gt; ML.</p>"
+        in raw_message.get_body(preferencelist=("html",)).get_content()
+    )
 
 
 @pytest.mark.asyncio
