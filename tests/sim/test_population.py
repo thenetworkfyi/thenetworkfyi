@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import mailbox
+from email import policy
+from email.parser import BytesParser
+from email.utils import parseaddr
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -7,7 +11,7 @@ import pytest
 from thenetwork.db.models import Memory
 from thenetwork.sim.scoring.scoring import MailFacts, score_memory_expectations
 from thenetwork.sim.run.loop import SimTickLoop
-from thenetwork.sim.personas.persona import TinyPersonEmailAdapter
+from thenetwork.sim.personas.persona import EmailFormat, TinyPersonEmailAdapter
 from thenetwork.sim.personas.population import (
     DEFAULT_EXPECTATIONS,
     EVENT_ATTENDEE_EMAIL,
@@ -253,6 +257,109 @@ def test_default_population_has_authored_personas_and_schedule():
     )
     assert additions["Omar Feld"].interruptions[0].kind == "dormancy"
     assert additions["Omar Feld"].interruptions[0].start_tick == 4
+
+
+def test_default_population_deterministically_mixes_email_presentations():
+    population = default_population()
+    by_name = {
+        persona.config.name: persona.config.presentation for persona in population
+    }
+
+    assert {presentation.format for presentation in by_name.values()} == {
+        EmailFormat.PLAIN,
+        EmailFormat.MULTIPART_ALTERNATIVE,
+    }
+    assert by_name["Priya Shah"].signature is None
+    assert by_name["Nora Chen"].format == EmailFormat.PLAIN
+    assert by_name["Nora Chen"].signature is not None
+    assert by_name["Samir Vale"].format == EmailFormat.MULTIPART_ALTERNATIVE
+    assert by_name["Samir Vale"].signature is None
+    assert by_name["Mateo Ruiz"].format == EmailFormat.MULTIPART_ALTERNATIVE
+    assert by_name["Mateo Ruiz"].signature is not None
+    assert by_name["Mateo Ruiz"].signature.link is not None
+    assert by_name["Mateo Ruiz"].signature.link.url == (
+        "https://labtools.example.test/notes"
+    )
+    assert (
+        sum(presentation.signature is not None for presentation in by_name.values()) > 1
+    )
+    assert (
+        sum(
+            presentation.signature is not None
+            and presentation.signature.link is not None
+            for presentation in by_name.values()
+        )
+        > 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_mixed_population_mailbox_preserves_authored_plain_delivery(tmp_path):
+    population = default_population(agent_address="join@example.test")
+    representatives = tuple(
+        persona
+        for persona in population
+        if persona.config.name
+        in {"Priya Shah", "Samir Vale", "Nora Chen", "Mateo Ruiz"}
+    )
+    process = AsyncMock()
+    loop = SimTickLoop(
+        [
+            TinyPersonEmailAdapter(
+                RecordingTinyPerson(persona.opening_body), persona.config
+            )
+            for persona in representatives
+        ],
+        run_dir=tmp_path,
+        process=process,
+        proactive_every=None,
+    )
+
+    result = await loop.run(ticks=1)
+
+    delivered_by_sender = {
+        await_call.kwargs["sender_email"]: await_call.kwargs["body"]
+        for await_call in process.await_args_list
+    }
+    for persona in representatives:
+        assert delivered_by_sender[persona.config.email].startswith(
+            persona.opening_body
+        )
+
+    raw_box = mailbox.mbox(result.post_office.mbox_path)
+    try:
+        raw_messages = tuple(
+            BytesParser(policy=policy.default).parsebytes(message.as_bytes())
+            for message in raw_box
+        )
+    finally:
+        raw_box.close()
+    by_sender = {parseaddr(message["From"])[1]: message for message in raw_messages}
+
+    assert by_sender["priya.sim@example.test"].get_content_type() == "text/plain"
+    assert by_sender["samir.sim@example.test"].get_content_type() == (
+        "multipart/alternative"
+    )
+    assert by_sender["nora.sim@example.test"].get_content_type() == "text/plain"
+    assert (
+        "Nora Chen\nIndustrial Climate Research"
+        in by_sender["nora.sim@example.test"].get_content()
+    )
+
+    mateo = by_sender["mateo.sim@example.test"]
+    assert mateo.get_content_type() == "multipart/alternative"
+    assert tuple(part.get_content_type() for part in mateo.iter_parts()) == (
+        "text/plain",
+        "text/html",
+    )
+    assert (
+        "I design internal tools for lab operations"
+        in mateo.get_body(preferencelist=("plain",)).get_content()
+    )
+    assert (
+        '<a href="https://labtools.example.test/notes">Lab Tools Studio</a>'
+        in mateo.get_body(preferencelist=("html",)).get_content()
+    )
 
 
 @pytest.mark.asyncio

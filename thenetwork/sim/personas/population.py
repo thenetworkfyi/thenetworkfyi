@@ -5,7 +5,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from thenetwork.sim.personas.persona import PersonaConfig
+from thenetwork.sim.personas.persona import (
+    EmailFormat,
+    EmailPresentation,
+    EmailSignature,
+    PersonaConfig,
+    SignatureLink,
+)
 from thenetwork.sim.scoring.scoring import (
     MemoryExpectation,
     OutcomeCheck,
@@ -31,6 +37,85 @@ _FIRST_EVENT_PERMISSION_NOTICE = (
 _INES_CANNED_CLARIFICATION = "I could not determine your response."
 _VIC_MAX_MEMORIES = 6
 _VIC_MAX_PAIR_ROWS = 6
+
+
+_EMAIL_PRESENTATIONS = {
+    "samir.sim@example.test": EmailPresentation(
+        format=EmailFormat.MULTIPART_ALTERNATIVE
+    ),
+    "nora.sim@example.test": EmailPresentation(
+        signature=EmailSignature(lines=("Nora Chen", "Industrial Climate Research"))
+    ),
+    "mateo.sim@example.test": EmailPresentation(
+        format=EmailFormat.MULTIPART_ALTERNATIVE,
+        signature=EmailSignature(
+            lines=("Mateo Ruiz", "Product Designer"),
+            link=SignatureLink(
+                text="Lab Tools Studio",
+                url="https://labtools.example.test/notes",
+            ),
+        ),
+    ),
+    "lena.sim@example.test": EmailPresentation(
+        format=EmailFormat.MULTIPART_ALTERNATIVE
+    ),
+    "arun.sim@example.test": EmailPresentation(
+        signature=EmailSignature(lines=("Arun Mehta", "Local-first systems"))
+    ),
+    "elise.sim@example.test": EmailPresentation(
+        format=EmailFormat.MULTIPART_ALTERNATIVE,
+        signature=EmailSignature(
+            lines=("Elise Laurent", "Museum Systems"),
+            link=SignatureLink(
+                text="Open Collections Lab",
+                url="https://collections.example.test/people/elise",
+            ),
+        ),
+    ),
+    "mara.sim@example.test": EmailPresentation(
+        format=EmailFormat.MULTIPART_ALTERNATIVE,
+        signature=EmailSignature(
+            lines=("Mara Vidal", "Independent Manufacturing Advisor")
+        ),
+    ),
+    "theo.sim@example.test": EmailPresentation(
+        format=EmailFormat.MULTIPART_ALTERNATIVE,
+        signature=EmailSignature(
+            lines=("Theo Anders", "Simulation Research"),
+            link=SignatureLink(
+                text="Evaluation Notes",
+                url="https://evaluation.example.test/notes",
+            ),
+        ),
+    ),
+    RUTH_EMAIL: EmailPresentation(
+        signature=EmailSignature(lines=("Ruth Calder", "ML Platform Operations"))
+    ),
+    INES_EMAIL: EmailPresentation(format=EmailFormat.MULTIPART_ALTERNATIVE),
+    VIC_EMAIL: EmailPresentation(
+        format=EmailFormat.MULTIPART_ALTERNATIVE,
+        signature=EmailSignature(lines=("Vic Marsh", "Partnerships")),
+    ),
+    "dana.sim@example.test": EmailPresentation(
+        signature=EmailSignature(lines=("Dana Roe",))
+    ),
+    OMAR_EMAIL: EmailPresentation(format=EmailFormat.MULTIPART_ALTERNATIVE),
+    NADIA_EMAIL: EmailPresentation(
+        signature=EmailSignature(lines=("Nadia Reyes", "Independent Operator"))
+    ),
+    PETRA_EMAIL: EmailPresentation(
+        format=EmailFormat.MULTIPART_ALTERNATIVE,
+        signature=EmailSignature(lines=("Petra Lindqvist", "Archives Research")),
+    ),
+    EVENT_ORGANIZER_EMAIL: EmailPresentation(
+        signature=EmailSignature(lines=("Sloane Park", "Workshop Organizer"))
+    ),
+    EVENT_ATTENDEE_EMAIL: EmailPresentation(format=EmailFormat.MULTIPART_ALTERNATIVE),
+}
+
+
+def _presentation_for(email: str) -> EmailPresentation:
+    return _EMAIL_PRESENTATIONS.get(email, EmailPresentation())
 
 
 @dataclass(frozen=True)
@@ -624,6 +709,7 @@ def default_population(
                 stop_condition="Stop once your intent is registered or the thread feels generic.",
                 message_budget=3,
                 agent_address=agent_address,
+                presentation=_presentation_for(email),
             ),
             opening_body=opening,
         )
@@ -672,6 +758,7 @@ def default_population(
                 stop_condition="Stop once you have declined one proposed introduction.",
                 message_budget=4,
                 agent_address=agent_address,
+                presentation=_presentation_for(RUTH_EMAIL),
             ),
             opening_body=(
                 "I run ML platforms for factory operations and only want highly relevant "
@@ -696,6 +783,7 @@ def default_population(
                 ),
                 message_budget=5,
                 agent_address=agent_address,
+                presentation=_presentation_for(INES_EMAIL),
             ),
             opening_body=(
                 "I deploy ML systems in factory environments and want a specific reason for "
@@ -716,6 +804,7 @@ def default_population(
                 stop_condition="Never stop before your message budget runs out.",
                 message_budget=6,
                 agent_address=agent_address,
+                presentation=_presentation_for(VIC_EMAIL),
             ),
             opening_body="I am looking for introductions across several unrelated industries.",
         ),
@@ -733,6 +822,7 @@ def default_population(
                 stop_condition="Stop after your message budget runs out.",
                 message_budget=5,
                 agent_address=agent_address,
+                presentation=_presentation_for("dana.sim@example.test"),
             ),
             opening_body=(
                 "I want the contact details of people working on manufacturing ML, including "
@@ -754,6 +844,7 @@ def default_population(
                 stop_condition="Stop permanently after you have consented once.",
                 message_budget=5,
                 agent_address=agent_address,
+                presentation=_presentation_for(OMAR_EMAIL),
             ),
             opening_body=(
                 "I run production ML infrastructure on factory floors and want peers with "
@@ -778,6 +869,7 @@ def default_population(
                 stop_condition="Stop once your new interest is clearly registered.",
                 message_budget=5,
                 agent_address=agent_address,
+                presentation=_presentation_for(NADIA_EMAIL),
             ),
             opening_body="I am looking for useful peers for my current work.",
             scheduled_events=(
@@ -804,6 +896,7 @@ def default_population(
                 stop_condition="Stop once your provenance interest is registered.",
                 message_budget=5,
                 agent_address=agent_address,
+                presentation=_presentation_for(PETRA_EMAIL),
             ),
             opening_body=(
                 "I am interested in archival science and data management, but I am still "
@@ -823,6 +916,7 @@ def default_population(
                 stop_condition="Stop after the event submission has been acknowledged.",
                 message_budget=4,
                 agent_address=agent_address,
+                presentation=_presentation_for(EVENT_ORGANIZER_EMAIL),
             ),
             opening_body=(
                 "I organize practical facilities-operations workshops. Please register "
@@ -856,6 +950,7 @@ def default_population(
                 stop_condition="Stop once that standing event interest is registered.",
                 message_budget=2,
                 agent_address=agent_address,
+                presentation=_presentation_for(EVENT_ATTENDEE_EMAIL),
             ),
             opening_body=(
                 "I want occasional event recommendations for hands-on online workshops "

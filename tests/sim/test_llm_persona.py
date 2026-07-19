@@ -1,3 +1,5 @@
+from email.message import EmailMessage
+
 import pytest
 
 from pydantic_ai.exceptions import ModelHTTPError
@@ -10,7 +12,14 @@ from thenetwork.sim.personas.llm_persona import (
     TransientPersonaError,
     _PERSONA_PROMPT,
 )
-from thenetwork.sim.personas.persona import PersonaConfig, TinyPersonEmailAdapter
+from thenetwork.sim.personas.persona import (
+    EmailFormat,
+    EmailPresentation,
+    EmailSignature,
+    PersonaConfig,
+    SignatureLink,
+    TinyPersonEmailAdapter,
+)
 
 
 def _config(**overrides) -> PersonaConfig:
@@ -60,6 +69,42 @@ async def test_llm_persona_writes_email_body_from_model_output():
 
     assert msg is not None
     assert msg.get_content().strip() == "Hi, I run ML platforms."
+    assert adapter.messages_sent == 1
+
+
+async def test_llm_persona_writes_threaded_multipart_mail_with_configured_signature():
+    config = _config(
+        presentation=EmailPresentation(
+            format=EmailFormat.MULTIPART_ALTERNATIVE,
+            signature=EmailSignature(
+                lines=("Priya Shah", "ML Platform Lead"),
+                link=SignatureLink(
+                    text="Northstar Labs",
+                    url="https://northstar.example.test/team/priya",
+                ),
+            ),
+        )
+    )
+    person = LLMTinyPerson(config, TestModel(custom_output_text="YES\n[intro:abc]"))
+    adapter = TinyPersonEmailAdapter(person, config)
+    request = EmailMessage()
+    request["Subject"] = "Possible introduction [intro:abc]"
+    request["Message-ID"] = "<proposal@example.test>"
+    request.set_content("Reply YES to opt in.")
+
+    msg = await adapter.anext_email(
+        "Tick 2. Reply to the request.", tick=2, reply_to=request
+    )
+
+    assert msg is not None
+    assert msg.get_content_type() == "multipart/alternative"
+    plain = msg.get_body(preferencelist=("plain",)).get_content()
+    html = msg.get_body(preferencelist=("html",)).get_content()
+    assert plain.startswith("YES\n[intro:abc]\n\n-- \nPriya Shah\nML Platform Lead")
+    assert plain.endswith("> Reply YES to opt in.\n")
+    assert '<a href="https://northstar.example.test/team/priya">' in html
+    assert "<blockquote><p>Reply YES to opt in.</p></blockquote>" in html
+    assert msg["In-Reply-To"] == "<proposal@example.test>"
     assert adapter.messages_sent == 1
 
 
