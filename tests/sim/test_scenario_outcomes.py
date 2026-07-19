@@ -219,9 +219,8 @@ def _default_outcome() -> ScenarioOutcome:
                 recipients=frozenset({EVENT_ATTENDEE_EMAIL}),
                 subject="An event you might care about",
                 body=(
-                    "An event that may be relevant. Would you like occasional event "
-                    "recommendations like this? Reply yes or no. A no stops only event "
-                    "recommendations."
+                    "An event that may be relevant. If you don't want more event "
+                    "recommendations, reply no to opt out."
                 ),
             ),
         ),

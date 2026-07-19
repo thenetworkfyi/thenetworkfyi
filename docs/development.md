@@ -402,8 +402,8 @@ bound id. The capability rechecks authentication, the bound version, expiry, can
 self-delivery, event-only suppression, and deduplication under a row lock; it resolves the
 address and composes the FYI from the stored gist server-side only if the evaluated version
 is still current, then records `notified_at` only after SMTP succeeds. The first delivered
-event FYI asks whether occasional event recommendations are welcome; later FYIs carry only
-a concise event-specific stop instruction.
+event FYI includes a concise opt-out notice; later FYIs carry only a concise event-specific
+stop instruction.
 
 A recurring series is one stable event id and therefore produces at most one FYI per person.
 Expired or cancelled events cannot be selected or sent. There are no occurrence jobs,

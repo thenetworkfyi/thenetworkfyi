@@ -64,10 +64,7 @@ class IntroductionEmailContext:
 class EventRecommendationNotice(str, Enum):
     """Fixed capability instructions for an event recommendation."""
 
-    FIRST = (
-        "Would you like occasional event recommendations like this? Reply yes or no. "
-        "A no stops only event recommendations."
-    )
+    FIRST = "If you don't want more event recommendations, reply no to opt out."
     STOP = 'To stop event recommendations, reply "stop event recommendations."'
 
 

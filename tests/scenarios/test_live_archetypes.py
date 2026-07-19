@@ -383,7 +383,7 @@ class CreatedEventKind(Evaluator[EmailScenario, RunOutcome, object]):
 
 @dataclass(repr=False)
 class FirstEventPermissionIsScoped(Evaluator[EmailScenario, RunOutcome, object]):
-    """The first FYI's server-owned permission question applies only to events."""
+    """The first FYI's server-owned opt-out notice applies only to events."""
 
     def evaluate(
         self, ctx: EvaluatorContext[EmailScenario, RunOutcome, object]
@@ -396,7 +396,7 @@ class FirstEventPermissionIsScoped(Evaluator[EmailScenario, RunOutcome, object])
         return (
             dispatch["subject"] == EVENT_RECOMMENDATION_SUBJECT
             and FIRST_EVENT_RECOMMENDATION_NOTICE in body
-            and "stops only event recommendations" in lowered
+            and "reply no to opt out" in lowered
             and "people recommendations" not in lowered
             and "opt out of introductions" not in lowered
         )

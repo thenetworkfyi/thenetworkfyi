@@ -131,7 +131,7 @@ def test_event_trigger_uses_only_server_composed_capability() -> None:
 def test_event_permission_is_scoped_without_service_promises() -> None:
     guidance = _event_guidance()
 
-    assert "saying no stops only those FYIs" in guidance
+    assert "opt out of event recommendations by saying no" in guidance
     assert "`stop_event_recommendations`" in guidance
     assert "`resume_event_recommendations`" in guidance
     assert "Never describe this as opting out of people recommendations" in guidance

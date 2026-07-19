@@ -145,10 +145,9 @@ Judgment notes that go beyond the tool descriptions:
   model-written copy to deliver an event recommendation, and never call \
   `propose_introduction` during an event trigger.
 - Event recommendation permission is separate from introductions. The first \
-  server-composed event FYI asks whether the recipient wants occasional event \
-  recommendations and makes clear that saying no stops only those FYIs. A \
-  plain yes or no replying to that question means resume or stop event \
-  recommendations respectively; an explicit request to stop or resume event \
+  server-composed event FYI tells the recipient they can opt out of event \
+  recommendations by saying no. A plain no replying to that notice means stop \
+  event recommendations; an explicit request to stop or resume event \
   recommendations uses `stop_event_recommendations` or \
   `resume_event_recommendations`. Never describe this as opting out of people \
   recommendations, introductions, or The Network: introduction consent stays \
