@@ -6,7 +6,7 @@ import mailbox
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from email.message import Message
-from email.utils import getaddresses
+from email.utils import getaddresses, parseaddr
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -82,6 +82,7 @@ class MemoryExpectation:
     refs_all: tuple[str, ...] = ()
     gist_contains: str | None = None
     persona_email: str | None = None
+    inbound_contains_any: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -292,6 +293,7 @@ def score_memory_expectations(
     memories: Iterable[Memory],
     expectations: Iterable[MemoryExpectation],
     emails_by_id: Mapping[str, str] | None = None,
+    mail_facts: Iterable[MailFacts] = (),
 ) -> TierScore:
     """Tier 2: state-based scenario outcome checks over Memory rows.
 
@@ -301,8 +303,26 @@ def score_memory_expectations(
     """
     memory_list = tuple(memories)
     id_to_email = dict(emails_by_id or {})
+    mail_fact_list = tuple(mail_facts)
     findings: list[ScoreFinding] = []
     for expectation in expectations:
+        exercise = _memory_expectation_exercise(expectation, mail_fact_list)
+        if exercise is not None and not exercise[0]:
+            findings.append(
+                ScoreFinding(
+                    tier="tier2",
+                    passed=True,
+                    message=(
+                        f"{expectation.description} (unexercised: expected fact "
+                        "was not stated in persona inbound mail)"
+                    ),
+                    evidence={
+                        "unexercised": True,
+                        "persona_inbound_messages_checked": exercise[1],
+                    },
+                )
+            )
+            continue
         match = _find_matching_memory(memory_list, expectation, id_to_email)
         if match is not None:
             evidence: dict[str, Any] = {"memory_id": match.id}
@@ -327,6 +347,32 @@ def score_memory_expectations(
             )
         )
     return TierScore(tier="tier2", findings=tuple(findings))
+
+
+def _memory_expectation_exercise(
+    expectation: MemoryExpectation,
+    mail_facts: Iterable[MailFacts],
+) -> tuple[bool, int] | None:
+    """Return whether a persona stated the fact and how many messages were checked."""
+    if not expectation.inbound_contains_any:
+        return None
+    if expectation.persona_email is None:
+        raise ValueError(
+            "inbound_contains_any requires a persona-bound memory expectation"
+        )
+
+    expected_sender = expectation.persona_email.casefold()
+    needles = tuple(value.casefold() for value in expectation.inbound_contains_any)
+    persona_bodies = []
+    for fact in mail_facts:
+        sender = parseaddr(fact.sender)[1].casefold()
+        if sender != expected_sender:
+            continue
+        persona_bodies.append("\n".join(_visible_lines(fact.body)).casefold())
+    return (
+        any(needle in body for body in persona_bodies for needle in needles),
+        len(persona_bodies),
+    )
 
 
 def score_response_quality(
