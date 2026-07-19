@@ -63,6 +63,14 @@ treat provenance as unknown in that case rather than guessing from directory or 
 timestamps. For runs recorded before this field existed, fall back to external run notes or
 the launching terminal to establish provenance.
 
+Current `config.json` files also include `runtime_provenance.version: 1`. That section
+records public-safe model identifiers by role, whether each role was active,
+behavior-affecting request and sanitizer settings, and SHA-256 fingerprints of the static
+agent, persona template, and sanitizer prompts. The persona fingerprint is for the
+unrendered template; persona identities, goals, messages, secrets, and credentials are
+never included. Runs made before this section existed have unknown runtime and prompt
+provenance. Do not infer it from the current checkout or retrofit it into an old run.
+
 ## Confirm the run completed
 
 Do not score a run that is still active or was abandoned. A complete default-population run

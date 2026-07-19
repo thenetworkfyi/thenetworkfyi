@@ -224,6 +224,12 @@ provisions a disposable database, migrates it, and
 (`thenetwork/sim/run/database.py`) shells out to whatever `pg_dump` is first on `PATH` to
 write the private dump before dropping the database.
 
+Simulation `config.json` records a versioned `runtime_provenance` section with public-safe
+model identifiers by role, active-role flags, request limits, timeout, sanitizer mode, and
+SHA-256 hashes of static system-prompt text. It never records API keys, credentials,
+rendered persona prompts, identities, or message content. See `docs/simulation-review.md`
+for how to treat older runs that predate this section.
+
 The compose stack uses `pgvector/pgvector:pg17`; use the corresponding local PostgreSQL and
 `pg_dump` major version for a simulation database.
 
