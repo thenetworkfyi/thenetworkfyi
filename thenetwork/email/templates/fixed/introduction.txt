@@ -1,3 +1,8 @@
-{{ person_a_name }} and {{ person_b_name }},
+You both opted in to this introduction.
+{% if person_a_gist and person_b_gist %}
+Why you were matched:
 
-You both opted in to this introduction. Reply to this message to continue the conversation without sharing your email address.
+- {{ person_a_gist }}
+- {{ person_b_gist }}
+{% endif %}
+Reply to this message, or email {{ relay_address }} directly, to continue the conversation without sharing your email address.

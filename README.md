@@ -63,8 +63,10 @@ mail for those addresses into either the primary IMAP mailbox or an optional
 separately authenticated relay mailbox. The worker authenticates the sender, requires
 the pair to remain `introduced`, resolves only the other participant, and resends
 through the existing SES/SMTP connection before any agent execution. This hides
-participant email addresses only: names, subject, and message body are not anonymized
-or rewritten. It adds no webhook, inbound HTTP endpoint, or separate receiving service.
+participant email addresses. The fixed introduction also omits participant names, prints
+the relay address in its body, and includes a sanitized match recap. Subject and body
+content that participants later send through the relay are not anonymized or rewritten.
+It adds no webhook, inbound HTTP endpoint, or separate receiving service.
 
 ---
 
@@ -124,7 +126,7 @@ The agent has eight tools (`thenetwork/agent/tools.py`):
 | `search(query) -> [{person_id, gist, similarity}]` | semantic recall returning **opaque ids + gist only** for other people |
 | `reply_to_sender(subject, body_text, …)` | reply only to the registered inbound sender; the model cannot select a recipient |
 | `send_outreach(recipient_user_id, subject, body_text, …)` | send a new, unthreaded message to another user by opaque id; the address is resolved server-side |
-| `propose_introduction(other_person_id, sender_gist, other_gist)` | create a sealed pairwise proposal; server-owned consent controls any identity reveal |
+| `propose_introduction(other_person_id, sender_gist, other_gist)` | create a sealed pairwise proposal; server-owned consent controls the anonymous relay handoff |
 | `escalate(reason)` | flag the inbound email for human review; authenticated unknown senders receive fixed first-contact guidance instead |
 | `register_person(name)` | self-register an authenticated first-contact sender; the server supplies the sender address |
 
@@ -165,17 +167,21 @@ column." Instead:
    `send_event_recommendation` accepts only a server-bound opaque event id, derives the
    recipient from authenticated context, and composes fixed mail from a sanitized gist.
    None of these tools lets the LLM see or supply a raw address.
-6. **Role separation.** The untrusted inbound body is passed as user-role message
+6. **Double-opt-in introduction.** Only authenticated consent from both participants lets
+   server code send the fixed introductions. Their bodies omit participant names and real
+   addresses, print only the server-owned relay address, and use server-resanitized
+   proposal gists for the match recap.
+7. **Role separation.** The untrusted inbound body is passed as user-role message
    content, never into the system prompt (`thenetwork/agent/core.py`).
-7. **Mail-loop prevention (RFC 3834).** Inbound carrying `Auto-Submitted` /
+8. **Mail-loop prevention (RFC 3834).** Inbound carrying `Auto-Submitted` /
    `Precedence: bulk|list` / `List-*` is skipped; automated agent replies set
    `Auto-Submitted: auto-replied`, while human-to-human relay mail omits it.
-8. **Rate limiting / anti-DoS.** Per-sender quota via
+9. **Rate limiting / anti-DoS.** Per-sender quota via
    [`limits`](https://limits.readthedocs.io/) (Postgres-backed), plus bounded
    Procrastinate worker concurrency as the global LLM-spend ceiling.
-9. **Credentials.** Never hardcoded - loaded from env / `.env` via
+10. **Credentials.** Never hardcoded - loaded from env / `.env` via
    pydantic-settings.
-10. **Optional content scanner.** Provider moderation / LLM Guard as opt-in
+11. **Optional content scanner.** Provider moderation / LLM Guard as opt-in
     defense-in-depth, never the primary defense.
 
 The red-team suite (`tests/security/`) proves it: adversarial emails must produce

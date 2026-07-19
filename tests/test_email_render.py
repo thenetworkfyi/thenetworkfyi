@@ -76,8 +76,9 @@ def test_fixed_renderer_uses_only_named_template_and_escapes_context():
     rendered = render_fixed_email(
         FixedEmailTemplate.INTRODUCTION,
         IntroductionEmailContext(
-            person_a_name='<img src=x onerror="steal()">',
-            person_b_name="Renée & O'Connor",
+            relay_address="hidden+<script>@relay.example.com",
+            person_a_gist='<img src=x onerror="steal()"> builds databases',
+            person_b_gist="Works on Renée & O'Connor's storage project",
         ),
     )
 
@@ -85,8 +86,22 @@ def test_fixed_renderer_uses_only_named_template_and_escapes_context():
     assert "<img src=x" not in rendered.html
     assert "&lt;img src=x onerror=&#34;steal()&#34;&gt;" in rendered.html
     assert "Renée &amp; O&#39;Connor" in rendered.html
+    assert "hidden+&lt;script&gt;@relay.example.com" in rendered.html
+    assert "Why you were matched:" in rendered.text
+    assert "email hidden+<script>@relay.example.com directly" in rendered.text
     with pytest.raises(TypeError, match="FixedEmailTemplate"):
         render_fixed_email("introduction", IntroductionEmailContext("A", "B"))  # type: ignore[arg-type]
+
+
+def test_introduction_renderer_omits_recap_for_legacy_context_without_gists():
+    rendered = render_fixed_email(
+        FixedEmailTemplate.INTRODUCTION,
+        IntroductionEmailContext(relay_address="hidden-token@relay.example.com"),
+        signature_variant=SignatureVariant.NONE,
+    )
+
+    assert "Why you were matched" not in rendered.text
+    assert "email hidden-token@relay.example.com directly" in rendered.text
 
 
 @pytest.mark.parametrize(

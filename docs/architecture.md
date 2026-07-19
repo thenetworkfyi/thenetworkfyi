@@ -91,7 +91,7 @@ is required; `thenetwork-producer` is just a manual one-shot poll for cron/debug
 - `gist` - PII-stripped summary; the **only** thing cross-user search may return
 - `created_at` - recency / perishability signal
 
-**`introduction_consents`** - security state for identity-revealing introductions:
+**`introduction_consents`** - security state for anonymous relay introductions:
 - one row per unordered person pair
 - server-written consent flags and state (`proposed`, `one_consented`,
   `introduced`, `declined` (temporary cooldown), or `revoked` (permanent)

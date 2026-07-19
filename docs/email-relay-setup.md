@@ -14,8 +14,9 @@ sends one message to the other participant through SES SMTP. SES is outbound-onl
 There is no SES receiving rule, webhook, public application port, or separate inbound
 service.
 
-This feature hides participant email addresses from each other. It does not hide names
-or rewrite the subject or body.
+This feature hides participant email addresses from each other. The fixed introduction
+also omits their names and prints the relay address in its body. Messages participants
+later send through the relay do not have their subject or body rewritten.
 
 ## Deployment values
 
@@ -271,7 +272,8 @@ Use test participants and mailboxes that you control.
    - one real recipient in `To`;
    - `From: The Network <hidden-<token>@relay.example.com>`;
    - the same hidden address in `Reply-To`; and
-   - no other participant email address in its headers or body.
+   - the same hidden address in the body, with no participant name or real address; and
+   - a match recap containing only the proposal's sanitized gist snapshots.
 3. Reply from participant A. Confirm exactly one message reaches participant B with the
    same proxy `From`/`Reply-To`, subject, and bounded extracted body.
 4. Reply from participant B and confirm the same behavior in the other direction.

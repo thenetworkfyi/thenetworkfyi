@@ -56,8 +56,9 @@ class InfrastructureRejectionReason(str, Enum):
 class IntroductionEmailContext:
     """Typed context for the post-consent introduction email."""
 
-    person_a_name: str
-    person_b_name: str
+    relay_address: str
+    person_a_gist: str | None = None
+    person_b_gist: str | None = None
 
 
 class EventRecommendationNotice(str, Enum):
@@ -276,15 +277,20 @@ def render_fixed_email(
 def _fixed_template_context(
     template: FixedEmailTemplate,
     context: FixedEmailContext,
-) -> dict[str, str]:
+) -> dict[str, str | None]:
     if template is FixedEmailTemplate.INTRODUCTION:
         if not isinstance(context, IntroductionEmailContext):
             raise TypeError("introduction requires IntroductionEmailContext")
-        _require_text(context.person_a_name, "context.person_a_name")
-        _require_text(context.person_b_name, "context.person_b_name")
+        _require_text(context.relay_address, "context.relay_address")
+        if (context.person_a_gist is None) != (context.person_b_gist is None):
+            raise ValueError("introduction match recap requires both participant gists")
+        if context.person_a_gist is not None:
+            _require_text(context.person_a_gist, "context.person_a_gist")
+            _require_text(context.person_b_gist, "context.person_b_gist")
         return {
-            "person_a_name": context.person_a_name,
-            "person_b_name": context.person_b_name,
+            "relay_address": context.relay_address,
+            "person_a_gist": context.person_a_gist,
+            "person_b_gist": context.person_b_gist,
         }
     if template is FixedEmailTemplate.FIRST_CONTACT_WELCOME:
         if not isinstance(context, FirstContactWelcomeEmailContext):

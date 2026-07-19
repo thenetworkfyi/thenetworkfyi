@@ -43,14 +43,17 @@ prompt-injection exfiltrate it, so the privacy boundary cannot be "withhold a co
    from authenticated context, and composes fixed mail from the stored sanitized event
    gist only when that version is still current. The LLM never sees or supplies a raw
    address, submitter identity, subject, or event body.
-6. **Double-opt-in identity reveal.** The model can propose an unordered pair but cannot
-   record consent or compose the revealing message. A random reply token associates an
+6. **Double-opt-in anonymous handoff.** The model can propose an unordered pair but cannot
+   record consent or compose the fixed introduction message. A random reply token associates an
    explicit `YES`, `NO`, or `REVOKE` reply with the pair; the worker accepts it only from
    an authenticated participant before model execution. After both participants consent,
    server code resolves both identities and sends two fixed, proxy-addressed messages,
-   one to each participant. Their real email addresses are never placed together in a
-   message. `NO` records a temporary declined state (90-day configurable cooldown);
-   `REVOKE` is permanent and revoked pairs remain structurally suppressed.
+   one to each participant. The body omits participant names and real addresses, prints
+   the pair's relay address as an alternative to replying, and recaps the match from the
+   proposal gists after server-side re-sanitization and snapshotting. Their real email
+   addresses are never placed together in a message. `NO` records a temporary declined
+   state (90-day configurable cooldown); `REVOKE` is permanent and revoked pairs remain
+   structurally suppressed.
 7. **Server-only address relay.** After introduction, both directions use the pair's
    `hidden-<reply-token>@RELAY_DOMAIN` address. The Dovecot catch-all feeds the ordinary
    IMAP worker; before any model, consent parser, memory write, or agent content scan,

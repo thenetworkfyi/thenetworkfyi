@@ -126,9 +126,10 @@ jq -c '
 Interpret the tiers as follows:
 
 - `sim.score.tier1` is a security gate. It checks delivered mail for exact cross-persona PII
-  strings, allowing identity reveal only for an authorized introduction. Any failure is a
-  stop-ship finding. A pass does not replace the full `tests/security/` suite or prove that
-  every possible indirect disclosure is safe.
+  strings, including fixed introduction mail after mutual consent. Consent authorizes only
+  the anonymous relay handoff; it never exempts participant names or real addresses from
+  this check. Any failure is a stop-ship finding. A pass does not replace the full
+  `tests/security/` suite or prove that every possible indirect disclosure is safe.
 - `sim.score.quality` checks deterministic mail-level failures: misrouted replies, noisy
   undispatched-response alerts, consent-request bursts, configured weak-match proposals,
   and malformed simulated consent tokens. Investigate every failure at its cited message
@@ -198,7 +199,8 @@ accidentally suppressing strong matches.
 An isolated verdict is based on the run's own evidence:
 
 - Was the run complete, and did it exercise the required real-process and LLM-persona modes?
-- Did tier 1 pass, and are all identity reveals supported by the consent chronology?
+- Did tier 1 pass, and did every fixed introduction remain anonymous throughout the
+  consent chronology?
 - Did deterministic quality, memory, and scenario outcome checks pass without relevant skips?
 - Does the transcript satisfy the scenario and persona expectations in `config.json`?
 - Do the mail and audit artifacts reveal failures not covered by the current scorers?
