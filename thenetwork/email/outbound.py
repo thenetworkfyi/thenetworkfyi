@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import smtplib
+from copy import deepcopy
+from email import policy
 from email.message import EmailMessage
+from email.parser import BytesParser
 from email.utils import formataddr, formatdate, make_msgid
 from time import monotonic
 from typing import Literal
@@ -342,30 +345,48 @@ def send_relay_email(
     proxy_address: str,
     subject: str,
     body_text: str,
+    body_html: str | None = None,
+    source_message: bytes | None = None,
     trace_id: str | None = None,
+    template_id: str = RELAY_TEMPLATE_ID,
+    automated: bool = False,
 ) -> None:
     """Relay one participant's message without exposing either real address.
 
-    Every address is supplied by trusted server-side routing code. This path is
-    deliberately plain-only and does not invoke the user-facing renderer,
-    append a signature/footer, or copy an inbound display name.
+    Every address is supplied by trusted server-side routing code. For a human
+    relay, ``source_message`` preserves only the original MIME body while this
+    function replaces all routing headers. A fixed server-owned caller may pass
+    an HTML alternative it already rendered. This transport never renders or
+    sanitizes participant content, appends a signature/footer, or copies an
+    inbound display name.
     """
+    if body_html is not None and source_message is not None:
+        raise ValueError("body_html and source_message are mutually exclusive")
+    parsed_source = (
+        BytesParser(policy=policy.default).parsebytes(source_message)
+        if source_message is not None
+        else None
+    )
+    html_present = body_html is not None or (
+        parsed_source is not None
+        and parsed_source.get_body(preferencelist=("html",)) is not None
+    )
     with (
         audit_trace(trace_id),
         audit_span(
             "email.smtp_send",
             recipient_count=1,
-            template_id=RELAY_TEMPLATE_ID,
+            template_id=template_id,
         ),
     ):
         settings = get_settings()
         audit_event(
             "email.rendered",
-            html_present=False,
-            template_id=RELAY_TEMPLATE_ID,
+            html_present=html_present,
+            template_id=template_id,
             recipient_count=1,
             outcome="success",
-            rendering_mode="relay_plain",
+            rendering_mode="html" if html_present else "relay_plain",
         )
 
         msg = EmailMessage()
@@ -375,7 +396,14 @@ def send_relay_email(
         msg["Subject"] = subject
         msg["Date"] = formatdate(localtime=True)
         msg["Message-ID"] = make_msgid()
-        msg.set_content(body_text)
+        if automated:
+            msg["Auto-Submitted"] = "auto-replied"
+        if parsed_source is not None:
+            _copy_mime_body(msg, parsed_source)
+        else:
+            msg.set_content(body_text)
+        if body_html is not None:
+            msg.add_alternative(body_html, subtype="html")
 
         with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as smtp:
             smtp.ehlo()
@@ -384,6 +412,20 @@ def send_relay_email(
             smtp.send_message(msg)
 
         _append_to_sent(msg, trace_id=trace_id)
+
+
+def _copy_mime_body(destination: EmailMessage, source: EmailMessage) -> None:
+    """Copy MIME content while intentionally dropping every source header."""
+    destination.set_payload(deepcopy(source.get_payload()))
+    copied_headers = set()
+    for name in source.keys():
+        normalized = name.casefold()
+        if normalized in copied_headers:
+            continue
+        if normalized == "mime-version" or normalized.startswith("content-"):
+            copied_headers.add(normalized)
+            for value in source.get_all(name, ()):
+                destination[name] = value
 
 
 def send_proxy_introduction(
@@ -413,5 +455,8 @@ def send_proxy_introduction(
             proxy_address=proxy_address,
             subject="Your introduction",
             body_text=rendered.text,
+            body_html=rendered.html,
             trace_id=trace_id,
+            template_id=FixedEmailTemplate.INTRODUCTION.value,
+            automated=True,
         )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import mailbox
 from contextlib import contextmanager, nullcontext
@@ -15,6 +16,7 @@ from procrastinate.testing import InMemoryConnector
 from pydantic_ai.exceptions import ModelHTTPError
 
 from thenetwork.audit import audit_event, audit_model_trace
+from thenetwork.agent.prompts import SYSTEM_PROMPT
 from thenetwork.db.models import (
     Event,
     EventRecommendation,
@@ -22,11 +24,14 @@ from thenetwork.db.models import (
     Memory,
     Person,
 )
+from thenetwork.email.outbound import send_proxy_introduction, send_relay_email
+from thenetwork.memory.sanitize import SANITIZER_SYSTEM_PROMPT
 from thenetwork.security import log_redaction
 from thenetwork.sim.cli import main, run_sim
 from thenetwork.sim.scoring.compare import compare_runs, load_run_metrics
 from thenetwork.sim.run.mail import SimPostOffice, publish_redacted_mbox
 from thenetwork.sim.personas.persona import PersonaConfig, TinyPersonEmailAdapter
+from thenetwork.sim.personas.llm_persona import _PERSONA_PROMPT
 from thenetwork.sim.personas.population import DEFAULT_OUTCOME_CHECKS
 from thenetwork.sim.run.recorder import (
     EventsLog,
@@ -46,6 +51,7 @@ from thenetwork.sim.scoring.scoring import (
     EventOutcomeFact,
     EventRecommendationOutcomeFact,
     IntroductionConsentState,
+    MemoryExpectation,
     OutcomeCheck,
     ProactiveEventTriggerOutcomeFact,
 )
@@ -152,6 +158,253 @@ async def test_public_simulation_artifacts_redact_content_and_keep_raw_mail_priv
         assert sensitive not in public_artifacts
         assert sensitive in artifacts.raw_mbox_path.read_text(encoding="utf-8")
     assert artifacts.private_dir.stat().st_mode & 0o777 == 0o700
+
+
+@pytest.mark.asyncio
+async def test_recorder_marks_absent_memory_fact_unexercised_with_bounded_evidence(
+    tmp_path,
+):
+    persona = PersonaConfig(
+        name="Petra",
+        email="petra.sim@example.test",
+        goal="Explore archival science.",
+        stop_condition="Wait for a useful connection.",
+        agent_address="join@example.test",
+    )
+    body = "I am interested in archival science and data management."
+    artifacts = await SimRunRecorder(runs_dir=tmp_path).run(
+        (TinyPersonEmailAdapter(ScriptedTinyPerson(body), persona),),
+        SimRunConfig(
+            scenario="memory-exercise",
+            ticks=1,
+            proactive_every=None,
+            personas=(persona,),
+            expectations=(
+                MemoryExpectation(
+                    description="Petra provenance interest remembered",
+                    gist_contains="provenance",
+                    persona_email=persona.email,
+                    inbound_contains_any=("provenance",),
+                ),
+            ),
+        ),
+    )
+
+    tier2 = next(
+        json.loads(line)
+        for line in artifacts.events_path.read_text().splitlines()
+        if json.loads(line)["event"] == "sim.score.tier2"
+    )
+    assert tier2["passed"] is True
+    assert tier2["findings"][0]["evidence"] == {
+        "unexercised": True,
+        "persona_inbound_messages_checked": 1,
+    }
+    assert "unexercised" in tier2["findings"][0]["message"]
+
+    public_artifacts = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            artifacts.config_path,
+            artifacts.events_path,
+            artifacts.mbox_path,
+            artifacts.transcript_path,
+        )
+    )
+    assert body not in public_artifacts
+    assert persona.email not in public_artifacts
+    assert body in artifacts.raw_mbox_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_recorder_combines_anonymous_tier1_and_persona_bound_tier2(tmp_path):
+    alice = PersonaConfig(
+        name="Alice Shah",
+        email="alice.sim@example.test",
+        goal="Record my provenance work.",
+        stop_condition="Wait for a useful connection.",
+        agent_address="join@example.test",
+    )
+    bob = PersonaConfig(
+        name="Bob Lee",
+        email="bob.sim@example.test",
+        goal="Say hello without discussing bakery work.",
+        stop_condition="Wait for a useful connection.",
+        agent_address="join@example.test",
+    )
+    private_fact = "I work on museum provenance systems."
+    memories = (
+        Memory(
+            id="memory-alice",
+            text="raw",
+            refs=[alice.email],
+            gist="works on museum provenance systems",
+        ),
+    )
+
+    async def process(**kwargs):
+        if kwargs["sender_email"] != alice.email:
+            return
+        send_proxy_introduction(
+            person_a_email=alice.email,
+            person_b_email=bob.email,
+            person_a_gist="Works on museum provenance systems",
+            person_b_gist="Explores archival data management",
+            reply_token="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        )
+
+    outbound_settings = SimpleNamespace(
+        relay_domain="relay.example.test",
+        smtp_host="smtp.example.test",
+        smtp_port=587,
+        smtp_account="join@example.test",
+        smtp_password="secret",
+    )
+    with patch(
+        "thenetwork.email.outbound.get_settings", return_value=outbound_settings
+    ):
+        artifacts = await SimRunRecorder(runs_dir=tmp_path).run(
+            (
+                TinyPersonEmailAdapter(ScriptedTinyPerson(private_fact), alice),
+                TinyPersonEmailAdapter(ScriptedTinyPerson("Hello."), bob),
+            ),
+            SimRunConfig(
+                scenario="assembled-scoring",
+                ticks=1,
+                proactive_every=None,
+                personas=(alice, bob),
+                expectations=(
+                    MemoryExpectation(
+                        description="Alice provenance work is remembered",
+                        gist_contains="provenance",
+                        persona_email=alice.email,
+                        inbound_contains_any=("provenance",),
+                    ),
+                    MemoryExpectation(
+                        description="Bob bakery work is remembered",
+                        gist_contains="bakery",
+                        persona_email=bob.email,
+                        inbound_contains_any=("bakery",),
+                    ),
+                ),
+            ),
+            process=process,
+            memories=memories,
+        )
+
+    events = [
+        json.loads(line) for line in artifacts.events_path.read_text().splitlines()
+    ]
+    tier1 = next(event for event in events if event["event"] == "sim.score.tier1")
+    presentation = next(
+        event for event in events if event["event"] == "sim.score.presentation"
+    )
+    tier2 = next(event for event in events if event["event"] == "sim.score.tier2")
+    assert tier1["passed"] is True
+    assert presentation == {
+        "event": "sim.score.presentation",
+        "findings": [
+            {
+                "evidence": {"messages_checked": 2},
+                "message": "Captured user-facing MIME passed presentation checks",
+                "passed": True,
+                "tier": "presentation",
+            }
+        ],
+        "passed": True,
+    }
+    assert tier2["passed"] is True
+    assert tier2["findings"][0]["evidence"] == {"memory_id": "memory-alice"}
+    assert tier2["findings"][1]["evidence"] == {
+        "persona_inbound_messages_checked": 1,
+        "unexercised": True,
+    }
+
+    raw_mail = artifacts.raw_mbox_path.read_text(encoding="utf-8")
+    assert private_fact in raw_mail
+    assert "Alice Shah and Bob Lee" not in raw_mail
+
+    public_artifacts = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (
+            artifacts.config_path,
+            artifacts.events_path,
+            artifacts.mbox_path,
+            artifacts.transcript_path,
+        )
+    )
+    for private_value in (alice.name, alice.email, bob.name, bob.email, private_fact):
+        assert private_value not in public_artifacts
+
+
+@pytest.mark.asyncio
+async def test_recorder_presentation_failure_has_bounded_stable_evidence(tmp_path):
+    persona = PersonaConfig(
+        name="Alice Shah",
+        email="alice.sim@example.test",
+        goal="Wait for a connection.",
+        stop_condition="Wait.",
+        agent_address="join@example.test",
+    )
+    token = "[intro:11111111-1111-1111-1111-111111111111]"
+    private_body = (
+        f"Malformed presentation {token}\n\n"
+        "--\nThe Network\nAn automated connection service\nReply anytime."
+    )
+
+    async def process(**_kwargs):
+        send_relay_email(
+            to_address=persona.email,
+            proxy_address=(
+                "hidden-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa@relay.example.test"
+            ),
+            subject="Your introduction",
+            body_text=private_body,
+            automated=True,
+        )
+
+    artifacts = await SimRunRecorder(runs_dir=tmp_path).run(
+        (TinyPersonEmailAdapter(ScriptedTinyPerson("Hello."), persona),),
+        SimRunConfig(
+            scenario="presentation-failure",
+            ticks=1,
+            proactive_every=None,
+            personas=(persona,),
+        ),
+        process=process,
+    )
+
+    presentation = next(
+        json.loads(line)
+        for line in artifacts.events_path.read_text().splitlines()
+        if json.loads(line)["event"] == "sim.score.presentation"
+    )
+    assert presentation == {
+        "event": "sim.score.presentation",
+        "findings": [
+            {
+                "evidence": {
+                    "message_index": 2,
+                    "violations": [
+                        "alternative_order",
+                        "mime_type",
+                        "required_text_html",
+                        "required_text_plain",
+                    ],
+                },
+                "message": "Captured user-facing MIME failed presentation checks",
+                "passed": False,
+                "tier": "presentation",
+            }
+        ],
+        "passed": False,
+    }
+    public_artifacts = (
+        artifacts.events_path.read_text() + artifacts.mbox_path.read_text()
+    )
+    assert private_body not in public_artifacts
+    assert token not in public_artifacts
+    assert persona.email not in public_artifacts
 
 
 def test_public_simulation_mbox_redacts_untrusted_headers_and_envelope(tmp_path):
@@ -1061,6 +1314,138 @@ def test_config_payload_git_provenance_fails_closed_to_none_when_git_unavailable
         payload = _config_payload(config, "mock")
 
     assert payload["git"] == {"commit": None, "dirty": None}
+
+
+def _runtime_settings(*, sanitizer_enabled: bool = True):
+    return SimpleNamespace(
+        agent_model="anthropic:claude-sonnet-5",
+        small_agent_model="anthropic:claude-haiku-4-5",
+        embed_model="text-embedding-3-small",
+        agent_thinking_level="high",
+        agent_request_limit=7,
+        agent_total_tokens_limit=4321,
+        model_request_timeout_seconds=45.5,
+        sanitize_llm_tier_enabled=sanitizer_enabled,
+        agent_api_key="agent-secret-value",
+        small_agent_api_key="small-secret-value",
+        embed_api_key="embed-secret-value",
+        postgres_password="database-secret-value",
+    )
+
+
+@pytest.mark.parametrize(
+    ("process_mode", "llm_personas", "active_roles"),
+    [
+        ("mock", False, set()),
+        ("mock", True, {"persona"}),
+        ("real", False, {"agent", "sanitizer", "embedding"}),
+        ("real", True, {"agent", "persona", "sanitizer", "embedding"}),
+    ],
+)
+def test_runtime_provenance_records_models_settings_and_active_modes(
+    process_mode, llm_personas, active_roles
+):
+    config = SimRunConfig(
+        scenario="runtime-provenance",
+        ticks=1,
+        proactive_every=None,
+        personas=(),
+        mock_process=process_mode != "real",
+        llm_personas=llm_personas,
+    )
+
+    with patch(
+        "thenetwork.sim.run.recorder.get_settings",
+        return_value=_runtime_settings(),
+    ):
+        provenance = _config_payload(config, process_mode)["runtime_provenance"]
+
+    assert provenance["version"] == 1
+    assert {
+        role for role, model in provenance["models"].items() if model["active"]
+    } == active_roles
+    assert provenance["models"] == {
+        "agent": {
+            "identifier": "anthropic:claude-sonnet-5",
+            "active": "agent" in active_roles,
+        },
+        "persona": {
+            "identifier": "anthropic:claude-haiku-4-5",
+            "active": "persona" in active_roles,
+        },
+        "sanitizer": {
+            "identifier": "anthropic:claude-haiku-4-5",
+            "active": "sanitizer" in active_roles,
+        },
+        "embedding": {
+            "identifier": "text-embedding-3-small",
+            "active": "embedding" in active_roles,
+        },
+    }
+    assert provenance["settings"] == {
+        "agent_thinking_level": "high",
+        "agent_request_limit": 7,
+        "agent_total_tokens_limit": 4321,
+        "model_request_timeout_seconds": 45.5,
+        "sanitizer_mode": "presidio+llm",
+    }
+
+
+def test_runtime_provenance_hashes_only_static_prompt_templates(tmp_path):
+    private_persona = PersonaConfig(
+        name="Private Persona Name",
+        email="private-persona@example.test",
+        goal="Private owner goal text",
+        stop_condition="Private stop condition text",
+        agent_address="private-agent@example.test",
+    )
+    config = SimRunConfig(
+        scenario="runtime-provenance",
+        ticks=1,
+        proactive_every=None,
+        personas=(private_persona,),
+        llm_personas=True,
+    )
+
+    with patch(
+        "thenetwork.sim.run.recorder.get_settings",
+        return_value=_runtime_settings(sanitizer_enabled=False),
+    ):
+        provenance = _config_payload(config, "mock")["runtime_provenance"]
+
+    assert provenance["static_prompt_sha256"] == {
+        "agent": hashlib.sha256(SYSTEM_PROMPT.encode("utf-8")).hexdigest(),
+        "persona_template": hashlib.sha256(_PERSONA_PROMPT.encode("utf-8")).hexdigest(),
+        "sanitizer": hashlib.sha256(
+            SANITIZER_SYSTEM_PROMPT.encode("utf-8")
+        ).hexdigest(),
+    }
+    assert provenance["settings"]["sanitizer_mode"] == "presidio"
+    assert provenance["models"]["sanitizer"]["active"] is False
+
+    serialized = json.dumps(provenance, sort_keys=True)
+    for private_value in (
+        "Private Persona Name",
+        "private-persona@example.test",
+        "Private owner goal text",
+        "Private stop condition text",
+        "agent-secret-value",
+        "small-secret-value",
+        "embed-secret-value",
+        "database-secret-value",
+        SYSTEM_PROMPT,
+        _PERSONA_PROMPT,
+        SANITIZER_SYSTEM_PROMPT,
+    ):
+        assert private_value not in serialized
+
+    path = tmp_path / "config.json"
+    write_redacted_json(path, {"runtime_provenance": provenance})
+    assert json.loads(path.read_text())["runtime_provenance"] == provenance
+
+    provenance["models"]["agent"]["identifier"] = "sk-secret-model-setting"
+    write_redacted_json(path, {"runtime_provenance": provenance})
+    assert "sk-secret-model-setting" not in path.read_text()
 
 
 @pytest.mark.asyncio

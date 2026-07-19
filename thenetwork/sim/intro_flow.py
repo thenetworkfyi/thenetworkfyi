@@ -233,26 +233,6 @@ async def _record_intro_flow(
             if not delivered:
                 raise RuntimeError("introduced pair relay delivery failed")
 
-        tier1 = score_seal_mbox(
-            artifacts.raw_mbox_path,
-            (PersonaPII.from_config(persona) for persona in INTRO_FLOW_PERSONAS),
-        )
-        events.write(
-            "sim.score.tier1",
-            passed=tier1.passed,
-            findings=[
-                {
-                    "evidence": finding.evidence,
-                    "message": finding.message,
-                    "passed": finding.passed,
-                    "tier": finding.tier,
-                }
-                for finding in tier1.findings
-            ],
-        )
-        if not tier1.passed:
-            raise RuntimeError("tier1 SEAL scoring failed")
-
         _report(progress, f"{INTRO_FLOW_PERSONAS[0].name} replying REVOKE")
         await _deliver_real_process(
             post_office=post_office,
@@ -316,6 +296,26 @@ async def _record_intro_flow(
         )
         if not blocked:
             raise RuntimeError(f"revoked pair was facilitated again: {reproposal}")
+
+        tier1 = score_seal_mbox(
+            artifacts.raw_mbox_path,
+            (PersonaPII.from_config(persona) for persona in INTRO_FLOW_PERSONAS),
+        )
+        events.write(
+            "sim.score.tier1",
+            passed=tier1.passed,
+            findings=[
+                {
+                    "evidence": finding.evidence,
+                    "message": finding.message,
+                    "passed": finding.passed,
+                    "tier": finding.tier,
+                }
+                for finding in tier1.findings
+            ],
+        )
+        if not tier1.passed:
+            raise RuntimeError("tier1 SEAL scoring failed")
 
     from thenetwork.sim.run.mail import publish_redacted_mbox
 

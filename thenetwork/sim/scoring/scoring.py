@@ -1,12 +1,15 @@
-"""Three-tier scoring for simulation runs."""
+"""Deterministic scoring for simulation runs."""
 
 from __future__ import annotations
 
 import mailbox
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from email import policy
 from email.message import Message
-from email.utils import getaddresses
+from email.parser import BytesParser
+from email.utils import getaddresses, parseaddr
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -15,6 +18,7 @@ from pydantic_evals.evaluators import LLMJudge
 from thenetwork.agent.core import _UNDISPATCHED_RESPONSE_SUBJECT
 from thenetwork.db.models import Memory
 from thenetwork.introductions import _TOKEN_RE
+from thenetwork.sim.html_validation import inspect_html_email
 from thenetwork.sim.personas.consent import _visible_lines
 from thenetwork.sim.run.mail import _extract_body
 from thenetwork.sim.personas.persona import PersonaConfig
@@ -22,6 +26,16 @@ from thenetwork.sim.personas.persona import PersonaConfig
 
 _CONSENT_REQUEST_SUBJECT_PREFIX = "Possible introduction"
 _SIM_DIRECTION_PERSONA_TO_AGENT = "persona->agent"
+_PRESENTATION_SIGNATURE_TEXT = (
+    "The Network",
+    "An automated connection service",
+    "Reply anytime.",
+)
+_RELAY_ADDRESS_RE = re.compile(
+    r"\bhidden-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-"
+    r"[0-9a-f]{12}@[a-z0-9.-]+\b",
+    re.IGNORECASE,
+)
 
 
 TRANSCRIPT_JUDGE_RUBRIC = (
@@ -82,6 +96,7 @@ class MemoryExpectation:
     refs_all: tuple[str, ...] = ()
     gist_contains: str | None = None
     persona_email: str | None = None
+    inbound_contains_any: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -250,6 +265,8 @@ def score_seal_mbox(
         }
         if not recipient_personas:
             continue
+        if _is_preserved_human_relay(message):
+            continue
         body = _extract_body(message)
         header_blob = "\n".join(
             str(message.get(name, "")) for name in ("From", "To", "Cc", "Subject")
@@ -288,10 +305,102 @@ def score_seal_mbox(
     return TierScore(tier="tier1", findings=tuple(findings))
 
 
+def score_presentation_mbox(
+    mbox_path: Path,
+    persona_emails: Iterable[str],
+) -> TierScore:
+    """Score captured automated user-facing MIME without publishing content."""
+    recipients_in_scope = {email.casefold() for email in persona_emails}
+    findings: list[ScoreFinding] = []
+    messages_checked = 0
+    box = mailbox.mbox(mbox_path)
+    try:
+        messages = list(box)
+    finally:
+        box.close()
+
+    for index, stored_message in enumerate(messages, start=1):
+        message = BytesParser(policy=policy.default).parsebytes(
+            stored_message.as_bytes()
+        )
+        if not (_recipient_emails(message) & recipients_in_scope):
+            continue
+        if not _is_presentation_candidate(message):
+            continue
+        messages_checked += 1
+        plain_text = _extract_body(message)
+        required_text = (
+            *_PRESENTATION_SIGNATURE_TEXT,
+            *(match.group(0) for match in _TOKEN_RE.finditer(plain_text)),
+            *(match.group(0) for match in _RELAY_ADDRESS_RE.finditer(plain_text)),
+        )
+        inspection = inspect_html_email(message, required_text=required_text)
+        violation_codes = _presentation_violation_codes(inspection.violations)
+        if violation_codes:
+            findings.append(
+                ScoreFinding(
+                    tier="presentation",
+                    passed=False,
+                    message="Captured user-facing MIME failed presentation checks",
+                    evidence={
+                        "message_index": index,
+                        "violations": violation_codes,
+                    },
+                )
+            )
+
+    if not findings:
+        findings.append(
+            ScoreFinding(
+                tier="presentation",
+                passed=True,
+                message="Captured user-facing MIME passed presentation checks",
+                evidence={"messages_checked": messages_checked},
+            )
+        )
+    return TierScore(tier="presentation", findings=tuple(findings))
+
+
+def _is_presentation_candidate(message: Message) -> bool:
+    return _is_automated_message(message)
+
+
+def _is_automated_message(message: Message) -> bool:
+    return str(message.get("Auto-Submitted", "")).casefold() == "auto-replied"
+
+
+def _is_preserved_human_relay(message: Message) -> bool:
+    """Identify server-routed participant mail without trusting its subject or body."""
+    if _is_automated_message(message):
+        return False
+    sender_address = parseaddr(str(message.get("From", "")))[1]
+    return _RELAY_ADDRESS_RE.fullmatch(sender_address) is not None
+
+
+def _presentation_violation_codes(violations: Iterable[str]) -> list[str]:
+    """Collapse detailed private inspection failures into bounded public codes."""
+    codes = set()
+    for violation in violations:
+        if violation == "message is not multipart/alternative":
+            codes.add("mime_type")
+        elif violation == "alternatives must be text/plain followed by text/html":
+            codes.add("alternative_order")
+        elif violation == "plain text and visible HTML text differ":
+            codes.add("semantic_parity")
+        elif violation.startswith("required text missing from plain part"):
+            codes.add("required_text_plain")
+        elif violation.startswith("required text missing from HTML part"):
+            codes.add("required_text_html")
+        else:
+            codes.add("unsafe_html")
+    return sorted(codes)
+
+
 def score_memory_expectations(
     memories: Iterable[Memory],
     expectations: Iterable[MemoryExpectation],
     emails_by_id: Mapping[str, str] | None = None,
+    mail_facts: Iterable[MailFacts] = (),
 ) -> TierScore:
     """Tier 2: state-based scenario outcome checks over Memory rows.
 
@@ -301,8 +410,26 @@ def score_memory_expectations(
     """
     memory_list = tuple(memories)
     id_to_email = dict(emails_by_id or {})
+    mail_fact_list = tuple(mail_facts)
     findings: list[ScoreFinding] = []
     for expectation in expectations:
+        exercise = _memory_expectation_exercise(expectation, mail_fact_list)
+        if exercise is not None and not exercise[0]:
+            findings.append(
+                ScoreFinding(
+                    tier="tier2",
+                    passed=True,
+                    message=(
+                        f"{expectation.description} (unexercised: expected fact "
+                        "was not stated in persona inbound mail)"
+                    ),
+                    evidence={
+                        "unexercised": True,
+                        "persona_inbound_messages_checked": exercise[1],
+                    },
+                )
+            )
+            continue
         match = _find_matching_memory(memory_list, expectation, id_to_email)
         if match is not None:
             evidence: dict[str, Any] = {"memory_id": match.id}
@@ -327,6 +454,32 @@ def score_memory_expectations(
             )
         )
     return TierScore(tier="tier2", findings=tuple(findings))
+
+
+def _memory_expectation_exercise(
+    expectation: MemoryExpectation,
+    mail_facts: Iterable[MailFacts],
+) -> tuple[bool, int] | None:
+    """Return whether a persona stated the fact and how many messages were checked."""
+    if not expectation.inbound_contains_any:
+        return None
+    if expectation.persona_email is None:
+        raise ValueError(
+            "inbound_contains_any requires a persona-bound memory expectation"
+        )
+
+    expected_sender = expectation.persona_email.casefold()
+    needles = tuple(value.casefold() for value in expectation.inbound_contains_any)
+    persona_bodies = []
+    for fact in mail_facts:
+        sender = parseaddr(fact.sender)[1].casefold()
+        if sender != expected_sender:
+            continue
+        persona_bodies.append("\n".join(_visible_lines(fact.body)).casefold())
+    return (
+        any(needle in body for body in persona_bodies for needle in needles),
+        len(persona_bodies),
+    )
 
 
 def score_response_quality(

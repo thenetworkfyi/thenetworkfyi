@@ -76,8 +76,10 @@ Dovecot catch-all -> IMAP poll -> process_email pair authorization -> SES/SMTP -
 
 The fixed introduction omits participant names and real addresses, prints the relay
 address in the body, and includes a recap made from the proposal's sanitized gist
-snapshots. Relay subject/body content passes through unchanged within the normal intake
-bounds. Revocation immediately makes subsequent lookups fail closed.
+snapshots. Relay delivery replaces source routing headers but preserves the original MIME
+body, including plain/HTML alternatives and attachments, within the normal intake bounds.
+Participant content bypasses the model and content scanner. Revocation immediately makes
+subsequent lookups fail closed.
 
 The full production procedure, including catch-all delivery, original-recipient headers,
 sender-authentication results, SES identity/DKIM/SMTP setup, and deployment probes, is in
@@ -199,7 +201,9 @@ The deterministic introduction simulation exercises the production
 an external mail service. It provisions and migrates a disposable database, sends both
 `YES` replies, verifies two separate proxy-addressed introduction messages, relays a
 message in each direction, then sends `REVOKE` and verifies that later relay delivery and
-another proposal for the pair are suppressed.
+another proposal for the pair are suppressed. Tier 1 runs after revocation over the whole
+mailbox and continues to reject every exact cross-persona PII disclosure; anonymous fixed
+introductions need no consent-based scoring exception.
 
 Run it against any local pgvector PostgreSQL instance:
 
@@ -219,6 +223,12 @@ directory on the simulation retention schedule (seven days by default). On teard
 provisions a disposable database, migrates it, and
 (`thenetwork/sim/run/database.py`) shells out to whatever `pg_dump` is first on `PATH` to
 write the private dump before dropping the database.
+
+Simulation `config.json` records a versioned `runtime_provenance` section with public-safe
+model identifiers by role, active-role flags, request limits, timeout, sanitizer mode, and
+SHA-256 hashes of static system-prompt text. It never records API keys, credentials,
+rendered persona prompts, identities, or message content. See `docs/simulation-review.md`
+for how to treat older runs that predate this section.
 
 The compose stack uses `pgvector/pgvector:pg17`; use the corresponding local PostgreSQL and
 `pg_dump` major version for a simulation database.
@@ -262,8 +272,17 @@ outcomes rather than force a particular conversation.
   Sloane's event is created and before the event scan runs. Theo Anders is the authored
   unrelated control for this outcome.
 
-The recorder emits three score-event tiers: tier 1 for delivered-mail SEAL checks, tier 2
-for memory expectations, and `sim.score.outcome` for the persona outcome predicates. The
+The recorder emits score events for tier 1 delivered-mail SEAL checks, captured-MIME
+presentation checks, tier 2 memory expectations, and scenario outcome predicates.
+`sim.score.presentation` inspects private captured automated mail and fixed introductions
+for plain-first multipart structure, semantic parity, required signature and capability
+text, unsafe markup, hidden content, and remote resources. Its public evidence contains
+only bounded violation codes, message indices, and counts; it never includes raw bodies,
+HTML, identities, or tokens. The
+Tier 2 scorer first checks the private exact inbound mail for each expectation's declared
+fact signal. If the persona never stated that fact, the finding is explicitly unexercised
+instead of passing memory retention or reporting a product failure; public evidence contains
+only the unexercised flag and the bounded number of persona messages checked. The
 default outcome predicates depend on both the real process and LLM personas; a run without
 either mode records each unavailable predicate as a passing skipped finding with its reason.
 This makes offline/mock runs useful without presenting unexercised behavior as a failure.
