@@ -225,12 +225,13 @@ accepts only canonical lowercase UUID tokens in valid aliases and only the confi
 domain. It still recognizes malformed `hidden-*` addresses as relay attempts so they
 fail closed instead of reaching the agent.
 
-No schema migration or new service is required for this feature. Pair aliases reuse
+No relay-specific table or service is required. Pair aliases reuse
 `IntroductionConsent.reply_token`; the worker polls each configured IMAP inbox and sends
-through SMTP. For a normal deployment:
+through SMTP. On a production host consuming the published GHCR image:
 
 ```bash
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 docker compose logs -f worker
 ```
 
@@ -274,8 +275,10 @@ Use test participants and mailboxes that you control.
    - the same hidden address in `Reply-To`; and
    - the same hidden address in the body, with no participant name or real address; and
    - a match recap containing only the proposal's sanitized gist snapshots.
-3. Reply from participant A. Confirm exactly one message reaches participant B with the
-   same proxy `From`/`Reply-To`, subject, and bounded extracted body.
+3. Reply from participant A with a controlled multipart message and attachment. Confirm
+   exactly one message reaches participant B with the same proxy `From`/`Reply-To` and
+   subject; the participant-authored MIME body, including plain/HTML alternatives and the
+   attachment, is preserved while every source routing header is absent.
 4. Reply from participant B and confirm the same behavior in the other direction.
 5. Confirm neither relay direction invokes the agent, consent parser, memory writes, or
    the agent-mail content scanner.
