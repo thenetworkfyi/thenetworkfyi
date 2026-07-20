@@ -225,6 +225,7 @@ _SAFE_CATEGORIES = {
             "primary_intake_paused",
             "invalid_summary",
             "memory_text_too_long",
+            "new_sender_burst",
             "person_memory_limit_exceeded",
             "rate_limit",
             "recipient_not_found",

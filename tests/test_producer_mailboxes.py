@@ -1,10 +1,12 @@
 """Producer coverage for primary and relay IMAP mailbox coordination."""
 
 from unittest.mock import call, patch
+from types import SimpleNamespace
 
 import pytest
 
 from thenetwork.email.inbound import InboundMessage
+from thenetwork.email.intake_observations import BurstObservationResult
 from thenetwork.worker.producer import (
     _poll_and_enqueue,
     _poll_mailbox_and_enqueue,
@@ -15,6 +17,14 @@ from thenetwork.worker.producer import (
 def _active_primary_intake(monkeypatch):
     monkeypatch.setattr(
         "thenetwork.worker.producer.is_primary_intake_paused", lambda: False
+    )
+    monkeypatch.setattr(
+        "thenetwork.worker.producer.get_settings",
+        lambda: SimpleNamespace(
+            primary_intake_burst_monitoring_enabled=False,
+            sender_identifier_secret="",
+            relay_domain="relay.example.com",
+        ),
     )
 
 
@@ -165,3 +175,101 @@ def test_pause_never_applies_to_separate_relay_mailbox():
 
     assert process_email.defer.call_args.kwargs["source_mailbox"] == "relay"
     mark_seen.assert_called_once_with(["12"], mailbox="relay")
+
+
+def test_new_sender_burst_pauses_before_enqueue_and_leaves_batch_unread(monkeypatch):
+    messages = [
+        _message(str(index), f"sender-{index}@example.com") for index in range(25)
+    ]
+    monkeypatch.setattr(
+        "thenetwork.worker.producer.get_settings",
+        lambda: SimpleNamespace(
+            primary_intake_burst_monitoring_enabled=True,
+            sender_identifier_secret="monitor-secret",
+            relay_domain="relay.example.com",
+        ),
+    )
+
+    with (
+        patch("thenetwork.worker.producer.poll_unseen", return_value=messages),
+        patch(
+            "thenetwork.worker.producer.observe_primary_intake_batch",
+            return_value=BurstObservationResult(
+                paused=True,
+                newly_observed=25,
+                distinct_new_senders=25,
+            ),
+        ) as observe,
+        patch("thenetwork.worker.producer.process_email") as process_email,
+        patch("thenetwork.worker.producer.mark_messages_seen") as mark_seen,
+        patch("thenetwork.worker.producer.mark_message_processed") as mark_processed,
+    ):
+        assert _poll_mailbox_and_enqueue("primary") == 0
+
+    observe.assert_called_once_with(messages, secret="monitor-secret")
+    process_email.defer.assert_not_called()
+    mark_processed.assert_not_called()
+    mark_seen.assert_called_once_with([], mailbox="primary")
+
+
+def test_monitor_excludes_admin_and_relay_candidates(monkeypatch):
+    ordinary = _message("20", "ordinary@example.com")
+    admin = _message("21", "admin@example.com")
+    admin.subject = "ADMIN: intake-status"
+    admin.raw_message = b"signed candidate"
+    relay = _message("22", "member@example.com")
+    relay.recipient_address = "hidden-token@relay.example.com"
+    monkeypatch.setattr(
+        "thenetwork.worker.producer.get_settings",
+        lambda: SimpleNamespace(
+            primary_intake_burst_monitoring_enabled=True,
+            sender_identifier_secret="monitor-secret",
+            relay_domain="relay.example.com",
+        ),
+    )
+
+    with (
+        patch(
+            "thenetwork.worker.producer.poll_unseen",
+            return_value=[ordinary, admin, relay],
+        ),
+        patch(
+            "thenetwork.worker.producer._is_relay_candidate",
+            side_effect=lambda address: bool(address),
+        ),
+        patch(
+            "thenetwork.worker.producer.observe_primary_intake_batch",
+            return_value=BurstObservationResult(
+                paused=False,
+                newly_observed=1,
+                distinct_new_senders=1,
+            ),
+        ) as observe,
+        patch("thenetwork.worker.producer.process_email"),
+        patch("thenetwork.worker.producer.mark_messages_seen"),
+    ):
+        assert _poll_mailbox_and_enqueue("primary") == 3
+
+    observe.assert_called_once_with([ordinary], secret="monitor-secret")
+
+
+def test_relay_mailbox_is_never_observed(monkeypatch):
+    monkeypatch.setattr(
+        "thenetwork.worker.producer.get_settings",
+        lambda: SimpleNamespace(
+            primary_intake_burst_monitoring_enabled=True,
+            sender_identifier_secret="monitor-secret",
+            relay_domain="relay.example.com",
+        ),
+    )
+    message = _message("23", "member@example.com")
+
+    with (
+        patch("thenetwork.worker.producer.poll_unseen", return_value=[message]),
+        patch("thenetwork.worker.producer.observe_primary_intake_batch") as observe,
+        patch("thenetwork.worker.producer.process_email"),
+        patch("thenetwork.worker.producer.mark_messages_seen"),
+    ):
+        assert _poll_mailbox_and_enqueue("relay") == 1
+
+    observe.assert_not_called()

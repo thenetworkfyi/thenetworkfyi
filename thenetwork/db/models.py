@@ -124,6 +124,24 @@ class PrimaryIntakeState(SQLModel, table=True):
     )
 
 
+class PrimaryIntakeObservation(SQLModel, table=True):
+    """PII-safe metadata observed before a primary inbox job is enqueued."""
+
+    __tablename__ = "primary_intake_observations"
+
+    mailbox_uid: str = Field(primary_key=True)
+    trace_id: str = Field(unique=True, index=True)
+    observed_at: datetime = Field(
+        default_factory=_utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False, index=True),
+    )
+    sender_authenticated: bool = Field(nullable=False)
+    sender_known: bool = Field(nullable=False, index=True)
+    sender_fingerprint: str = Field(index=True)
+    domain_fingerprint: str = Field(index=True)
+    body_fingerprint: str = Field(index=True)
+
+
 class IntroductionConsent(SQLModel, table=True):
     """Server-owned pairwise consent state for anonymous relay introductions."""
 
