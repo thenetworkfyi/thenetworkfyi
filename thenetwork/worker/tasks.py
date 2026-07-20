@@ -418,7 +418,7 @@ async def process_email(
             )
             return
 
-        is_safe, scan_reason = scan_content(body)
+        is_safe, scan_reason = await scan_content(body)
         if not is_safe:
             audit_event("worker.message_rejected", reason=scan_reason)
             _send_infrastructure_rejection_reply(

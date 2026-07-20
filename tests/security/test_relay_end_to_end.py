@@ -334,7 +334,10 @@ async def test_ordinary_mail_recipient_still_runs_existing_agent_path():
         patch("thenetwork.worker.tasks.get_settings", return_value=_settings()),
         patch("thenetwork.worker.tasks.get_session", return_value=session),
         patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
-        patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)),
+        patch(
+            "thenetwork.worker.tasks.scan_content",
+            new=AsyncMock(return_value=(True, None)),
+        ),
         patch("thenetwork.worker.tasks.verify_admin_request", return_value=None),
         patch(
             "thenetwork.worker.tasks.process_consent_reply",

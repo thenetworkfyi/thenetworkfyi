@@ -36,7 +36,7 @@ dependencies = [
 
 [project.optional-dependencies]
 content-scan = [
-    "llm-guard>=0.3",
+    "llamafirewall==1.0.3",
 ]
 dev = [
     "pytest>=8.3",

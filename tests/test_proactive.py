@@ -289,7 +289,10 @@ async def test_rematch_job_reaches_agent_through_real_worker_handoff():
         patch(
             "thenetwork.worker.tasks.check_rate_limit", return_value=True
         ) as check_rate_limit,
-        patch("thenetwork.worker.tasks.scan_content", return_value=(True, "ok")),
+        patch(
+            "thenetwork.worker.tasks.scan_content",
+            new=AsyncMock(return_value=(True, "ok")),
+        ),
         patch("thenetwork.worker.tasks.verify_admin_request", return_value=None),
         patch(
             "thenetwork.worker.tasks.process_consent_reply",
