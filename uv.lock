@@ -3208,6 +3208,15 @@ wheels = [
 ]
 
 [[package]]
+name = "python-disposable"
+version = "0.0.13"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/4b/52/0ab513d1081e03cf46e95d92253755d6e8c269560fd08fca22999d779f69/python_disposable-0.0.13.tar.gz", hash = "sha256:6f68256d405376462967a636b55225b25f9dfec08a7d54978638b34b84aef72f", size = 548350, upload-time = "2026-04-07T12:23:24.493Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0c/da/103298fa0e3123366e98cfe33dcbca413bb924fc1d6ac7b5ecbe21fcbbd4/python_disposable-0.0.13-py3-none-any.whl", hash = "sha256:6f1abf8f9783d89c49b7ac8934661198ecc827fec1b46243b5afab2710faea3e", size = 549281, upload-time = "2026-04-07T12:23:22.829Z" },
+]
+
+[[package]]
 name = "python-dotenv"
 version = "1.2.2"
 source = { registry = "https://pypi.org/simple" }
@@ -3859,6 +3868,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
+    { name = "python-disposable" },
     { name = "python-gnupg" },
     { name = "spacy" },
     { name = "sqlmodel" },
@@ -3902,6 +3912,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.3" },
     { name = "pytest-asyncio", specifier = ">=0.24" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24" },
+    { name = "python-disposable", specifier = ">=0.0.13" },
     { name = "python-gnupg", specifier = ">=0.5" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.12" },
     { name = "spacy", specifier = ">=3.7" },

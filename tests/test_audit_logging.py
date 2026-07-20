@@ -1288,6 +1288,44 @@ def test_intake_rejects_bad_shape_without_enqueueing_or_replying(caplog):
     assert rejected["body_chars"] == 100_001
 
 
+def test_intake_disposable_rejection_audit_is_pii_safe(caplog):
+    from thenetwork.email.inbound import InboundMessage
+    from thenetwork.worker.producer import (
+        REJECT_DISPOSABLE_DOMAIN,
+        _poll_and_enqueue,
+    )
+
+    message = InboundMessage(
+        uid="123",
+        sender="private-user@mailinator.com",
+        subject="Confidential acquisition",
+        body="Project Finch closes Friday",
+        auto_submitted=None,
+        sender_authenticated=True,
+    )
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    with (
+        patch("thenetwork.worker.producer.poll_unseen", return_value=[message]),
+        patch("thenetwork.worker.producer.process_email") as process_email,
+        patch("thenetwork.worker.producer.mark_messages_seen") as mark_seen,
+    ):
+        assert _poll_and_enqueue() == 0
+
+    process_email.defer.assert_not_called()
+    mark_seen.assert_called_once_with(["123"], mailbox="primary")
+    serialized = "\n".join(record.message for record in caplog.records)
+    assert message.sender not in serialized
+    assert message.subject not in serialized
+    assert message.body not in serialized
+    rejected = next(
+        event
+        for event in _events(caplog)
+        if event["event"] == "intake.message_rejected"
+    )
+    assert rejected["reason"] == REJECT_DISPOSABLE_DOMAIN
+
+
 @pytest.mark.asyncio
 async def test_worker_rejection_logs_reason_without_message_content(caplog):
     from thenetwork.worker.tasks import process_email
