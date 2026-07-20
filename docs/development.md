@@ -33,9 +33,9 @@ RELAY_DOMAIN=relay.example.com  # Dovecot catch-all domain for pair reply aliase
 REQUIRE_SENDER_AUTH=true        # reject if the IMAP provider supplies no passing verdict
 IMAP_SENT_FOLDER=Sent       # outbound replies are IMAP-appended here after SMTP send
 WORKER_CONCURRENCY=4        # worker concurrency ceiling
-RATE_LIMIT_PER_HOUR=10      # authenticated sender bucket
-UNAUTHENTICATED_RATE_LIMIT_PER_HOUR=3
-GLOBAL_EMAIL_RATE_LIMIT_PER_HOUR=100
+RATE_LIMIT_PER_HOUR=20      # authenticated sender bucket
+UNAUTHENTICATED_RATE_LIMIT_PER_HOUR=6
+GLOBAL_EMAIL_RATE_LIMIT_PER_HOUR=200
 CONTENT_SCAN_ENABLED=false
 SANITIZE_LLM_TIER_ENABLED=true    # higher-fidelity gist pass, see docs/security.md layer 4; on by default
 RECENT_MEMORY_CONTEXT_MAX_COUNT=20  # newest sender-owned gists loaded into an agent run
@@ -76,10 +76,10 @@ Dovecot catch-all -> IMAP poll -> process_email pair authorization -> SES/SMTP -
 
 The fixed introduction omits participant names and real addresses, prints the relay
 address in the body, and includes a recap made from the proposal's sanitized gist
-snapshots. Relay delivery replaces source routing headers but preserves the original MIME
-body, including plain/HTML alternatives and attachments, within the normal intake bounds.
-Participant content bypasses the model and content scanner. Revocation immediately makes
-subsequent lookups fail closed.
+snapshots. After the decoded body passes the normal intake size guard, relay delivery
+replaces source routing headers but preserves the original MIME body, including plain/HTML
+alternatives and attachments. Participant content bypasses the model and content scanner.
+Revocation immediately makes subsequent lookups fail closed.
 
 The full production procedure, including catch-all delivery, original-recipient headers,
 sender-authentication results, SES identity/DKIM/SMTP setup, and deployment probes, is in
