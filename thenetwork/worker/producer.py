@@ -14,6 +14,8 @@ from __future__ import annotations
 import asyncio
 import base64
 
+from disposable_email import is_disposable
+
 from thenetwork.audit import (
     audit_event,
     audit_run,
@@ -34,6 +36,8 @@ from thenetwork.email.inbound import (
 )
 from thenetwork.security.sender_identifier import optional_sender_identifier
 from thenetwork.worker.tasks import app, process_email
+
+REJECT_DISPOSABLE_DOMAIN = "disposable_domain"
 
 
 def _poll_mailbox_and_enqueue(mailbox: MailboxKind) -> int:
@@ -57,6 +61,18 @@ def _poll_mailbox_and_enqueue(mailbox: MailboxKind) -> int:
                     auto_submitted_present=bool(auto_submitted),
                     header_names=["from", "subject", "auto-submitted"],
                     reason=msg.rejection_reason,
+                )
+                handled_uids.append(msg.uid)
+                continue
+            if is_disposable(msg.sender):
+                audit_event(
+                    "intake.message_rejected",
+                    sender_present=bool(msg.sender),
+                    subject_chars=len(msg.subject),
+                    body_chars=body_chars,
+                    auto_submitted_present=bool(auto_submitted),
+                    header_names=["from", "subject", "auto-submitted"],
+                    reason=REJECT_DISPOSABLE_DOMAIN,
                 )
                 handled_uids.append(msg.uid)
                 continue

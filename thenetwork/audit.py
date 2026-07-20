@@ -219,6 +219,7 @@ _SAFE_CATEGORIES = {
             "body_empty",
             "body_oversize",
             "content_scan",
+            "disposable_domain",
             "invalid_summary",
             "memory_text_too_long",
             "person_memory_limit_exceeded",

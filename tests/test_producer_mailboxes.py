@@ -2,8 +2,13 @@
 
 from unittest.mock import call, patch
 
+import pytest
+
 from thenetwork.email.inbound import InboundMessage
-from thenetwork.worker.producer import _poll_and_enqueue
+from thenetwork.worker.producer import (
+    _poll_and_enqueue,
+    _poll_mailbox_and_enqueue,
+)
 
 
 def _message(uid: str, sender: str) -> InboundMessage:
@@ -61,3 +66,35 @@ def test_poll_and_enqueue_skips_unconfigured_relay_mailbox():
 
     poll_unseen.assert_called_once_with(mailbox="primary")
     mark_seen.assert_called_once_with([], mailbox="primary")
+
+
+@pytest.mark.parametrize("mailbox", ["primary", "relay"])
+def test_disposable_sender_is_rejected_before_enqueue(mailbox):
+    message = _message("7", "sender@mailinator.com")
+
+    with (
+        patch("thenetwork.worker.producer.poll_unseen", return_value=[message]),
+        patch("thenetwork.worker.producer.process_email") as process_email,
+        patch("thenetwork.worker.producer.mark_messages_seen") as mark_seen,
+        patch("thenetwork.worker.producer.mark_message_processed") as mark_processed,
+    ):
+        assert _poll_mailbox_and_enqueue(mailbox) == 0
+
+    process_email.defer.assert_not_called()
+    mark_processed.assert_not_called()
+    mark_seen.assert_called_once_with(["7"], mailbox=mailbox)
+
+
+@pytest.mark.parametrize("domain", ["gmail.com", "outlook.com", "proton.me"])
+def test_established_provider_is_accepted(domain):
+    message = _message("8", f"sender@{domain}")
+
+    with (
+        patch("thenetwork.worker.producer.poll_unseen", return_value=[message]),
+        patch("thenetwork.worker.producer.process_email") as process_email,
+        patch("thenetwork.worker.producer.mark_messages_seen") as mark_seen,
+    ):
+        assert _poll_mailbox_and_enqueue("primary") == 1
+
+    process_email.defer.assert_called_once()
+    mark_seen.assert_called_once_with(["8"], mailbox="primary")

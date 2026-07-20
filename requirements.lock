@@ -2015,6 +2015,10 @@ python-dateutil==2.9.0.post0 \
     #   croniter
     #   mistralai
     #   procrastinate
+python-disposable==0.0.13 \
+    --hash=sha256:6f1abf8f9783d89c49b7ac8934661198ecc827fec1b46243b5afab2710faea3e \
+    --hash=sha256:6f68256d405376462967a636b55225b25f9dfec08a7d54978638b34b84aef72f
+    # via thenetwork-agent
 python-dotenv==1.2.2 \
     --hash=sha256:1d8214789a24de455a8b8bd8ae6fe3c6b69a5e3d64aa8a8e5d68e694bbcb285a \
     --hash=sha256:2c371a91fbd7ba082c2c1dc1f8bf89ca22564a087c2c287cd9b662adde799cf3
