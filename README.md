@@ -13,10 +13,10 @@ all behavior (onboarding, attribute capture, introductions, one-way FYIs) is
 The whole thing runs on a single VPS against Postgres.
 
 > **Status:** active development. See [`docs/design-decisions.md`](./docs/design-decisions.md)
-> for the design rationale and the list of deliberately rejected approaches. Proactive outreach
-> (`thenetwork/worker/proactive.py`) is ported to the Person/Memory model and wired
-> as the hourly periodic scan; it is intentionally conservative - it only enqueues
-> candidate pairs and lets the agent decide whether to introduce.
+> for the design rationale and the list of deliberately rejected approaches. Three
+> independent hourly scans surface graph matches, semantic people matches, and relevant
+> events. The scans only enqueue sealed candidates; the agent decides whether to act, and
+> server-owned capabilities enforce what can leave the system.
 
 ---
 
@@ -32,11 +32,10 @@ The whole thing runs on a single VPS against Postgres.
                   Worker (Procrastinate task)
                       | rate-limit + optional content scan
                       | run the pydantic-ai agent: Think / Act / Observe
-                      | tools: remember / forget / search / reply_to_sender /
-                      |        send_outreach / propose_introduction / escalate /
-                      |        register_person
+                      | tools: memory + introductions + event lifecycle /
+                      |        sealed email and event capabilities
                       v
-                  Reply --SMTP--> [Sender]
+                Outbound --SMTP--> [Recipient]
 
 [Dovecot catch-all: hidden-*@RELAY_DOMAIN]
                       | configured IMAP inbox/job path
@@ -44,18 +43,20 @@ The whole thing runs on a single VPS against Postgres.
               server-owned pair resolver --SES/SMTP--> [Other participant]
 ```
 
-1. **Producer** (`thenetwork/worker/producer.py`) polls the IMAP inbox for unseen
-   messages, enqueues exactly one durable Procrastinate job per message, and only
-   *then* marks the message seen. Durability lives in the Postgres job row, not
-   the IMAP seen-flag - a crash mid-run means the job retries and nothing is lost.
+1. **Producer** (`thenetwork/worker/producer.py`) polls the primary and optional relay
+   IMAP inboxes for unseen messages, enqueues exactly one durable Procrastinate job per
+   message, and only *then* marks the message seen. Durability lives in the Postgres job
+   row, not the IMAP seen-flag - a crash mid-run means the job retries and nothing is
+   lost.
 2. **Worker** (`thenetwork/worker/tasks.py`) is a Postgres-native Procrastinate
    task (LISTEN/NOTIFY + `SKIP LOCKED`, no Redis/broker). It enforces a per-sender
    rate limit and an optional content scan, looks up whether the sender is a known
    person, then runs the agent. Retries/backoff are Procrastinate's job.
 3. **Agent** (`thenetwork/agent/`) is a [pydantic-ai](https://ai.pydantic.dev/)
    ReAct agent. The untrusted email body is passed as **user-role** content and
-   never concatenated into the system prompt. It loops over its tools and produces
-   a reply, which goes out over SMTP with the appropriate auto-reply headers.
+   never concatenated into the system prompt. It loops over its tools and may remember,
+   reply, send outreach, manage an event, propose an introduction, escalate, or explicitly
+   take no action.
 
 Introduced pairs communicate through one stable
 `hidden-<reply-token>@RELAY_DOMAIN` address. The existing Dovecot catch-all puts
@@ -72,7 +73,10 @@ It adds no webhook, inbound HTTP endpoint, or separate receiving service.
 
 ## Data model
 
-Two tables - that is the entire durable model.
+`people` and `memories` are the core domain substrate. Narrow operational tables enforce
+security and lifecycle invariants that cannot safely be left to model reasoning; they do
+not turn freeform memories into a networking schema. Procrastinate also owns its durable
+queue tables in the same Postgres database.
 
 ### `people`
 Pure identity, addressing, and the security boundary. Nothing about *why* a person
@@ -106,6 +110,18 @@ There is no `kind`/`direction`/`status`/`category`/`tags` column. Those are
 distinctions the agent draws from `text` at reasoning time, not facts the DB
 enforces.
 
+### Operational and security state
+
+- `introduction_consents` stores server-owned pairwise consent, decline/revocation,
+  sanitized proposal snapshots, and the opaque token used by the hidden-address relay.
+- `proactive_surfaces` rotates recently surfaced people pairs so scans can reach later
+  candidates without repeatedly emailing the same pair.
+- `events`, `event_recommendations`, and `event_suppressions` enforce stable event identity,
+  ownership, lifecycle, version-bound delivery deduplication, and event-only opt-out. Event
+  meaning remains freeform.
+- `rate_limits`, `processed_messages`, `banned_emails`, and `admin_nonces` provide durable
+  abuse controls, intake idempotency, bans, and PGP-admin replay protection.
+
 ### The graph is a projection, not a table
 "Who knows whom" is derived: nodes are people, an edge exists between two people
 because some memory references both, and edge weight comes from the count/recency
@@ -117,18 +133,26 @@ reference mapping at write time.
 
 ## Agent surface
 
-The agent has eight tools (`thenetwork/agent/tools.py`):
+The agent has sixteen tools (`thenetwork/agent/tools.py`):
 
 | tool | description |
 |---|---|
 | `remember(text, refs)` | write a chunk; a PII-stripped gist is produced automatically for any memory with refs |
 | `forget(memory_id)` | delete a sender-owned, single-ref chunk (edit = forget + remember, so embeddings never go stale) |
 | `search(query) -> [{person_id, gist, similarity}]` | semantic recall returning **opaque ids + gist only** for other people |
-| `reply_to_sender(subject, body_text, …)` | reply only to the registered inbound sender; the model cannot select a recipient |
-| `send_outreach(recipient_user_id, subject, body_text, …)` | send a new, unthreaded message to another user by opaque id; the address is resolved server-side |
+| `reply_to_sender(subject, body_text, sent_email_summary)` | reply only to the registered inbound sender; after SMTP succeeds, remember only the separate concise summary |
+| `send_outreach(recipient_user_id, subject, body_text, sent_email_summary)` | send unthreaded outreach by opaque id and remember only the post-SMTP summary; resolve the address server-side |
 | `propose_introduction(other_person_id, sender_gist, other_gist)` | create a sealed pairwise proposal; server-owned consent controls the anonymous relay handoff |
-| `escalate(reason)` | flag the inbound email for human review; authenticated unknown senders receive fixed first-contact guidance instead |
 | `register_person(name)` | self-register an authenticated first-contact sender; the server supplies the sender address |
+| `escalate(reason)` | flag the inbound email for human review; authenticated unknown senders receive fixed first-contact guidance instead |
+| `no_action(reason)` | explicitly end a run without dispatching or mutating anything |
+| `create_event(text, expires_at, recurrence)` | create a sender-owned event or recurring series with a sealed cross-user gist |
+| `update_event(event_id, text, expires_at, recurrence)` | replace an owned event while retaining its stable id and refreshing its version, gist, and embedding |
+| `cancel_event(event_id)` | cancel an owned event so it cannot be searched or recommended |
+| `search_events(query)` | search active events through an opaque-id + sealed-gist projection |
+| `send_event_recommendation(event_id)` | send only the scan-bound event to the current proactive recipient using server-composed copy |
+| `stop_event_recommendations()` | suppress event FYIs for the authenticated sender without affecting people matching |
+| `resume_event_recommendations()` | remove only the authenticated sender's event-FYI suppression |
 
 ---
 
@@ -171,18 +195,31 @@ column." Instead:
    server code send the fixed introductions. Their bodies omit participant names and real
    addresses, print only the server-owned relay address, and use server-resanitized
    proposal gists for the match recap.
-7. **Role separation.** The untrusted inbound body is passed as user-role message
+7. **Server-only address relay.** After introduction, replies to the stable pair alias are
+   authenticated and authorized before any model execution. Server code resolves only the
+   other participant and preserves the participant-authored MIME body while replacing
+   source routing headers.
+8. **Role separation.** The untrusted inbound body is passed as user-role message
    content, never into the system prompt (`thenetwork/agent/core.py`).
-8. **Mail-loop prevention (RFC 3834).** Inbound carrying `Auto-Submitted` /
+9. **Mail-loop prevention (RFC 3834).** Inbound carrying `Auto-Submitted` /
    `Precedence: bulk|list` / `List-*` is skipped; automated agent replies set
    `Auto-Submitted: auto-replied`, while human-to-human relay mail omits it.
-9. **Rate limiting / anti-DoS.** Per-sender quota via
-   [`limits`](https://limits.readthedocs.io/) (Postgres-backed), plus bounded
-   Procrastinate worker concurrency as the global LLM-spend ceiling.
-10. **Credentials.** Never hardcoded - loaded from env / `.env` via
+10. **Rate limiting / anti-DoS.** Postgres-backed inbound and outbound quotas via
+    [`limits`](https://limits.readthedocs.io/), a global processed-email quota, and bounded
+    Procrastinate worker concurrency cap LLM and email spend.
+11. **PII-safe audit correlation.** Opaque trace ids follow each message, while stable
+    sender correlation requires an HMAC-derived pseudonym; raw sender addresses are never
+    logged.
+12. **Credentials.** Never hardcoded - loaded from env / `.env` via
    pydantic-settings.
-11. **Optional content scanner.** Provider moderation / LLM Guard as opt-in
+13. **Optional content scanner.** Provider moderation / LLM Guard as opt-in
     defense-in-depth, never the primary defense.
+14. **Mutating-tool replay boundary.** Server-side fingerprints prevent a pydantic-ai
+    retry from repeating completed database, SMTP, quota, or sent-memory effects within
+    one agent run.
+
+The PGP-verified admin channel is separate from the agent-facing SEAL. See
+[`docs/security.md`](./docs/security.md) for the complete threat model and contracts.
 
 The red-team suite (`tests/security/`) proves it: adversarial emails must produce
 **zero** raw other-person memory text - no names, emails, or bios - in the reply
@@ -267,9 +304,9 @@ REQUIRE_SENDER_AUTH=true
 
 # Tuning
 WORKER_CONCURRENCY=4
-RATE_LIMIT_PER_HOUR=10
-UNAUTHENTICATED_RATE_LIMIT_PER_HOUR=3
-GLOBAL_EMAIL_RATE_LIMIT_PER_HOUR=100
+RATE_LIMIT_PER_HOUR=20
+UNAUTHENTICATED_RATE_LIMIT_PER_HOUR=6
+GLOBAL_EMAIL_RATE_LIMIT_PER_HOUR=200
 CONTENT_SCAN_ENABLED=false
 ```
 
@@ -294,9 +331,10 @@ uv run alembic upgrade head     # creates the vector extension + tables
 ### 4. Run the worker
 
 The worker is a single long-running process. It drains the Procrastinate queue
-and, via periodic tasks, polls the IMAP inbox every minute (`poll_inbox`) and
-runs the hourly proactive scan (`scan_for_opportunities`) - no separate producer
-process is needed.
+and, via periodic tasks, polls IMAP every minute (`poll_inbox`) and runs three hourly
+discovery scans: graph people matching (`scan_for_opportunities`), semantic people
+rematching (`scan_for_matches`), and semantic event recommendations
+(`scan_for_event_recommendations`). No separate producer process is needed.
 
 ```bash
 uv run thenetwork-worker            # long-running: intake + processing + scans
@@ -375,16 +413,19 @@ uv run pytest -m "not integration"  # skip tests that need a live pgvector DB
 
 ```
 thenetwork/
+  admin/      PGP/MIME-verified operator commands
   agent/      pydantic-ai agent: core wiring, tools, prompts, deps
   db/         SQLModel models + session
-  email/      IMAP inbound polling, SMTP outbound
+  email/      IMAP intake, SMTP output, hidden-address relay, templates
   embed/      OpenAI embedding wrapper (1536 dimensions)
   memory/     the SEAL: sanitize (gist) + seal (self/other gate)
   search/     semantic match over memories + NetworkX graph projection
   security/   rate limiting + optional content scan
-  worker/     Procrastinate producer/tasks + proactive (hourly scan)
+  sim/        deterministic and model-driven end-to-end simulation harness
+  worker/     Procrastinate intake/tasks + people and event discovery scans
   settings.py pydantic-settings config
 alembic/      migrations (vector extension lives here)
-tests/        security, scenarios, pipeline
-CLAUDE.md     guidance for Claude Code (imports docs/ for architecture, the SEAL, rationale)
+docs/         architecture, security, development, operations, and review runbooks
+tests/        unit, security, scenario, simulation, and integration suites
+AGENTS.md     repository guidance (`CLAUDE.md` is a symlink to this file)
 ```
