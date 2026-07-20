@@ -8,6 +8,7 @@ import pytest
 def test_worker_main_checks_presidio_before_run_loop(monkeypatch):
     from thenetwork.worker import tasks
     from thenetwork.embed import embeddings
+    from thenetwork.security import content_scan
 
     events: list[str] = []
 
@@ -25,11 +26,22 @@ def test_worker_main_checks_presidio_before_run_loop(monkeypatch):
     monkeypatch.setattr(
         tasks, "assert_presidio_ready", lambda: events.append("presidio")
     )
+    monkeypatch.setattr(
+        content_scan,
+        "assert_content_scanner_ready",
+        lambda: events.append("content_scanner"),
+    )
     monkeypatch.setattr(tasks, "run_worker", fake_run_worker)
 
     tasks.main()
 
-    assert events == ["embedding_validation", "audit", "presidio", "run_worker"]
+    assert events == [
+        "embedding_validation",
+        "audit",
+        "presidio",
+        "content_scanner",
+        "run_worker",
+    ]
 
 
 def test_worker_main_fails_before_run_loop_when_presidio_unavailable(monkeypatch):

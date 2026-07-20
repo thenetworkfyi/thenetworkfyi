@@ -8,12 +8,15 @@ defense; the structural privacy boundary is documented in ``docs/security.md``.
 from __future__ import annotations
 
 from enum import StrEnum
+import os
+from pathlib import Path
 from typing import Any, Iterator
 
 from thenetwork.settings import get_settings
 
 MODEL_CONTEXT_TOKENS = 512
 WINDOW_OVERLAP_TOKENS = 64
+PROMPT_GUARD_MODEL = "meta-llama/Llama-Prompt-Guard-2-86M"
 
 
 class ContentScanReason(StrEnum):
@@ -41,6 +44,50 @@ def _get_scanner() -> Any:
     if _scanner is None:
         _scanner = _build_scanner()
     return _scanner
+
+
+def _model_cache_path() -> Path:
+    """Return the cache path used internally by LlamaFirewall 1.0.3."""
+    hf_home = Path(os.environ.get("HF_HOME", "~/.cache/huggingface")).expanduser()
+    return hf_home / PROMPT_GUARD_MODEL.replace("/", "--")
+
+
+def _has_huggingface_token() -> bool:
+    from huggingface_hub import get_token
+
+    return bool(get_token())
+
+
+def _probe_scanner(scanner: Any) -> None:
+    """Run one fixed local inference so device/model failures surface at startup."""
+    score = scanner.pg.get_jailbreak_score(text="Hello")
+    if not isinstance(score, int | float) or not 0.0 <= score <= 1.0:
+        raise RuntimeError("Llama Prompt Guard 2 returned an invalid readiness score")
+
+
+def assert_content_scanner_ready() -> None:
+    """Preload Prompt Guard at startup or fail before processing any jobs.
+
+    A missing cache requires a non-interactive Hugging Face token. Checking it
+    before constructing LlamaFirewall prevents its fallback login prompt from
+    hanging a headless worker. Constructing the cached singleton here also
+    prevents a model download on the first inbound message.
+    """
+    if not get_settings().content_scan_enabled:
+        return
+
+    if not _model_cache_path().is_dir() and not _has_huggingface_token():
+        raise RuntimeError(
+            "CONTENT_SCAN_ENABLED requires a cached Llama Prompt Guard 2 model "
+            "or a non-interactive HF_TOKEN for startup preload"
+        )
+
+    try:
+        _probe_scanner(_get_scanner())
+    except Exception as exc:
+        raise RuntimeError(
+            "CONTENT_SCAN_ENABLED but Llama Prompt Guard 2 failed startup preload"
+        ) from exc
 
 
 def _get_llamafirewall_types() -> tuple[Any, Any]:

@@ -531,10 +531,12 @@ def main() -> None:
     """Console entrypoint: run the long-lived worker (intake + processing + scans)."""
     import asyncio
     from thenetwork.embed.embeddings import validate_embedding_configuration
+    from thenetwork.security.content_scan import assert_content_scanner_ready
 
     validate_embedding_configuration()
     configure_audit_logging()
     assert_presidio_ready()
+    assert_content_scanner_ready()
     asyncio.run(run_worker())
 
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from enum import Enum
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -225,3 +225,129 @@ async def test_non_allow_non_block_decision_fails_closed():
     settings, get_scanner, types = _enabled(scanner)
     with settings, get_scanner, types:
         assert await content_scan.scan_content("hello") == (False, "scanner_error")
+
+
+def test_disabled_startup_check_does_not_load_optional_dependency():
+    from thenetwork.security import content_scan
+
+    with (
+        patch(
+            "thenetwork.security.content_scan.get_settings",
+            return_value=SimpleNamespace(content_scan_enabled=False),
+        ),
+        patch(
+            "thenetwork.security.content_scan._model_cache_path",
+            side_effect=AssertionError(
+                "disabled startup must not inspect a model cache"
+            ),
+        ),
+        patch(
+            "thenetwork.security.content_scan._get_scanner",
+            side_effect=AssertionError("disabled startup must not load the scanner"),
+        ),
+    ):
+        content_scan.assert_content_scanner_ready()
+
+
+def test_enabled_startup_without_cache_or_token_fails_before_scanner_login(tmp_path):
+    from thenetwork.security import content_scan
+
+    with (
+        patch(
+            "thenetwork.security.content_scan.get_settings",
+            return_value=SimpleNamespace(content_scan_enabled=True),
+        ),
+        patch(
+            "thenetwork.security.content_scan._model_cache_path",
+            return_value=tmp_path / "missing-model",
+        ),
+        patch(
+            "thenetwork.security.content_scan._has_huggingface_token",
+            return_value=False,
+        ),
+        patch("thenetwork.security.content_scan._get_scanner") as get_scanner,
+    ):
+        with pytest.raises(RuntimeError, match="cached Llama Prompt Guard 2 model"):
+            content_scan.assert_content_scanner_ready()
+
+    get_scanner.assert_not_called()
+
+
+def test_enabled_startup_preloads_with_noninteractive_token(tmp_path):
+    from thenetwork.security import content_scan
+
+    scanner = _Scanner()
+    scanner.pg.get_jailbreak_score = lambda *, text: 0.01
+    with (
+        patch(
+            "thenetwork.security.content_scan.get_settings",
+            return_value=SimpleNamespace(content_scan_enabled=True),
+        ),
+        patch(
+            "thenetwork.security.content_scan._model_cache_path",
+            return_value=tmp_path / "missing-model",
+        ),
+        patch(
+            "thenetwork.security.content_scan._has_huggingface_token",
+            return_value=True,
+        ),
+        patch(
+            "thenetwork.security.content_scan._get_scanner", return_value=scanner
+        ) as get_scanner,
+    ):
+        content_scan.assert_content_scanner_ready()
+
+    get_scanner.assert_called_once_with()
+
+
+def test_enabled_startup_uses_cache_without_huggingface_credentials(tmp_path):
+    from thenetwork.security import content_scan
+
+    model_cache = tmp_path / "cached-model"
+    model_cache.mkdir()
+    scanner = _Scanner()
+    scanner.pg.get_jailbreak_score = lambda *, text: 0.01
+    with (
+        patch(
+            "thenetwork.security.content_scan.get_settings",
+            return_value=SimpleNamespace(content_scan_enabled=True),
+        ),
+        patch(
+            "thenetwork.security.content_scan._model_cache_path",
+            return_value=model_cache,
+        ),
+        patch(
+            "thenetwork.security.content_scan._has_huggingface_token",
+            side_effect=AssertionError("cached startup must not require credentials"),
+        ),
+        patch(
+            "thenetwork.security.content_scan._get_scanner", return_value=scanner
+        ) as get_scanner,
+    ):
+        content_scan.assert_content_scanner_ready()
+
+    get_scanner.assert_called_once_with()
+
+
+def test_enabled_startup_fails_when_readiness_inference_fails(tmp_path):
+    from thenetwork.security import content_scan
+
+    model_cache = tmp_path / "cached-model"
+    model_cache.mkdir()
+    scanner = _Scanner()
+    scanner.pg.get_jailbreak_score = MagicMock(
+        side_effect=RuntimeError("device unavailable")
+    )
+    with (
+        patch(
+            "thenetwork.security.content_scan.get_settings",
+            return_value=SimpleNamespace(content_scan_enabled=True),
+        ),
+        patch(
+            "thenetwork.security.content_scan._model_cache_path",
+            return_value=model_cache,
+        ),
+        patch("thenetwork.security.content_scan._get_scanner", return_value=scanner),
+    ):
+        with pytest.raises(RuntimeError, match="failed startup preload"):
+            content_scan.assert_content_scanner_ready()

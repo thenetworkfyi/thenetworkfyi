@@ -105,8 +105,16 @@ prompt-injection exfiltrate it, so the privacy boundary cannot be "withhold a co
    raw sender addresses, and never replace this with a bare `sha256(email)`:
    candidate-address dictionary lookup would make that reversible.
 12. **Credentials.** Loaded from env / `.env` via pydantic-settings; never hardcoded.
-13. **Optional content scanner.** Provider moderation / LLM Guard as opt-in
-    defense-in-depth, never the primary defense (`security/content_scan.py`).
+13. **Optional content scanner.** LlamaFirewall's local Llama Prompt Guard 2 86M
+    classifier is opt-in defense-in-depth, never the primary defense
+    (`security/content_scan.py`). Agent-bound primary mail is scanned after its hard
+    body cap and before consent parsing, person lookup, memory access, or the agent.
+    Tokenizer-aware windows overlap and reserve special-token space so every window
+    fits the model's 512-token context instead of relying on LlamaFirewall's silent
+    truncation. A block or scanner error fails closed; only the fixed PII-safe reason
+    category reaches audit, because LlamaFirewall's detailed block reason contains the
+    raw email. Relay mail and verified PGP administration retain their earlier
+    server-only bypasses.
 14. **Server-owned mutating-tool replay boundary.** Within one agent run, validated
     mutating-tool names and arguments are canonically fingerprinted in memory and indexed
     by their occurrence before each Pydantic retry prompt. A later retry generation receives

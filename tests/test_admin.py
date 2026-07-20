@@ -396,7 +396,7 @@ def test_process_email_routes_admin_to_handler():
         patch(
             "thenetwork.worker.tasks.scan_content",
             new=AsyncMock(return_value=(True, None)),
-        ),
+        ) as scan_content,
         patch(
             "thenetwork.worker.tasks.verify_admin_request",
             return_value=verified_cleartext,
@@ -420,6 +420,7 @@ def test_process_email_routes_admin_to_handler():
         )
 
     mock_reply.assert_called_once_with("status", "")
+    scan_content.assert_not_awaited()
     mock_send.assert_called_once()
     assert mock_send.call_args.kwargs["in_reply_to"] == "<admin123@example.com>"
     assert (
