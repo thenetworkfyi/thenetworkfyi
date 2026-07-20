@@ -16,7 +16,8 @@ The whole thing runs on a single VPS against Postgres.
 > for the design rationale and the list of deliberately rejected approaches. Three
 > independent hourly scans surface graph matches, semantic people matches, and relevant
 > events. The scans only enqueue sealed candidates; the agent decides whether to act, and
-> server-owned capabilities enforce what can leave the system.
+> server-owned capabilities enforce what can leave the system. An optional separate hourly
+> judge can pause primary intake from sealed cross-account abuse patterns.
 
 ---
 
@@ -47,7 +48,9 @@ The whole thing runs on a single VPS against Postgres.
    IMAP inboxes for unseen messages, enqueues exactly one durable Procrastinate job per
    message, and only *then* marks the message seen. Durability lives in the Postgres job
    row, not the IMAP seen-flag - a crash mid-run means the job retries and nothing is
-   lost.
+   lost. Disposable domains are rejected before enqueue. Optional burst monitoring can
+   pause only primary intake before a suspicious batch is marked seen; relay and verified
+   PGP admin mail continue.
 2. **Worker** (`thenetwork/worker/tasks.py`) is a Postgres-native Procrastinate
    task (LISTEN/NOTIFY + `SKIP LOCKED`, no Redis/broker). It enforces a per-sender
    rate limit and an optional content scan, looks up whether the sender is a known
@@ -121,6 +124,9 @@ enforces.
   meaning remains freeform.
 - `rate_limits`, `processed_messages`, `banned_emails`, and `admin_nonces` provide durable
   abuse controls, intake idempotency, bans, and PGP-admin replay protection.
+- `primary_intake_state`, `primary_intake_observations`, and
+  `primary_intake_judge_state` implement the primary-only circuit breaker using keyed
+  fingerprints and an idempotent judge cursor, never raw campaign content.
 
 ### The graph is a projection, not a table
 "Who knows whom" is derived: nodes are people, an edge exists between two people
@@ -204,9 +210,11 @@ column." Instead:
 9. **Mail-loop prevention (RFC 3834).** Inbound carrying `Auto-Submitted` /
    `Precedence: bulk|list` / `List-*` is skipped; automated agent replies set
    `Auto-Submitted: auto-replied`, while human-to-human relay mail omits it.
-10. **Rate limiting / anti-DoS.** Postgres-backed inbound and outbound quotas via
+10. **Rate limiting / anti-DoS.** Disposable-domain rejection, Postgres-backed inbound and outbound quotas via
     [`limits`](https://limits.readthedocs.io/), a global processed-email quota, and bounded
-    Procrastinate worker concurrency cap LLM and email spend.
+    Procrastinate worker concurrency cap LLM and email spend. Optional primary-only burst
+    detection and a fixed-prompt, no-tools judge use keyed fingerprints and opaque labels;
+    only a coordinated-abuse verdict can pause intake.
 11. **PII-safe audit correlation.** Opaque trace ids follow each message, while stable
     sender correlation requires an HMAC-derived pseudonym; raw sender addresses are never
     logged.
@@ -307,6 +315,8 @@ WORKER_CONCURRENCY=4
 RATE_LIMIT_PER_HOUR=20
 UNAUTHENTICATED_RATE_LIMIT_PER_HOUR=6
 GLOBAL_EMAIL_RATE_LIMIT_PER_HOUR=200
+SENDER_IDENTIFIER_SECRET=long-random-server-secret
+PRIMARY_INTAKE_BURST_MONITORING_ENABLED=false
 CONTENT_SCAN_ENABLED=false
 ```
 
@@ -334,7 +344,9 @@ The worker is a single long-running process. It drains the Procrastinate queue
 and, via periodic tasks, polls IMAP every minute (`poll_inbox`) and runs three hourly
 discovery scans: graph people matching (`scan_for_opportunities`), semantic people
 rematching (`scan_for_matches`), and semantic event recommendations
-(`scan_for_event_recommendations`). No separate producer process is needed.
+(`scan_for_event_recommendations`). When primary monitoring is enabled, the same worker
+also runs the fixed-policy abuse judge at minute 15; it is not a discovery scan and cannot
+send user mail or use tools. No separate producer process is needed.
 
 ```bash
 uv run thenetwork-worker            # long-running: intake + processing + scans

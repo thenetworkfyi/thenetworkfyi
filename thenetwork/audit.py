@@ -110,6 +110,7 @@ _SAFE_FIELDS = frozenset(
         "http_method",
         "http_status",
         "user_message_chars",
+        "verdict",
     }
 )
 _SAFE_TOKEN = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
@@ -229,14 +230,21 @@ _SAFE_CATEGORIES = {
             "person_memory_limit_exceeded",
             "rate_limit",
             "recipient_not_found",
+            "established_sender_traffic",
+            "multi_sender_campaign",
+            "routine_variation",
             "scanner_error",
+            "shared_body_pattern",
+            "shared_domain_pattern",
             "unauthenticated_unknown_sender",
+            "unusual_new_sender_volume",
             "banned",
         }
     ),
     "model_endpoint": frozenset(
         {"chat_completions", "embeddings", "responses", "other"}
     ),
+    "verdict": frozenset({"normal", "suspicious", "coordinated_abuse"}),
     "http_method": frozenset({"GET", "POST", "PUT", "PATCH", "DELETE"}),
     "record_type": frozenset(
         {

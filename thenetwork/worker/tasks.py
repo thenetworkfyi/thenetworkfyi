@@ -87,6 +87,7 @@ app = procrastinate.App(
         "thenetwork.worker.producer",
         "thenetwork.worker.proactive",
         "thenetwork.worker.event_scan",
+        "thenetwork.worker.abuse_judge",
     ],
 )
 

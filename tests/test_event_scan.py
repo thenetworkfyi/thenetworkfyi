@@ -419,3 +419,4 @@ def test_worker_registers_independent_event_scan_module():
     from thenetwork.worker.tasks import app
 
     assert "thenetwork.worker.event_scan" in app.import_paths
+    assert "thenetwork.worker.abuse_judge" in app.import_paths
