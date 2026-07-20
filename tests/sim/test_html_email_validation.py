@@ -19,7 +19,7 @@ def _synthetic_multipart_email(*, html: str | None = None) -> EmailMessage:
         "Hello Casey,\n\n"
         "Would you like an introduction?\n\n"
         f"{token}\n\n"
-        "--\nThe Network\nAn automated connection service\nReply anytime."
+        "The Network\njoin@thenetwork.fyi"
     )
     message = EmailMessage()
     message["From"] = "join@example.test"
@@ -30,7 +30,7 @@ def _synthetic_multipart_email(*, html: str | None = None) -> EmailMessage:
         html
         or """<html><body><p>Hello Casey,</p><p>Would you like an introduction?</p>
 <p>[intro:abcdef123456]</p><hr><p><strong>The Network</strong><br>
-An automated connection service<br>Reply anytime.</p></body></html>""",
+join@thenetwork.fyi</p></body></html>""",
         subtype="html",
     )
     return message
@@ -85,8 +85,7 @@ def test_synthetic_multipart_fixture_has_canonical_plain_text_and_safe_html():
         required_text=(
             "[intro:abcdef123456]",
             "The Network",
-            "An automated connection service",
-            "Reply anytime.",
+            "join@thenetwork.fyi",
         ),
     )
 
@@ -103,8 +102,7 @@ def test_production_conversational_mime_with_quote_passes_contract():
         required_text=(
             "Would you like an introduction?",
             "The Network",
-            "An automated connection service",
-            "Reply anytime.",
+            "join@thenetwork.fyi",
             "On Tuesday, you wrote:",
             "Original note",
             "Second original line",

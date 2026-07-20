@@ -256,7 +256,6 @@ def test_event_recommendation_template_escapes_only_the_sealed_gist():
     ("variant", "expected_signature"),
     [
         (SignatureVariant.STANDARD, True),
-        (SignatureVariant.STANDARD_WITH_REFERRAL, True),
         (SignatureVariant.NONE, False),
     ],
 )
@@ -264,15 +263,13 @@ def test_signature_variants_are_rendered_once(variant, expected_signature):
     rendered = render_conversational_email(
         "A short note.",
         signature_variant=variant,
-        referral_account="join@example.com",
     )
 
     assert rendered.html is not None
     assert (rendered.text.count("The Network") == 1) is expected_signature
     assert (rendered.html.count("The Network") == 1) is expected_signature
-    if variant is SignatureVariant.STANDARD_WITH_REFERRAL:
-        assert "join@example.com" in rendered.text
-        assert "join@example.com" in rendered.html
+    assert (rendered.text.count("join@thenetwork.fyi") == 1) is expected_signature
+    assert (rendered.html.count("join@thenetwork.fyi") == 1) is expected_signature
 
 
 def test_plain_and_html_have_equivalent_meaning_and_ordering():
@@ -282,15 +279,14 @@ def test_plain_and_html_have_equivalent_meaning_and_ordering():
     )
 
     assert rendered.html is not None
-    plain_visible = rendered.text.replace("\n--\n", "\n").replace("\n> ", "\n")
+    plain_visible = rendered.text.replace("\n> ", "\n")
     html_visible = _visible_html(rendered.html)
     for text in (
         "First line",
         "second line",
         "Second paragraph",
         "The Network",
-        "An automated connection service",
-        "Reply anytime.",
+        "join@thenetwork.fyi",
     ):
         assert text in plain_visible
         assert text in html_visible

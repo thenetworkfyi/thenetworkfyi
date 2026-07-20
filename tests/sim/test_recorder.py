@@ -347,10 +347,7 @@ async def test_recorder_presentation_failure_has_bounded_stable_evidence(tmp_pat
         agent_address="join@example.test",
     )
     token = "[intro:11111111-1111-1111-1111-111111111111]"
-    private_body = (
-        f"Malformed presentation {token}\n\n"
-        "--\nThe Network\nAn automated connection service\nReply anytime."
-    )
+    private_body = f"Malformed presentation {token}\n\nThe Network\njoin@thenetwork.fyi"
 
     async def process(**_kwargs):
         send_relay_email(
@@ -834,8 +831,7 @@ async def test_run_recorder_logs_delivery_metadata_without_public_message_bodies
         "agent->persona",
     ]
     canonical_plain_reply = (
-        "Here is why you may fit.\n\n"
-        "--\nThe Network\nAn automated connection service\nReply anytime.\n"
+        "Here is why you may fit.\n\nThe Network\njoin@thenetwork.fyi\n"
     )
     assert [
         (delivery["subject"], delivery["body_chars"]) for delivery in deliveries

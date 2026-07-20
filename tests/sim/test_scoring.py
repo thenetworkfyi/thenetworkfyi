@@ -228,14 +228,14 @@ def _presentation_message(*, html: str | None = None) -> EmailMessage:
     message.set_content(
         "Would you like an introduction?\n\n"
         f"{token}\n\n"
-        "--\nThe Network\nAn automated connection service\nReply anytime."
+        "The Network\njoin@thenetwork.fyi"
     )
     message.add_alternative(
         html
         or (
             "<html><body><p>Would you like an introduction?</p>"
             f"<p>{token}</p><hr><p><strong>The Network</strong><br>"
-            "An automated connection service<br>Reply anytime.</p></body></html>"
+            "join@thenetwork.fyi</p></body></html>"
         ),
         subtype="html",
     )
