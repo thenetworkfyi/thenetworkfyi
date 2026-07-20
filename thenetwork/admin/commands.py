@@ -20,6 +20,12 @@ from thenetwork.audit import audit_event, audit_span
 from thenetwork.db.models import BannedEmail, Memory, Person
 from thenetwork.db.session import get_session
 from thenetwork.embed.embeddings import embed_text
+from thenetwork.email.intake_control import (
+    PrimaryIntakePauseReason,
+    get_primary_intake_status,
+    pause_primary_intake,
+    resume_primary_intake,
+)
 from thenetwork.memory.sanitize import sanitize_memory_high_fidelity
 from thenetwork.security.rate_limit import normalize_rate_limit_identity
 
@@ -43,7 +49,16 @@ async def handle_admin_command(command: str, body_text: str) -> str:
             return await _cmd_ban(args.strip())
         if verb == "unban":
             return await _cmd_unban(args.strip())
-        return f"Unknown command: {verb!r}. Valid: status, search, show, forget, remember, ban, unban"
+        if verb == "intake-status":
+            return _cmd_intake_status()
+        if verb == "pause-intake":
+            return _cmd_pause_intake()
+        if verb == "resume-intake":
+            return _cmd_resume_intake()
+        return (
+            f"Unknown command: {verb!r}. Valid: status, search, show, forget, "
+            "remember, ban, unban, intake-status, pause-intake, resume-intake"
+        )
 
 
 async def _cmd_status() -> str:
@@ -51,6 +66,32 @@ async def _cmd_status() -> str:
         n_people = len(session.exec(select(Person)).all())
         n_mem = len(session.exec(select(Memory)).all())
     return f"People:   {n_people}\nMemories: {n_mem}\n"
+
+
+def _cmd_intake_status() -> str:
+    status = get_primary_intake_status()
+    if not status.paused:
+        return "Primary intake: active"
+    details = ["Primary intake: paused"]
+    if status.reason:
+        details.append(f"Reason: {status.reason}")
+    if status.paused_at:
+        details.append(f"Paused at: {status.paused_at.isoformat()}")
+    return "\n".join(details)
+
+
+def _cmd_pause_intake() -> str:
+    transition = pause_primary_intake(PrimaryIntakePauseReason.ADMIN)
+    if transition.changed:
+        return "Primary intake paused. Ordinary primary messages will remain unread."
+    return "Primary intake is already paused."
+
+
+def _cmd_resume_intake() -> str:
+    transition = resume_primary_intake()
+    if transition.changed:
+        return "Primary intake resumed. Unread primary messages can be processed."
+    return "Primary intake is already active."
 
 
 async def _cmd_search(query: str) -> str:

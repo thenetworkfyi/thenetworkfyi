@@ -105,6 +105,25 @@ class BannedEmail(SQLModel, table=True):
     )
 
 
+class PrimaryIntakeState(SQLModel, table=True):
+    """Singleton durable control state for the primary IMAP intake."""
+
+    __tablename__ = "primary_intake_state"
+
+    key: str = Field(default="primary", primary_key=True)
+    paused: bool = Field(default=False, nullable=False)
+    pause_reason: Optional[str] = Field(
+        default=None, sa_column=Column(Text(), nullable=True)
+    )
+    paused_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    updated_at: datetime = Field(
+        default_factory=_utcnow,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )
+
+
 class IntroductionConsent(SQLModel, table=True):
     """Server-owned pairwise consent state for anonymous relay introductions."""
 

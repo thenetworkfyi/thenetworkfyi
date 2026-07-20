@@ -30,6 +30,7 @@ from thenetwork.audit import (
 from thenetwork.db.models import BannedEmail, Person
 from thenetwork.db.session import get_session
 from thenetwork.email.inbound import (
+    MailboxKind,
     REJECT_BODY_EMPTY,
     REJECT_BODY_OVERSIZE,
     BodyTooLargeError,
@@ -37,6 +38,7 @@ from thenetwork.email.inbound import (
     cap_subject,
     is_near_empty_body,
 )
+from thenetwork.email.intake_control import is_primary_intake_paused
 from thenetwork.email.outbound import (
     _direct_reply_kwargs,
     _thread_headers,
@@ -261,6 +263,7 @@ async def process_email(
     proactive_candidate_id: str | None = None,
     proactive_event_id: str | None = None,
     proactive_event_version: int | None = None,
+    source_mailbox: MailboxKind | None = None,
 ) -> None:
     """Procrastinate worker task: run the agent for one inbound email.
 
@@ -351,6 +354,26 @@ async def process_email(
             audit_event("worker.relay_forwarded", outcome="success")
             return
 
+        raw_message = base64.b64decode(raw_message_b64) if raw_message_b64 else None
+        verified_body = verify_admin_request(sender_email, subject, raw_message)
+        if verified_body is not None:
+            command = extract_command(verified_body)
+            body_text = extract_body_text(verified_body)
+            reply = await handle_admin_command(command, body_text)
+            send_reply(
+                to_address=sender_email,
+                subject=f"Re: {subject}",
+                body_text=reply,
+                audience="internal",
+                **_trace_kwargs(trace_id),
+                **_thread_headers(inbound_message_id, inbound_references),
+            )
+            return
+
+        if source_mailbox == "primary" and is_primary_intake_paused():
+            audit_event("worker.message_rejected", reason="primary_intake_paused")
+            return
+
         if is_near_empty_body(body):
             rate_limit_kwargs = {"sender_authenticated": sender_authenticated}
             if is_proactive:
@@ -407,22 +430,6 @@ async def process_email(
                 inbound_body_for_quote=inbound_body_for_quote or body,
                 inbound_date=inbound_date,
                 trace_id=trace_id,
-            )
-            return
-
-        raw_message = base64.b64decode(raw_message_b64) if raw_message_b64 else None
-        verified_body = verify_admin_request(sender_email, subject, raw_message)
-        if verified_body is not None:
-            command = extract_command(verified_body)
-            body_text = extract_body_text(verified_body)
-            reply = await handle_admin_command(command, body_text)
-            send_reply(
-                to_address=sender_email,
-                subject=f"Re: {subject}",
-                body_text=reply,
-                audience="internal",
-                **_trace_kwargs(trace_id),
-                **_thread_headers(inbound_message_id, inbound_references),
             )
             return
 
