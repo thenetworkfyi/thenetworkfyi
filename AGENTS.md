@@ -73,7 +73,11 @@ code, commit messages, docs, or responses. Keep it straightforward and professio
 - Periodic discovery has three independent hourly scans. `thenetwork/worker/proactive.py`
   holds the two people scans: `scan_for_opportunities` finds high graph-proximity pairs,
   while `scan_for_matches` semantically revisits standing notes for dormant or unengaged
-  users. Both only `defer` a synthetic `process_email` job with opaque ids + sealed gists;
-  they never introduce people themselves. `thenetwork/worker/event_scan.py` independently
-  matches active sealed event gists to people and defers version-bound recommendation jobs.
-  All three scans are bounded and server capabilities recheck eligibility before sending.
+  users. The graph trigger body contains opaque person ids plus a proximity score; the
+  semantic trigger body contains opaque ids, sealed gists, and similarity. Both only
+  `defer` synthetic `process_email` jobs and never introduce people themselves.
+  `thenetwork/worker/event_scan.py` independently matches active sealed event gists to
+  people and defers triggers with opaque ids, sealed gists, expiry/similarity, and a
+  server-bound event version. Neither people scan has a dedicated whole-scan fan-out cap;
+  the semantic scan bounds its input and top-k, while the event scan also has whole-scan
+  and per-person limits. Server capabilities recheck eligibility before sending.
