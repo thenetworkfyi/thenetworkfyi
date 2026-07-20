@@ -224,6 +224,7 @@ _SAFE_CATEGORIES = {
             "content_scan",
             "disposable_domain",
             "primary_intake_paused",
+            "prompt_injection_detected",
             "invalid_summary",
             "memory_text_too_long",
             "new_sender_burst",

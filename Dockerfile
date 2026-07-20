@@ -1,6 +1,8 @@
 # syntax=docker/dockerfile:1
 FROM python:3.12-slim AS base
 
+ARG INSTALL_CONTENT_SCAN=false
+
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
@@ -17,7 +19,8 @@ RUN apt-get update \
 # Install dependencies before copying app code, so changes under thenetwork/
 # do not invalidate the model-install layer.
 COPY pyproject.toml README.md ./
-RUN python - <<'PY' > /tmp/project-requirements.txt
+RUN INSTALL_CONTENT_SCAN="${INSTALL_CONTENT_SCAN}" python - <<'PY' > /tmp/project-requirements.txt
+import os
 import tomllib
 
 with open("pyproject.toml", "rb") as config_file:
@@ -27,6 +30,9 @@ for dependency in pyproject["build-system"]["requires"]:
     print(dependency)
 for dependency in pyproject["project"]["dependencies"]:
     print(dependency)
+if os.environ.get("INSTALL_CONTENT_SCAN", "false").lower() == "true":
+    for dependency in pyproject["project"]["optional-dependencies"]["content-scan"]:
+        print(dependency)
 PY
 RUN pip install -r /tmp/project-requirements.txt
 COPY thenetwork ./thenetwork
@@ -39,7 +45,9 @@ COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 # Drop privileges.
-RUN useradd --create-home --uid 10001 appuser
+RUN useradd --create-home --uid 10001 appuser \
+    && mkdir -p /home/appuser/.cache/huggingface \
+    && chown -R appuser:appuser /home/appuser/.cache
 USER appuser
 
 ENTRYPOINT ["docker-entrypoint.sh"]

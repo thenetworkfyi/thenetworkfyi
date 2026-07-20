@@ -39,6 +39,7 @@ GLOBAL_EMAIL_RATE_LIMIT_PER_HOUR=200
 SENDER_IDENTIFIER_SECRET=long-random-server-secret
 PRIMARY_INTAKE_BURST_MONITORING_ENABLED=false # opt in; requires the secret above
 CONTENT_SCAN_ENABLED=false
+HF_TOKEN=                         # first enabled scanner startup only; omit after cache is populated
 SANITIZE_LLM_TIER_ENABLED=true    # higher-fidelity gist pass, see docs/security.md layer 4; on by default
 RECENT_MEMORY_CONTEXT_MAX_COUNT=20  # newest sender-owned gists loaded into an agent run
 RECENT_MEMORY_CONTEXT_MAX_CHARS=4000 # total rendered user-role memory-context budget
@@ -118,8 +119,29 @@ proxy layer.
 
 ## Optional dependencies
 
-- `uv pip install -e ".[content-scan]"` - optional inbound content scanner (`llm-guard`),
-  defense-in-depth per `docs/security.md` layer 13.
+- `uv pip install -e ".[content-scan]"` - pinned LlamaFirewall inbound
+  prompt-injection scanner, defense-in-depth per `docs/security.md` layer 13.
+
+The scanner uses the gated `meta-llama/Llama-Prompt-Guard-2-86M` weights under
+the Llama 4 Community License. Accept the model license on Hugging Face and set a
+non-interactive `HF_TOKEN` before the first enabled startup. `thenetwork-worker`
+preloads the model and validates inference readiness before opening the queue; if
+neither the model cache nor a token exists, startup fails before LlamaFirewall can
+open an interactive login prompt. Once cached under `HF_HOME`, the token is no
+longer required. Disabled startup does not import LlamaFirewall or inspect the
+cache.
+
+Prompt Guard 2 has a 512-token context. `content_scan.py` tokenizes the complete
+10,000-character capped body, reserves room for model special tokens, and scans
+overlapping windows so a boundary or late-body injection is not silently truncated.
+Any blocked window and every initialization/inference failure fail closed. Never log
+or return LlamaFirewall's `ScanResult.reason`: its block reason embeds the raw email.
+Only `prompt_injection_detected` or `scanner_error` crosses into the audit layer.
+
+LlamaFirewall pulls PyTorch and platform-specific inference wheels. Budget materially
+more container/image disk space, model-cache space, memory, and CPU inference time than
+the disabled installation. The 86M model runs locally; no email text is sent to a
+scanner service.
 
 Presidio (`presidio-analyzer` + `spacy`) is a core dependency. It powers
 `thenetwork/memory/sanitize.py`'s deterministic `sanitize_memory`, which redacts person
@@ -371,6 +393,14 @@ cp .env.example .env
 docker compose up -d --build      # build + start db + worker
 docker compose pull && docker compose up -d   # redeploy only changed services
 ```
+
+Local compose builds exclude the large scanner dependency by default. To enable it,
+set `INSTALL_CONTENT_SCAN=true`, `CONTENT_SCAN_ENABLED=true`, and `HF_TOKEN` for the
+first start, then run `docker compose up -d --build`. The named `hf-cache` volume is
+mounted at `/home/appuser/.cache/huggingface`, which compose exports as `HF_HOME`, so
+later restarts preload from local weights without credentials or a download. Published
+GHCR images are built with `INSTALL_CONTENT_SCAN=true`; scanner-disabled deployments
+still load no model and require no Hugging Face account or token.
 
 `.github/workflows/publish.yml` builds + pushes images to GHCR on pushes to `main` and
 `v*` tags; set `IMAGE` in `.env` on the server to that path. The VPS is a **GHCR
