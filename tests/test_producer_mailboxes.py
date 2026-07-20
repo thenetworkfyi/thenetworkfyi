@@ -11,6 +11,13 @@ from thenetwork.worker.producer import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _active_primary_intake(monkeypatch):
+    monkeypatch.setattr(
+        "thenetwork.worker.producer.is_primary_intake_paused", lambda: False
+    )
+
+
 def _message(uid: str, sender: str) -> InboundMessage:
     return InboundMessage(
         uid=uid,
@@ -98,3 +105,63 @@ def test_established_provider_is_accepted(domain):
 
     process_email.defer.assert_called_once()
     mark_seen.assert_called_once_with(["8"], mailbox="primary")
+
+
+def test_paused_primary_leaves_ordinary_messages_unread_and_unenqueued():
+    message = _message("9", "sender@gmail.com")
+
+    with (
+        patch("thenetwork.worker.producer.poll_unseen", return_value=[message]),
+        patch("thenetwork.worker.producer.process_email") as process_email,
+        patch("thenetwork.worker.producer.mark_messages_seen") as mark_seen,
+    ):
+        assert _poll_mailbox_and_enqueue("primary", primary_paused=True) == 0
+
+    process_email.defer.assert_not_called()
+    mark_seen.assert_called_once_with([], mailbox="primary")
+
+
+def test_paused_primary_enqueues_admin_candidate_for_pgp_verification():
+    message = _message("10", "admin@gmail.com")
+    message.subject = "ADMIN: resume-intake"
+    message.raw_message = b"signed candidate"
+
+    with (
+        patch("thenetwork.worker.producer.poll_unseen", return_value=[message]),
+        patch("thenetwork.worker.producer.process_email") as process_email,
+        patch("thenetwork.worker.producer.mark_messages_seen") as mark_seen,
+    ):
+        assert _poll_mailbox_and_enqueue("primary", primary_paused=True) == 1
+
+    assert process_email.defer.call_args.kwargs["source_mailbox"] == "primary"
+    mark_seen.assert_called_once_with(["10"], mailbox="primary")
+
+
+def test_paused_primary_does_not_block_relay_candidate():
+    message = _message("11", "member@gmail.com")
+    message.recipient_address = "hidden-token@relay.example.com"
+
+    with (
+        patch("thenetwork.worker.producer.poll_unseen", return_value=[message]),
+        patch("thenetwork.worker.producer._is_relay_candidate", return_value=True),
+        patch("thenetwork.worker.producer.process_email") as process_email,
+        patch("thenetwork.worker.producer.mark_messages_seen") as mark_seen,
+    ):
+        assert _poll_mailbox_and_enqueue("primary", primary_paused=True) == 1
+
+    process_email.defer.assert_called_once()
+    mark_seen.assert_called_once_with(["11"], mailbox="primary")
+
+
+def test_pause_never_applies_to_separate_relay_mailbox():
+    message = _message("12", "member@gmail.com")
+
+    with (
+        patch("thenetwork.worker.producer.poll_unseen", return_value=[message]),
+        patch("thenetwork.worker.producer.process_email") as process_email,
+        patch("thenetwork.worker.producer.mark_messages_seen") as mark_seen,
+    ):
+        assert _poll_mailbox_and_enqueue("relay", primary_paused=True) == 1
+
+    assert process_email.defer.call_args.kwargs["source_mailbox"] == "relay"
+    mark_seen.assert_called_once_with(["12"], mailbox="relay")

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import base64
 import tempfile
 import time
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -410,6 +412,7 @@ def test_process_email_routes_admin_to_handler():
                 body="COMMAND: status",
                 inbound_message_id="<admin123@example.com>",
                 inbound_references="<root@example.com>",
+                source_mailbox="primary",
             )
         )
 
@@ -422,6 +425,41 @@ def test_process_email_routes_admin_to_handler():
     )
     assert "quoted_body_text" not in mock_send.call_args.kwargs
     assert "quoted_date" not in mock_send.call_args.kwargs
+    mock_agent.assert_not_called()
+
+
+def test_paused_primary_rejects_unverified_admin_candidate_before_agent():
+    import asyncio
+
+    from thenetwork.worker.tasks import process_email
+
+    mock_agent = AsyncMock()
+    mock_session = MagicMock()
+    mock_session.__enter__ = MagicMock(return_value=mock_session)
+    mock_session.__exit__ = MagicMock(return_value=False)
+    mock_session.get.return_value = None
+
+    with (
+        patch("thenetwork.worker.tasks.get_session", return_value=mock_session),
+        patch("thenetwork.worker.tasks.verify_admin_request", return_value=None),
+        patch("thenetwork.worker.tasks.is_primary_intake_paused", return_value=True),
+        patch("thenetwork.worker.tasks.check_rate_limit") as check_rate_limit,
+        patch("thenetwork.worker.tasks.scan_content") as scan_content,
+        patch("thenetwork.worker.tasks.run_agent_for_email", mock_agent),
+    ):
+        asyncio.run(
+            process_email.func(
+                sender_email="attacker@example.com",
+                subject="ADMIN: resume-intake",
+                body="COMMAND: resume-intake",
+                raw_message_b64=base64.b64encode(b"not signed").decode(),
+                source_mailbox="primary",
+                sender_authenticated=True,
+            )
+        )
+
+    check_rate_limit.assert_not_called()
+    scan_content.assert_not_called()
     mock_agent.assert_not_called()
 
 
@@ -539,6 +577,60 @@ def test_handle_admin_command_unknown():
     result = asyncio.run(handle_admin_command("explode", ""))
     assert "Unknown command" in result
     assert "explode" in result
+
+
+def test_handle_admin_intake_status_reports_durable_state():
+    import asyncio
+
+    from thenetwork.admin.commands import handle_admin_command
+    from thenetwork.email.intake_control import PrimaryIntakeStatus
+
+    paused_at = datetime(2026, 7, 20, 12, 0, tzinfo=timezone.utc)
+    with patch(
+        "thenetwork.admin.commands.get_primary_intake_status",
+        return_value=PrimaryIntakeStatus(
+            paused=True, reason="admin", paused_at=paused_at
+        ),
+    ):
+        result = asyncio.run(handle_admin_command("intake-status", ""))
+
+    assert result == (
+        "Primary intake: paused\nReason: admin\nPaused at: 2026-07-20T12:00:00+00:00"
+    )
+
+
+def test_handle_admin_pause_and_resume_intake_are_idempotent():
+    import asyncio
+
+    from thenetwork.admin.commands import handle_admin_command
+    from thenetwork.email.intake_control import (
+        PrimaryIntakeStatus,
+        PrimaryIntakeTransition,
+    )
+
+    paused = PrimaryIntakeTransition(
+        PrimaryIntakeStatus(paused=True, reason="admin"), changed=True
+    )
+    unchanged = PrimaryIntakeTransition(
+        PrimaryIntakeStatus(paused=True, reason="admin"), changed=False
+    )
+    resumed = PrimaryIntakeTransition(PrimaryIntakeStatus(paused=False), changed=True)
+    with (
+        patch(
+            "thenetwork.admin.commands.pause_primary_intake",
+            side_effect=[paused, unchanged],
+        ) as pause_intake,
+        patch(
+            "thenetwork.admin.commands.resume_primary_intake",
+            return_value=resumed,
+        ) as resume_intake,
+    ):
+        assert "paused" in asyncio.run(handle_admin_command("pause-intake", ""))
+        assert "already paused" in asyncio.run(handle_admin_command("pause-intake", ""))
+        assert "resumed" in asyncio.run(handle_admin_command("resume-intake", ""))
+
+    assert pause_intake.call_count == 2
+    resume_intake.assert_called_once_with()
 
 
 def test_handle_admin_command_search_no_query():

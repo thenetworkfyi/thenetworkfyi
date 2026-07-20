@@ -34,13 +34,28 @@ from thenetwork.email.inbound import (
     poll_unseen,
     relay_mailbox_configured,
 )
+from thenetwork.email.intake_control import is_primary_intake_paused
+from thenetwork.email.relay import is_relay_address_candidate
 from thenetwork.security.sender_identifier import optional_sender_identifier
+from thenetwork.settings import get_settings
 from thenetwork.worker.tasks import app, process_email
 
 REJECT_DISPOSABLE_DOMAIN = "disposable_domain"
 
 
-def _poll_mailbox_and_enqueue(mailbox: MailboxKind) -> int:
+def _is_admin_candidate(subject: str, raw_message: bytes | None) -> bool:
+    return raw_message is not None and subject.strip().lower().startswith("admin:")
+
+
+def _is_relay_candidate(recipient_address: str | None) -> bool:
+    if not recipient_address:
+        return False
+    return is_relay_address_candidate(recipient_address, get_settings().relay_domain)
+
+
+def _poll_mailbox_and_enqueue(
+    mailbox: MailboxKind, *, primary_paused: bool = False
+) -> int:
     """Poll one inbox, enqueue its messages, then mark its UIDs seen."""
     messages = poll_unseen(mailbox=mailbox)  # does NOT mark seen
     count = 0
@@ -52,6 +67,20 @@ def _poll_mailbox_and_enqueue(mailbox: MailboxKind) -> int:
         ):
             auto_submitted = msg.auto_submitted
             body_chars = msg.body_chars if msg.body_chars is not None else len(msg.body)
+            if (
+                mailbox == "primary"
+                and primary_paused
+                and not _is_admin_candidate(msg.subject, msg.raw_message)
+                and not _is_relay_candidate(msg.recipient_address)
+            ):
+                audit_event(
+                    "intake.message_deferred",
+                    sender_present=bool(msg.sender),
+                    subject_chars=len(msg.subject),
+                    body_chars=body_chars,
+                    reason="primary_intake_paused",
+                )
+                continue
             if msg.rejection_reason:
                 audit_event(
                     "intake.message_rejected",
@@ -109,6 +138,7 @@ def _poll_mailbox_and_enqueue(mailbox: MailboxKind) -> int:
                 "sender_display_name": msg.sender_display_name,
                 "raw_message_b64": raw_message_b64,
                 "trace_id": msg.trace_id,
+                "source_mailbox": mailbox,
             }
             if msg.recipient_address:
                 job_kwargs["recipient_address"] = msg.recipient_address
@@ -137,7 +167,9 @@ def _poll_and_enqueue() -> int:
     """Poll configured inboxes and enqueue one job per message."""
     with audit_run(), audit_span("producer.poll"):
         relay_configured = relay_mailbox_configured()
-        count = _poll_mailbox_and_enqueue("primary")
+        count = _poll_mailbox_and_enqueue(
+            "primary", primary_paused=is_primary_intake_paused()
+        )
         if relay_configured:
             count += _poll_mailbox_and_enqueue("relay")
         audit_event("producer.poll_completed", message_count=count, outcome="success")

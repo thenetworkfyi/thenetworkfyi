@@ -27,6 +27,9 @@ def _empty_recent_sender_memory_context(monkeypatch):
         "thenetwork.agent.core.load_recent_sender_memory_context",
         lambda *_args, **_kwargs: RecentSenderMemoryContext(),
     )
+    monkeypatch.setattr(
+        "thenetwork.worker.producer.is_primary_intake_paused", lambda: False
+    )
 
 
 def _events(caplog) -> list[dict]:
@@ -1050,6 +1053,7 @@ def test_intake_logs_header_metadata_without_values(caplog):
         sender_display_name=message.sender_display_name,
         raw_message_b64=None,
         trace_id=message.trace_id,
+        source_mailbox="primary",
     )
     mark_seen.assert_called_once_with(["123"], mailbox="primary")
     serialized = "\n".join(record.message for record in caplog.records)
@@ -1099,6 +1103,7 @@ def test_intake_enqueues_inbound_message_id_when_present(caplog):
         sender_display_name=message.sender_display_name,
         raw_message_b64=None,
         trace_id=message.trace_id,
+        source_mailbox="primary",
         inbound_message_id=message.message_id,
         inbound_references=message.message_references,
         inbound_body_for_quote=message.body,
