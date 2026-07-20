@@ -142,6 +142,29 @@ class PrimaryIntakeObservation(SQLModel, table=True):
     body_fingerprint: str = Field(index=True)
 
 
+class PrimaryIntakeJudgeState(SQLModel, table=True):
+    """Singleton cursor and last outcome for the hourly abuse judge."""
+
+    __tablename__ = "primary_intake_judge_state"
+
+    key: str = Field(default="primary", primary_key=True)
+    last_observed_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    last_mailbox_uid: Optional[str] = Field(
+        default=None, sa_column=Column(Text(), nullable=True)
+    )
+    last_run_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    last_verdict: Optional[str] = Field(
+        default=None, sa_column=Column(Text(), nullable=True)
+    )
+    last_reason: Optional[str] = Field(
+        default=None, sa_column=Column(Text(), nullable=True)
+    )
+
+
 class IntroductionConsent(SQLModel, table=True):
     """Server-owned pairwise consent state for anonymous relay introductions."""
 

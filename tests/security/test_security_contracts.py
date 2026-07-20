@@ -156,6 +156,23 @@ def test_primary_intake_observation_schema_cannot_store_raw_content():
     )
 
 
+def test_primary_intake_judge_state_cannot_store_raw_content():
+    from thenetwork.db.models import PrimaryIntakeJudgeState
+
+    columns = set(PrimaryIntakeJudgeState.__table__.columns.keys())
+    assert columns == {
+        "key",
+        "last_observed_at",
+        "last_mailbox_uid",
+        "last_run_at",
+        "last_verdict",
+        "last_reason",
+    }
+    assert columns.isdisjoint(
+        {"sender", "sender_email", "email", "domain", "subject", "body"}
+    )
+
+
 class FakeCtx:
     def __init__(
         self,

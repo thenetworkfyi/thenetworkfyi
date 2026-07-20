@@ -36,6 +36,8 @@ WORKER_CONCURRENCY=4        # worker concurrency ceiling
 RATE_LIMIT_PER_HOUR=20      # authenticated sender bucket
 UNAUTHENTICATED_RATE_LIMIT_PER_HOUR=6
 GLOBAL_EMAIL_RATE_LIMIT_PER_HOUR=200
+SENDER_IDENTIFIER_SECRET=long-random-server-secret
+PRIMARY_INTAKE_BURST_MONITORING_ENABLED=false # opt in; requires the secret above
 CONTENT_SCAN_ENABLED=false
 SANITIZE_LLM_TIER_ENABLED=true    # higher-fidelity gist pass, see docs/security.md layer 4; on by default
 RECENT_MEMORY_CONTEXT_MAX_COUNT=20  # newest sender-owned gists loaded into an agent run
@@ -56,6 +58,32 @@ replies are appended to `imap_sent_folder` (`IMAP_SENT_FOLDER`, default `Sent`) 
 SMTP send succeeds, so the account reads like a normal mailbox with both received and
 sent mail visible end-to-end; the append is best-effort and its failure never fails the
 send job.
+
+### Primary intake circuit breaker
+
+Set `PRIMARY_INTAKE_BURST_MONITORING_ENABLED=true` with a long, stable
+`SENDER_IDENTIFIER_SECRET` to enable primary-inbox burst detection and the hourly abuse
+judge. The producer rejects disposable domains independently, then records only keyed
+sender/domain/body fingerprints for ordinary primary messages. Twenty-five distinct
+unregistered senders in the rolling hour pause primary intake before the triggering batch
+is enqueued or marked seen. At `15 * * * *`, the no-tools fixed-policy judge uses
+`SMALL_AGENT_MODEL` to classify a bounded, sender-diverse 24-hour opaque sample. Only a
+`coordinated_abuse` verdict may pause; suspicious verdicts and provider failures never
+change intake. This control never observes the separate relay mailbox.
+
+The pause is durable. Ordinary primary mail stays unread, but relay delivery and valid
+PGP/MIME admin requests continue. After clearing unwanted unread mail, send a signed admin
+message (subject beginning `ADMIN:`) with one of these signed-body commands:
+
+```text
+COMMAND: intake-status
+COMMAND: pause-intake
+COMMAND: resume-intake
+```
+
+The transition email sent to `ADMIN_EMAILS` is fixed server-authored copy and contains no
+sender or campaign metadata. Resume establishes a fresh burst-counting baseline; previously
+observed traffic cannot immediately re-pause intake.
 
 `RELAY_DOMAIN` must be a bare domain already handled by the deployment's Dovecot
 catch-all. Deliver every address at that domain into `RELAY_IMAP_ACCOUNT` when the
@@ -410,6 +438,10 @@ Expired or cancelled events cannot be selected or sent. There are no occurrence 
 reminders, RSVP or attendance tracking, post-event follow-up, calendar integration, or
 people-recommendation opt-out. `event_suppressions` is not read by either people scan, so a
 person who stops event FYIs remains eligible for introductions and people matching.
+
+The abuse judge is a fourth hourly periodic task, but is not discovery and never enters the
+agent path. `judge_primary_email_abuse` runs at minute 15 only when primary monitoring is
+enabled; its cursor makes repeated runs without new observations no-ops.
 
 ## Sharp edges
 

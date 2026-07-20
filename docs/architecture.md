@@ -7,6 +7,7 @@ The "big picture" that requires reading several files to reconstruct. See
 
 ```
 [Inbox] --IMAP--> Producer (imap-tools poll)
+                    | optional sealed burst observation / primary-only pause
                     | enqueue ONE Procrastinate job per message, THEN mark seen
                     v
             [Postgres job row]  <- durable source of truth
@@ -27,13 +28,16 @@ The "big picture" that requires reading several files to reconstruct. See
                     | Dovecot catch-all -> configured IMAP inbox/job
                     v
           Worker pair resolver --SES/SMTP--> [Opposite participant]
+
+[sealed primary observations] --hourly fixed-policy judge--> [primary pause state]
 ```
 
 There is **one** long-lived process (`thenetwork-worker` → `worker/tasks.py:main`). It
 drains the Procrastinate queue *and*, via periodic tasks, polls IMAP every minute
-(`producer.poll_inbox`) and runs three independent hourly discovery scans: graph and
-semantic people matching plus semantic event recommendations. No separate producer daemon
-is required; `thenetwork-producer` is just a manual one-shot poll for cron/debugging.
+(`producer.poll_inbox`), runs three independent hourly discovery scans (graph and semantic
+people matching plus semantic event recommendations), and runs the primary-inbox abuse
+judge at minute 15. No separate producer daemon is required; `thenetwork-producer` is just
+a manual one-shot poll for cron/debugging.
 
 - **Producer** (`worker/producer.py`): polls the primary and, when configured, separate
   relay IMAP inboxes for unseen mail, enqueues exactly one durable job per message, and
@@ -42,6 +46,15 @@ is required; `thenetwork-producer` is just a manual one-shot poll for cron/debug
   (`max_attempts=3`) and nothing is lost. The producer only ever flips `\Seen`; it never
   deletes or moves inbound mail, so everything each account has received stays in INBOX
   permanently, the same as a normal mailbox.
+- **Primary abuse controls** (`email/intake_observations.py`,
+  `worker/abuse_judge.py`): disposable sender domains are rejected before enqueue. When
+  monitoring is enabled, ordinary primary messages are recorded as keyed sender, domain,
+  and body fingerprints before enqueue; a 25-distinct-new-sender rolling-hour burst pauses
+  the primary batch before it can be marked seen. The hourly fixed-policy judge sees only a
+  bounded, sender-diverse 24-hour sample with run-local opaque labels. A strict
+  `coordinated_abuse` verdict can only pause primary intake and send fixed operator copy.
+  It has no tools, raw content, identities, relay input, or resume capability. While paused,
+  ordinary primary messages remain unread; verified admin and relay candidates still run.
 - **Inbound body extraction** (`email/inbound.py`): prefers imap-tools'
   `MailMessage.text`, falling back to `MailMessage.html` run through BeautifulSoup to
   recover visible text when a message has no plain-text part. No hand-rolled MIME
@@ -103,6 +116,10 @@ model reasoning:
 - **`rate_limits`** - durable counters for inbound and outbound quotas
 - **`processed_messages`** - durable Message-ID idempotency beyond the IMAP `\Seen` flag
 - **`banned_emails`** - normalized addresses blocked before agent execution
+- **`primary_intake_state`** - durable primary-only pause reason and timestamp
+- **`primary_intake_observations`** - keyed fingerprints and authentication/known-sender
+  booleans; no raw sender, domain, subject, or body
+- **`primary_intake_judge_state`** - idempotent observation cursor plus enum verdict/reason
 - **`proactive_surfaces`** - recently surfaced opaque people pairs, used to rotate scan
   candidates through a configurable cooldown
 

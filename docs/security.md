@@ -71,7 +71,8 @@ prompt-injection exfiltrate it, so the privacy boundary cannot be "withhold a co
    introductions set `Auto-Submitted: auto-replied`. Human-to-human relay messages omit it
    so normal mail clients treat them as correspondence. Simulation gates use this
    server-owned distinction rather than participant-authored subjects or bodies.
-10. **Rate limiting / anti-DoS.** Per-sender quota plus registration, outbound-recipient,
+10. **Rate limiting / anti-DoS.** Disposable sender domains are rejected before job
+   creation. Per-sender quota plus registration, outbound-recipient,
    outbound sender-reply, and first-contact welcome quotas use `limits` with Postgres-backed
    state so counters survive restarts. Keys are normalized and split by
    authentication state: authenticated senders use the normal bucket, while
@@ -81,6 +82,18 @@ prompt-injection exfiltrate it, so the privacy boundary cannot be "withhold a co
    bounded Procrastinate worker concurrency remains an additional ceiling. Outbound
    quota checks occur before SMTP and are consumed after a successful send, leaving a
    bounded cross-worker check-versus-consume race rather than charging failed sends.
+   Optional primary-intake monitoring adds a server-side circuit breaker before enqueue:
+   it stores only independently domain-separated keyed HMAC fingerprints, authentication
+   and known-sender booleans, opaque trace/UID values, and timestamps. A rolling-hour burst
+   pauses only primary intake before its batch is marked seen. The hourly abuse judge uses
+   `small_agent_model` with a fixed prompt, strict enum output, no tools, and a bounded,
+   sender-diverse 24-hour projection whose fingerprints are replaced with run-local opaque
+   labels. It cannot read raw mail or identities, inspect relay mail, resume intake, or
+   perform any action except returning a verdict. Only `coordinated_abuse` can atomically
+   pause primary intake; model/provider failure and `suspicious` do not change intake and
+   are audited.
+   Ordinary primary mail remains unread while paused, while relay delivery and verified
+   PGP administration bypass the pause.
 11. **Audit correlation without PII.** Per-message `trace_id` values are minted as
    opaque UUIDv4-style tokens at IMAP intake and threaded through the Procrastinate
    job, worker, agent run, outbound SMTP send, and IMAP Sent append. Sender-level
