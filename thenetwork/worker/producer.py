@@ -35,6 +35,7 @@ from thenetwork.email.inbound import (
     relay_mailbox_configured,
 )
 from thenetwork.email.intake_control import is_primary_intake_paused
+from thenetwork.email.intake_observations import observe_primary_intake_batch
 from thenetwork.email.relay import is_relay_address_candidate
 from thenetwork.security.sender_identifier import optional_sender_identifier
 from thenetwork.settings import get_settings
@@ -58,6 +59,32 @@ def _poll_mailbox_and_enqueue(
 ) -> int:
     """Poll one inbox, enqueue its messages, then mark its UIDs seen."""
     messages = poll_unseen(mailbox=mailbox)  # does NOT mark seen
+    settings = get_settings()
+    if (
+        mailbox == "primary"
+        and not primary_paused
+        and settings.primary_intake_burst_monitoring_enabled is True
+    ):
+        observation_messages = [
+            message
+            for message in messages
+            if not _is_admin_candidate(message.subject, message.raw_message)
+            and not _is_relay_candidate(message.recipient_address)
+        ]
+        burst = observe_primary_intake_batch(
+            observation_messages,
+            secret=settings.sender_identifier_secret,
+        )
+        if burst.paused:
+            audit_event(
+                "intake.new_sender_burst_detected",
+                outcome="blocked",
+                reason="new_sender_burst",
+                message_count=burst.newly_observed,
+                result_count=burst.distinct_new_senders,
+            )
+            mark_messages_seen([], mailbox=mailbox)
+            return 0
     count = 0
     handled_uids: list[str] = []
     for msg in messages:

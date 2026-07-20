@@ -72,6 +72,47 @@ def resume_primary_intake() -> PrimaryIntakeTransition:
     return _set_primary_intake_state(paused=False, reason=None)
 
 
+def set_primary_intake_paused_in_session(
+    session,
+    reason: PrimaryIntakePauseReason,
+    *,
+    now: datetime,
+) -> PrimaryIntakeTransition:
+    """Pause while participating in the caller's database transaction."""
+    state = session.get(
+        PrimaryIntakeState,
+        PRIMARY_INTAKE_KEY,
+        with_for_update=True,
+    )
+    if state is None:
+        state = PrimaryIntakeState(key=PRIMARY_INTAKE_KEY)
+        session.add(state)
+    changed = not state.paused
+    if changed:
+        state.paused = True
+        state.pause_reason = reason.value
+        state.paused_at = now
+        state.updated_at = now
+    return PrimaryIntakeTransition(
+        status=PrimaryIntakeStatus(
+            paused=state.paused,
+            reason=state.pause_reason,
+            paused_at=state.paused_at,
+        ),
+        changed=changed,
+    )
+
+
+def notify_primary_intake_transition(transition: PrimaryIntakeTransition) -> None:
+    if not transition.changed:
+        return
+    settings = get_settings()
+    if transition.status.paused:
+        notify_admins(settings, _PAUSED_SUBJECT, _PAUSED_BODY)
+    else:
+        notify_admins(settings, _RESUMED_SUBJECT, _RESUMED_BODY)
+
+
 def _set_primary_intake_state(
     *, paused: bool, reason: str | None
 ) -> PrimaryIntakeTransition:
@@ -104,10 +145,6 @@ def _set_primary_intake_state(
         record_type="primary_intake",
         outcome="success" if changed else "exists",
     )
-    if changed:
-        settings = get_settings()
-        if paused:
-            notify_admins(settings, _PAUSED_SUBJECT, _PAUSED_BODY)
-        else:
-            notify_admins(settings, _RESUMED_SUBJECT, _RESUMED_BODY)
-    return PrimaryIntakeTransition(status=status, changed=changed)
+    transition = PrimaryIntakeTransition(status=status, changed=changed)
+    notify_primary_intake_transition(transition)
+    return transition

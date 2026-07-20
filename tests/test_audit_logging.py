@@ -1331,6 +1331,60 @@ def test_intake_disposable_rejection_audit_is_pii_safe(caplog):
     assert rejected["reason"] == REJECT_DISPOSABLE_DOMAIN
 
 
+def test_new_sender_burst_audit_contains_only_bounded_metadata(caplog):
+    from thenetwork.email.inbound import InboundMessage
+    from thenetwork.email.intake_observations import BurstObservationResult
+    from thenetwork.worker.producer import _poll_mailbox_and_enqueue
+
+    message = InboundMessage(
+        uid="burst-1",
+        sender="private.sender@example.com",
+        subject="Private campaign subject",
+        body="Private campaign body",
+        auto_submitted=None,
+        sender_authenticated=False,
+    )
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    with (
+        patch("thenetwork.worker.producer.poll_unseen", return_value=[message]),
+        patch(
+            "thenetwork.worker.producer.get_settings",
+            return_value=SimpleNamespace(
+                primary_intake_burst_monitoring_enabled=True,
+                sender_identifier_secret="monitor-secret",
+                relay_domain="relay.example.com",
+            ),
+        ),
+        patch(
+            "thenetwork.worker.producer.observe_primary_intake_batch",
+            return_value=BurstObservationResult(
+                paused=True,
+                newly_observed=25,
+                distinct_new_senders=25,
+            ),
+        ),
+        patch("thenetwork.worker.producer.process_email") as process_email,
+        patch("thenetwork.worker.producer.mark_messages_seen") as mark_seen,
+    ):
+        assert _poll_mailbox_and_enqueue("primary") == 0
+
+    process_email.defer.assert_not_called()
+    mark_seen.assert_called_once_with([], mailbox="primary")
+    serialized = "\n".join(record.message for record in caplog.records)
+    assert message.sender not in serialized
+    assert message.subject not in serialized
+    assert message.body not in serialized
+    event = next(
+        event
+        for event in _events(caplog)
+        if event["event"] == "intake.new_sender_burst_detected"
+    )
+    assert event["reason"] == "new_sender_burst"
+    assert event["message_count"] == 25
+    assert event["result_count"] == 25
+
+
 @pytest.mark.asyncio
 async def test_worker_rejection_logs_reason_without_message_content(caplog):
     from thenetwork.worker.tasks import process_email

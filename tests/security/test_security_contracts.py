@@ -137,6 +137,25 @@ async def test_paused_primary_candidate_cannot_reach_agent_or_leak_content(caplo
     assert "primary_intake_paused" in serialized
 
 
+def test_primary_intake_observation_schema_cannot_store_raw_content():
+    from thenetwork.db.models import PrimaryIntakeObservation
+
+    columns = set(PrimaryIntakeObservation.__table__.columns.keys())
+    assert columns == {
+        "mailbox_uid",
+        "trace_id",
+        "observed_at",
+        "sender_authenticated",
+        "sender_known",
+        "sender_fingerprint",
+        "domain_fingerprint",
+        "body_fingerprint",
+    }
+    assert columns.isdisjoint(
+        {"sender", "sender_email", "email", "domain", "subject", "body"}
+    )
+
+
 class FakeCtx:
     def __init__(
         self,

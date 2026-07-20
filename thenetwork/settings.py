@@ -1,4 +1,4 @@
-from pydantic import computed_field
+from pydantic import computed_field, model_validator
 from pydantic_ai.settings import ThinkingLevel
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import URL
@@ -126,6 +126,10 @@ class Settings(BaseSettings):
     # dictionary lookup can reverse it.
     sender_identifier_secret: str = ""
 
+    # Optional primary-intake burst monitor. Its durable observations use only
+    # keyed fingerprints, so enabling it without the HMAC secret is invalid.
+    primary_intake_burst_monitoring_enabled: bool = False
+
     # Optional HMAC key for stable pseudonyms in redacted model-response audit
     # records. Leaving it unset preserves redaction while disabling correlation.
     response_log_redaction_secret: str = ""
@@ -194,6 +198,18 @@ class Settings(BaseSettings):
     event_scan_active_event_limit: int = 100
     event_scan_max_candidates: int = 50
     event_scan_max_per_person: int = 1
+
+    @model_validator(mode="after")
+    def _validate_primary_intake_monitor_secret(self) -> "Settings":
+        if (
+            self.primary_intake_burst_monitoring_enabled
+            and not self.sender_identifier_secret
+        ):
+            raise ValueError(
+                "SENDER_IDENTIFIER_SECRET is required when primary intake burst "
+                "monitoring is enabled"
+            )
+        return self
 
 
 _settings: Settings | None = None
