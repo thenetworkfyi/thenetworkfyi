@@ -1,6 +1,7 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to coding agents working with this repository. `CLAUDE.md`
+symlinks here for Claude Code compatibility.
 
 ## What this is
 
@@ -8,8 +9,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 address; a pydantic-ai agent reads each message, decides what (if anything) to do, and
 acts: capture a fact, surface an event, introduce two people, or do nothing. There is
 no networking schema and no scenario script - all behavior is *emergent* from a system
-prompt plus nine tools over a store of freeform **memories**. Runs as a single
-long-lived worker on one VPS against Postgres (pgvector). No inbound network access.
+prompt plus sixteen tools over a store of freeform **memories**. Runs as a single
+long-lived worker on one VPS against Postgres (pgvector). No application-owned inbound
+network access.
 
 The README has the full prose; the docs below are the working details. The one rule that
 shapes everything: hand-write only the genuine domain glue (memory + the privacy seal);
@@ -28,9 +30,8 @@ must keep the `tests/security/` red-team suite green.
 ## Commands
 
 ```bash
-uv pip install -e ".[dev]"          # install with test deps
+uv pip install -e ".[dev]"          # install with test deps, including the pinned Presidio spaCy model
 uv pip install -e ".[content-scan]" # optional content scanner (llm-guard)
-uv run python -m spacy download en_core_web_lg  # required Presidio model for local worker runs; Docker bakes it in
 
 docker compose up -d db            # local pgvector Postgres
 uv run alembic upgrade head         # create vector extension + tables
@@ -69,10 +70,10 @@ code, commit messages, docs, or responses. Keep it straightforward and professio
   pass the SQLModel DSN to Procrastinate directly.
 - Editing a memory = `forget` + `remember` (never mutate in place), so embeddings and
   gists never go stale.
-- `thenetwork/worker/proactive.py` holds two hourly periodic scans, both of which only
-  `defer` a synthetic `process_email` job per candidate pair - they never introduce
-  people themselves, the agent decides. `scan_for_opportunities` finds high graph-proximity
-  pairs; `scan_for_matches` is the semantic rematch that re-engages a dormant user when a
-  later arrival finally matches an older standing note (SEAL-safe trigger body: opaque ids
-  + gists only). Both covered by `tests/test_proactive.py`; capped proposals are skipped
-  and become eligible again on a later sweep.
+- Periodic discovery has three independent hourly scans. `thenetwork/worker/proactive.py`
+  holds the two people scans: `scan_for_opportunities` finds high graph-proximity pairs,
+  while `scan_for_matches` semantically revisits standing notes for dormant or unengaged
+  users. Both only `defer` a synthetic `process_email` job with opaque ids + sealed gists;
+  they never introduce people themselves. `thenetwork/worker/event_scan.py` independently
+  matches active sealed event gists to people and defers version-bound recommendation jobs.
+  All three scans are bounded and server capabilities recheck eligibility before sending.

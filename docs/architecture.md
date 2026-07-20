@@ -56,11 +56,13 @@ is required; `thenetwork-producer` is just a manual one-shot poll for cron/debug
 - **Introduction relay** (`email/relay.py`, `worker/tasks.py`): a recipient matching
   `hidden-<reply-token>@RELAY_DOMAIN` is handled before the agent path. Server code
   requires sender authentication, an `introduced` consent row, and exact membership in
-  that pair, then resolves only the opposite participant. It sends one plain message
-  through the existing SES/SMTP connection with `From: The Network <proxy>` and
-  `Reply-To: proxy`. Subject and bounded extracted body are copied without name/content
-  rewriting. Invalid tokens, nonparticipants, non-introduced states, and revoked pairs
-  fail closed. The existing sender rate limit still applies.
+  that pair, then resolves only the opposite participant. It sends through the existing
+  SES/SMTP connection with `From: The Network <proxy>` and `Reply-To: proxy`, replaces
+  every source routing header, and preserves the participant-authored MIME body, including
+  plain/HTML alternatives and attachments, after the decoded body passes the intake size
+  guard. It never renders, sanitizes, signs, or adds a footer to participant content. Invalid
+  tokens, nonparticipants, non-introduced states, and revoked pairs fail closed. The existing
+  sender rate limit still applies.
 - **Outbound** (`email/outbound.py`): after the SMTP send succeeds, `send_reply` also
   appends the sent message to an IMAP folder (`imap_sent_folder`, default `Sent`),
   flagged `\Seen`, so the account looks like a normal end-to-end mailbox with both
@@ -73,11 +75,14 @@ is required; `thenetwork-producer` is just a manual one-shot poll for cron/debug
   registered sender, a bounded newest-first projection of that person's sanitized
   memory gists is prepended inside an explicit untrusted-data delimiter; the query
   selects no raw memory text. Tools registered in `build_agent`; deps in
-  `agent/deps.py` carry `sender_email` + `sender_user_id` (None on first contact).
+  `agent/deps.py` bind authenticated sender identity, inbound threading/quote/trace
+  metadata, proactive person/event capabilities, per-run action counters, the session
+  factory, and server-owned mutating-tool replay state.
 
 ## Data model
 
-`db/models.py`. Everything durable is here.
+Application-owned tables live in `db/models.py`. Procrastinate maintains its own durable
+queue tables in the same Postgres database.
 
 **`people`** - pure identity / addressing / the security boundary:
 - `id` (uuid str, pk) - opaque internal id, *the only person reference the LLM ever sees*
@@ -90,6 +95,16 @@ is required; `thenetwork-producer` is just a manual one-shot poll for cron/debug
 - `refs` `text[]` - the `people.id`s a memory concerns (0..N)
 - `gist` - PII-stripped summary; the **only** thing cross-user search may return
 - `created_at` - recency / perishability signal
+
+Small server-owned operational tables enforce boundaries that cannot safely be left to
+model reasoning:
+
+- **`admin_nonces`** - replay protection for verified PGP/MIME admin requests
+- **`rate_limits`** - durable counters for inbound and outbound quotas
+- **`processed_messages`** - durable Message-ID idempotency beyond the IMAP `\Seen` flag
+- **`banned_emails`** - normalized addresses blocked before agent execution
+- **`proactive_surfaces`** - recently surfaced opaque people pairs, used to rotate scan
+  candidates through a configurable cooldown
 
 **`introduction_consents`** - security state for anonymous relay introductions:
 - one row per unordered person pair
