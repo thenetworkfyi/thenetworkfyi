@@ -459,7 +459,10 @@ async def test_tokened_persona_reply_round_trips_through_consent_processing(tmp_
     with (
         patch("thenetwork.worker.tasks.get_session", session_factory(WorkerSession())),
         patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
-        patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)),
+        patch(
+            "thenetwork.worker.tasks.scan_content",
+            new=AsyncMock(return_value=(True, None)),
+        ),
         patch("thenetwork.worker.tasks.verify_admin_request", return_value=None),
         patch(
             "thenetwork.worker.tasks.process_consent_reply",

@@ -166,7 +166,10 @@ async def test_submit_scan_send_suppress_and_people_match_remains_eligible(seede
 
     with (
         patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
-        patch("thenetwork.worker.tasks.scan_content", return_value=(True, "ok")),
+        patch(
+            "thenetwork.worker.tasks.scan_content",
+            new=AsyncMock(return_value=(True, "ok")),
+        ),
         patch("thenetwork.worker.tasks.verify_admin_request", return_value=None),
         patch(
             "thenetwork.worker.tasks.process_consent_reply",

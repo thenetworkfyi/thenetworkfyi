@@ -393,7 +393,10 @@ def test_process_email_routes_admin_to_handler():
 
     with (
         patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
-        patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)),
+        patch(
+            "thenetwork.worker.tasks.scan_content",
+            new=AsyncMock(return_value=(True, None)),
+        ),
         patch(
             "thenetwork.worker.tasks.verify_admin_request",
             return_value=verified_cleartext,
@@ -473,7 +476,10 @@ def test_process_email_authenticated_non_admin_goes_to_agent():
 
     with (
         patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
-        patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)),
+        patch(
+            "thenetwork.worker.tasks.scan_content",
+            new=AsyncMock(return_value=(True, None)),
+        ),
         patch("thenetwork.worker.tasks.verify_admin_request", return_value=None),
         patch("thenetwork.worker.tasks.get_session") as mock_gs,
         patch("thenetwork.worker.tasks.run_agent_for_email", mock_agent),
@@ -506,7 +512,10 @@ def test_process_email_drops_unauthenticated_unknown_sender_before_agent():
 
     with (
         patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
-        patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)),
+        patch(
+            "thenetwork.worker.tasks.scan_content",
+            new=AsyncMock(return_value=(True, None)),
+        ),
         patch("thenetwork.worker.tasks.verify_admin_request", return_value=None),
         patch("thenetwork.worker.tasks.get_session") as mock_gs,
         patch("thenetwork.worker.tasks.audit_event") as mock_audit,
@@ -544,7 +553,10 @@ def test_process_email_dev_auth_bypass_still_goes_to_agent():
 
     with (
         patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
-        patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)),
+        patch(
+            "thenetwork.worker.tasks.scan_content",
+            new=AsyncMock(return_value=(True, None)),
+        ),
         patch("thenetwork.worker.tasks.verify_admin_request", return_value=None),
         patch("thenetwork.worker.tasks.get_session") as mock_gs,
         patch("thenetwork.worker.tasks.run_agent_for_email", mock_agent),
@@ -882,7 +894,8 @@ async def test_process_email_drops_banned_email_without_reply():
             "thenetwork.worker.tasks.check_rate_limit", return_value=True
         ) as mock_rate_limit,
         patch(
-            "thenetwork.worker.tasks.scan_content", return_value=(True, None)
+            "thenetwork.worker.tasks.scan_content",
+            new=AsyncMock(return_value=(True, None)),
         ) as mock_scan,
         patch(
             "thenetwork.worker.tasks.verify_admin_request", return_value=None
@@ -932,7 +945,10 @@ async def test_process_email_drops_banned_email_alias():
 
     with (
         patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
-        patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)),
+        patch(
+            "thenetwork.worker.tasks.scan_content",
+            new=AsyncMock(return_value=(True, None)),
+        ),
         patch("thenetwork.worker.tasks.verify_admin_request", return_value=None),
         patch("thenetwork.worker.tasks.get_session", return_value=cm),
         patch("thenetwork.worker.tasks.send_reply", mock_send_reply),

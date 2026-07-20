@@ -1420,7 +1420,10 @@ async def test_agent_failure_is_audited_and_reraised_for_retry(caplog):
     caplog.set_level(logging.INFO, logger=LOGGER_NAME)
     with (
         patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
-        patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)),
+        patch(
+            "thenetwork.worker.tasks.scan_content",
+            new=AsyncMock(return_value=(True, None)),
+        ),
         patch("thenetwork.worker.tasks.verify_admin_request", return_value=None),
         patch(
             "thenetwork.worker.tasks.get_session",
@@ -1455,7 +1458,10 @@ async def test_agent_failure_notifies_admins_on_final_retry_only():
     final_context = SimpleNamespace(job=SimpleNamespace(attempts=3))
     with (
         patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
-        patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)),
+        patch(
+            "thenetwork.worker.tasks.scan_content",
+            new=AsyncMock(return_value=(True, None)),
+        ),
         patch("thenetwork.worker.tasks.verify_admin_request", return_value=None),
         patch(
             "thenetwork.worker.tasks.get_session",
@@ -1489,7 +1495,8 @@ async def test_worker_caps_subject_and_body_before_agent():
     with (
         patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
         patch(
-            "thenetwork.worker.tasks.scan_content", return_value=(True, None)
+            "thenetwork.worker.tasks.scan_content",
+            new=AsyncMock(return_value=(True, None)),
         ) as scan_content,
         patch("thenetwork.worker.tasks.verify_admin_request", return_value=None),
         patch("thenetwork.worker.tasks.get_session") as mock_get_session,
@@ -1508,7 +1515,7 @@ async def test_worker_caps_subject_and_body_before_agent():
             sender_authenticated=True,
         )
 
-    scan_content.assert_called_once_with("b" * MAX_BODY_CHARS)
+    scan_content.assert_awaited_once_with("b" * MAX_BODY_CHARS)
     mock_agent.assert_awaited_once()
     _, kwargs = mock_agent.await_args
     assert kwargs["email_subject"] == "s" * MAX_SUBJECT_CHARS
@@ -1528,7 +1535,10 @@ async def test_worker_threads_trace_id_to_agent_and_audit(caplog):
 
     with (
         patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
-        patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)),
+        patch(
+            "thenetwork.worker.tasks.scan_content",
+            new=AsyncMock(return_value=(True, None)),
+        ),
         patch("thenetwork.worker.tasks.verify_admin_request", return_value=None),
         patch(
             "thenetwork.worker.tasks.get_session",
@@ -1705,7 +1715,10 @@ async def test_worker_sends_verified_admin_command_reply_as_internal_plain_mail(
             return_value=_mock_sender_lookup(None),
         ),
         patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
-        patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)),
+        patch(
+            "thenetwork.worker.tasks.scan_content",
+            new=AsyncMock(return_value=(True, None)),
+        ),
         patch(
             "thenetwork.worker.tasks.verify_admin_request",
             return_value="COMMAND: status",

@@ -685,7 +685,10 @@ async def test_consent_reply_is_consumed_before_model_execution():
     with (
         patch("thenetwork.worker.tasks.get_session", factory(session)),
         patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
-        patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)),
+        patch(
+            "thenetwork.worker.tasks.scan_content",
+            new=AsyncMock(return_value=(True, None)),
+        ),
         patch("thenetwork.worker.tasks.verify_admin_request", return_value=None),
         patch(
             "thenetwork.worker.tasks.process_consent_reply",
@@ -721,7 +724,10 @@ async def test_unparseable_tokened_reply_gets_clarification_before_model():
     with (
         patch("thenetwork.worker.tasks.get_session", factory(worker_session)),
         patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
-        patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)),
+        patch(
+            "thenetwork.worker.tasks.scan_content",
+            new=AsyncMock(return_value=(True, None)),
+        ),
         patch("thenetwork.worker.tasks.verify_admin_request", return_value=None),
         patch(
             "thenetwork.worker.tasks.process_consent_reply",
@@ -860,7 +866,10 @@ async def test_consent_remainder_reaches_agent_after_server_handling():
     with (
         patch("thenetwork.worker.tasks.get_session", factory(worker_session)),
         patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
-        patch("thenetwork.worker.tasks.scan_content", return_value=(True, None)),
+        patch(
+            "thenetwork.worker.tasks.scan_content",
+            new=AsyncMock(return_value=(True, None)),
+        ),
         patch("thenetwork.worker.tasks.verify_admin_request", return_value=None),
         patch(
             "thenetwork.worker.tasks.process_consent_reply",

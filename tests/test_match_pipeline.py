@@ -63,7 +63,10 @@ async def test_e2e_producer_to_agent(monkeypatch):
             side_effect=fake_run_agent,
         ),
         patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
-        patch("thenetwork.worker.tasks.scan_content", return_value=(True, "ok")),
+        patch(
+            "thenetwork.worker.tasks.scan_content",
+            new=AsyncMock(return_value=(True, "ok")),
+        ),
         patch("thenetwork.worker.tasks.get_session") as mock_gs,
     ):
         mock_session = MagicMock()
