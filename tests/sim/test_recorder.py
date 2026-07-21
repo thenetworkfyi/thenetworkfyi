@@ -5,7 +5,9 @@ import json
 import mailbox
 from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
+from email import policy
 from email.message import EmailMessage
+from email.parser import BytesParser
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -461,6 +463,51 @@ def test_public_simulation_mbox_redacts_untrusted_headers_and_envelope(tmp_path)
     assert "From MAILER-DAEMON" in public_artifact
     assert "X-Client-Secret:" in public_artifact
     assert "[redacted-text chars=10]" in public_artifact
+
+
+def test_public_simulation_mbox_consolidates_repeated_identifier_headers(tmp_path):
+    raw_mbox_path = tmp_path / "private" / "all-mail.mbox"
+    public_mbox_path = tmp_path / "all-mail.mbox"
+    raw_message = (
+        b"From: alice@example.test\r\n"
+        b"To: join@example.test\r\n"
+        b"Message-ID: <primary@private.example>\r\n"
+        b"Message-ID: <duplicate@private.example>\r\n"
+        b"In-Reply-To: <root@private.example>\r\n"
+        b"In-Reply-To: <other@private.example>\r\n"
+        b"References: <root@private.example>\r\n"
+        b"References: <other@private.example>\r\n"
+        b"Resent-Message-ID: <resent-primary@private.example>\r\n"
+        b"Resent-Message-ID: <resent-duplicate@private.example>\r\n"
+        b"Content-Type: text/plain; charset=utf-8\r\n"
+        b"\r\n"
+        b"Private body\r\n"
+    )
+    message = BytesParser(policy=policy.default).parsebytes(raw_message)
+    assert len(message.get_all("Message-ID", ())) == 2
+    SimPostOffice(mbox_path=raw_mbox_path).deliver(message)
+
+    publish_redacted_mbox(raw_mbox_path, public_mbox_path)
+
+    public_box = mailbox.mbox(public_mbox_path)
+    try:
+        (redacted,) = tuple(public_box)
+    finally:
+        public_box.close()
+    assert redacted.get_all("Message-ID") == ["<sim-redacted-1@simulation.invalid>"]
+    assert redacted.get_all("In-Reply-To") == [
+        "<sim-redacted-2@simulation.invalid> <sim-redacted-3@simulation.invalid>"
+    ]
+    assert redacted.get_all("References") == [
+        "<sim-redacted-2@simulation.invalid> <sim-redacted-3@simulation.invalid>"
+    ]
+    assert redacted.get_all("Resent-Message-ID") == [
+        "<sim-redacted-4@simulation.invalid>"
+    ]
+    public_artifact = public_mbox_path.read_text(encoding="utf-8")
+    assert "private.example" not in public_artifact
+    assert "duplicate" not in public_artifact
+    assert "Private body" not in public_artifact
 
 
 def test_public_simulation_json_artifacts_omit_raw_markup_and_message_content(tmp_path):
