@@ -31,7 +31,12 @@ from sqlmodel import col, select
 from thenetwork.db.models import IntroductionConsent, Memory, Person
 from thenetwork.db.session import get_session
 from thenetwork.search.graph import build_graph, score_proximity
-from thenetwork.search.match import match_memories
+from thenetwork.search.match import (
+    MemoryMatch,
+    SealedMemoryEvidence,
+    build_candidate_contexts,
+    match_memories,
+)
 from thenetwork.settings import get_settings
 from thenetwork.introductions import (
     mark_pairs_surfaced,
@@ -133,7 +138,13 @@ async def scan_for_matches(timestamp: int) -> None:
 
     with get_session() as session:
         memories = session.exec(
-            select(Memory)
+            select(
+                Memory.id,
+                Memory.refs,
+                Memory.gist,
+                Memory.embedding,
+                Memory.created_at,
+            )
             .where(col(Memory.gist).is_not(None))
             .where(col(Memory.embedding).is_not(None))
             .order_by(col(Memory.created_at).desc())
@@ -151,6 +162,17 @@ async def scan_for_matches(timestamp: int) -> None:
         active_cache: dict[str, bool] = {}
         seen: set[frozenset[str]] = set()
         candidates: list[tuple[float, tuple[str, str], dict]] = []
+        recent_evidence: dict[str, list[SealedMemoryEvidence]] = {}
+        for memory in memories:
+            if not memory.gist:
+                continue
+            for person_id in (person_id for person_id in memory.refs if person_id):
+                recent_evidence.setdefault(person_id, []).append(
+                    SealedMemoryEvidence(
+                        memory_id=memory.id,
+                        gist=memory.gist,
+                    )
+                )
 
         def email_for(person_id: str) -> str | None:
             if person_id not in email_cache:
@@ -204,20 +226,49 @@ async def scan_for_matches(timestamp: int) -> None:
                     if pair_key in surfaced_pairs or email_for(counterpart_id) is None:
                         continue
                     seen.add(pair)
+                    pair_contexts = {
+                        context.person_id: context
+                        for context in build_candidate_contexts(
+                            [
+                                MemoryMatch(
+                                    memory_id=memory.id,
+                                    person_id=recipient_id,
+                                    gist=memory.gist,
+                                    similarity=match.similarity,
+                                ),
+                                match,
+                            ],
+                            recent_evidence,
+                            max_candidates=2,
+                        )
+                    }
+                    recipient_evidence = pair_contexts[recipient_id].evidence
+                    counterpart_evidence = pair_contexts[counterpart_id].evidence
+                    recipient_lines = "\n".join(
+                        f"- {item.gist}" for item in recipient_evidence
+                    )
+                    counterpart_lines = "\n".join(
+                        f"- {item.gist}" for item in counterpart_evidence
+                    )
                     body = (
-                        "[System match] A standing signal about one person closely "
-                        "matches a standing signal about another "
-                        f"(similarity={match.similarity:.2f}).\n\n"
-                        f"Person {recipient_id}: {memory.gist}\n"
-                        f"Person {counterpart_id}: {match.gist}\n\n"
+                        "[System match] Semantic retrieval surfaced a candidate pair "
+                        f"(similarity={match.similarity:.2f}, a retrieval signal, not "
+                        "a fit score). The evidence below is bounded to sealed gists "
+                        "grouped by opaque person id.\n\n"
+                        f"Person {recipient_id} evidence:\n{recipient_lines}\n\n"
+                        f"Person {counterpart_id} evidence:\n"
+                        f"{counterpart_lines}\n\n"
                         f"You are acting for person {recipient_id}, the recipient "
                         "of this trigger. Their side of the pair is derived "
                         "server-side, so never pass their id to "
                         "`propose_introduction`. If these two share specific, "
-                        "real common ground, propose an introduction with "
+                        "two-sided, materially supported common ground, propose an "
+                        "introduction with "
                         f"`propose_introduction` and other_person_id={counterpart_id} "
                         "(the counterpart), using only what the gists support. "
-                        "If the overlap is thin or you are unsure, do nothing."
+                        "If a consequential side or constraint is missing, "
+                        "contradictory, or supported only by keyword overlap, call "
+                        "`no_action`."
                     )
                     candidates.append(
                         (

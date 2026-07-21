@@ -253,6 +253,57 @@ async def test_rematch_enqueues_new_match_against_standing_note():
 
 
 @pytest.mark.asyncio
+async def test_rematch_groups_bounded_supporting_gists_for_each_opaque_person():
+    from thenetwork.search.match import (
+        MAX_EVIDENCE_CHARS_PER_PERSON,
+        MAX_EVIDENCE_GISTS_PER_PERSON,
+        MemoryMatch,
+    )
+    from thenetwork.worker.proactive import scan_for_matches
+
+    recent = [
+        _memory("q-intent", ["Q"], "seeks a climate hardware cofounder"),
+        _memory("q-stage", ["Q"], "pre-seed with a validated industrial pilot"),
+        _memory("p-skill", ["P"], "builds industrial heat recovery systems"),
+        _memory("p-intent", ["P"], "wants to join an early climate hardware team"),
+    ]
+    matches = [
+        MemoryMatch("p-anchor", "P", "climate hardware engineer", 0.84),
+    ]
+    persons = {"P": _person("P", "p@test.com"), "Q": _person("Q", "q@test.com")}
+
+    with (
+        patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()),
+        patch(
+            "thenetwork.worker.proactive.get_session",
+            return_value=_rematch_session(recent, persons),
+        ),
+        patch("thenetwork.worker.proactive.match_memories", return_value=matches),
+        patch("thenetwork.worker.proactive.process_email") as mock_pe,
+    ):
+        await scan_for_matches.func(0)
+
+    body = mock_pe.defer.call_args.kwargs["body"]
+    assert "Person Q evidence:" in body
+    assert "seeks a climate hardware cofounder" in body
+    assert "pre-seed with a validated industrial pilot" in body
+    assert "Person P evidence:" in body
+    assert "builds industrial heat recovery systems" in body
+    assert "wants to join an early climate hardware team" in body
+    assert "retrieval signal, not a fit score" in body
+
+    for person_id, next_person_id in (("Q", "P"), ("P", None)):
+        section = body.split(f"Person {person_id} evidence:\n", 1)[1]
+        if next_person_id is not None:
+            section = section.split(f"\n\nPerson {next_person_id} evidence:", 1)[0]
+        else:
+            section = section.split("\n\nYou are acting", 1)[0]
+        gists = [line.removeprefix("- ") for line in section.splitlines()]
+        assert len(gists) <= MAX_EVIDENCE_GISTS_PER_PERSON
+        assert sum(len(gist) for gist in gists) <= MAX_EVIDENCE_CHARS_PER_PERSON
+
+
+@pytest.mark.asyncio
 async def test_rematch_job_reaches_agent_through_real_worker_handoff():
     """Synthetic rematch jobs authenticate their DB-resolved sender identity."""
     from thenetwork.introductions import ConsentReplyResult

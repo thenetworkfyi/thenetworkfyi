@@ -448,8 +448,8 @@ consent pair and defers eligible counterparts above `proactive_match_threshold` 
 Declined pairs remain suppressed for the 90-day
 cooldown, while a no-action surface becomes eligible again after the proactive-surface
 cooldown. Pairs already connected in the projected graph are skipped, and the trigger body
-contains only opaque ids + PII-stripped gists; real addresses and raw memory text never
-enter it.
+groups a deterministic, bounded set of supporting PII-stripped gists under each opaque
+person id; real addresses and raw memory text never enter it.
 
 Both scans order candidates deterministically by score descending with canonical pair id
 as a tiebreak. The agent's per-run proposal cap and the server-side consent-request caps

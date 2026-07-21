@@ -160,6 +160,7 @@ async def test_matchmaking_returns_opaque_ids_only():
     candidate = result[0]
     # Opaque ID present
     assert candidate["person_id"] == "opaque-id-1"
+    assert candidate["evidence"] == [{"gist": "backend engineer interested in ML"}]
     # No PII fields
     assert "name" not in candidate
     assert "email" not in candidate

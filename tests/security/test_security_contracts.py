@@ -22,7 +22,7 @@ from thenetwork.agent.tools import (
 )
 from thenetwork.audit import LOGGER_NAME, audit_event
 from thenetwork.db.models import Person
-from thenetwork.search.match import MemoryMatch
+from thenetwork.search.match import MemoryMatch, SealedMemoryEvidence
 from thenetwork.settings import Settings
 
 
@@ -1465,7 +1465,7 @@ async def test_remember_dedupes_consolidation_candidates_by_memory_id():
 
 @pytest.mark.asyncio
 async def test_search_returns_gist_not_raw_text():
-    """search() results must not include raw memory text - only gist (PII-stripped)."""
+    """search() results must include only bounded PII-stripped gist evidence."""
     from thenetwork.agent.tools import search
 
     mock_match = MemoryMatch(
@@ -1488,16 +1488,16 @@ async def test_search_returns_gist_not_raw_text():
 
     assert results
     r = results[0]
-    assert "gist" in r
+    assert "evidence" in r
     assert "text" not in r, "raw memory text must never appear in search results"
     assert "name" not in r
     assert "email" not in r
-    assert r["gist"] == "ml engineer at a startup"
+    assert r["evidence"] == [{"gist": "ml engineer at a startup"}]
 
 
 @pytest.mark.asyncio
 async def test_search_result_keys_sealed_for_other_people():
-    """Cross-user search results must not expose anything beyond gist + opaque person id."""
+    """Cross-user search exposes only sealed evidence and an opaque person id."""
     from thenetwork.agent.tools import search
 
     mock_match = MemoryMatch(
@@ -1518,10 +1518,11 @@ async def test_search_result_keys_sealed_for_other_people():
     ):
         results = await search(ctx, query="ml engineer")
 
-    allowed_keys = {"person_id", "gist", "similarity", "is_sender_owned"}
+    allowed_keys = {"person_id", "evidence", "similarity", "is_sender_owned"}
     for r in results:
         leaked = set(r.keys()) - allowed_keys
         assert not leaked, f"unexpected keys leaked into search result: {leaked}"
+        assert all(set(item) == {"gist"} for item in r["evidence"])
 
 
 @pytest.mark.asyncio
@@ -1555,10 +1556,55 @@ async def test_search_includes_memory_id_only_for_sender_owned_results():
     ):
         results = await search(ctx, query="my stored facts")
 
-    assert results[0]["memory_id"] == "self-memory"
     assert results[0]["is_sender_owned"] is True
-    assert "memory_id" not in results[1]
+    assert results[0]["evidence"] == [
+        {"gist": "backend engineer", "memory_id": "self-memory"}
+    ]
     assert results[1]["is_sender_owned"] is False
+    assert results[1]["evidence"] == [{"gist": "systems engineer"}]
+
+
+@pytest.mark.asyncio
+async def test_search_groups_supporting_gists_without_cross_user_memory_ids():
+    from thenetwork.agent.tools import search
+
+    matches = [
+        MemoryMatch("self-intent", "user-alice", "seeks a climate cofounder", 0.92),
+        MemoryMatch("other-intent", "user-bob", "seeks climate founders", 0.89),
+    ]
+    supporting = {
+        "user-alice": [
+            SealedMemoryEvidence("self-stage", "pre-seed product leader"),
+        ],
+        "user-bob": [
+            SealedMemoryEvidence("other-skill", "builds industrial heat systems"),
+            SealedMemoryEvidence("other-location", "works in Oakland"),
+        ],
+    }
+
+    ctx = FakeCtx(sender_user_id="user-alice")
+    with (
+        patch(
+            "thenetwork.agent.tools.embed_text",
+            new_callable=AsyncMock,
+            return_value=[0.0] * 1536,
+        ),
+        patch("thenetwork.agent.tools.match_memories", return_value=matches),
+        patch("thenetwork.agent.tools.load_person_evidence", return_value=supporting),
+    ):
+        results = await search(ctx, query="climate cofounder")
+
+    assert results[0]["evidence"] == [
+        {"gist": "seeks a climate cofounder", "memory_id": "self-intent"},
+        {"gist": "pre-seed product leader", "memory_id": "self-stage"},
+    ]
+    assert results[1]["evidence"] == [
+        {"gist": "seeks climate founders"},
+        {"gist": "builds industrial heat systems"},
+        {"gist": "works in Oakland"},
+    ]
+    assert "other-intent" not in repr(results[1])
+    assert "other-skill" not in repr(results[1])
 
 
 @pytest.mark.asyncio
@@ -1613,6 +1659,25 @@ async def test_search_rejects_query_over_configured_cap():
         result = await search(ctx, query="too long")
 
     assert result == {"status": "error", "reason": "query_too_long", "limit": 5}
+    mock_embed.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_search_rejects_unbounded_candidate_count_before_embedding():
+    from thenetwork.agent.tools import search
+    from thenetwork.search.match import MAX_CANDIDATE_CONTEXTS
+
+    ctx = FakeCtx()
+    with patch(
+        "thenetwork.agent.tools.embed_text", new_callable=AsyncMock
+    ) as mock_embed:
+        result = await search(ctx, query="climate", top_k=MAX_CANDIDATE_CONTEXTS + 1)
+
+    assert result == {
+        "status": "error",
+        "reason": "top_k_out_of_range",
+        "limit": MAX_CANDIDATE_CONTEXTS,
+    }
     mock_embed.assert_not_awaited()
 
 
