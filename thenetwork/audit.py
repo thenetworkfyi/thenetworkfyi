@@ -1,9 +1,11 @@
 """PII-safe structured audit events for the agent execution lifecycle."""
 
 from __future__ import annotations
+
 import json
 import logging
 import re
+import traceback
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import asdict, is_dataclass
@@ -15,7 +17,10 @@ from uuid import uuid4
 
 import structlog
 
-from thenetwork.security.log_redaction import redact_structured_log
+from thenetwork.security.log_redaction import (
+    redact_structured_log,
+    redact_structured_values,
+)
 
 LOGGER_NAME = "thenetwork.audit"
 _run_id: ContextVar[str | None] = ContextVar("thenetwork_audit_run_id", default=None)
@@ -37,13 +42,74 @@ def _iso_timestamp(logger: object, method_name: str, event_dict: dict) -> dict:
     return event_dict
 
 
+_FOREIGN_LOG_METADATA_FIELDS = frozenset(
+    {"logger", "level", "_record", "_from_structlog"}
+)
+
+
+def _redact_foreign_content(event_dict: dict) -> dict:
+    metadata = {
+        key: event_dict[key]
+        for key in _FOREIGN_LOG_METADATA_FIELDS
+        if key in event_dict
+    }
+    content = {
+        key: value
+        for key, value in event_dict.items()
+        if key not in _FOREIGN_LOG_METADATA_FIELDS
+    }
+    return {**metadata, **redact_structured_log(content)}
+
+
+def _redact_procrastinate_job(value: object) -> object:
+    if not isinstance(value, dict):
+        return redact_structured_values(value)
+    job = dict(value)
+    job.pop("call_string", None)
+    if "task_kwargs" in job:
+        job["task_kwargs"] = redact_structured_values(job["task_kwargs"])
+    return job
+
+
+def _procrastinate_log_event(event_dict: dict) -> dict:
+    """Use Procrastinate's action/extras instead of its argument-bearing prose."""
+    action = event_dict.get("action")
+    if not isinstance(action, str):
+        return _redact_foreign_content(event_dict)
+
+    structured = dict(event_dict)
+    structured["event"] = f"procrastinate.{action}"
+    structured.pop("exc_info", None)
+    structured.pop("stack_info", None)
+    if "job" in structured:
+        structured["job"] = _redact_procrastinate_job(structured["job"])
+    if isinstance(structured.get("jobs"), list):
+        structured["jobs"] = [
+            _redact_procrastinate_job(job) for job in structured["jobs"]
+        ]
+    if "result" in structured:
+        structured["result"] = redact_structured_values(structured["result"])
+    record = event_dict.get("_record")
+    if isinstance(record, logging.LogRecord) and record.exc_info:
+        structured["exception"] = redact_structured_log(
+            "".join(traceback.format_exception(*record.exc_info))
+        )
+    return structured
+
+
 def _redact_foreign_log_event(
     logger: object, method_name: str, event_dict: dict
 ) -> dict:
-    """Redact untrusted library log messages but preserve audited metadata."""
-    if event_dict.get("logger") == LOGGER_NAME:
+    """Redact content-bearing foreign fields while preserving log metadata."""
+    logger_name = event_dict.get("logger")
+    if logger_name == LOGGER_NAME:
         return event_dict
-    return redact_structured_log(event_dict)
+    if isinstance(logger_name, str) and (
+        logger_name == "procrastinate" or logger_name.startswith("procrastinate.")
+    ):
+        return _procrastinate_log_event(event_dict)
+
+    return _redact_foreign_content(event_dict)
 
 
 # Shared by both chains below so audit events and third-party logs (e.g.
@@ -51,6 +117,9 @@ def _redact_foreign_log_event(
 _SHARED_PROCESSORS = [
     structlog.stdlib.add_log_level,
     structlog.stdlib.add_logger_name,
+    # Procrastinate publishes its stable action/job metadata through LogRecord
+    # extras. Copy them into the event dict before applying field-level policy.
+    structlog.stdlib.ExtraAdder(),
     # Provider and library errors may include a rejected model response in the
     # record message. Redact the event dict before it reaches any stderr/JSONL
     # sink, including the foreign-stdlib logging bridge below.
