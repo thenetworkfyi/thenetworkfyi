@@ -30,8 +30,7 @@ must keep the `tests/security/` red-team suite green.
 ## Commands
 
 ```bash
-uv pip install -e ".[dev]"          # install with test deps, including the pinned Presidio spaCy model
-uv pip install -e ".[content-scan]" # optional LlamaFirewall Prompt Guard 2 scanner
+uv pip install -e ".[dev]"         # install with test deps, including Presidio and the content scanner
 
 docker compose up -d db            # local pgvector Postgres
 uv run alembic upgrade head         # create vector extension + tables

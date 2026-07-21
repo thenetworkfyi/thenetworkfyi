@@ -26,10 +26,7 @@ services:
     # the published image in production. Set IMAGE to your GHCR path, e.g.
     # IMAGE=ghcr.io/<owner>/thenetwork-agent:latest
     image: ${IMAGE:-thenetwork-agent:latest}
-    build:
-      context: .
-      args:
-        INSTALL_CONTENT_SCAN: ${INSTALL_CONTENT_SCAN:-false}
+    build: .
     env_file: .env
     environment:
       # Parts, not a pre-built DATABASE_URL: the app assembles (and correctly

@@ -327,20 +327,19 @@ HF_TOKEN=                 # first enabled startup only, until the model is cache
 
 ```bash
 uv pip install -e .
-# optional content scanner:
-# uv pip install -e ".[content-scan]"
 ```
 
 The required `en_core_web_lg` spaCy model is installed with the project; no
 separate model download is needed.
 
-The optional extra pins LlamaFirewall and uses
+The project installs pinned LlamaFirewall scanner dependencies and uses
 `meta-llama/Llama-Prompt-Guard-2-86M`, a gated model under the Llama 4 Community
 License. Accept that license on Hugging Face and set `HF_TOKEN` before the first
-enabled worker startup. Startup downloads and initializes the model before queue
-processing; later starts use `HF_HOME` and need no token. LlamaFirewall brings
-PyTorch and its platform wheels, so allow materially more image/disk space and
-memory than the scanner-disabled installation.
+enabled worker startup. `CONTENT_SCAN_ENABLED` is the only feature switch: when
+enabled, startup downloads and initializes the model before queue processing;
+later starts use `HF_HOME` and need no token. LlamaFirewall brings PyTorch and
+its platform wheels, so allow materially more image/disk space and memory even
+when scanning is disabled at runtime.
 
 ### 3. Start Postgres and apply migrations
 
@@ -386,15 +385,12 @@ docker compose up -d --build  # builds the image, starts db + worker
 docker compose logs -f worker
 ```
 
-For a local image with scanning enabled, set both
-`INSTALL_CONTENT_SCAN=true` and `CONTENT_SCAN_ENABLED=true`. Published GHCR images
-already contain the optional dependency, so only the runtime flag is needed there.
-On the first enabled start, provide `HF_TOKEN`; compose persists the downloaded
-Prompt Guard 2 model in the `hf-cache` volume at `HF_HOME`. The worker refuses to
-start if scanning is enabled without either that cache or a non-interactive token,
-and it finishes model initialization before accepting jobs. Scanner-disabled
-deployments load no LlamaFirewall code and require neither model weights nor Hugging
-Face credentials.
+To enable scanning, set `CONTENT_SCAN_ENABLED=true`. On the first enabled start,
+provide `HF_TOKEN`; compose persists the downloaded Prompt Guard 2 model in the
+`hf-cache` volume at `HF_HOME`. The worker refuses to start if scanning is enabled
+without either that cache or a non-interactive token, and it finishes model
+initialization before accepting jobs. Scanner-disabled deployments load no
+LlamaFirewall code and require neither model weights nor Hugging Face credentials.
 
 The container entrypoint runs `alembic upgrade head` before starting, so
 migrations apply automatically on every deploy.
