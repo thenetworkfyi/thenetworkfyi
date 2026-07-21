@@ -6,13 +6,18 @@ import pytest
 
 from thenetwork.db.models import Memory
 from thenetwork.sim.personas.population import (
+    CHLOE_EMAIL,
     DEFAULT_EXPECTATIONS,
     DEFAULT_OUTCOME_CHECKS,
     EVENT_ATTENDEE_EMAIL,
     EVENT_CONTROL_EMAIL,
     EVENT_ORGANIZER_EMAIL,
+    FELIX_EMAIL,
+    GABI_EMAIL,
+    HUGO_EMAIL,
     NADIA_EMAIL,
     PETRA_EMAIL,
+    TARIQ_EMAIL,
 )
 from thenetwork.sim.scoring.scoring import (
     EventOutcomeFact,
@@ -223,6 +228,18 @@ def _default_outcome() -> ScenarioOutcome:
                     "recommendations, reply no to opt out."
                 ),
             ),
+            MailFacts(
+                sender="join@example.test",
+                recipients=frozenset({HUGO_EMAIL}),
+                subject="Re: The Network",
+                body="What kind of work and counterpart are you looking for?",
+            ),
+            MailFacts(
+                sender="join@example.test",
+                recipients=frozenset({TARIQ_EMAIL}),
+                subject="Re: The Network",
+                body="What type of climate work are you focused on?",
+            ),
         ),
         memory_counts={"vic.sim@example.test": 6},
         event_rows=(
@@ -261,7 +278,7 @@ def test_default_outcome_checks_cover_all_persona_situations():
     )
 
     assert score.passed is True
-    assert len(score.findings) == 13
+    assert len(score.findings) == 18
     assert all(check.requires_real_process for check in DEFAULT_OUTCOME_CHECKS)
     assert all(check.requires_llm_personas for check in DEFAULT_OUTCOME_CHECKS)
 
@@ -445,7 +462,7 @@ def test_event_outcome_checks_have_failure_fixtures(
 def test_event_outcome_evidence_contains_only_safe_correlation_facts():
     score = score_scenario_outcomes(
         _default_outcome(),
-        DEFAULT_OUTCOME_CHECKS[9:],
+        DEFAULT_OUTCOME_CHECKS[9:13],
         real_process=True,
         llm_personas=True,
     )
@@ -461,6 +478,51 @@ def test_event_outcome_evidence_contains_only_safe_correlation_facts():
     ):
         assert sensitive not in evidence
     assert "evt_v1_default" in evidence
+
+
+@pytest.mark.parametrize(
+    ("check_index", "outcome"),
+    [
+        (13, replace(_default_outcome(), memory_counts={FELIX_EMAIL: 1})),
+        (14, replace(_default_outcome(), memory_counts={GABI_EMAIL: 1})),
+        (
+            15,
+            replace(
+                _default_outcome(),
+                mail_facts=tuple(
+                    message
+                    for message in _default_outcome().mail_facts
+                    if HUGO_EMAIL not in message.recipients
+                ),
+            ),
+        ),
+        (
+            16,
+            replace(
+                _default_outcome(),
+                mail_facts=tuple(
+                    message
+                    for message in _default_outcome().mail_facts
+                    if TARIQ_EMAIL not in message.recipients
+                ),
+            ),
+        ),
+        (17, replace(_default_outcome(), memory_counts={CHLOE_EMAIL: 1})),
+    ],
+)
+def test_tofu_outcome_checks_have_failure_fixtures(
+    check_index: int,
+    outcome: ScenarioOutcome,
+):
+    score = score_scenario_outcomes(
+        outcome,
+        (DEFAULT_OUTCOME_CHECKS[check_index],),
+        real_process=True,
+        llm_personas=True,
+    )
+
+    assert score.passed is False
+    assert score.findings[0].passed is False
 
 
 def test_ines_clarification_check_ignores_other_personas_clarify_events():
@@ -727,6 +789,10 @@ def test_omar_outcome_rejects_missing_repeated_or_revoked_consent(actions):
         (0, NADIA_EMAIL, "Nadia is still in ML infrastructure.", False),
         (1, PETRA_EMAIL, "Petra studies provenance for museum archives.", True),
         (1, PETRA_EMAIL, "Petra wants generic networking advice.", False),
+        (2, HUGO_EMAIL, "Hugo operates patient-scheduling systems.", True),
+        (2, HUGO_EMAIL, "Hugo wants generic networking advice.", False),
+        (3, TARIQ_EMAIL, "Tariq runs public-school heat-pump retrofits.", True),
+        (3, TARIQ_EMAIL, "Tariq wants generic climate contacts.", False),
     ],
 )
 def test_default_memory_expectations_have_pass_and_fail_fixtures(

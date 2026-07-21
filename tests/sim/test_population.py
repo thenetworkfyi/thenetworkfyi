@@ -13,10 +13,15 @@ from thenetwork.sim.scoring.scoring import MailFacts, score_memory_expectations
 from thenetwork.sim.run.loop import SimTickLoop
 from thenetwork.sim.personas.persona import EmailFormat, TinyPersonEmailAdapter
 from thenetwork.sim.personas.population import (
+    CHLOE_EMAIL,
     DEFAULT_EXPECTATIONS,
     EVENT_ATTENDEE_EMAIL,
     EVENT_ORGANIZER_EMAIL,
+    FELIX_EMAIL,
+    GABI_EMAIL,
+    HUGO_EMAIL,
     PETRA_EMAIL,
+    TARIQ_EMAIL,
     SimSchedule,
     default_population,
 )
@@ -63,7 +68,7 @@ class QualifyingPetra:
 def test_default_population_has_authored_personas_and_schedule():
     population = default_population(agent_address="join@example.test")
 
-    assert len(population) == 19
+    assert len(population) == 24
     assert len({persona.config.email for persona in population}) == len(population)
     assert all(persona.opening_body for persona in population)
 
@@ -145,6 +150,11 @@ def test_default_population_has_authored_personas_and_schedule():
         "Petra Lindqvist",
         "Sloane Park",
         "Mina Brooks",
+        "Felix",
+        "Gabi",
+        "Hugo",
+        "Tariq",
+        "Chloe",
     }
     assert additions["Ruth Calder"].config.goal.endswith(
         "include the [intro:...] token line from the proposal."
@@ -232,6 +242,28 @@ def test_default_population_has_authored_personas_and_schedule():
     assert mina.config.message_budget == 2
     assert mina.interruptions[0].start_tick == 2
     assert mina.interruptions[0].kind == "dormancy"
+    felix = additions["Felix"]
+    assert felix.config.email == FELIX_EMAIL
+    assert felix.opening_body == "Hi."
+    assert "content-free greeting" in felix.config.goal
+    assert felix.config.message_budget == 1
+    gabi = additions["Gabi"]
+    assert gabi.config.email == GABI_EMAIL
+    assert "what The Network does" in gabi.config.goal
+    assert "what would you do with anything I send" in gabi.opening_body
+    hugo = additions["Hugo"]
+    assert hugo.config.email == HUGO_EMAIL
+    assert "community health clinics" in hugo.config.goal
+    assert "patient-scheduling systems" in hugo.config.goal
+    assert hugo.config.message_budget == 3
+    tariq = additions["Tariq"]
+    assert tariq.config.email == TARIQ_EMAIL
+    assert "heat-pump retrofits for public schools" in tariq.config.goal
+    assert tariq.opening_body == "I want to meet someone working on climate."
+    chloe = additions["Chloe"]
+    assert chloe.config.email == CHLOE_EMAIL
+    assert "Explicitly opt out" in chloe.config.goal
+    assert "do not retain information about me" in chloe.opening_body
     assert all(
         persona.config.agent_address == "join@example.test"
         for persona in additions.values()
@@ -280,6 +312,11 @@ def test_default_population_deterministically_mixes_email_presentations():
     assert by_name["Mateo Ruiz"].signature.link.url == (
         "https://labtools.example.test/notes"
     )
+    assert by_name["Felix"].signature is not None
+    assert by_name["Gabi"].format == EmailFormat.MULTIPART_ALTERNATIVE
+    assert by_name["Hugo"].signature is not None
+    assert by_name["Tariq"].format == EmailFormat.PLAIN
+    assert by_name["Chloe"].format == EmailFormat.MULTIPART_ALTERNATIVE
     assert (
         sum(presentation.signature is not None for presentation in by_name.values()) > 1
     )
