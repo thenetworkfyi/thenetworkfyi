@@ -90,13 +90,15 @@ def test_fixed_renderer_uses_only_named_template_and_escapes_context():
     assert "Why you were matched:" in rendered.text
     assert "email hidden+<script>@relay.example.com directly" in rendered.text
     with pytest.raises(TypeError, match="FixedEmailTemplate"):
-        render_fixed_email("introduction", IntroductionEmailContext("A", "B"))  # type: ignore[arg-type]
+        render_fixed_email("introduction", IntroductionEmailContext(
+            "A", "B"))  # type: ignore[arg-type]
 
 
 def test_introduction_renderer_omits_recap_for_legacy_context_without_gists():
     rendered = render_fixed_email(
         FixedEmailTemplate.INTRODUCTION,
-        IntroductionEmailContext(relay_address="hidden-token@relay.example.com"),
+        IntroductionEmailContext(
+            relay_address="hidden-token@relay.example.com"),
         signature_variant=SignatureVariant.NONE,
     )
 
@@ -135,7 +137,8 @@ def test_worker_fixed_templates_have_equivalent_plain_and_html_parts(
     html_visible = _visible_html(rendered.html)
     assert expected_text in rendered.text
     assert expected_text in html_visible
-    assert rendered.text.index(expected_text) < rendered.text.index("On Tuesday")
+    assert rendered.text.index(
+        expected_text) < rendered.text.index("On Tuesday")
     assert html_visible.index(expected_text) < html_visible.index("On Tuesday")
     assert "Original line" in rendered.text
     assert "Original line" in html_visible
@@ -150,7 +153,8 @@ def test_fixed_renderer_rejects_mismatched_or_untrusted_worker_contexts():
     with pytest.raises(TypeError, match="InfrastructureRejectionReason"):
         render_fixed_email(
             FixedEmailTemplate.INFRASTRUCTURE_REJECTION,
-            InfrastructureRejectionEmailContext("<script>steal()</script>"),  # type: ignore[arg-type]
+            InfrastructureRejectionEmailContext(
+                "<script>steal()</script>"),  # type: ignore[arg-type]
         )
 
 
@@ -194,11 +198,11 @@ def test_consent_request_renderer_preserves_anonymous_plain_body_and_escapes_con
         ),
         (
             FixedEmailTemplate.CONSENT_DECLINED,
-            "Noted — this introduction will not go ahead.",
+            "Noted — this introduction will not proceed.",
         ),
         (
             FixedEmailTemplate.CONSENT_ALREADY_DECLINED,
-            "This introduction has already been declined and will not go ahead.",
+            "This introduction has already been declined and will not proceed.",
         ),
     ],
 )
@@ -268,14 +272,17 @@ def test_signature_variants_are_rendered_once(variant, expected_signature):
     assert rendered.html is not None
     assert (rendered.text.count("The Network") == 1) is expected_signature
     assert (rendered.html.count("The Network") == 1) is expected_signature
-    assert (rendered.text.count("join@thenetwork.fyi") == 1) is expected_signature
-    assert (rendered.html.count("join@thenetwork.fyi") == 1) is expected_signature
+    assert (rendered.text.count("join@thenetwork.fyi")
+            == 1) is expected_signature
+    assert (rendered.html.count("join@thenetwork.fyi")
+            == 1) is expected_signature
 
 
 def test_plain_and_html_have_equivalent_meaning_and_ordering():
     rendered = render_conversational_email(
         "First line\nsecond line\n\nSecond paragraph",
-        quoted_message=QuotedMessage("Original line\nSecond original", "Tuesday"),
+        quoted_message=QuotedMessage(
+            "Original line\nSecond original", "Tuesday"),
     )
 
     assert rendered.html is not None
@@ -290,8 +297,10 @@ def test_plain_and_html_have_equivalent_meaning_and_ordering():
     ):
         assert text in plain_visible
         assert text in html_visible
-        assert plain_visible.index(text) < plain_visible.index("On Tuesday, you wrote:")
-        assert html_visible.index(text) < html_visible.index("On Tuesday, you wrote:")
+        assert plain_visible.index(text) < plain_visible.index(
+            "On Tuesday, you wrote:")
+        assert html_visible.index(text) < html_visible.index(
+            "On Tuesday, you wrote:")
     assert (
         plain_visible.index("On Tuesday, you wrote:")
         < plain_visible.index("Original line")
