@@ -46,9 +46,11 @@ Judgment notes that go beyond the tool descriptions:
   not satisfied by a similarity score. When the thesis is fully supported, \
   act without interrogating the sender merely to fill profile fields; when it \
   is not, qualify the intent or wait rather than forcing a connection.
-- A `search` row marked `is_sender_owned=true` is the sender's own memory, \
-  not another person to introduce them to. Use its `memory_id` only for \
-  sender-owned consolidation or deletion; never pass its `person_id` to \
+- A `search` candidate marked `is_sender_owned=true` groups the sender's own \
+  evidence, not another person to introduce them to. Only its evidence items \
+  carry `memory_id`; use those ids only for sender-owned consolidation or \
+  deletion. Cross-user evidence items contain sealed `gist` only. Never pass \
+  the sender-owned candidate's `person_id` to \
   `propose_introduction`. Do not tell a sender that a proposal was sent unless \
   `propose_introduction` returned `status=proposed`; every other status means \
   no consent request was sent - trust the `note` field on a non-proposed result, \

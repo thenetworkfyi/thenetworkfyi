@@ -5,9 +5,16 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
+from thenetwork.search.match import MemoryMatch
 from tests.scenarios.test_live_archetypes import EmailScenario, run_scenario
 
 
@@ -108,6 +115,98 @@ async def test_forced_proposal_uses_captured_fixed_deliveries():
         )
 
     assert "propose_introduction" in outcome.tool_calls
+    assert {delivery["to"] for delivery in outcome.dispatched} == {
+        "sender@example.com",
+        "other@example.com",
+    }
+
+
+@pytest.mark.asyncio
+async def test_grouped_candidate_evidence_can_drive_a_bound_proposal():
+    model_calls = 0
+
+    async def inspect_then_propose(
+        messages: list[ModelMessage], _info: AgentInfo
+    ) -> ModelResponse:
+        nonlocal model_calls
+        model_calls += 1
+        if model_calls == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="search",
+                        args={"query": "Rust systems peer"},
+                    )
+                ]
+            )
+        if model_calls == 2:
+            search_result = next(
+                part.content
+                for message in reversed(messages)
+                for part in reversed(message.parts)
+                if isinstance(part, ToolReturnPart) and part.tool_name == "search"
+            )
+            assert len(search_result) == 1
+            candidate = search_result[0]
+            assert candidate["person_id"] == "person-other"
+            gists = [item["gist"] for item in candidate["evidence"]]
+            assert gists == [
+                "wants Rust systems peers",
+                "builds a distributed storage engine in Rust",
+                "works deeply on storage internals",
+            ]
+            assert all(set(item) == {"gist"} for item in candidate["evidence"])
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="propose_introduction",
+                        args={
+                            "other_person_id": candidate["person_id"],
+                            "sender_gist": "Rust systems programmer seeking peers",
+                            "other_gist": "; ".join(gists),
+                        },
+                    )
+                ]
+            )
+        return ModelResponse(parts=[TextPart(content="Proposal recorded.")])
+
+    outcome = await run_scenario(
+        EmailScenario(
+            subject="Rust systems folks",
+            body="I write low-level Rust infrastructure and want relevant peers.",
+            sender_email="sender@example.com",
+            sender_user_id="person-sender",
+            sender_authenticated=True,
+            known_people={"person-other": "other@example.com"},
+            search_results=[
+                MemoryMatch(
+                    "other-intent",
+                    "person-other",
+                    "wants Rust systems peers",
+                    0.93,
+                ),
+                MemoryMatch(
+                    "other-contribution",
+                    "person-other",
+                    "builds a distributed storage engine in Rust",
+                    0.91,
+                ),
+                MemoryMatch(
+                    "other-scope",
+                    "person-other",
+                    "works deeply on storage internals",
+                    0.88,
+                ),
+            ],
+        ),
+        model=FunctionModel(inspect_then_propose),
+    )
+
+    assert "search" in outcome.tool_calls
+    assert "propose_introduction" in outcome.tool_calls
+    assert outcome.tool_calls.index("search") < outcome.tool_calls.index(
+        "propose_introduction"
+    )
     assert {delivery["to"] for delivery in outcome.dispatched} == {
         "sender@example.com",
         "other@example.com",

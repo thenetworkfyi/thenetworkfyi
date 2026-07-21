@@ -65,7 +65,14 @@ from thenetwork.memory.sent_email import (
 )
 from thenetwork.security.rate_limit import PostgresFixedWindowStorage
 from thenetwork.introductions import propose_pair
-from thenetwork.search.match import MemoryMatch, match_memories
+from thenetwork.search.match import (
+    MAX_CANDIDATE_CONTEXTS,
+    MAX_EVIDENCE_GISTS_PER_PERSON,
+    MemoryMatch,
+    build_candidate_contexts,
+    load_person_evidence,
+    match_memories,
+)
 from thenetwork.search.events import EventMatch, match_events
 
 MAX_CONSOLIDATION_CANDIDATES = 3
@@ -495,10 +502,13 @@ async def search(
     query: str,
     top_k: int = 5,
 ) -> list[dict[str, Any]] | dict[str, Any]:
-    """Semantic search over person-referencing memories.
+    """Discover people and return bounded sealed evidence grouped by person.
 
-    Returns opaque person_id + PII-stripped gist only. Raw text, names, and
-    email addresses of other users are NEVER returned (SEAL contract).
+    Similarity ranks candidate discovery; it is not a fit score. Cross-user
+    evidence contains only PII-stripped gists plus an opaque person id. For
+    sender-owned evidence only, each item also carries its memory id so the
+    sender can consolidate or forget their own facts. Raw text, names, and
+    email addresses are NEVER returned (SEAL contract).
     """
     with audit_span(
         "agent.tool",
@@ -515,27 +525,53 @@ async def search(
                     "limit": max_chars,
                 }
             )
+        if top_k < 1 or top_k > MAX_CANDIDATE_CONTEXTS:
+            return _tool_result(
+                {
+                    "status": "error",
+                    "reason": "top_k_out_of_range",
+                    "limit": MAX_CANDIDATE_CONTEXTS,
+                }
+            )
 
         query_vec = await embed_text(query)
         with _get_session(ctx) as session:
-            matches: list[MemoryMatch] = match_memories(query_vec, session, limit=top_k)
+            matches: list[MemoryMatch] = match_memories(
+                query_vec,
+                session,
+                limit=top_k * MAX_EVIDENCE_GISTS_PER_PERSON,
+            )
+            candidate_ids = list(dict.fromkeys(match.person_id for match in matches))[
+                :top_k
+            ]
+            supporting = load_person_evidence(session, candidate_ids)
+        contexts = build_candidate_contexts(
+            matches,
+            supporting,
+            max_candidates=top_k,
+        )
         audit_event(
             "database.action",
             action="search",
             record_type="memory",
-            result_count=len(matches),
+            result_count=len(contexts),
             outcome="success",
         )
         results = []
-        for m in matches:
+        for candidate in contexts:
+            is_sender_owned = candidate.person_id == ctx.deps.sender_user_id
+            evidence = []
+            for item in candidate.evidence:
+                projected = {"gist": item.gist}
+                if is_sender_owned:
+                    projected["memory_id"] = item.memory_id
+                evidence.append(projected)
             result = {
-                "person_id": m.person_id,
-                "gist": m.gist,
-                "similarity": round(m.similarity, 3),
-                "is_sender_owned": m.person_id == ctx.deps.sender_user_id,
+                "person_id": candidate.person_id,
+                "evidence": evidence,
+                "similarity": round(candidate.similarity, 3),
+                "is_sender_owned": is_sender_owned,
             }
-            if result["is_sender_owned"]:
-                result["memory_id"] = m.memory_id
             results.append(result)
         audit_span_completion(tool_outcome="success")
         return results

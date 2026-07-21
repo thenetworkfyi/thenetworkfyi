@@ -1208,7 +1208,7 @@ async def test_tool_and_database_events_do_not_log_arguments(caplog):
     ):
         result = await search(ctx, query=secret_query)
 
-    assert result[0]["gist"] == secret_gist
+    assert result[0]["evidence"] == [{"gist": secret_gist}]
     serialized = "\n".join(record.message for record in caplog.records)
     assert secret_query not in serialized
     assert secret_gist not in serialized

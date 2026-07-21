@@ -177,7 +177,7 @@ mapping at write time. Semantic match over memories lives in `search/match.py`.
 |---|---|
 | `remember(text, refs)` | write a chunk; a PII-stripped gist is auto-produced for any memory with refs |
 | `forget(memory_id)` | delete a sender-owned, single-ref chunk (edit = forget + remember, so embeddings never go stale) |
-| `search(query) -> [{person_id, gist, similarity}]` | semantic recall returning **opaque ids + gist only** for other people |
+| `search(query) -> [{person_id, evidence: [{gist}], similarity}]` | semantic candidate discovery grouped by opaque person id, with deterministic count/character bounds and **sealed gists only** for other people; sender-owned evidence items include their own `memory_id` for forget-plus-remember edits |
 | `reply_to_sender(subject, body_text, sent_email_summary)` | reply only to the registered inbound sender; the model cannot select a recipient, and only this tool receives inbound threading and quoted-message context. After SMTP succeeds, the separate concise summary becomes a normal sealed memory for that recipient |
 | `send_outreach(recipient_user_id, subject, body_text, sent_email_summary)` | send a new, unthreaded message to another user by opaque id; the address is resolved server-side, and the post-SMTP summary is remembered without storing the subject, body, address, or headers |
 | `propose_introduction(other_person_id, sender_gist, other_gist)` | creates a pairwise proposal and sends fixed anonymous opt-in requests; authenticated replies are handled server-side before the model runs |

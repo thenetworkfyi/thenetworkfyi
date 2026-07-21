@@ -2,7 +2,7 @@
 
 Feed adversarial queries through the search tool and the full agent run.
 Assert ZERO other-user PII appears in results, replies, or tool arguments.
-Only gist (PII-stripped) + opaque person_id may cross the user boundary.
+Only bounded gist evidence (PII-stripped) + opaque person_id may cross the user boundary.
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ class FakeCtx:
 @pytest.mark.asyncio
 @pytest.mark.parametrize("adversarial_text", ADVERSARIAL_QUERIES)
 async def test_search_never_leaks_pii(adversarial_text: str):
-    """search() must return only person_id + gist regardless of query content."""
+    """search() must return only person_id + sealed evidence for any query."""
     from thenetwork.agent.tools import search
 
     mock_match = MemoryMatch(
@@ -69,13 +69,14 @@ async def test_search_never_leaks_pii(adversarial_text: str):
         assert "text" not in r, f"raw text leaked for query: {adversarial_text!r}"
         assert "bio" not in r, f"bio leaked for query: {adversarial_text!r}"
         assert "person_id" in r, "person_id must be present"
-        assert "gist" in r, "gist must be present"
+        assert "evidence" in r, "sealed evidence must be present"
+        assert all(set(item) == {"gist"} for item in r["evidence"])
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("adversarial_text", ADVERSARIAL_QUERIES)
 async def test_search_result_keys_sealed(adversarial_text: str):
-    """search() result dicts may only contain person_id, gist, similarity - nothing else."""
+    """Cross-user search result and evidence keys stay strictly allowlisted."""
     from thenetwork.agent.tools import search
 
     mock_match = MemoryMatch(
@@ -96,10 +97,11 @@ async def test_search_result_keys_sealed(adversarial_text: str):
     ):
         results = await search(ctx, query=adversarial_text)
 
-    allowed_keys = {"person_id", "gist", "similarity", "is_sender_owned"}
+    allowed_keys = {"person_id", "evidence", "similarity", "is_sender_owned"}
     for r in results:
         leaked = set(r.keys()) - allowed_keys
         assert not leaked, f"unexpected keys leaked into result: {leaked}"
+        assert all(set(item) == {"gist"} for item in r["evidence"])
 
 
 @pytest.mark.asyncio

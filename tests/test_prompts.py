@@ -25,7 +25,7 @@ def test_possible_match_guidance_describes_current_email_capability() -> None:
 
 def test_match_guidance_treats_similarity_as_discovery_only() -> None:
     guidance = SYSTEM_PROMPT.split("- `search` similarity", 1)[1].split(
-        "- A `search` row", 1
+        "- A `search` candidate", 1
     )[0]
     guidance = " ".join(guidance.split())
 
@@ -36,6 +36,18 @@ def test_match_guidance_treats_similarity_as_discovery_only() -> None:
     assert "shared keyword, tool, title, topic, or city" in guidance
     assert "Missing or contradictory evidence" in guidance
     assert "act without interrogating" in guidance
+
+
+def test_sender_owned_group_is_the_only_search_evidence_with_memory_ids() -> None:
+    guidance = SYSTEM_PROMPT.split("- A `search` candidate", 1)[1].split(
+        "- Tool status vocabulary", 1
+    )[0]
+    guidance = " ".join(guidance.split())
+
+    assert "groups the sender's own evidence" in guidance
+    assert "Only its evidence items carry `memory_id`" in guidance
+    assert "Cross-user evidence items contain sealed `gist` only" in guidance
+    assert "Never pass the sender-owned candidate's `person_id`" in guidance
 
 
 def test_thin_standing_intent_guidance_requests_one_material_follow_up() -> None:

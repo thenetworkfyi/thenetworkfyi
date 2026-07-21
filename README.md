@@ -145,7 +145,7 @@ The agent has sixteen tools (`thenetwork/agent/tools.py`):
 |---|---|
 | `remember(text, refs)` | write a chunk; a PII-stripped gist is produced automatically for any memory with refs |
 | `forget(memory_id)` | delete a sender-owned, single-ref chunk (edit = forget + remember, so embeddings never go stale) |
-| `search(query) -> [{person_id, gist, similarity}]` | semantic recall returning **opaque ids + gist only** for other people |
+| `search(query) -> [{person_id, evidence: [{gist}], similarity}]` | semantic candidate discovery returning bounded, grouped **opaque ids + sealed gists only** for other people; sender-owned evidence items also carry their own `memory_id` for edits |
 | `reply_to_sender(subject, body_text, sent_email_summary)` | reply only to the registered inbound sender; after SMTP succeeds, remember only the separate concise summary |
 | `send_outreach(recipient_user_id, subject, body_text, sent_email_summary)` | send unthreaded outreach by opaque id and remember only the post-SMTP summary; resolve the address server-side |
 | `propose_introduction(other_person_id, sender_gist, other_gist)` | create a sealed pairwise proposal; server-owned consent controls the anonymous relay handoff |

@@ -7,6 +7,10 @@ from sqlmodel import Session
 
 from thenetwork.search.graph import RECENCY_HALF_LIFE_DAYS
 
+MAX_CANDIDATE_CONTEXTS = 5
+MAX_EVIDENCE_GISTS_PER_PERSON = 4
+MAX_EVIDENCE_CHARS_PER_PERSON = 1_200
+
 
 @dataclass
 class MemoryMatch:
@@ -14,6 +18,149 @@ class MemoryMatch:
     person_id: str
     gist: str
     similarity: float
+
+
+@dataclass(frozen=True)
+class SealedMemoryEvidence:
+    """One PII-sanitized memory projection safe for candidate context."""
+
+    memory_id: str
+    gist: str
+
+
+@dataclass(frozen=True)
+class CandidateContext:
+    """Bounded sealed evidence for one opaque candidate person id."""
+
+    person_id: str
+    similarity: float
+    evidence: tuple[SealedMemoryEvidence, ...]
+
+
+def load_person_evidence(
+    session: Session,
+    person_ids: list[str],
+    *,
+    per_person_limit: int = MAX_EVIDENCE_GISTS_PER_PERSON,
+) -> dict[str, list[SealedMemoryEvidence]]:
+    """Load recent gist-only evidence for opaque people, bounded in SQL.
+
+    This is a SEAL projection: the query deliberately selects no raw memory
+    text, person row, name, or address. Character bounds are applied when the
+    evidence is assembled for model context.
+    """
+    ordered_ids = list(
+        dict.fromkeys(person_id for person_id in person_ids if person_id)
+    )
+    evidence = {person_id: [] for person_id in ordered_ids}
+    if not ordered_ids or per_person_limit <= 0:
+        return evidence
+
+    rows = session.exec(
+        text("""
+            WITH ranked AS (
+                SELECT
+                    m.id AS memory_id,
+                    m.gist AS gist,
+                    ref.person_id AS person_id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY ref.person_id
+                        ORDER BY m.created_at DESC, m.id
+                    ) AS evidence_rank
+                FROM memories m
+                CROSS JOIN LATERAL unnest(m.refs) AS ref(person_id)
+                WHERE
+                    m.gist IS NOT NULL
+                    AND ref.person_id = ANY(CAST(:person_ids AS text[]))
+            )
+            SELECT memory_id, gist, person_id
+            FROM ranked
+            WHERE evidence_rank <= :per_person_limit
+            ORDER BY person_id, evidence_rank
+        """),
+        params={
+            "person_ids": ordered_ids,
+            "per_person_limit": per_person_limit,
+        },
+    ).all()
+    for row in rows:
+        evidence[row.person_id].append(
+            SealedMemoryEvidence(memory_id=row.memory_id, gist=row.gist)
+        )
+    return evidence
+
+
+def build_candidate_contexts(
+    matches: list[MemoryMatch],
+    supporting_evidence: dict[str, list[SealedMemoryEvidence]] | None = None,
+    *,
+    max_candidates: int = MAX_CANDIDATE_CONTEXTS,
+    max_evidence_per_person: int = MAX_EVIDENCE_GISTS_PER_PERSON,
+    max_chars_per_person: int = MAX_EVIDENCE_CHARS_PER_PERSON,
+) -> list[CandidateContext]:
+    """Group ranked matches into bounded, deterministic candidate evidence.
+
+    Candidate order and similarity come from the first ranked retrieval hit.
+    Within a candidate, ranked hit gists come first, followed by recent
+    supporting gists. Exact duplicate ids or normalized gists are removed.
+    """
+    if max_candidates <= 0 or max_evidence_per_person <= 0 or max_chars_per_person <= 0:
+        return []
+
+    ordered_people: list[str] = []
+    similarity_by_person: dict[str, float] = {}
+    anchors_by_person: dict[str, list[SealedMemoryEvidence]] = {}
+    for match in matches:
+        if match.person_id not in similarity_by_person:
+            if len(ordered_people) == max_candidates:
+                continue
+            ordered_people.append(match.person_id)
+            similarity_by_person[match.person_id] = match.similarity
+            anchors_by_person[match.person_id] = []
+        if match.person_id in anchors_by_person:
+            anchors_by_person[match.person_id].append(
+                SealedMemoryEvidence(memory_id=match.memory_id, gist=match.gist)
+            )
+
+    supporting_evidence = supporting_evidence or {}
+    contexts = []
+    for person_id in ordered_people:
+        bounded: list[SealedMemoryEvidence] = []
+        seen_ids: set[str] = set()
+        seen_gists: set[str] = set()
+        chars = 0
+        ordered_evidence = anchors_by_person[person_id] + supporting_evidence.get(
+            person_id, []
+        )
+        for item in ordered_evidence:
+            gist = item.gist.strip()
+            normalized_gist = " ".join(gist.split()).casefold()
+            if not gist or item.memory_id in seen_ids or normalized_gist in seen_gists:
+                continue
+            remaining = max_chars_per_person - chars
+            if remaining <= 0:
+                break
+            bounded_gist = gist[:remaining]
+            bounded.append(
+                SealedMemoryEvidence(
+                    memory_id=item.memory_id,
+                    gist=bounded_gist,
+                )
+            )
+            seen_ids.add(item.memory_id)
+            seen_gists.add(normalized_gist)
+            chars += len(bounded_gist)
+            if len(bounded) == max_evidence_per_person:
+                break
+        if bounded:
+            contexts.append(
+                CandidateContext(
+                    person_id=person_id,
+                    similarity=similarity_by_person[person_id],
+                    evidence=tuple(bounded),
+                )
+            )
+    return contexts
 
 
 def match_memories(

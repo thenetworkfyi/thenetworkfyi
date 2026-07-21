@@ -613,11 +613,23 @@ strong_match_case = Case(
         known_people={"person-strong-1": "other@example.com"},
         search_results=[
             MemoryMatch(
-                memory_id="mem-strong-1",
+                memory_id="mem-strong-intent",
+                person_id="person-strong-1",
+                gist="wants to meet Rust systems peers working on low-level infrastructure",
+                similarity=0.92,
+            ),
+            MemoryMatch(
+                memory_id="mem-strong-contribution",
                 person_id="person-strong-1",
                 gist="Rust systems programmer building a distributed storage engine",
-                similarity=0.92,
-            )
+                similarity=0.90,
+            ),
+            MemoryMatch(
+                memory_id="mem-strong-scope",
+                person_id="person-strong-1",
+                gist="works deeply on storage internals and distributed systems",
+                similarity=0.87,
+            ),
         ],
     ),
     evaluators=(
@@ -627,8 +639,10 @@ strong_match_case = Case(
         NoPersonalSignoff(),
         LLMJudge(
             rubric=(
-                "There is a clear, specific overlap between the sender and "
-                "the search result gist (both Rust systems programmers). A "
+                "There is a clear, specific two-sided match across the grouped "
+                "candidate evidence: both want Rust systems peers, while the "
+                "candidate's separate sealed gists establish relevant storage and "
+                "distributed-systems contribution and scope. A "
                 "reasonable response proposes the introduction, references only what "
                 "the gist actually supports, and does not invent details beyond it. "
                 "The evidence already supports the match thesis, so it should not "
