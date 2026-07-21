@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import io
 import json
 import logging
+import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -38,6 +40,166 @@ def _events(caplog) -> list[dict]:
         for record in caplog.records
         if record.name == LOGGER_NAME
     ]
+
+
+class _LogAnalyzer:
+    def analyze(self, *, text, language):
+        matches = []
+        for value, entity_type in (
+            ("Alice Example", "PERSON"),
+            ("alice@example.test", "EMAIL_ADDRESS"),
+        ):
+            start = text.find(value)
+            while start >= 0:
+                matches.append(
+                    SimpleNamespace(
+                        start=start,
+                        end=start + len(value),
+                        entity_type=entity_type,
+                    )
+                )
+                start = text.find(value, start + len(value))
+        return matches
+
+
+def _format_foreign_log(
+    *,
+    logger_name: str,
+    message: str,
+    extra: dict,
+    exc_info=None,
+) -> dict:
+    from thenetwork import audit
+
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(
+        audit.structlog.stdlib.ProcessorFormatter(
+            foreign_pre_chain=audit._SHARED_PROCESSORS,
+            processors=[
+                audit.structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+                audit._JSON_RENDERER,
+            ],
+        )
+    )
+    logger = logging.getLogger(logger_name)
+    previous_handlers = logger.handlers[:]
+    previous_level = logger.level
+    previous_propagate = logger.propagate
+    logger.handlers = [handler]
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+    try:
+        log_method = logger.error if exc_info else logger.info
+        log_method(message, extra=extra, exc_info=exc_info)
+    finally:
+        logger.handlers = previous_handlers
+        logger.setLevel(previous_level)
+        logger.propagate = previous_propagate
+        handler.close()
+    return json.loads(stream.getvalue())
+
+
+def _procrastinate_job_extra(*, action: str, result=None) -> dict:
+    timestamp = 1784614500.0
+    task_name = "thenetwork.worker.abuse_judge.judge_primary_email_abuse"
+    task_kwargs = {
+        "timestamp": timestamp,
+        "sender_email": "alice@example.test",
+        "body": "Private note from Alice Example",
+    }
+    extra = {
+        "action": action,
+        "worker": {
+            "name": None,
+            "worker_id": 7,
+            "job_id": 35,
+            "queues": [],
+        },
+        "job": {
+            "id": 35,
+            "status": "doing",
+            "queue": "default",
+            "priority": 0,
+            "task_name": task_name,
+            "task_kwargs": task_kwargs,
+            "scheduled_at": None,
+            "attempts": 1,
+            "worker_id": 7,
+            "call_string": f"{task_name}[35](timestamp={timestamp})",
+        },
+        "start_timestamp": timestamp,
+        "duration": 4.992,
+    }
+    if result is not None:
+        extra["result"] = result
+    return extra
+
+
+def test_procrastinate_start_log_preserves_metadata_and_redacts_only_job_content(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "thenetwork.security.log_redaction._get_log_analyzer", _LogAnalyzer
+    )
+    event = _format_foreign_log(
+        logger_name="procrastinate.worker.worker",
+        message=(
+            "Starting job "
+            "thenetwork.worker.abuse_judge.judge_primary_email_abuse[35]"
+            "(timestamp=1784614500.0, sender_email='alice@example.test')"
+        ),
+        extra=_procrastinate_job_extra(action="start_job"),
+    )
+
+    serialized = json.dumps(event)
+    assert event["event"] == "procrastinate.start_job"
+    assert event["logger"] == "procrastinate.worker.worker"
+    assert event["level"] == "info"
+    assert event["action"] == "start_job"
+    assert event["job"]["task_name"] == (
+        "thenetwork.worker.abuse_judge.judge_primary_email_abuse"
+    )
+    assert event["job"]["task_kwargs"]["timestamp"] == 1784614500.0
+    assert event["start_timestamp"] == 1784614500.0
+    assert "call_string" not in event["job"]
+    assert "[url]er" not in serialized
+    assert "[phone_number]" not in serialized
+    assert "alice@example.test" not in serialized
+    assert "Alice Example" not in serialized
+
+
+def test_procrastinate_failure_log_redacts_result_and_exception_content(monkeypatch):
+    monkeypatch.setattr(
+        "thenetwork.security.log_redaction._get_log_analyzer", _LogAnalyzer
+    )
+    private_error = "Delivery failed for alice@example.test and Alice Example"
+    try:
+        raise RuntimeError(private_error)
+    except RuntimeError:
+        exc_info = sys.exc_info()
+
+    event = _format_foreign_log(
+        logger_name="procrastinate.worker.worker",
+        message=(
+            "Job thenetwork.worker.tasks.process_email[36]"
+            "(sender_email='alice@example.test') ended with status: Error"
+        ),
+        extra=_procrastinate_job_extra(
+            action="job_error", result="Reply for alice@example.test"
+        ),
+        exc_info=exc_info,
+    )
+
+    serialized = json.dumps(event)
+    assert event["event"] == "procrastinate.job_error"
+    assert event["logger"] == "procrastinate.worker.worker"
+    assert event["level"] == "error"
+    assert event["job"]["id"] == 35
+    assert event["duration"] == 4.992
+    assert "alice@example.test" not in serialized
+    assert "Alice Example" not in serialized
+    assert "RuntimeError" in event["exception"]
 
 
 def _mock_sender_lookup(sender_id: str | None) -> MagicMock:
