@@ -603,7 +603,7 @@ async def test_sim_run_cli_function_creates_run_directory(tmp_path):
     assert artifacts.audit_path.name == "audit.jsonl"
     assert not artifacts.audit_path.exists()
     config = json.loads(artifacts.config_path.read_text())
-    assert len(config["personas"]) == 24
+    assert len(config["personas"]) == 25
     assert len(config["outcome_checks"]) == len(DEFAULT_OUTCOME_CHECKS)
     assert config["llm_personas"] is False
     events = [

@@ -301,8 +301,8 @@ The compose stack uses `pgvector/pgvector:pg17`; use the corresponding local Pos
 
 ### Population situations
 
-`sim run` uses the authored population of 24 personas by default. The original first ten
-remain available for backward-compatible smoke runs with `--personas 10`; the 14 later
+`sim run` uses the authored population of 25 personas by default. The original first ten
+remain available for backward-compatible smoke runs with `--personas 10`; the 15 later
 personas are deliberately varied situations, not a scenario script. Their replies remain
 prompt-emergent when `--llm-personas` is enabled, so the checks describe observable
 outcomes rather than force a particular conversation.
@@ -345,6 +345,12 @@ outcomes rather than force a particular conversation.
   Outcome scoring requires a scope question; tier 2 binds each resulting memory to its sender.
 - **Chloe** opts out before sharing personal or professional facts. Outcome scoring requires
   the opt-out to leave no memory and no introduction.
+- **Leila Hart** begins with a concrete community-lab inventory-tool request that overlaps
+  with Mateo's lab-tools work but omits consequential role, experience, exchange, and working
+  details. She answers one focused gap category per turn. Outcome scoring requires two useful
+  qualification replies without a passive matching promise, forget-plus-remember consolidation
+  into one sender-owned standing memory, and a Leila-Mateo proposal only after the accumulated
+  two-sided evidence supports it.
 
 The recorder emits score events for tier 1 delivered-mail SEAL checks, captured-MIME
 presentation checks, tier 2 memory expectations, and scenario outcome predicates.

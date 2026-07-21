@@ -15,6 +15,8 @@ from thenetwork.sim.personas.population import (
     FELIX_EMAIL,
     GABI_EMAIL,
     HUGO_EMAIL,
+    LEILA_EMAIL,
+    MATEO_EMAIL,
     NADIA_EMAIL,
     PETRA_EMAIL,
     TARIQ_EMAIL,
@@ -180,6 +182,11 @@ def _default_outcome() -> ScenarioOutcome:
                 )
                 for index in range(6)
             ),
+            IntroductionConsentState(
+                person_a_email=LEILA_EMAIL,
+                person_b_email=MATEO_EMAIL,
+                status="proposed",
+            ),
         ),
         audit_events=(
             {
@@ -201,6 +208,26 @@ def _default_outcome() -> ScenarioOutcome:
                 "outcome": "success",
                 "sender_id_hash": "snd_v1_mina",
             },
+            *(
+                {
+                    "event": "agent.tool.completed",
+                    "tool_name": tool_name,
+                    "outcome": "success",
+                    "sender_id_hash": "snd_v1_leila",
+                }
+                for tool_name in (
+                    "remember",
+                    "remember",
+                    "forget",
+                    "forget",
+                    "remember",
+                    "remember",
+                    "forget",
+                    "forget",
+                    "remember",
+                    "propose_introduction",
+                )
+            ),
         ),
         sender_id_hashes={
             "omar.sim@example.test": "snd_v1_omar",
@@ -208,6 +235,7 @@ def _default_outcome() -> ScenarioOutcome:
             EVENT_ORGANIZER_EMAIL: "snd_v1_sloane",
             EVENT_ATTENDEE_EMAIL: "snd_v1_mina",
             EVENT_CONTROL_EMAIL: "snd_v1_theo",
+            LEILA_EMAIL: "snd_v1_leila",
         },
         mail_facts=(
             MailFacts(
@@ -240,8 +268,20 @@ def _default_outcome() -> ScenarioOutcome:
                 subject="Re: The Network",
                 body="What type of climate work are you focused on?",
             ),
+            MailFacts(
+                sender="join@example.test",
+                recipients=frozenset({LEILA_EMAIL}),
+                subject="Re: The Network",
+                body="What role and relevant experience do you bring to this lab tool?",
+            ),
+            MailFacts(
+                sender="join@example.test",
+                recipients=frozenset({LEILA_EMAIL}),
+                subject="Re: The Network",
+                body="What kind of peer exchange and working rhythm would be useful?",
+            ),
         ),
-        memory_counts={"vic.sim@example.test": 6},
+        memory_counts={"vic.sim@example.test": 6, LEILA_EMAIL: 1},
         event_rows=(
             EventOutcomeFact(
                 event_key="evt_v1_default",
@@ -278,7 +318,7 @@ def test_default_outcome_checks_cover_all_persona_situations():
     )
 
     assert score.passed is True
-    assert len(score.findings) == 18
+    assert len(score.findings) == 21
     assert all(check.requires_real_process for check in DEFAULT_OUTCOME_CHECKS)
     assert all(check.requires_llm_personas for check in DEFAULT_OUTCOME_CHECKS)
 
@@ -523,6 +563,106 @@ def test_tofu_outcome_checks_have_failure_fixtures(
 
     assert score.passed is False
     assert score.findings[0].passed is False
+
+
+@pytest.mark.parametrize(
+    ("check_index", "outcome"),
+    [
+        (
+            18,
+            replace(
+                _default_outcome(),
+                mail_facts=tuple(
+                    message
+                    for message in _default_outcome().mail_facts
+                    if not (
+                        LEILA_EMAIL in message.recipients
+                        and "working rhythm" in message.body
+                    )
+                ),
+            ),
+        ),
+        (
+            18,
+            replace(
+                _default_outcome(),
+                mail_facts=tuple(
+                    replace(message, body="Can you say more?")
+                    if LEILA_EMAIL in message.recipients
+                    else message
+                    for message in _default_outcome().mail_facts
+                ),
+            ),
+        ),
+        (19, replace(_default_outcome(), memory_counts={LEILA_EMAIL: 2})),
+        (
+            20,
+            replace(
+                _default_outcome(),
+                consent_rows=tuple(
+                    row
+                    for row in _default_outcome().consent_rows
+                    if LEILA_EMAIL not in row.participant_emails
+                )
+                + (
+                    IntroductionConsentState(
+                        person_a_email=LEILA_EMAIL,
+                        person_b_email="unrelated.sim@example.test",
+                        status="proposed",
+                    ),
+                ),
+            ),
+        ),
+        (
+            20,
+            replace(
+                _default_outcome(),
+                audit_events=(
+                    {
+                        "event": "agent.tool.completed",
+                        "tool_name": "propose_introduction",
+                        "outcome": "success",
+                        "sender_id_hash": "snd_v1_leila",
+                    },
+                    *_default_outcome().audit_events,
+                ),
+            ),
+        ),
+    ],
+)
+def test_match_depth_outcome_checks_have_failure_fixtures(
+    check_index: int,
+    outcome: ScenarioOutcome,
+):
+    score = score_scenario_outcomes(
+        outcome,
+        (DEFAULT_OUTCOME_CHECKS[check_index],),
+        real_process=True,
+        llm_personas=True,
+    )
+
+    assert score.passed is False
+    assert score.findings[0].passed is False
+
+
+def test_match_depth_outcome_evidence_is_privacy_safe():
+    score = score_scenario_outcomes(
+        _default_outcome(),
+        DEFAULT_OUTCOME_CHECKS[18:],
+        real_process=True,
+        llm_personas=True,
+    )
+
+    evidence = repr([finding.evidence for finding in score.findings])
+    assert score.passed is True
+    for private_value in (
+        LEILA_EMAIL,
+        MATEO_EMAIL,
+        "Leila Hart",
+        "community science labs",
+        "working rhythm",
+    ):
+        assert private_value not in evidence
 
 
 def test_ines_clarification_check_ignores_other_personas_clarify_events():
@@ -793,6 +933,10 @@ def test_omar_outcome_rejects_missing_repeated_or_revoked_consent(actions):
         (2, HUGO_EMAIL, "Hugo wants generic networking advice.", False),
         (3, TARIQ_EMAIL, "Tariq runs public-school heat-pump retrofits.", True),
         (3, TARIQ_EMAIL, "Tariq wants generic climate contacts.", False),
+        (4, LEILA_EMAIL, "Leila is a product designer for a community lab.", True),
+        (4, LEILA_EMAIL, "Leila wants generic lab contacts.", False),
+        (5, LEILA_EMAIL, "Leila wants a remote peer exchange.", True),
+        (5, LEILA_EMAIL, "Leila wants an in-person hiring lead.", False),
     ],
 )
 def test_default_memory_expectations_have_pass_and_fail_fixtures(
@@ -815,6 +959,16 @@ def test_default_memory_expectations_have_pass_and_fail_fixtures(
     )
 
     assert score.passed is expected
+
+
+def test_match_depth_memory_expectations_are_unexercised_without_persona_mail():
+    score = score_memory_expectations((), DEFAULT_EXPECTATIONS[4:], mail_facts=())
+
+    assert score.passed is True
+    assert all(
+        finding.evidence == {"unexercised": True, "persona_inbound_messages_checked": 0}
+        for finding in score.findings
+    )
 
 
 def test_default_memory_expectations_reject_wrong_persona_owner():

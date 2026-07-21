@@ -22,6 +22,7 @@ from thenetwork.sim.scoring.scoring import (
 RUTH_EMAIL = "ruth.sim@example.test"
 INES_EMAIL = "ines.sim@example.test"
 VIC_EMAIL = "vic.sim@example.test"
+MATEO_EMAIL = "mateo.sim@example.test"
 OMAR_EMAIL = "omar.sim@example.test"
 NADIA_EMAIL = "nadia.sim@example.test"
 PETRA_EMAIL = "petra.sim@example.test"
@@ -33,6 +34,7 @@ GABI_EMAIL = "gabi.sim@example.test"
 HUGO_EMAIL = "hugo.sim@example.test"
 TARIQ_EMAIL = "tariq.sim@example.test"
 CHLOE_EMAIL = "chloe.sim@example.test"
+LEILA_EMAIL = "leila.sim@example.test"
 
 _INTRODUCTION_SUBJECT = "Your introduction"
 _EVENT_RECOMMENDATION_SUBJECT = "An event you might care about"
@@ -52,6 +54,37 @@ _SCOPE_QUESTION_MARKERS = (
     "which part",
     "who would",
 )
+_PASSIVE_MATCHING_PROMISES = (
+    "keep looking",
+    "keep matching",
+    "keep you in mind",
+    "let you know if",
+    "let you know when",
+    "reach out if",
+    "reach out when",
+)
+_PROFILE_QUALIFICATION_MARKERS = (
+    "role",
+    "experience",
+    "involvement",
+    "contribution",
+    "worked on",
+)
+_MATCH_QUALIFICATION_MARKERS = (
+    "peer",
+    "exchange",
+    "working rhythm",
+    "cadence",
+    "remotely",
+    "location",
+)
+_PREMATURE_PROPOSAL_MARKERS = (
+    "would you like an introduction",
+    "should i introduce",
+    "shall i introduce",
+    "i found someone",
+    "i have a match",
+)
 
 
 _EMAIL_PRESENTATIONS = {
@@ -61,7 +94,7 @@ _EMAIL_PRESENTATIONS = {
     "nora.sim@example.test": EmailPresentation(
         signature=EmailSignature(lines=("Nora Chen", "Industrial Climate Research"))
     ),
-    "mateo.sim@example.test": EmailPresentation(
+    MATEO_EMAIL: EmailPresentation(
         format=EmailFormat.MULTIPART_ALTERNATIVE,
         signature=EmailSignature(
             lines=("Mateo Ruiz", "Product Designer"),
@@ -138,6 +171,10 @@ _EMAIL_PRESENTATIONS = {
         signature=EmailSignature(lines=("Tariq", "Public-Sector Retrofit Programs")),
     ),
     CHLOE_EMAIL: EmailPresentation(format=EmailFormat.MULTIPART_ALTERNATIVE),
+    LEILA_EMAIL: EmailPresentation(
+        format=EmailFormat.MULTIPART_ALTERNATIVE,
+        signature=EmailSignature(lines=("Leila Hart", "Community Lab Product Design")),
+    ),
 }
 
 
@@ -362,6 +399,172 @@ def _privacy_opt_out_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
             and CHLOE_EMAIL in message.recipients
             for message in outcome.mail_facts
         ),
+    }
+
+
+def _match_depth_tool_events(outcome: ScenarioOutcome) -> list[dict[str, Any]]:
+    sender_id_hash = outcome.sender_id_hashes.get(LEILA_EMAIL)
+    if sender_id_hash is None:
+        return []
+    return [
+        dict(event)
+        for event in outcome.audit_events
+        if event.get("event") == "agent.tool.completed"
+        and event.get("outcome") == "success"
+        and event.get("sender_id_hash") == sender_id_hash
+        and event.get("tool_name") in {"forget", "remember", "propose_introduction"}
+    ]
+
+
+def _match_depth_question_replies(outcome: ScenarioOutcome):
+    return tuple(
+        message
+        for message in outcome.mail_facts
+        if LEILA_EMAIL in message.recipients
+        and message.subject not in {_INTRODUCTION_SUBJECT, "Possible introduction"}
+        and "?" in message.body
+    )
+
+
+def _has_no_passive_match_promise(outcome: ScenarioOutcome) -> bool:
+    replies = (
+        message.body.casefold()
+        for message in outcome.mail_facts
+        if LEILA_EMAIL in message.recipients
+        and message.subject not in {_INTRODUCTION_SUBJECT, "Possible introduction"}
+    )
+    return not any(
+        phrase in body for body in replies for phrase in _PASSIVE_MATCHING_PROMISES
+    )
+
+
+def _has_progressive_match_questions(outcome: ScenarioOutcome) -> bool:
+    question_bodies = [
+        message.body.casefold() for message in _match_depth_question_replies(outcome)
+    ]
+    if len(question_bodies) != 2 or not _has_no_passive_match_promise(outcome):
+        return False
+    if any(body.count("?") != 1 for body in question_bodies):
+        return False
+    if any(
+        marker in body
+        for body in question_bodies
+        for marker in _PREMATURE_PROPOSAL_MARKERS
+    ):
+        return False
+
+    profile_questions = {
+        index
+        for index, body in enumerate(question_bodies)
+        if any(marker in body for marker in _PROFILE_QUALIFICATION_MARKERS)
+    }
+    match_questions = {
+        index
+        for index, body in enumerate(question_bodies)
+        if any(marker in body for marker in _MATCH_QUALIFICATION_MARKERS)
+    }
+    return any(
+        profile_index != match_index
+        for profile_index in profile_questions
+        for match_index in match_questions
+    )
+
+
+def _progressive_match_question_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
+    question_bodies = [
+        message.body.casefold() for message in _match_depth_question_replies(outcome)
+    ]
+    return {
+        "question_reply_count": len(question_bodies),
+        "single_question_reply_count": sum(
+            body.count("?") == 1 for body in question_bodies
+        ),
+        "profile_question_present": any(
+            marker in body
+            for body in question_bodies
+            for marker in _PROFILE_QUALIFICATION_MARKERS
+        ),
+        "match_question_present": any(
+            marker in body
+            for body in question_bodies
+            for marker in _MATCH_QUALIFICATION_MARKERS
+        ),
+        "proposal_shaped_question_present": any(
+            marker in body
+            for body in question_bodies
+            for marker in _PREMATURE_PROPOSAL_MARKERS
+        ),
+        "passive_promise_present": not _has_no_passive_match_promise(outcome),
+    }
+
+
+def _has_progressive_memory_lifecycle(outcome: ScenarioOutcome) -> bool:
+    tool_names = [event["tool_name"] for event in _match_depth_tool_events(outcome)]
+    forget_positions = [
+        index for index, tool_name in enumerate(tool_names) if tool_name == "forget"
+    ]
+    remember_positions = [
+        index for index, tool_name in enumerate(tool_names) if tool_name == "remember"
+    ]
+    return (
+        outcome.memory_counts.get(LEILA_EMAIL, 0) == 1
+        and len(forget_positions) >= 2
+        and len(remember_positions) >= 3
+        and all(
+            any(remember_index > forget_index for remember_index in remember_positions)
+            for forget_index in forget_positions
+        )
+    )
+
+
+def _progressive_memory_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
+    tool_names = [event["tool_name"] for event in _match_depth_tool_events(outcome)]
+    return {
+        "memory_count": outcome.memory_counts.get(LEILA_EMAIL, 0),
+        "forget_count": tool_names.count("forget"),
+        "remember_count": tool_names.count("remember"),
+    }
+
+
+def _has_supported_match_after_qualification(outcome: ScenarioOutcome) -> bool:
+    leila_pairs = [
+        row for row in outcome.consent_rows if _pair_involves(row, LEILA_EMAIL)
+    ]
+    if len(leila_pairs) != 1:
+        return False
+    pair = leila_pairs[0]
+    if pair.participant_emails != frozenset((LEILA_EMAIL, MATEO_EMAIL)):
+        return False
+    if pair.status not in {"proposed", "one_consented", "introduced"}:
+        return False
+
+    tool_names = [event["tool_name"] for event in _match_depth_tool_events(outcome)]
+    proposal_positions = [
+        index
+        for index, tool_name in enumerate(tool_names)
+        if tool_name == "propose_introduction"
+    ]
+    if len(proposal_positions) != 1:
+        return False
+    first_proposal = proposal_positions[0]
+    return (
+        tool_names[:first_proposal].count("forget") >= 2
+        and tool_names[:first_proposal].count("remember") >= 3
+    )
+
+
+def _supported_match_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
+    tool_names = [event["tool_name"] for event in _match_depth_tool_events(outcome)]
+    return {
+        "tool_sequence": tool_names,
+        "pair_count": sum(
+            _pair_involves(row, LEILA_EMAIL) for row in outcome.consent_rows
+        ),
+        "supported_pair_statuses": [
+            row.status
+            for row in outcome.consent_rows
+            if row.participant_emails == frozenset((LEILA_EMAIL, MATEO_EMAIL))
+        ],
     }
 
 
@@ -724,6 +927,34 @@ DEFAULT_OUTCOME_CHECKS = (
         requires_llm_personas=True,
         evidence=_privacy_opt_out_summary,
     ),
+    OutcomeCheck(
+        description=(
+            "Leila receives two progressive qualification questions without a "
+            "passive matching promise"
+        ),
+        predicate=_has_progressive_match_questions,
+        requires_real_process=True,
+        requires_llm_personas=True,
+        evidence=_progressive_match_question_summary,
+    ),
+    OutcomeCheck(
+        description=(
+            "Leila's asked notes and stale intent consolidate into one standing memory"
+        ),
+        predicate=_has_progressive_memory_lifecycle,
+        requires_real_process=True,
+        requires_llm_personas=True,
+        evidence=_progressive_memory_summary,
+    ),
+    OutcomeCheck(
+        description=(
+            "Leila's supported Mateo match is proposed only after progressive qualification"
+        ),
+        predicate=_has_supported_match_after_qualification,
+        requires_real_process=True,
+        requires_llm_personas=True,
+        evidence=_supported_match_summary,
+    ),
 )
 
 
@@ -752,6 +983,18 @@ DEFAULT_EXPECTATIONS = (
         persona_email=TARIQ_EMAIL,
         inbound_contains_any=("heat-pump retrofits", "public schools"),
     ),
+    MemoryExpectation(
+        description="Leila's community-lab product-design experience is preserved",
+        gist_contains="community lab",
+        persona_email=LEILA_EMAIL,
+        inbound_contains_any=("community science labs", "product designer"),
+    ),
+    MemoryExpectation(
+        description="Leila's remote peer-exchange constraints are preserved",
+        gist_contains="remote",
+        persona_email=LEILA_EMAIL,
+        inbound_contains_any=("remote", "every other week", "three months"),
+    ),
 )
 
 
@@ -779,7 +1022,7 @@ def default_population(
         ),
         (
             "Mateo Ruiz",
-            "mateo.sim@example.test",
+            MATEO_EMAIL,
             "Meet designers turning dense technical workflows into usable internal tools.",
             "I design internal tools for lab operations and want to compare notes on adoption.",
         ),
@@ -1182,7 +1425,40 @@ def default_population(
             ),
         ),
     )
-    return (*original_population, *additions, *top_of_funnel)
+    progressive_match = (
+        PopulationPersona(
+            config=PersonaConfig(
+                name="Leila Hart",
+                email=LEILA_EMAIL,
+                goal=(
+                    "Build toward a well-supported peer introduction without volunteering "
+                    "every detail at once. Begin only with the lab-inventory request from "
+                    "your opening email. You have two additional gap categories to answer "
+                    "honestly when The Network asks a focused question: first, you are the "
+                    "product designer and have piloted the tool with two volunteer-run "
+                    "community science labs; second, you want a peer product designer with "
+                    "hands-on workflow-adoption experience to compare onboarding methods, "
+                    "and you can meet remotely every other week for three months. Answer "
+                    "only the single category the question actually asks about, preserve "
+                    "everything you already stated, and do not invent other constraints. "
+                    "If a supported introduction is later proposed, reply Yes with its "
+                    "[intro:...] token."
+                ),
+                stop_condition=(
+                    "Stop after consenting to a supported introduction, or after both gap "
+                    "categories are registered and no relevant peer is available."
+                ),
+                message_budget=4,
+                agent_address=agent_address,
+                presentation=_presentation_for(LEILA_EMAIL),
+            ),
+            opening_body=(
+                "I am building inventory software for community science labs and would "
+                "like to meet someone else working on lab tools."
+            ),
+        ),
+    )
+    return (*original_population, *additions, *top_of_funnel, *progressive_match)
 
 
 def _with_event(persona: PopulationPersona, event: ScheduledEvent) -> PopulationPersona:
