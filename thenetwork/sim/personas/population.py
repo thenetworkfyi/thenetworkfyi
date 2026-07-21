@@ -28,6 +28,11 @@ PETRA_EMAIL = "petra.sim@example.test"
 EVENT_ORGANIZER_EMAIL = "sloane.sim@example.test"
 EVENT_ATTENDEE_EMAIL = "mina.sim@example.test"
 EVENT_CONTROL_EMAIL = "theo.sim@example.test"
+FELIX_EMAIL = "felix.sim@example.test"
+GABI_EMAIL = "gabi.sim@example.test"
+HUGO_EMAIL = "hugo.sim@example.test"
+TARIQ_EMAIL = "tariq.sim@example.test"
+CHLOE_EMAIL = "chloe.sim@example.test"
 
 _INTRODUCTION_SUBJECT = "Your introduction"
 _EVENT_RECOMMENDATION_SUBJECT = "An event you might care about"
@@ -111,6 +116,18 @@ _EMAIL_PRESENTATIONS = {
         signature=EmailSignature(lines=("Sloane Park", "Workshop Organizer"))
     ),
     EVENT_ATTENDEE_EMAIL: EmailPresentation(format=EmailFormat.MULTIPART_ALTERNATIVE),
+    FELIX_EMAIL: EmailPresentation(
+        signature=EmailSignature(lines=("Felix",)),
+    ),
+    GABI_EMAIL: EmailPresentation(format=EmailFormat.MULTIPART_ALTERNATIVE),
+    HUGO_EMAIL: EmailPresentation(
+        format=EmailFormat.MULTIPART_ALTERNATIVE,
+        signature=EmailSignature(lines=("Hugo", "Community Health Systems")),
+    ),
+    TARIQ_EMAIL: EmailPresentation(
+        signature=EmailSignature(lines=("Tariq", "Public-Sector Retrofit Programs")),
+    ),
+    CHLOE_EMAIL: EmailPresentation(format=EmailFormat.MULTIPART_ALTERNATIVE),
 }
 
 
@@ -966,7 +983,103 @@ def default_population(
             ),
         ),
     )
-    return (*original_population, *additions)
+    top_of_funnel = (
+        PopulationPersona(
+            config=PersonaConfig(
+                name="Felix",
+                email=FELIX_EMAIL,
+                goal=(
+                    "Send one content-free greeting. Do not invent a profession, "
+                    "interest, project, or request, even if The Network asks for one."
+                ),
+                stop_condition="Stop after The Network replies once.",
+                message_budget=1,
+                agent_address=agent_address,
+                presentation=_presentation_for(FELIX_EMAIL),
+            ),
+            opening_body="Hi.",
+        ),
+        PopulationPersona(
+            config=PersonaConfig(
+                name="Gabi",
+                email=GABI_EMAIL,
+                goal=(
+                    "Ask what The Network does and how it handles information before "
+                    "deciding whether to participate. Do not state a profession, project, "
+                    "interest, or networking request."
+                ),
+                stop_condition=(
+                    "Stop after receiving a useful explanation or after asking twice."
+                ),
+                message_budget=2,
+                agent_address=agent_address,
+                presentation=_presentation_for(GABI_EMAIL),
+            ),
+            opening_body=(
+                "A friend gave me this address. What is The Network, and what would you "
+                "do with anything I send?"
+            ),
+        ),
+        PopulationPersona(
+            config=PersonaConfig(
+                name="Hugo",
+                email=HUGO_EMAIL,
+                goal=(
+                    "Ask for a useful introduction without naming a field on the first "
+                    "turn. Only after The Network asks a focused follow-up, explain that "
+                    "you maintain software for community health clinics and want peers "
+                    "operating patient-scheduling systems."
+                ),
+                stop_condition=(
+                    "Stop once that community-clinic systems scope is registered."
+                ),
+                message_budget=3,
+                agent_address=agent_address,
+                presentation=_presentation_for(HUGO_EMAIL),
+            ),
+            opening_body=(
+                "I would like an introduction, but I am not sure how specific I need to be."
+            ),
+        ),
+        PopulationPersona(
+            config=PersonaConfig(
+                name="Tariq",
+                email=TARIQ_EMAIL,
+                goal=(
+                    "Begin with a broad request to meet someone working on climate. If The "
+                    "Network asks what kind of work or counterpart would help, narrow it to "
+                    "procurement leads running heat-pump retrofits for public schools."
+                ),
+                stop_condition=(
+                    "Stop once the public-school retrofit scope is registered."
+                ),
+                message_budget=3,
+                agent_address=agent_address,
+                presentation=_presentation_for(TARIQ_EMAIL),
+            ),
+            opening_body="I want to meet someone working on climate.",
+        ),
+        PopulationPersona(
+            config=PersonaConfig(
+                name="Chloe",
+                email=CHLOE_EMAIL,
+                goal=(
+                    "Explicitly opt out before sharing any personal or professional facts. "
+                    "Ask The Network not to retain information about you and do not accept "
+                    "an invitation to continue."
+                ),
+                stop_condition="Stop once the privacy opt-out is acknowledged.",
+                message_budget=2,
+                agent_address=agent_address,
+                presentation=_presentation_for(CHLOE_EMAIL),
+            ),
+            opening_body=(
+                "Please do not retain information about me. I am opting out and do not "
+                "want to participate."
+            ),
+        ),
+    )
+    return (*original_population, *additions, *top_of_funnel)
 
 
 def _with_event(persona: PopulationPersona, event: ScheduledEvent) -> PopulationPersona:
