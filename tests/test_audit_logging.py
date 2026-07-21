@@ -169,6 +169,40 @@ def test_procrastinate_start_log_preserves_metadata_and_redacts_only_job_content
     assert "Alice Example" not in serialized
 
 
+def test_procrastinate_success_log_preserves_completion_metadata(monkeypatch):
+    monkeypatch.setattr(
+        "thenetwork.security.log_redaction._get_log_analyzer", _LogAnalyzer
+    )
+    extra = _procrastinate_job_extra(
+        action="job_success", result="Reply for alice@example.test"
+    )
+    extra["end_timestamp"] = 1784614504.992
+    event = _format_foreign_log(
+        logger_name="procrastinate.worker.worker",
+        message=(
+            "Job thenetwork.worker.tasks.process_email[35]"
+            "(sender_email='alice@example.test') ended with status: Success, "
+            "lasted 4.992 s - Result: Reply for alice@example.test"
+        ),
+        extra=extra,
+    )
+
+    serialized = json.dumps(event)
+    assert event["event"] == "procrastinate.job_success"
+    assert event["logger"] == "procrastinate.worker.worker"
+    assert event["level"] == "info"
+    assert event["job"]["id"] == 35
+    assert event["job"]["task_name"] == (
+        "thenetwork.worker.abuse_judge.judge_primary_email_abuse"
+    )
+    assert event["start_timestamp"] == 1784614500.0
+    assert event["end_timestamp"] == 1784614504.992
+    assert event["duration"] == 4.992
+    assert "[url]er" not in serialized
+    assert "[phone_number]" not in serialized
+    assert "alice@example.test" not in serialized
+
+
 def test_procrastinate_failure_log_redacts_result_and_exception_content(monkeypatch):
     monkeypatch.setattr(
         "thenetwork.security.log_redaction._get_log_analyzer", _LogAnalyzer
