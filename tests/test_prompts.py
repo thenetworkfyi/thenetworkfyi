@@ -55,6 +55,22 @@ def test_status_vocabulary_guidance_present() -> None:
     assert "never loop on the same error" in guidance
 
 
+def test_operational_and_account_wide_requests_escalate() -> None:
+    guidance = SYSTEM_PROMPT.split("- Operational and account-wide requests", 1)[
+        1
+    ].split("- Consolidation:", 1)[0]
+    guidance = " ".join(guidance.split())
+
+    assert "broken or not working as expected" in guidance
+    assert "complaint that needs follow-up" in guidance
+    assert "delete their account or all data" in guidance
+    assert "call `escalate(reason)`" in guidance
+    assert "Do not attempt remediation" in guidance
+    assert "call `forget`" in guidance
+    assert "request to forget or correct one or more specific" in guidance
+    assert "should use `forget`" in guidance
+
+
 def test_consolidation_guidance_present() -> None:
     guidance = SYSTEM_PROMPT.split("- Consolidation:", 1)[1].split(
         "- `register_person`", 1

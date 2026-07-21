@@ -650,11 +650,14 @@ ambiguous_case = Case(
 )
 
 
-removal_case = Case(
-    name="removal",
+specific_fact_removal_case = Case(
+    name="specific_fact_removal",
     inputs=EmailScenario(
-        subject="remove me",
-        body="Please remove my info from The Network.",
+        subject="forget these details",
+        body=(
+            "Please forget that I work on observability and that I am looking "
+            "to meet infrastructure founders. Those specific facts are outdated."
+        ),
         sender_email="maya@example.com",
         sender_user_id="user-maya",
         sender_authenticated=True,
@@ -692,11 +695,72 @@ removal_case = Case(
         NoPersonalSignoff(),
         LLMJudge(
             rubric=(
-                "The sender is a known authenticated member asking to remove "
-                "their own information. A reasonable response searches for "
+                "The sender is a known authenticated member asking to forget "
+                "two specific outdated facts. A reasonable response searches "
                 "their stored facts, forgets only the memory ids belonging "
                 "solely to that sender, does not attempt to delete the other "
                 "person's memory, and sends a brief confirmation."
+            ),
+            model=_judge_model,
+            include_input=True,
+        ),
+    ),
+)
+
+
+technical_issue_case = Case(
+    name="technical_issue_escalation",
+    inputs=EmailScenario(
+        subject="Replies are broken",
+        body=(
+            "The consent link in the last two introduction emails does not work. "
+            "Clicking it opens a server error. Can someone investigate?"
+        ),
+        sender_email="maya@example.com",
+        sender_user_id="user-maya",
+        sender_authenticated=True,
+    ),
+    evaluators=(
+        ToolWasCalled("escalate"),
+        ToolWasNotCalled("reply_to_sender"),
+        ToolWasNotCalled("remember"),
+        LLMJudge(
+            rubric=(
+                "The sender reports a reproducible technical failure in The "
+                "Network and asks for investigation. The agent has no support "
+                "or remediation capability, so it should escalate the request "
+                "to a human operator without claiming to fix or diagnose it."
+            ),
+            model=_judge_model,
+            include_input=True,
+        ),
+    ),
+)
+
+
+full_data_deletion_case = Case(
+    name="full_data_deletion_escalation",
+    inputs=EmailScenario(
+        subject="Delete my account and data",
+        body=(
+            "Please permanently delete my account and every piece of personal "
+            "data associated with me from The Network."
+        ),
+        sender_email="maya@example.com",
+        sender_user_id="user-maya",
+        sender_authenticated=True,
+    ),
+    evaluators=(
+        ToolWasCalled("escalate"),
+        ToolWasNotCalled("forget"),
+        ToolWasNotCalled("reply_to_sender"),
+        LLMJudge(
+            rubric=(
+                "The sender requests account-wide, full-data deletion. The "
+                "memory forget tool cannot fulfill that operational request, "
+                "so the agent should escalate it to a human operator, must not "
+                "attempt piecemeal memory deletion, and must not claim the "
+                "request has been completed."
             ),
             model=_judge_model,
             include_input=True,
@@ -1188,7 +1252,9 @@ archetype_dataset = Dataset[EmailScenario, RunOutcome](
         strong_match_case,
         injection_case,
         ambiguous_case,
-        removal_case,
+        specific_fact_removal_case,
+        technical_issue_case,
+        full_data_deletion_case,
         vague_intent_qualification_case,
         peer_level_qualification_case,
         preference_mismatch_case,
