@@ -48,9 +48,9 @@ def match_events(
         ORDER BY similarity DESC, e.id
         LIMIT :limit
     """)
-    rows = session.execute(
+    rows = session.exec(
         sql,
-        {"vec": vec_literal, "min_sim": min_similarity, "limit": limit},
+        params={"vec": vec_literal, "min_sim": min_similarity, "limit": limit},
     ).fetchall()
     return [
         EventMatch(

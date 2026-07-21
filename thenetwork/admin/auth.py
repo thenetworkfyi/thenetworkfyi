@@ -160,7 +160,7 @@ def _consume_signature(sig_hash: str, window_seconds: int) -> bool:
     cutoff = datetime.now(timezone.utc) - timedelta(seconds=window_seconds)
     try:
         with get_session() as session:
-            session.execute(delete(AdminNonce).where(AdminNonce.created_at < cutoff))
+            session.exec(delete(AdminNonce).where(AdminNonce.created_at < cutoff))
             if session.get(AdminNonce, sig_hash) is not None:
                 return False
             session.add(AdminNonce(nonce=sig_hash))

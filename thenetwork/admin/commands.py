@@ -113,7 +113,7 @@ async def _cmd_search(query: str) -> str:
         LIMIT 10
     """)
     with get_session() as session:
-        rows = session.execute(sql, {"vec": vec_literal}).fetchall()
+        rows = session.exec(sql, params={"vec": vec_literal}).fetchall()
     audit_event(
         "database.action",
         action="search",
