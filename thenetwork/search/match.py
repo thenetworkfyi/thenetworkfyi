@@ -65,9 +65,9 @@ def match_memories(
             ref.person_id
         LIMIT :limit
     """)
-    rows = session.execute(
+    rows = session.exec(
         sql,
-        {
+        params={
             "vec": vec_literal,
             "min_sim": min_similarity,
             "limit": limit,

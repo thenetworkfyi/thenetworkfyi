@@ -23,11 +23,11 @@ def test_event_match_sql_never_selects_raw_text_or_submitter_identity():
         similarity=0.91,
     )
     session = MagicMock()
-    session.execute.return_value.fetchall.return_value = [row]
+    session.exec.return_value.fetchall.return_value = [row]
 
     matches = match_events([0.0, 1.0], session, limit=4)
 
-    statement = str(session.execute.call_args.args[0]).lower()
+    statement = str(session.exec.call_args.args[0]).lower()
     assert "e.text" not in statement
     assert "e.recurrence" not in statement
     assert "submitter_id" not in statement
@@ -39,6 +39,8 @@ def test_event_match_sql_never_selects_raw_text_or_submitter_identity():
     assert not hasattr(matches[0], "text")
     assert not hasattr(matches[0], "submitter_id")
     assert not hasattr(matches[0], "recurrence")
+    assert session.exec.call_args.kwargs["params"]["limit"] == 4
+    session.execute.assert_not_called()
 
 
 @pytest.mark.asyncio

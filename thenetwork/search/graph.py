@@ -29,7 +29,7 @@ def build_graph() -> nx.Graph:
     """
     G: nx.Graph = nx.Graph()
     with get_session() as session:
-        rows = session.execute(
+        rows = session.exec(
             text("""
                 SELECT refs, created_at
                 FROM memories
