@@ -410,9 +410,15 @@ def test_public_simulation_mbox_redacts_untrusted_headers_and_envelope(tmp_path)
     message = EmailMessage()
     message["From"] = "Alice <alice@example.test>"
     message["To"] = "join@example.test"
-    message["Message-ID"] = "<request_123456-alice@example.test>"
-    message["In-Reply-To"] = "<trace_123456-alice@example.test>"
-    message["References"] = "<request_123456-alice@example.test>"
+    source_message_id = (
+        "<1772890.10662178711929224360@"
+        "cbx-dl-71004e9f-install-content-scanner-a5839631>"
+    )
+    source_reply_id = "<trace_123456-alice@example.test>"
+    source_content_id = "<attachment_123456-alice@example.test>"
+    message["Message-ID"] = source_message_id
+    message["In-Reply-To"] = source_reply_id
+    message["References"] = f"{source_message_id} {source_reply_id}"
     message["X-Client-Secret"] = "api_key=sk_abcdefghijklmnopq"
     message["X-Custom"] = "https://example.test/alice@example.test"
     message.set_content("Safe body")
@@ -423,15 +429,30 @@ def test_public_simulation_mbox_redacts_untrusted_headers_and_envelope(tmp_path)
         filename="alice@example.test",
     )
     message.set_param("name", "alice@example.test", header="Content-Type")
+    message["Content-ID"] = source_content_id
     SimPostOffice(mbox_path=raw_mbox_path).deliver(message)
 
     publish_redacted_mbox(raw_mbox_path, public_mbox_path)
 
+    public_box = mailbox.mbox(public_mbox_path)
+    try:
+        (redacted,) = tuple(public_box)
+    finally:
+        public_box.close()
+    assert redacted["Message-ID"] == "<sim-redacted-1@simulation.invalid>"
+    assert redacted["In-Reply-To"] == "<sim-redacted-2@simulation.invalid>"
+    assert redacted["References"] == (
+        "<sim-redacted-1@simulation.invalid> <sim-redacted-2@simulation.invalid>"
+    )
+    assert redacted["Content-ID"] == "<sim-redacted-3@simulation.invalid>"
+
     public_artifact = public_mbox_path.read_text(encoding="utf-8")
     for sensitive in (
         "alice@example.test",
-        "request_123456",
+        "1772890.10662178711929224360",
+        "cbx-dl-71004e9f-install-content-scanner-a5839631",
         "trace_123456",
+        "attachment_123456",
         "sk_abcdefghijklmnopq",
         "https://example.test/alice@example.test",
         "Safe body",
