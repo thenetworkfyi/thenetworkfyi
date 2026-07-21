@@ -21,9 +21,10 @@ The script deletes:
   - the matching people row
   - memories whose refs array contains that person's id
   - structured records removed by foreign-key cascades
+  - rate-limit rows keyed to the normalized target email
 
-The script deliberately leaves rate limits, processed-message dedup records,
-completed jobs, logs, and mailbox messages unchanged.
+The script deliberately leaves shared global rate limits, processed-message
+dedup records, completed jobs, logs, and mailbox messages unchanged.
 EOF
 }
 
@@ -60,7 +61,8 @@ if [[ "$commit" == true ]]; then
         exit 2
     fi
 
-    echo "This will permanently remove the Person row for $target_email."
+    echo "This will permanently remove application data for $target_email."
+    echo "That includes its Person row, if present, and email-specific rate limits."
     echo "Memories referring to that person will be deleted in full, including"
     echo "any memory that also refers to another person. Take a backup first."
     expected="delete $target_email"
@@ -91,16 +93,10 @@ FROM people
 WHERE lower(email) = lower(:'target_email');
 
 SELECT
-    count(*) = 0 AS target_missing,
-    count(*) <> 1 AS target_not_unique
+    count(*) > 0 AS target_present,
+    count(*) > 1 AS target_not_unique
 FROM rollback_person
 \gset
-
-\if :target_missing
-    \echo No matching Person row was found. Nothing needs to be removed.
-    ROLLBACK;
-    \quit
-\endif
 
 \if :target_not_unique
     \echo More than one case-insensitive match was found; refusing to continue.
@@ -108,87 +104,102 @@ FROM rollback_person
     \quit 3
 \endif
 
-\echo
-\echo Matching Person row:
-SELECT p.id, p.email, p.name
-FROM people AS p
-JOIN rollback_person AS target ON target.id = p.id;
+\if :target_present
+    \echo
+    \echo Matching Person row:
+    SELECT p.id, p.email, p.name
+    FROM people AS p
+    JOIN rollback_person AS target ON target.id = p.id;
 
-\echo
-\echo Records affected directly or by cascade:
-SELECT relation, row_count
-FROM (
-    SELECT 'event_recommendations' AS relation, count(DISTINCT r.id) AS row_count
-    FROM event_recommendations AS r
-    WHERE r.person_id IN (SELECT id FROM rollback_person)
-       OR r.event_id IN (
-            SELECT e.id
-            FROM events AS e
-            WHERE e.submitter_id IN (SELECT id FROM rollback_person)
-       )
+    \echo
+    \echo Records affected directly or by cascade:
+    SELECT relation, row_count
+    FROM (
+        SELECT 'event_recommendations' AS relation, count(DISTINCT r.id) AS row_count
+        FROM event_recommendations AS r
+        WHERE r.person_id IN (SELECT id FROM rollback_person)
+           OR r.event_id IN (
+                SELECT e.id
+                FROM events AS e
+                WHERE e.submitter_id IN (SELECT id FROM rollback_person)
+           )
 
-    UNION ALL
+        UNION ALL
 
-    SELECT 'event_suppressions', count(*)
-    FROM event_suppressions AS s
-    WHERE s.person_id IN (SELECT id FROM rollback_person)
+        SELECT 'event_suppressions', count(*)
+        FROM event_suppressions AS s
+        WHERE s.person_id IN (SELECT id FROM rollback_person)
 
-    UNION ALL
+        UNION ALL
 
-    SELECT 'events', count(*)
-    FROM events AS e
-    WHERE e.submitter_id IN (SELECT id FROM rollback_person)
+        SELECT 'events', count(*)
+        FROM events AS e
+        WHERE e.submitter_id IN (SELECT id FROM rollback_person)
 
-    UNION ALL
+        UNION ALL
 
-    SELECT 'introduction_consents', count(*)
-    FROM introduction_consents AS c
-    WHERE c.person_a_id IN (SELECT id FROM rollback_person)
-       OR c.person_b_id IN (SELECT id FROM rollback_person)
+        SELECT 'introduction_consents', count(*)
+        FROM introduction_consents AS c
+        WHERE c.person_a_id IN (SELECT id FROM rollback_person)
+           OR c.person_b_id IN (SELECT id FROM rollback_person)
 
-    UNION ALL
+        UNION ALL
 
-    SELECT 'memories', count(*)
+        SELECT 'memories', count(*)
+        FROM memories AS m
+        WHERE EXISTS (
+            SELECT 1
+            FROM rollback_person AS target
+            WHERE target.id = ANY(m.refs)
+        )
+
+        UNION ALL
+
+        SELECT 'proactive_surfaces', count(*)
+        FROM proactive_surfaces AS s
+        WHERE s.person_a_id IN (SELECT id FROM rollback_person)
+           OR s.person_b_id IN (SELECT id FROM rollback_person)
+    ) AS affected
+    ORDER BY relation;
+
+    \echo
+    \echo Memories selected for deletion; inspect refs for shared memories:
+    SELECT m.id, m.created_at, m.refs
     FROM memories AS m
     WHERE EXISTS (
         SELECT 1
         FROM rollback_person AS target
         WHERE target.id = ANY(m.refs)
     )
+    ORDER BY m.created_at, m.id;
 
-    UNION ALL
-
-    SELECT 'proactive_surfaces', count(*)
-    FROM proactive_surfaces AS s
-    WHERE s.person_a_id IN (SELECT id FROM rollback_person)
-       OR s.person_b_id IN (SELECT id FROM rollback_person)
-) AS affected
-ORDER BY relation;
-
-\echo
-\echo Memories selected for deletion; inspect refs for shared memories:
-SELECT m.id, m.created_at, m.refs
-FROM memories AS m
-WHERE EXISTS (
-    SELECT 1
-    FROM rollback_person AS target
+    \echo
+    \echo Deleting memories:
+    DELETE FROM memories AS m
+    USING rollback_person AS target
     WHERE target.id = ANY(m.refs)
-)
-ORDER BY m.created_at, m.id;
+    RETURNING m.id, m.created_at, m.refs;
+
+    \echo
+    \echo Deleting Person; foreign-key records cascade:
+    DELETE FROM people AS p
+    USING rollback_person AS target
+    WHERE p.id = target.id
+    RETURNING p.id, p.email, p.name;
+\else
+    \echo No matching Person row was found.
+\endif
 
 \echo
-\echo Deleting memories:
-DELETE FROM memories AS m
-USING rollback_person AS target
-WHERE target.id = ANY(m.refs)
-RETURNING m.id, m.created_at, m.refs;
+\echo Email-specific rate-limit rows selected for deletion:
+SELECT key, count, expires_at
+FROM rate_limits
+WHERE strpos(key, ':' || lower(:'target_email') || '/') > 0
+ORDER BY key;
 
-\echo
-\echo Deleting Person; foreign-key records cascade:
-DELETE FROM people AS p
-USING rollback_person AS target
-WHERE p.id = target.id
-RETURNING p.id, p.email, p.name;
+DELETE FROM rate_limits
+WHERE strpos(key, ':' || lower(:'target_email') || '/') > 0
+RETURNING key, count, expires_at;
 
 \if :do_commit
     COMMIT;
