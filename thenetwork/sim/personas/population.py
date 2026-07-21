@@ -42,6 +42,16 @@ _FIRST_EVENT_PERMISSION_NOTICE = (
 _INES_CANNED_CLARIFICATION = "I could not determine your response."
 _VIC_MAX_MEMORIES = 6
 _VIC_MAX_PAIR_ROWS = 6
+_SCOPE_QUESTION_MARKERS = (
+    "looking for",
+    "more specific",
+    "tell me more",
+    "what kind",
+    "what type",
+    "what would",
+    "which part",
+    "who would",
+)
 
 
 _EMAIL_PRESENTATIONS = {
@@ -307,6 +317,52 @@ def _vic_memory_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
 
 def _vic_pair_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
     return {**_pair_summary(outcome, VIC_EMAIL), "limit": _VIC_MAX_PAIR_ROWS}
+
+
+def _has_no_memories(outcome: ScenarioOutcome, email: str) -> bool:
+    return outcome.memory_counts.get(email, 0) == 0
+
+
+def _memory_count_summary(outcome: ScenarioOutcome, email: str) -> dict[str, Any]:
+    return {"count": outcome.memory_counts.get(email, 0), "limit": 0}
+
+
+def _scope_questions_for(outcome: ScenarioOutcome, email: str) -> list[str]:
+    return [
+        message.subject
+        for message in outcome.mail_facts
+        if email in message.recipients
+        and "?" in message.body
+        and any(marker in message.body.casefold() for marker in _SCOPE_QUESTION_MARKERS)
+    ]
+
+
+def _has_scope_clarification(outcome: ScenarioOutcome, email: str) -> bool:
+    return bool(_scope_questions_for(outcome, email))
+
+
+def _scope_clarification_summary(
+    outcome: ScenarioOutcome, email: str
+) -> dict[str, Any]:
+    questions = _scope_questions_for(outcome, email)
+    return {"question_count": len(questions), "subjects": questions}
+
+
+def _privacy_opt_out_holds(outcome: ScenarioOutcome) -> bool:
+    return _has_no_memories(outcome, CHLOE_EMAIL) and _has_no_introduction(
+        outcome, CHLOE_EMAIL
+    )
+
+
+def _privacy_opt_out_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
+    return {
+        "memory_count": outcome.memory_counts.get(CHLOE_EMAIL, 0),
+        "introduction_count": sum(
+            message.subject == _INTRODUCTION_SUBJECT
+            and CHLOE_EMAIL in message.recipients
+            for message in outcome.mail_facts
+        ),
+    }
 
 
 def _omar_consent_events(outcome: ScenarioOutcome) -> list[dict[str, Any]]:
@@ -633,6 +689,41 @@ DEFAULT_OUTCOME_CHECKS = (
         requires_llm_personas=True,
         evidence=_event_exclusion_summary,
     ),
+    OutcomeCheck(
+        description="Felix's content-free greeting creates no junk memory",
+        predicate=lambda outcome: _has_no_memories(outcome, FELIX_EMAIL),
+        requires_real_process=True,
+        requires_llm_personas=True,
+        evidence=lambda outcome: _memory_count_summary(outcome, FELIX_EMAIL),
+    ),
+    OutcomeCheck(
+        description="Gabi's service questions create no junk memory",
+        predicate=lambda outcome: _has_no_memories(outcome, GABI_EMAIL),
+        requires_real_process=True,
+        requires_llm_personas=True,
+        evidence=lambda outcome: _memory_count_summary(outcome, GABI_EMAIL),
+    ),
+    OutcomeCheck(
+        description="Hugo receives a question that clarifies his networking scope",
+        predicate=lambda outcome: _has_scope_clarification(outcome, HUGO_EMAIL),
+        requires_real_process=True,
+        requires_llm_personas=True,
+        evidence=lambda outcome: _scope_clarification_summary(outcome, HUGO_EMAIL),
+    ),
+    OutcomeCheck(
+        description="Tariq receives a question that clarifies his climate scope",
+        predicate=lambda outcome: _has_scope_clarification(outcome, TARIQ_EMAIL),
+        requires_real_process=True,
+        requires_llm_personas=True,
+        evidence=lambda outcome: _scope_clarification_summary(outcome, TARIQ_EMAIL),
+    ),
+    OutcomeCheck(
+        description="Chloe's privacy opt-out leaves no memory or introduction",
+        predicate=_privacy_opt_out_holds,
+        requires_real_process=True,
+        requires_llm_personas=True,
+        evidence=_privacy_opt_out_summary,
+    ),
 )
 
 
@@ -648,6 +739,18 @@ DEFAULT_EXPECTATIONS = (
         gist_contains="provenance",
         persona_email=PETRA_EMAIL,
         inbound_contains_any=("provenance",),
+    ),
+    MemoryExpectation(
+        description="Hugo's community-clinic scheduling scope is remembered",
+        gist_contains="patient-scheduling",
+        persona_email=HUGO_EMAIL,
+        inbound_contains_any=("community health clinics", "patient-scheduling"),
+    ),
+    MemoryExpectation(
+        description="Tariq's public-school heat-pump scope is remembered",
+        gist_contains="heat-pump",
+        persona_email=TARIQ_EMAIL,
+        inbound_contains_any=("heat-pump retrofits", "public schools"),
     ),
 )
 
