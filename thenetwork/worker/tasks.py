@@ -107,13 +107,24 @@ def _get_welcome_limiter() -> tuple[strategies.FixedWindowRateLimiter, object]:
     return _welcome_limiter, _welcome_storage
 
 
-def _hit_welcome_quota(sender_email: str) -> bool:
-    limiter, _ = _get_welcome_limiter()
+def _welcome_quota_key(sender_email: str) -> str:
     identity = normalize_rate_limit_identity(sender_email)
+    return f"welcome:first-contact:{identity}"
+
+
+def _check_welcome_quota(sender_email: str) -> bool:
+    """Return whether the sender can receive a welcome, without consuming it."""
+    limiter, _ = _get_welcome_limiter()
     try:
-        return limiter.hit(_WELCOME_LIMIT, f"welcome:first-contact:{identity}")
+        return limiter.test(_WELCOME_LIMIT, _welcome_quota_key(sender_email))
     except Exception:
         return False
+
+
+def _consume_welcome_quota(sender_email: str) -> None:
+    """Consume a welcome only after SMTP delivery succeeds."""
+    limiter, _ = _get_welcome_limiter()
+    limiter.hit(_WELCOME_LIMIT, _welcome_quota_key(sender_email))
 
 
 def _trace_kwargs(trace_id: str | None) -> dict[str, str]:
@@ -197,7 +208,7 @@ def _send_first_contact_welcome_reply(
         is not None
     ):
         return False
-    if not _hit_welcome_quota(sender_email):
+    if not _check_welcome_quota(sender_email):
         return False
 
     send_reply(
@@ -213,6 +224,7 @@ def _send_first_contact_welcome_reply(
             inbound_references=inbound_references,
         ),
     )
+    _consume_welcome_quota(sender_email)
     return True
 
 

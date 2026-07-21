@@ -251,7 +251,7 @@ def test_outbound_registration_and_welcome_quotas_fail_closed_when_storage_is_un
                 )
             )
         )
-        assert not tasks._hit_welcome_quota("person@example.com")
+        assert not tasks._check_welcome_quota("person@example.com")
 
 
 @pytest.mark.integration
