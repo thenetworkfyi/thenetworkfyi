@@ -1,7 +1,7 @@
 """Optional prompt-injection scanner (opt-in defense-in-depth).
 
 Enabled by ``settings.content_scan_enabled``. When disabled, always passes and
-does not import the optional LlamaFirewall dependency. This is not a primary
+does not import LlamaFirewall. This is not a primary
 defense; the structural privacy boundary is documented in ``docs/security.md``.
 """
 

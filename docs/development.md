@@ -117,10 +117,10 @@ sender-authentication results, SES identity/DKIM/SMTP setup, and deployment prob
 Provider selection is by model-string prefix, not by code paths - there is no LiteLLM /
 proxy layer.
 
-## Optional dependencies
+## Content scanner
 
-- `uv pip install -e ".[content-scan]"` - pinned LlamaFirewall inbound
-  prompt-injection scanner, defense-in-depth per `docs/security.md` layer 13.
+The normal project installation includes the pinned LlamaFirewall inbound
+prompt-injection scanner, used as defense-in-depth per `docs/security.md` layer 13.
 
 The scanner uses the gated `meta-llama/Llama-Prompt-Guard-2-86M` weights under
 the Llama 4 Community License. Accept the model license on Hugging Face and set a
@@ -394,13 +394,13 @@ docker compose up -d --build      # build + start db + worker
 docker compose pull && docker compose up -d   # redeploy only changed services
 ```
 
-Local compose builds exclude the large scanner dependency by default. To enable it,
-set `INSTALL_CONTENT_SCAN=true`, `CONTENT_SCAN_ENABLED=true`, and `HF_TOKEN` for the
-first start, then run `docker compose up -d --build`. The named `hf-cache` volume is
-mounted at `/home/appuser/.cache/huggingface`, which compose exports as `HF_HOME`, so
-later restarts preload from local weights without credentials or a download. Published
-GHCR images are built with `INSTALL_CONTENT_SCAN=true`; scanner-disabled deployments
-still load no model and require no Hugging Face account or token.
+All compose builds install the scanner dependencies. To enable model loading and
+scanning, set `CONTENT_SCAN_ENABLED=true` and `HF_TOKEN` for the first start, then run
+`docker compose up -d --build`. The named `hf-cache` volume is mounted at
+`/home/appuser/.cache/huggingface`, which compose exports as `HF_HOME`, so later
+restarts preload from local weights without credentials or a download.
+Scanner-disabled deployments load no model and require no Hugging Face account or
+token.
 
 `.github/workflows/publish.yml` builds + pushes images to GHCR on pushes to `main` and
 `v*` tags; set `IMAGE` in `.env` on the server to that path. The VPS is a **GHCR

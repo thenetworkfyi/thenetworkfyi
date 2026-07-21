@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import tomllib
 from enum import Enum
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from packaging.requirements import Requirement
 
 
 class _Decision(Enum):
@@ -227,7 +230,7 @@ async def test_non_allow_non_block_decision_fails_closed():
         assert await content_scan.scan_content("hello") == (False, "scanner_error")
 
 
-def test_disabled_startup_check_does_not_load_optional_dependency():
+def test_disabled_startup_check_does_not_load_scanner():
     from thenetwork.security import content_scan
 
     with (
@@ -247,6 +250,33 @@ def test_disabled_startup_check_does_not_load_optional_dependency():
         ),
     ):
         content_scan.assert_content_scanner_ready()
+
+
+def test_content_scanner_has_one_runtime_switch_and_core_dependencies():
+    root = Path(__file__).parents[1]
+    with (root / "pyproject.toml").open("rb") as config_file:
+        project = tomllib.load(config_file)["project"]
+
+    dependency_names = {
+        Requirement(dependency).name for dependency in project["dependencies"]
+    }
+    assert {"llamafirewall", "huggingface-hub"} <= dependency_names
+    assert "content-scan" not in project.get("optional-dependencies", {})
+
+    deployment_files = [
+        root / "Dockerfile",
+        root / "docker-compose.yml",
+        root / ".env.example",
+        root / ".github" / "workflows" / "publish.yml",
+    ]
+    deployment_config = "\n".join(
+        path.read_text(encoding="utf-8") for path in deployment_files
+    )
+    assert "INSTALL_CONTENT_SCAN" not in deployment_config
+    assert "CONTENT_SCAN_ENABLED" in deployment_config
+    assert 'pyproject["project"]["dependencies"]' in deployment_config
+    assert "HF_HOME: /home/appuser/.cache/huggingface" in deployment_config
+    assert "hf-cache:/home/appuser/.cache/huggingface" in deployment_config
 
 
 def test_enabled_startup_without_cache_or_token_fails_before_scanner_login(tmp_path):

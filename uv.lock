@@ -3949,12 +3949,14 @@ dependencies = [
     { name = "alembic" },
     { name = "beautifulsoup4" },
     { name = "en-core-web-lg" },
+    { name = "huggingface-hub" },
     { name = "imap-tools" },
     { name = "jinja2" },
     { name = "limits" },
     { name = "llama-index" },
     { name = "llama-index-embeddings-openai" },
     { name = "llama-index-vector-stores-postgres" },
+    { name = "llamafirewall" },
     { name = "networkx" },
     { name = "pgvector" },
     { name = "presidio-analyzer" },
@@ -3974,9 +3976,6 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-content-scan = [
-    { name = "llamafirewall" },
-]
 dev = [
     { name = "pydantic-evals" },
     { name = "pytest" },
@@ -3989,13 +3988,14 @@ requires-dist = [
     { name = "alembic", specifier = ">=1.13" },
     { name = "beautifulsoup4", specifier = ">=4.12" },
     { name = "en-core-web-lg", url = "https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl" },
+    { name = "huggingface-hub", specifier = ">=0.23,<1" },
     { name = "imap-tools", specifier = ">=1.7" },
     { name = "jinja2", specifier = ">=3.1" },
     { name = "limits", specifier = ">=3.13" },
     { name = "llama-index", specifier = ">=0.11" },
     { name = "llama-index-embeddings-openai", specifier = ">=0.2" },
     { name = "llama-index-vector-stores-postgres", specifier = ">=0.2" },
-    { name = "llamafirewall", marker = "extra == 'content-scan'", specifier = "==1.0.3" },
+    { name = "llamafirewall", specifier = "==1.0.3" },
     { name = "networkx", specifier = ">=3.3" },
     { name = "pgvector", specifier = ">=0.3" },
     { name = "presidio-analyzer", specifier = ">=2.2" },
@@ -4017,7 +4017,7 @@ requires-dist = [
     { name = "structlog", specifier = ">=24.1" },
     { name = "tenacity", specifier = ">=9.0" },
 ]
-provides-extras = ["content-scan", "dev"]
+provides-extras = ["dev"]
 
 [[package]]
 name = "thinc"
