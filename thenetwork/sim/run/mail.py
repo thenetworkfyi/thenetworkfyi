@@ -224,22 +224,26 @@ def _opaque_message_identifiers(
 
 def _redact_headers(message: EmailMessage, message_identifiers: dict[str, str]) -> None:
     """Redact all non-MIME header values, including repeated custom headers."""
+    processed_headers: set[str] = set()
     for name in tuple(message.keys()):
         normalized_name = name.lower()
+        if normalized_name in processed_headers:
+            continue
+        processed_headers.add(normalized_name)
         if normalized_name in _SAFE_MIME_HEADERS:
             continue
         values = message.get_all(name, ())
         del message[name]
+        if normalized_name in _MESSAGE_IDENTIFIER_HEADERS:
+            redacted_identifier = _opaque_message_identifiers(
+                " ".join(str(value) for value in values),
+                message_identifiers,
+                single=normalized_name in _SINGLE_MESSAGE_IDENTIFIER_HEADERS,
+            )
+            if redacted_identifier is not None:
+                message[name] = redacted_identifier
+            continue
         for value in values:
-            if normalized_name in _MESSAGE_IDENTIFIER_HEADERS:
-                redacted_identifier = _opaque_message_identifiers(
-                    str(value),
-                    message_identifiers,
-                    single=normalized_name in _SINGLE_MESSAGE_IDENTIFIER_HEADERS,
-                )
-                if redacted_identifier is not None:
-                    message[name] = redacted_identifier
-                continue
             redacted = redact_structured_log(value)
             message[name] = (
                 redacted if isinstance(redacted, str) else "[redaction-unavailable]"
