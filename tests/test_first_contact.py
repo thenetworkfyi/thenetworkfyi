@@ -265,15 +265,54 @@ async def test_welcome_is_limited_per_sender():
         patch("thenetwork.worker.tasks.send_reply") as send_reply,
         patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()),
     ):
-        for _ in range(2):
+        await process_email.func(
+            sender_email="New@Example.COM",
+            subject="Hello",
+            body="Hi",
+            sender_authenticated=True,
+        )
+        await process_email.func(
+            sender_email="new@example.com",
+            subject="Hello",
+            body="Hi",
+            sender_authenticated=True,
+        )
+
+    send_reply.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_failed_welcome_delivery_preserves_quota_for_retry():
+    from thenetwork.worker.tasks import process_email
+
+    _reset_welcome_limiter()
+    mock_session = _mock_sender_lookup(None)
+
+    with (
+        patch("thenetwork.worker.tasks.get_session", return_value=mock_session),
+        patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
+        patch(
+            "thenetwork.worker.tasks.send_reply",
+            side_effect=[RuntimeError("SMTP unavailable"), None],
+        ) as send_reply,
+        patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()),
+    ):
+        with pytest.raises(RuntimeError, match="SMTP unavailable"):
             await process_email.func(
-                sender_email="new@example.com",
+                sender_email="New@Example.COM",
                 subject="Hello",
                 body="Hi",
                 sender_authenticated=True,
             )
 
-    send_reply.assert_called_once()
+        await process_email.func(
+            sender_email="new@example.com",
+            subject="Hello",
+            body="Hi",
+            sender_authenticated=True,
+        )
+
+    assert send_reply.call_count == 2
 
 
 @pytest.mark.asyncio
