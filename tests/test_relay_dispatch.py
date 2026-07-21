@@ -100,6 +100,7 @@ async def test_process_email_relays_both_directions_before_agent_paths(
     [
         (PROXY, None),
         (f"hidden-not-a-token@{DOMAIN}", "bob@example.com"),
+        (f"hidden-not-a-token@{DOMAIN}.", "bob@example.com"),
     ],
 )
 @pytest.mark.asyncio

@@ -48,7 +48,7 @@ def is_relay_address_candidate(address: str | None, relay_domain: str) -> bool:
         return False
     local_part, candidate_domain = address.rsplit("@", 1)
     return local_part.lower().startswith(_PREFIX) and (
-        candidate_domain.lower() == relay_domain.lower()
+        candidate_domain.lower().rstrip(".") == relay_domain.lower()
     )
 
 
