@@ -432,6 +432,90 @@ def test_process_email_routes_admin_to_handler():
     mock_agent.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    ("message_kind", "body"),
+    [
+        pytest.param("untrusted_signature", "COMMAND: status", id="untrusted"),
+        pytest.param("missing_command", "ordinary-looking body", id="no-command"),
+        pytest.param("empty_signed_body", "", id="empty-body"),
+    ],
+)
+def test_process_email_rejects_failed_admin_auth_before_ordinary_processing(
+    admin_identity, attacker_identity, message_kind, body
+):
+    """Admin-shaped mail from an allowlisted sender must never fall through."""
+    import asyncio
+
+    from thenetwork.db.models import BannedEmail
+    from thenetwork.worker.tasks import REJECT_ADMIN_AUTH, process_email
+
+    if message_kind == "untrusted_signature":
+        raw = _admin_message(attacker_identity, command="status")
+    elif message_kind == "missing_command":
+        raw = _build_pgp_mime_message(
+            admin_identity,
+            signed_part=_build_signed_part("ordinary-looking body"),
+        )
+    else:
+        raw = _build_pgp_mime_message(
+            admin_identity,
+            signed_part=_build_signed_part(""),
+        )
+
+    session = MagicMock()
+    session.get.return_value = None
+    session.exec.return_value.first.return_value = None
+    session_cm = MagicMock()
+    session_cm.__enter__ = MagicMock(return_value=session)
+    session_cm.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch(
+            "thenetwork.admin.auth.get_settings",
+            return_value=_settings(public_key=admin_identity.public_key),
+        ),
+        patch("thenetwork.worker.tasks.get_session", return_value=session_cm),
+        patch("thenetwork.worker.tasks.audit_event") as audit_event,
+        patch("thenetwork.worker.tasks.check_rate_limit") as check_rate_limit,
+        patch("thenetwork.worker.tasks.scan_content", new_callable=AsyncMock) as scan,
+        patch("thenetwork.worker.tasks._send_first_contact_welcome_reply") as welcome,
+        patch("thenetwork.worker.tasks.process_consent_reply") as consent,
+        patch(
+            "thenetwork.worker.tasks.record_sent_email_memories",
+            new_callable=AsyncMock,
+        ) as record_memories,
+        patch("thenetwork.worker.tasks.handle_admin_command", new_callable=AsyncMock),
+        patch("thenetwork.worker.tasks.send_reply") as send_reply,
+        patch(
+            "thenetwork.worker.tasks.run_agent_for_email", new_callable=AsyncMock
+        ) as run_agent,
+    ):
+        asyncio.run(
+            process_email.func(
+                sender_email="admin@example.com",
+                subject="ADMIN: status",
+                body=body,
+                raw_message_b64=base64.b64encode(raw).decode(),
+                sender_authenticated=True,
+            )
+        )
+
+    session.get.assert_called_once_with(BannedEmail, "admin@example.com")
+    session.exec.assert_not_called()
+    session.add.assert_not_called()
+    audit_event.assert_any_call(
+        "worker.message_rejected",
+        reason=REJECT_ADMIN_AUTH,
+    )
+    check_rate_limit.assert_not_called()
+    scan.assert_not_awaited()
+    welcome.assert_not_called()
+    consent.assert_not_called()
+    record_memories.assert_not_awaited()
+    send_reply.assert_not_called()
+    run_agent.assert_not_awaited()
+
+
 def test_paused_primary_rejects_unverified_admin_candidate_before_agent():
     import asyncio
 

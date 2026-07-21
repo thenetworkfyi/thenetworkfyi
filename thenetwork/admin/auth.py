@@ -63,6 +63,19 @@ _gpg_instance: gnupg.GPG | None = None
 _gpg_key_material: str | None = None
 
 
+def _matches_admin_candidate(
+    sender_email: str, subject: str, admin_emails: list[str]
+) -> bool:
+    return sender_email.lower() in {email.lower() for email in admin_emails} and (
+        subject.strip().lower().startswith(_ADMIN_PREFIX)
+    )
+
+
+def is_admin_request_candidate(sender_email: str, subject: str) -> bool:
+    """Return whether ordinary processing must not handle this admin-shaped mail."""
+    return _matches_admin_candidate(sender_email, subject, get_settings().admin_emails)
+
+
 def _get_gpg(public_key: str) -> gnupg.GPG:
     """Return a GPG instance whose keyring holds only the configured admin key.
 
@@ -179,9 +192,7 @@ def verify_admin_request(
     s = get_settings()
     if not s.admin_emails or not s.admin_gpg_public_key:
         return None
-    if sender_email.lower() not in {e.lower() for e in s.admin_emails}:
-        return None
-    if not subject.strip().lower().startswith(_ADMIN_PREFIX):
+    if not _matches_admin_candidate(sender_email, subject, s.admin_emails):
         return None
     if raw_message is None:
         return None
