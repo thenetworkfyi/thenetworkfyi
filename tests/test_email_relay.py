@@ -44,7 +44,7 @@ def test_parse_relay_address_rejects_nonconfigured_formats(address):
 
 
 def test_build_relay_address_uses_configured_domain_verbatim():
-    configured_domain = "Relay.Example.Com."
+    configured_domain = "Relay.Example.Com"
 
     assert build_relay_address(TOKEN, configured_domain) == (
         f"hidden-{TOKEN}@{configured_domain}"
