@@ -13,38 +13,20 @@ from thenetwork.db.session import get_session
 _PREFIX = "hidden-"
 
 
-def _normalise_domain(relay_domain: str) -> str:
-    domain = relay_domain.strip().lower().rstrip(".")
-    if (
-        not domain
-        or "@" in domain
-        or any(character.isspace() for character in domain)
-        or domain.startswith(".")
-        or ".." in domain
-    ):
-        raise ValueError("relay_domain must be a bare email domain")
-    return domain
-
-
 def build_relay_address(reply_token: str, relay_domain: str) -> str:
     """Build the fixed proxy address for an introduction consent pair."""
 
     token = str(uuid.UUID(reply_token))
-    return f"{_PREFIX}{token}@{_normalise_domain(relay_domain)}"
+    return f"{_PREFIX}{token}@{relay_domain}"
 
 
 def parse_relay_address(address: str, relay_domain: str) -> str | None:
     """Return a canonical pair token only for this deployment's proxy format."""
 
-    try:
-        domain = _normalise_domain(relay_domain)
-    except ValueError:
-        return None
-
     if address != address.strip() or address.count("@") != 1:
         return None
     local_part, candidate_domain = address.rsplit("@", 1)
-    if candidate_domain.lower().rstrip(".") != domain or not local_part.startswith(
+    if candidate_domain.lower() != relay_domain.lower() or not local_part.startswith(
         _PREFIX
     ):
         return None
@@ -62,15 +44,11 @@ def is_relay_address_candidate(address: str | None, relay_domain: str) -> bool:
 
     if not address:
         return False
-    try:
-        domain = _normalise_domain(relay_domain)
-    except ValueError:
-        return False
     if address != address.strip() or address.count("@") != 1:
         return False
     local_part, candidate_domain = address.rsplit("@", 1)
     return local_part.lower().startswith(_PREFIX) and (
-        candidate_domain.lower().rstrip(".") == domain
+        candidate_domain.lower() == relay_domain.lower()
     )
 
 

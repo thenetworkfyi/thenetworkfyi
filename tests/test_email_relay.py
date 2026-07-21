@@ -3,6 +3,7 @@
 from contextlib import contextmanager
 
 import pytest
+from pydantic import ValidationError
 
 from thenetwork.db.models import IntroductionConsent, Person
 from thenetwork.email.relay import (
@@ -42,10 +43,26 @@ def test_parse_relay_address_rejects_nonconfigured_formats(address):
     assert parse_relay_address(address, DOMAIN) is None
 
 
-@pytest.mark.parametrize("domain", ["", "relay@example.com", "bad domain", ".bad"])
-def test_build_relay_address_rejects_invalid_domain(domain):
-    with pytest.raises(ValueError):
-        build_relay_address(TOKEN, domain)
+def test_build_relay_address_uses_configured_domain_verbatim():
+    configured_domain = "Relay.Example.Com."
+
+    assert build_relay_address(TOKEN, configured_domain) == (
+        f"hidden-{TOKEN}@{configured_domain}"
+    )
+
+
+def test_settings_requires_relay_domain(monkeypatch):
+    from thenetwork.settings import Settings
+
+    monkeypatch.delenv("RELAY_DOMAIN", raising=False)
+
+    with pytest.raises(ValidationError, match="relay_domain"):
+        Settings(
+            agent_model="test:model",
+            small_agent_model="test:model",
+            embed_model="test:embed",
+            _env_file=None,
+        )
 
 
 def test_settings_exposes_relay_domain(monkeypatch):

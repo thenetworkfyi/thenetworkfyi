@@ -95,8 +95,9 @@ class Settings(BaseSettings):
     email_from: str = ""
     # Domain whose Dovecot catch-all feeds the IMAP inbox. Introduction reply
     # aliases are generated beneath this domain; no inbound HTTP service is
-    # involved.
-    relay_domain: str = ""
+    # involved. Deliberately no default: every deployment must explicitly own
+    # the relay namespace used by these server-authorized addresses.
+    relay_domain: str
     # Folder outbound replies are appended to after a successful SMTP send, so
     # sent mail shows up in the account like it would from a normal mail
     # client rather than relying on provider-side auto-save.

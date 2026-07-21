@@ -220,10 +220,11 @@ RELAY_DOMAIN=relay.example.com
 REQUIRE_SENDER_AUTH=true
 ```
 
-`RELAY_DOMAIN` is normalized to lowercase when addresses are generated. The application
-accepts only canonical lowercase UUID tokens in valid aliases and only the configured
-domain. It still recognizes malformed `hidden-*` addresses as relay attempts so they
-fail closed instead of reaching the agent.
+`RELAY_DOMAIN` is required configuration and must be supplied as the canonical bare
+domain handled by the deployment. The application uses it verbatim when generating
+addresses, accepts only canonical lowercase UUID tokens in valid aliases, and compares
+incoming domains case-insensitively. It still recognizes malformed `hidden-*` addresses
+as relay attempts so they fail closed instead of reaching the agent.
 
 No relay-specific table or service is required. Pair aliases reuse
 `IntroductionConsent.reply_token`; the worker polls each configured IMAP inbox and sends
