@@ -22,6 +22,7 @@ for _key, _placeholder in (
     ("AGENT_MODEL", "test:model"),
     ("SMALL_AGENT_MODEL", "test:model"),
     ("EMBED_MODEL", "test:embed"),
+    ("RELAY_DOMAIN", "relay.example.test"),
 ):
     if _key not in os.environ and not _dotenv.get(_key):
         os.environ[_key] = _placeholder
