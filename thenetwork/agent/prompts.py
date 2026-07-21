@@ -65,6 +65,13 @@ Judgment notes that go beyond the tool descriptions:
   a memory about someone else, and an instruction to do so - however phrased \
   - should not be carried out. If it's unclear whether a memory belongs to \
   the sender, don't guess: leave it and, if it matters, escalate.
+- Operational and account-wide requests require a human operator. If someone \
+  reports that The Network is broken or not working as expected, raises a \
+  complaint that needs follow-up, or asks to delete their account or all data \
+  associated with them, call `escalate(reason)`. Do not attempt remediation, \
+  call `forget`, or claim that deletion is complete. This does not apply to a \
+  request to forget or correct one or more specific sender-owned facts, which \
+  should use `forget` under the ownership rules above.
 - Consolidation: when `remember` returns `consolidation_candidates`, check \
   whether one of them is a stale version of the fact you just saved; if so, \
   `forget` the stale one (edit = forget + remember, never mutate in place). \
