@@ -20,6 +20,7 @@ from thenetwork.sim.personas.population import (
     FELIX_EMAIL,
     GABI_EMAIL,
     HUGO_EMAIL,
+    LEILA_EMAIL,
     PETRA_EMAIL,
     TARIQ_EMAIL,
     SimSchedule,
@@ -65,10 +66,46 @@ class QualifyingPetra:
         return {"content": ""}
 
 
+class ProgressiveLeila:
+    """Reveal only the gap category asked about on each qualification turn."""
+
+    name = "Leila"
+
+    def __init__(self) -> None:
+        self.stimuli: list[str] = []
+
+    def listen_and_act(self, stimulus: str):
+        self.stimuli.append(stimulus)
+        if "You received a reply:" not in stimulus:
+            return {
+                "content": (
+                    "I am building inventory software for community science labs and "
+                    "would like to meet someone else working on lab tools."
+                )
+            }
+        reply = stimulus.casefold().rsplit("you received a reply:", maxsplit=1)[-1]
+        if "role" in reply or "experience" in reply:
+            return {
+                "content": (
+                    "I am the product designer, and I have piloted the tool with two "
+                    "volunteer-run community science labs."
+                )
+            }
+        if "exchange" in reply or "working rhythm" in reply:
+            return {
+                "content": (
+                    "I want a peer product designer with hands-on workflow-adoption "
+                    "experience to compare onboarding methods. I can meet remotely every "
+                    "other week for three months."
+                )
+            }
+        return {"content": ""}
+
+
 def test_default_population_has_authored_personas_and_schedule():
     population = default_population(agent_address="join@example.test")
 
-    assert len(population) == 24
+    assert len(population) == 25
     assert len({persona.config.email for persona in population}) == len(population)
     assert all(persona.opening_body for persona in population)
 
@@ -155,6 +192,7 @@ def test_default_population_has_authored_personas_and_schedule():
         "Hugo",
         "Tariq",
         "Chloe",
+        "Leila Hart",
     }
     assert additions["Ruth Calder"].config.goal.endswith(
         "include the [intro:...] token line from the proposal."
@@ -264,6 +302,16 @@ def test_default_population_has_authored_personas_and_schedule():
     assert chloe.config.email == CHLOE_EMAIL
     assert "Explicitly opt out" in chloe.config.goal
     assert "do not retain information about me" in chloe.opening_body
+    leila = additions["Leila Hart"]
+    assert leila.config.email == LEILA_EMAIL
+    assert "two additional gap categories" in leila.config.goal
+    assert "product designer" in leila.config.goal
+    assert "remotely every other week for three months" in leila.config.goal
+    assert leila.config.message_budget == 4
+    assert leila.opening_body == (
+        "I am building inventory software for community science labs and would "
+        "like to meet someone else working on lab tools."
+    )
     assert all(
         persona.config.agent_address == "join@example.test"
         for persona in additions.values()
@@ -317,6 +365,8 @@ def test_default_population_deterministically_mixes_email_presentations():
     assert by_name["Hugo"].signature is not None
     assert by_name["Tariq"].format == EmailFormat.PLAIN
     assert by_name["Chloe"].format == EmailFormat.MULTIPART_ALTERNATIVE
+    assert by_name["Leila Hart"].format == EmailFormat.MULTIPART_ALTERNATIVE
+    assert by_name["Leila Hart"].signature is not None
     assert (
         sum(presentation.signature is not None for presentation in by_name.values()) > 1
     )
@@ -523,3 +573,57 @@ async def test_petra_qualification_turn_precedes_specific_interest_memory(tmp_pa
         ),
     )
     assert score.passed is True
+
+
+@pytest.mark.asyncio
+async def test_leila_progressively_answers_one_match_gap_per_turn(tmp_path):
+    population = default_population(agent_address="join@example.test")
+    leila = next(
+        persona for persona in population if persona.config.email == LEILA_EMAIL
+    )
+    person = ProgressiveLeila()
+    bodies: list[str] = []
+
+    async def process(**kwargs):
+        bodies.append(kwargs["body"])
+        if len(bodies) == 1:
+            question = "What role and relevant experience do you bring to the lab tool?"
+        elif len(bodies) == 2:
+            question = "What kind of peer exchange and working rhythm would be useful?"
+        else:
+            return
+
+        from thenetwork.email.outbound import send_reply
+
+        send_reply(
+            to_address=kwargs["sender_email"],
+            subject=f"Re: {kwargs['subject']}",
+            body_text=question,
+            include_footer=False,
+        )
+
+    settings = MagicMock(
+        smtp_host="smtp.example.com",
+        smtp_port=587,
+        smtp_account="agent@example.com",
+        smtp_password="secret",
+        email_from="join@example.test",
+        imap_account="join@example.test",
+        growth_footer_enabled=False,
+    )
+    loop = SimTickLoop(
+        [TinyPersonEmailAdapter(person, leila.config)],
+        run_dir=tmp_path,
+        process=process,
+        proactive_every=None,
+    )
+
+    with patch("thenetwork.email.outbound.get_settings", return_value=settings):
+        await loop.run(ticks=3)
+
+    assert len(bodies) == 3
+    assert "community science labs" in bodies[0]
+    assert "product designer" in bodies[1]
+    assert "remotely" not in bodies[1]
+    assert "remotely every other week for three months" in bodies[2]
+    assert len(person.stimuli) == 3
