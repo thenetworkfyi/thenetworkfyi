@@ -301,8 +301,8 @@ The compose stack uses `pgvector/pgvector:pg17`; use the corresponding local Pos
 
 ### Population situations
 
-`sim run` uses the authored population of 19 personas by default. The original first ten
-remain available for backward-compatible smoke runs with `--personas 10`; the nine later
+`sim run` uses the authored population of 24 personas by default. The original first ten
+remain available for backward-compatible smoke runs with `--personas 10`; the 14 later
 personas are deliberately varied situations, not a scenario script. Their replies remain
 prompt-emergent when `--llm-personas` is enabled, so the checks describe observable
 outcomes rather than force a particular conversation.
@@ -337,6 +337,14 @@ outcomes rather than force a particular conversation.
   becomes dormant from tick 2 onward. This ordering makes her sealed memory available before
   Sloane's event is created and before the event scan runs. Theo Anders is the authored
   unrelated control for this outcome.
+- **Felix** sends only a content-free greeting, and **Gabi** asks how the service and its
+  information handling work without stating a durable personal fact. Outcome scoring requires
+  both exchanges to leave zero junk memories.
+- **Hugo** and **Tariq** begin with underspecified introduction requests, then reveal their
+  community-clinic scheduling and public-school heat-pump scopes after a useful follow-up.
+  Outcome scoring requires a scope question; tier 2 binds each resulting memory to its sender.
+- **Chloe** opts out before sharing personal or professional facts. Outcome scoring requires
+  the opt-out to leave no memory and no introduction.
 
 The recorder emits score events for tier 1 delivered-mail SEAL checks, captured-MIME
 presentation checks, tier 2 memory expectations, and scenario outcome predicates.
