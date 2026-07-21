@@ -104,6 +104,7 @@ class EmailScenario:
     event_recommendation: EventRecommendation | None = None
     prior_event_deliveries: int = 0
     event_recommendations_stopped: bool = False
+    admin_emails: list[str] | None = None
 
 
 @dataclass
@@ -118,7 +119,7 @@ class RunOutcome:
     created_events: list[Event]
 
 
-async def run_scenario(inputs: EmailScenario) -> RunOutcome:
+async def run_scenario(inputs: EmailScenario, *, model: Any = None) -> RunOutcome:
     """Run the real agent (real AGENT_MODEL) over one archetype email.
 
     Mirrors the mocking style in `test_archetypes.py`: DB session, embeddings,
@@ -204,6 +205,7 @@ async def run_scenario(inputs: EmailScenario) -> RunOutcome:
     with (
         patch("thenetwork.agent.tools.get_session", return_value=mock_session),
         patch("thenetwork.agent.tools.send_reply", side_effect=fake_send_reply),
+        patch("thenetwork.agent.tools.notify_admins"),
         patch(
             "thenetwork.agent.tools.embed_text",
             new=AsyncMock(side_effect=fake_embed_text),
@@ -223,8 +225,11 @@ async def run_scenario(inputs: EmailScenario) -> RunOutcome:
         patch("thenetwork.agent.tools._consume_daily_dispatch_cap"),
     ):
         settings = get_settings()
-        agent = build_agent(model=settings.agent_model)
+        if inputs.admin_emails is not None:
+            settings = settings.model_copy(update={"admin_emails": inputs.admin_emails})
+        agent = build_agent(model=model if model is not None else settings.agent_model)
         deps = AgentDeps(
+            settings=settings,
             sender_email=inputs.sender_email,
             sender_user_id=inputs.sender_user_id,
             sender_authenticated=inputs.sender_authenticated,
