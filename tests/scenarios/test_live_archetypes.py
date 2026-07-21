@@ -98,6 +98,7 @@ class EmailScenario:
     search_results: list[MemoryMatch] = field(default_factory=list)
     outbound_send_count: int = 0
     is_proactive: bool = False
+    proactive_candidate_id: str | None = None
     proactive_event_id: str | None = None
     proactive_event_version: int | None = None
     event: Event | None = None
@@ -163,6 +164,8 @@ async def run_scenario(inputs: EmailScenario, *, model: Any = None) -> RunOutcom
         if model_cls is EventSuppression:
             return EventSuppression(person_id=obj_id) if event_suppressed else None
         email = inputs.known_people.get(obj_id)
+        if email is None and obj_id == inputs.sender_user_id:
+            email = inputs.sender_email
         if email is None:
             return None
         person = MagicMock()
@@ -189,8 +192,10 @@ async def run_scenario(inputs: EmailScenario, *, model: Any = None) -> RunOutcom
     mock_session.exec.return_value.first.return_value = event_recommendation
     mock_session.exec.return_value.one.return_value = inputs.prior_event_deliveries
 
-    def fake_send_reply(to_address, subject, body_text, body_html=None, **kwargs):
-        dispatched.append({"to": to_address, "subject": subject, "body": body_text})
+    def fake_send_reply(to_address, subject, body_text=None, body_html=None, **kwargs):
+        dispatched.append(
+            {"to": to_address, "subject": subject, "body": body_text or ""}
+        )
 
     async def fake_embed_text(text: str) -> list[float]:
         return [0.0] * 1536
@@ -206,6 +211,7 @@ async def run_scenario(inputs: EmailScenario, *, model: Any = None) -> RunOutcom
         patch("thenetwork.agent.tools.get_session", return_value=mock_session),
         patch("thenetwork.agent.tools.send_reply", side_effect=fake_send_reply),
         patch("thenetwork.agent.tools.notify_admins"),
+        patch("thenetwork.introductions.send_reply", side_effect=fake_send_reply),
         patch(
             "thenetwork.agent.tools.embed_text",
             new=AsyncMock(side_effect=fake_embed_text),
@@ -236,6 +242,7 @@ async def run_scenario(inputs: EmailScenario, *, model: Any = None) -> RunOutcom
             inbound_subject=inputs.subject,
             outbound_send_count=inputs.outbound_send_count,
             is_proactive=inputs.is_proactive,
+            proactive_candidate_id=inputs.proactive_candidate_id,
             proactive_event_id=inputs.proactive_event_id,
             proactive_event_version=inputs.proactive_event_version,
         )
@@ -299,6 +306,18 @@ class RepliedWithQuestion(Evaluator[EmailScenario, RunOutcome, object]):
         self, ctx: EvaluatorContext[EmailScenario, RunOutcome, object]
     ) -> bool:
         return any("?" in dispatch["body"] for dispatch in ctx.output.dispatched)
+
+
+@dataclass(repr=False)
+class RepliedWithoutQuestion(Evaluator[EmailScenario, RunOutcome, object]):
+    """A supported match should not trigger unnecessary qualification."""
+
+    def evaluate(
+        self, ctx: EvaluatorContext[EmailScenario, RunOutcome, object]
+    ) -> bool:
+        return bool(ctx.output.dispatched) and all(
+            "?" not in dispatch["body"] for dispatch in ctx.output.dispatched
+        )
 
 
 @dataclass(repr=False)
@@ -369,6 +388,25 @@ class RememberedSubstringsTogether(Evaluator[EmailScenario, RunOutcome, object])
     ) -> bool:
         joined = "\n".join(chunk["text"].lower() for chunk in ctx.output.remembered)
         return all(needle.lower() in joined for needle in self.substrings)
+
+
+@dataclass(repr=False)
+class OneRememberedChunkContains(Evaluator[EmailScenario, RunOutcome, object]):
+    """Exactly one new standing-intent chunk preserves all material context."""
+
+    substrings: tuple[str, ...] = ()
+
+    def evaluate(
+        self, ctx: EvaluatorContext[EmailScenario, RunOutcome, object]
+    ) -> bool:
+        enriched = [
+            chunk["text"].lower()
+            for chunk in ctx.output.remembered
+            if all(
+                needle.lower() in chunk["text"].lower() for needle in self.substrings
+            )
+        ]
+        return len(enriched) == 1
 
 
 @dataclass(repr=False)
@@ -516,32 +554,47 @@ onboarding_case = Case(
     ),
 )
 
-weak_match_case = Case(
-    name="weak_match",
+job_keyword_qualification_case = Case(
+    name="job_keyword_qualification",
     inputs=EmailScenario(
-        subject="Looking for a cofounder",
-        body="I'm exploring an idea in agricultural robotics, open to chatting with anyone in the space.",
-        sender_email="jordan@example.com",
-        sender_user_id="user-jordan",
+        subject="Looking for work in SF",
+        body=(
+            "I'm looking for software work in San Francisco. I mostly use React "
+            "and I'm learning Python."
+        ),
+        sender_email="lee@example.com",
+        sender_user_id="user-lee",
         sender_authenticated=True,
         search_results=[
             MemoryMatch(
-                memory_id="mem-weak-1",
-                person_id="person-weak-1",
-                gist="enjoys hiking and photography",
-                similarity=0.21,
+                memory_id="mem-keyword-1",
+                person_id="person-keyword-1",
+                gist=(
+                    "software engineer in San Francisco who uses React and Python "
+                    "and enjoys meeting other developers"
+                ),
+                similarity=0.89,
             )
         ],
     ),
     evaluators=(
-        DidNotDispatchEmail(),
+        ToolWasCalled("reply_to_sender"),
+        ToolWasCalled("remember"),
+        ToolWasNotCalled("propose_introduction"),
+        RepliedWithQuestion(),
+        NoPersonalSignoff(),
         LLMJudge(
             rubric=(
-                "The only available search result is a thin, low-similarity "
-                "match with no real overlap with the sender's stated interest "
-                "in agricultural robotics. A reasonable response captures the "
-                "sender's note and does not force an introduction on such a "
-                "weak, unrelated hit."
+                "The sender is a San Francisco job seeker who mostly uses React "
+                "and is learning Python. The high-similarity result shares those "
+                "keywords but gives no evidence of a job opportunity, relevant "
+                "hiring need, target level, role scope, or the sender's demonstrated "
+                "React experience. Similarity is candidate discovery, not fit. A "
+                "reasonable response asks exactly one neutral, useful question about "
+                "a consequential gap such as target level, desired scope, or React "
+                "experience. It does not propose an introduction or passively promise "
+                "to keep matching merely because React, Python, and SF overlap. The "
+                "question must be curious and direct, not gatekeeping."
             ),
             model=_judge_model,
             include_input=True,
@@ -568,15 +621,18 @@ strong_match_case = Case(
         ],
     ),
     evaluators=(
+        ToolWasCalled("propose_introduction"),
         ToolWasCalled("reply_to_sender"),
+        RepliedWithoutQuestion(),
         NoPersonalSignoff(),
         LLMJudge(
             rubric=(
                 "There is a clear, specific overlap between the sender and "
                 "the search result gist (both Rust systems programmers). A "
-                "reasonable response introduces them, referencing only what "
-                "the gist actually supports, and does not invent details "
-                "beyond it."
+                "reasonable response proposes the introduction, references only what "
+                "the gist actually supports, and does not invent details beyond it. "
+                "The evidence already supports the match thesis, so it should not "
+                "interrogate the sender with another qualification question."
             ),
             model=_judge_model,
             include_input=True,
@@ -864,6 +920,118 @@ peer_level_qualification_case = Case(
         ),
     ),
 )
+
+
+progressive_job_answer_case = Case(
+    name="progressive_job_answer",
+    inputs=EmailScenario(
+        subject="Re: Looking for work in SF",
+        body="Senior IC roles, ideally on a product team.",
+        sender_email="lee@example.com",
+        sender_user_id="user-lee",
+        sender_authenticated=True,
+        memory_refs={
+            "mem-lee-standing": ["user-lee"],
+            "mem-lee-asked-level": ["user-lee"],
+        },
+        search_results=[
+            MemoryMatch(
+                memory_id="mem-lee-standing",
+                person_id="user-lee",
+                gist=(
+                    "San Francisco job seeker who mostly uses React and is "
+                    "learning Python"
+                ),
+                similarity=0.96,
+            ),
+            MemoryMatch(
+                memory_id="mem-lee-asked-level",
+                person_id="user-lee",
+                gist="asked which target level and role scope would fit",
+                similarity=0.94,
+            ),
+            MemoryMatch(
+                memory_id="mem-react-adjacent",
+                person_id="person-react-adjacent",
+                gist="React engineer on a product design systems team",
+                similarity=0.87,
+            ),
+        ],
+    ),
+    evaluators=(
+        ToolWasCalled("forget"),
+        ToolWasCalled("remember"),
+        ToolWasCalled("reply_to_sender"),
+        ToolWasNotCalled("propose_introduction"),
+        ForgotExactly(("mem-lee-standing", "mem-lee-asked-level")),
+        OneRememberedChunkContains(
+            ("san francisco", "react", "python", "senior", "product")
+        ),
+        RepliedWithQuestion(),
+        NoPersonalSignoff(),
+        LLMJudge(
+            rubric=(
+                "This is an answer to one prior qualification question. It closes "
+                "the target-level and role-scope gap only: the sender wants a senior "
+                "IC role on a product team. A reasonable response first replaces the "
+                "old standing-intent note and answered asked-note with one small "
+                "enriched standing intent that preserves San Francisco, mostly React, "
+                "learning Python, senior IC, and product-team constraints. It does not "
+                "treat the answer as proof of demonstrated React depth or as support "
+                "for the adjacent person's availability. It asks at most one neutral "
+                "next question about the remaining consequential gap and makes no "
+                "introduction or passive matching promise yet."
+            ),
+            model=_judge_model,
+            include_input=True,
+        ),
+    ),
+)
+
+
+under_supported_proactive_people_case = Case(
+    name="under_supported_proactive_people",
+    inputs=EmailScenario(
+        subject="[Proactive] Possible connection",
+        body=(
+            "[System match] A standing signal about one person closely matches a "
+            "standing signal about another (similarity=0.91).\n\n"
+            "Person user-lee: San Francisco job seeker who mostly uses React and is "
+            "learning Python; target level and demonstrated experience are unknown.\n"
+            "Person person-react-adjacent: software engineer in San Francisco who "
+            "uses React and Python; no hiring need or desired connection is known.\n\n"
+            "You are acting for person user-lee. If the pair is genuinely supported, "
+            "the bound counterpart id is person-react-adjacent."
+        ),
+        sender_email="lee@example.com",
+        sender_user_id="user-lee",
+        sender_authenticated=True,
+        is_proactive=True,
+        proactive_candidate_id="person-react-adjacent",
+    ),
+    evaluators=(
+        ToolWasCalled("no_action"),
+        ToolWasNotCalled("propose_introduction"),
+        ToolWasNotCalled("send_outreach"),
+        ToolWasNotCalled("reply_to_sender"),
+        DidNotDispatchEmail(),
+        LLMJudge(
+            rubric=(
+                "This proactive trigger offers only high semantic similarity and "
+                "React, Python, and San Francisco keyword overlap. It lacks a "
+                "two-sided thesis: one person's target level and demonstrated "
+                "experience are unknown, while the other has no known hiring need or "
+                "desire for this connection. Because there is no inbound turn in "
+                "which to qualify the missing evidence, the only reasonable action is "
+                "no_action. It must not propose an introduction or send exploratory "
+                "outreach from the trigger."
+            ),
+            model=_judge_model,
+            include_input=True,
+        ),
+    ),
+)
+
 
 preference_mismatch_case = Case(
     name="preference_mismatch",
@@ -1253,7 +1421,7 @@ archetype_dataset = Dataset[EmailScenario, RunOutcome](
     name="live_model_archetypes",
     cases=[
         onboarding_case,
-        weak_match_case,
+        job_keyword_qualification_case,
         strong_match_case,
         injection_case,
         ambiguous_case,
@@ -1262,6 +1430,8 @@ archetype_dataset = Dataset[EmailScenario, RunOutcome](
         full_data_deletion_case,
         vague_intent_qualification_case,
         peer_level_qualification_case,
+        progressive_job_answer_case,
+        under_supported_proactive_people_case,
         preference_mismatch_case,
         exhausted_reply_cap_case,
         consolidation_update_case,

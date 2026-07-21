@@ -23,21 +23,67 @@ def test_possible_match_guidance_describes_current_email_capability() -> None:
     assert "copy the token string into their reply" in intro_guidance
 
 
-def test_vague_standing_intent_guidance_requests_a_follow_up() -> None:
-    guidance = SYSTEM_PROMPT.split("- Asking for clarification:", 1)[1].split(
-        "- First contact", 1
+def test_match_guidance_treats_similarity_as_discovery_only() -> None:
+    guidance = SYSTEM_PROMPT.split("- `search` similarity", 1)[1].split(
+        "- A `search` row", 1
     )[0]
     guidance = " ".join(guidance.split())
 
-    assert "new or existing member" in guidance
-    assert "one brief, concrete, curious question" in guidance
-    assert "sector, stage, or connection" in guidance
+    assert "candidate discovery, not a fit score" in guidance
+    assert "specific two-sided match thesis" in guidance
+    assert "what each person is seeking" in guidance
+    assert "what the other could materially contribute" in guidance
+    assert "shared keyword, tool, title, topic, or city" in guidance
+    assert "Missing or contradictory evidence" in guidance
+    assert "act without interrogating" in guidance
+
+
+def test_thin_standing_intent_guidance_requests_one_material_follow_up() -> None:
+    guidance = SYSTEM_PROMPT.split("- Asking for clarification:", 1)[1].split(
+        "- Progressive qualification memory:", 1
+    )[0]
+    guidance = " ".join(guidance.split())
+
+    assert "broad or concrete-but-thin" in guidance
+    assert "mostly use React" in guidance
+    assert "target level, role scope, or demonstrated React experience" in guidance
+    assert "exactly one brief, neutral, high-information question" in guidance
+    assert "Across jobs, collaborators, peers, mentors, founders" in guidance
+    assert "not for generic profile completeness" in guidance
     assert "This is a qualification turn" in guidance
     assert "do not call `propose_introduction`" in guidance
     assert "even if `search` found a semantically adjacent person" in guidance
     assert "Do not interrogate every message" in guidance
-    assert "consent reply or a concrete update" in guidance
-    assert "`remember` the specific interest learned under the sender's id" in guidance
+    assert "passively promising" in guidance
+    assert "`remember` that you asked" in guidance
+
+
+def test_progressive_qualification_replaces_one_enriched_intent_note() -> None:
+    guidance = SYSTEM_PROMPT.split("- Progressive qualification memory:", 1)[1].split(
+        "- Preferences about who", 1
+    )[0]
+    guidance = " ".join(guidance.split())
+
+    assert "answer closes only the gap it actually answers" in guidance
+    assert "Preserve earlier material context and constraints" in guidance
+    assert "one small enriched note using `forget` + `remember`" in guidance
+    assert "forget the answered asked-note" in guidance
+    assert "Do not accumulate a trail of partial intent notes" in guidance
+    assert "before reconsidering a match" in guidance
+    assert "ask one next question" in guidance
+
+
+def test_under_supported_proactive_people_candidate_is_no_action() -> None:
+    guidance = SYSTEM_PROMPT.split("- Proactive people triggers", 1)[1].split(
+        "- Events are secondary", 1
+    )[0]
+    guidance = " ".join(guidance.split())
+
+    assert "surface candidates; they do not establish fit" in guidance
+    assert "same two-sided thesis" in guidance
+    assert "call `no_action`" in guidance
+    assert "Do not call `propose_introduction`" in guidance
+    assert "under-supported proactive candidate" in guidance
 
 
 def test_status_vocabulary_guidance_present() -> None:
