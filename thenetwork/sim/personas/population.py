@@ -85,6 +85,8 @@ _PREMATURE_PROPOSAL_MARKERS = (
     "i found someone",
     "i have a match",
 )
+_MATCH_DEPTH_MIN_FORGETS = 4
+_MATCH_DEPTH_MIN_REMEMBERS = 5
 
 
 _EMAIL_PRESENTATIONS = {
@@ -364,25 +366,24 @@ def _memory_count_summary(outcome: ScenarioOutcome, email: str) -> dict[str, Any
     return {"count": outcome.memory_counts.get(email, 0), "limit": 0}
 
 
-def _scope_questions_for(outcome: ScenarioOutcome, email: str) -> list[str]:
-    return [
-        message.subject
+def _scope_question_count(outcome: ScenarioOutcome, email: str) -> int:
+    return sum(
+        1
         for message in outcome.mail_facts
         if email in message.recipients
         and "?" in message.body
         and any(marker in message.body.casefold() for marker in _SCOPE_QUESTION_MARKERS)
-    ]
+    )
 
 
 def _has_scope_clarification(outcome: ScenarioOutcome, email: str) -> bool:
-    return bool(_scope_questions_for(outcome, email))
+    return _scope_question_count(outcome, email) > 0
 
 
 def _scope_clarification_summary(
     outcome: ScenarioOutcome, email: str
 ) -> dict[str, Any]:
-    questions = _scope_questions_for(outcome, email)
-    return {"question_count": len(questions), "subjects": questions}
+    return {"question_count": _scope_question_count(outcome, email)}
 
 
 def _privacy_opt_out_holds(outcome: ScenarioOutcome) -> bool:
@@ -508,8 +509,8 @@ def _has_progressive_memory_lifecycle(outcome: ScenarioOutcome) -> bool:
     ]
     return (
         outcome.memory_counts.get(LEILA_EMAIL, 0) == 1
-        and len(forget_positions) >= 2
-        and len(remember_positions) >= 3
+        and len(forget_positions) >= _MATCH_DEPTH_MIN_FORGETS
+        and len(remember_positions) >= _MATCH_DEPTH_MIN_REMEMBERS
         and all(
             any(remember_index > forget_index for remember_index in remember_positions)
             for forget_index in forget_positions
@@ -523,6 +524,8 @@ def _progressive_memory_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
         "memory_count": outcome.memory_counts.get(LEILA_EMAIL, 0),
         "forget_count": tool_names.count("forget"),
         "remember_count": tool_names.count("remember"),
+        "minimum_forget_count": _MATCH_DEPTH_MIN_FORGETS,
+        "minimum_remember_count": _MATCH_DEPTH_MIN_REMEMBERS,
     }
 
 
@@ -548,8 +551,8 @@ def _has_supported_match_after_qualification(outcome: ScenarioOutcome) -> bool:
         return False
     first_proposal = proposal_positions[0]
     return (
-        tool_names[:first_proposal].count("forget") >= 2
-        and tool_names[:first_proposal].count("remember") >= 3
+        tool_names[:first_proposal].count("forget") >= _MATCH_DEPTH_MIN_FORGETS
+        and tool_names[:first_proposal].count("remember") >= _MATCH_DEPTH_MIN_REMEMBERS
     )
 
 
