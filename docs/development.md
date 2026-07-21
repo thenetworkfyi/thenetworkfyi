@@ -60,6 +60,27 @@ SMTP send succeeds, so the account reads like a normal mailbox with both receive
 sent mail visible end-to-end; the append is best-effort and its failure never fails the
 send job.
 
+### PGP/MIME admin commands
+
+Admin requests must come from an address in `ADMIN_EMAILS` and be signed by the key in
+`ADMIN_GPG_PUBLIC_KEY`; see `docs/security.md` for the full authentication and replay
+protection contract. The subject must begin with `ADMIN:`, but it is only an unsigned
+pre-filter. Put the command in the signed MIME body's `COMMAND:` line. Arguments are
+positional and space-separated.
+
+| Signed body command | Action |
+| --- | --- |
+| `COMMAND: status` | Show system statistics. |
+| `COMMAND: search <query words…>` | Search memories semantically and return raw text. |
+| `COMMAND: show <email_or_person_id>` | Show all memories referencing a person. |
+| `COMMAND: forget <memory_id>` | Delete one memory. |
+| `COMMAND: remember [refs:e1,e2]` | Store the remaining signed body text as a new memory, optionally referencing people by email. |
+| `COMMAND: ban <email>` | Block an email address before agent execution. |
+| `COMMAND: unban <email>` | Remove an email address from the blocklist. |
+| `COMMAND: intake-status` | Show whether primary intake is active or paused. |
+| `COMMAND: pause-intake` | Pause primary intake. |
+| `COMMAND: resume-intake` | Resume primary intake. |
+
 ### Primary intake circuit breaker
 
 Set `PRIMARY_INTAKE_BURST_MONITORING_ENABLED=true` with a long, stable
@@ -74,13 +95,8 @@ change intake. This control never observes the separate relay mailbox.
 
 The pause is durable. Ordinary primary mail stays unread, but relay delivery and valid
 PGP/MIME admin requests continue. After clearing unwanted unread mail, send a signed admin
-message (subject beginning `ADMIN:`) with one of these signed-body commands:
-
-```text
-COMMAND: intake-status
-COMMAND: pause-intake
-COMMAND: resume-intake
-```
+message with `COMMAND: resume-intake`. Use `COMMAND: intake-status` to inspect the current
+state or `COMMAND: pause-intake` to pause intake manually.
 
 The transition email sent to `ADMIN_EMAILS` is fixed server-authored copy and contains no
 sender or campaign metadata. Resume establishes a fresh burst-counting baseline; previously

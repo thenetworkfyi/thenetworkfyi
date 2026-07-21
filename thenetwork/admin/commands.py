@@ -1,16 +1,21 @@
 """Admin command execution.
 
-Commands are extracted from the email subject after 'ADMIN:' and executed
-server-side with full DB access. The SEAL does not restrict admin reads -
-admins can see raw memory text. Commands that write (remember/forget) apply
-the same DB path as agent tools.
+Commands are extracted from the verified signed body's 'COMMAND:' line and
+executed server-side with full DB access. The unsigned 'ADMIN:' subject is only
+a pre-filter. The SEAL does not restrict admin reads - admins can see raw memory
+text. Memory writes (remember/forget) apply the same DB path as agent tools.
 
-Command grammar (all positional, space-separated in subject):
+Command grammar (all positional, space-separated in the 'COMMAND:' line):
   status                    - system stats
   search <query words…>     - semantic search, returns raw text
   show <email_or_person_id> - all memories referencing a person
   forget <memory_id>        - delete one memory
   remember [refs:e1,e2]     - store body text as a new memory
+  ban <email>               - block an email address
+  unban <email>             - unblock an email address
+  intake-status             - show whether primary intake is active or paused
+  pause-intake              - pause primary intake
+  resume-intake             - resume primary intake
 """
 
 from __future__ import annotations
