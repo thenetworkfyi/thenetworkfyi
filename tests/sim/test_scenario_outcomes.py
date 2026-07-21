@@ -309,6 +309,27 @@ def _default_outcome() -> ScenarioOutcome:
     )
 
 
+def _with_leila_tool_sequence(
+    outcome: ScenarioOutcome, tool_names: tuple[str, ...]
+) -> ScenarioOutcome:
+    sender_id_hash = outcome.sender_id_hashes[LEILA_EMAIL]
+    other_events = tuple(
+        event
+        for event in outcome.audit_events
+        if event.get("sender_id_hash") != sender_id_hash
+    )
+    leila_events = tuple(
+        {
+            "event": "agent.tool.completed",
+            "tool_name": tool_name,
+            "outcome": "success",
+            "sender_id_hash": sender_id_hash,
+        }
+        for tool_name in tool_names
+    )
+    return replace(outcome, audit_events=(*other_events, *leila_events))
+
+
 def test_default_outcome_checks_cover_all_persona_situations():
     score = score_scenario_outcomes(
         _default_outcome(),
@@ -565,6 +586,30 @@ def test_tofu_outcome_checks_have_failure_fixtures(
     assert score.findings[0].passed is False
 
 
+def test_tofu_scope_question_evidence_does_not_expose_mail_content():
+    private_subject = "Private sender-authored project details"
+    outcome = replace(
+        _default_outcome(),
+        mail_facts=tuple(
+            replace(message, subject=private_subject)
+            if HUGO_EMAIL in message.recipients or TARIQ_EMAIL in message.recipients
+            else message
+            for message in _default_outcome().mail_facts
+        ),
+    )
+
+    score = score_scenario_outcomes(
+        outcome,
+        DEFAULT_OUTCOME_CHECKS[15:17],
+        real_process=True,
+        llm_personas=True,
+    )
+
+    assert score.passed is True
+    assert all(finding.evidence == {"question_count": 1} for finding in score.findings)
+    assert private_subject not in repr(score.findings)
+
+
 @pytest.mark.parametrize(
     ("check_index", "outcome"),
     [
@@ -595,6 +640,27 @@ def test_tofu_outcome_checks_have_failure_fixtures(
             ),
         ),
         (19, replace(_default_outcome(), memory_counts={LEILA_EMAIL: 2})),
+        (
+            19,
+            _with_leila_tool_sequence(
+                _default_outcome(),
+                ("remember", "remember", "forget", "forget", "remember"),
+            ),
+        ),
+        (
+            20,
+            _with_leila_tool_sequence(
+                _default_outcome(),
+                (
+                    "remember",
+                    "remember",
+                    "forget",
+                    "forget",
+                    "remember",
+                    "propose_introduction",
+                ),
+            ),
+        ),
         (
             20,
             replace(
