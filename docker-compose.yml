@@ -1,7 +1,9 @@
 services:
   db:
     image: pgvector/pgvector:pg17
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -27,7 +29,9 @@ services:
     # IMAGE=ghcr.io/<owner>/thenetwork-agent:latest
     image: ${IMAGE:-thenetwork-agent:latest}
     build: .
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false
     environment:
       # Parts, not a pre-built DATABASE_URL: the app assembles (and correctly
       # percent-encodes) the connection URI itself, so POSTGRES_PASSWORD here
@@ -53,6 +57,19 @@ services:
     volumes:
       - hf-cache:/home/appuser/.cache/huggingface
 
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.118.0
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
+    ports:
+      - "127.0.0.1:24224:24224"
+    restart: unless-stopped
+
 volumes:
   pgdata:
   hf-cache:
+
