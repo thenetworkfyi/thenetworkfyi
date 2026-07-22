@@ -89,6 +89,9 @@ _dispatch_storage: PostgresFixedWindowStorage | None = None
 _registration_limiter: strategies.FixedWindowRateLimiter | None = None
 _registration_storage: PostgresFixedWindowStorage | None = None
 _WELCOME_LIMIT_PER_DAY = 1
+_PROACTIVE_BOUND_MUTATIONS = frozenset(
+    {"propose_introduction", "send_event_recommendation"}
+)
 
 FIRST_EVENT_RECOMMENDATION_NOTICE = EventRecommendationNotice.FIRST.value
 EVENT_RECOMMENDATION_STOP_NOTICE = EventRecommendationNotice.STOP.value
@@ -179,6 +182,14 @@ def _idempotent_mutation(function):
 
     @wraps(function)
     async def wrapped(ctx: RunContext[AgentDeps], *args, **kwargs):
+        if ctx.deps.is_proactive and tool_name not in _PROACTIVE_BOUND_MUTATIONS:
+            with audit_span("agent.tool", tool_name=tool_name):
+                return _tool_result(
+                    {
+                        "status": "forbidden",
+                        "reason": "proactive_read_only",
+                    }
+                )
         fingerprint = _tool_argument_fingerprint(
             tool_name, signature, ctx, args, kwargs
         )
@@ -889,6 +900,7 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
                 f"Please reply to {sender} manually."
             )
             notify_admins(s, subject, body, trace_id=ctx.deps.trace_id)
+            ctx.deps.terminal_action_taken = True
             if welcome_result.get("status") == "sent":
                 return _tool_result({"status": "welcomed_and_escalated"})
             return _tool_result({"status": "escalated"})
@@ -916,6 +928,7 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
             f"Please reply to {sender} manually."
         )
         notify_admins(s, subject, body, trace_id=ctx.deps.trace_id)
+        ctx.deps.terminal_action_taken = True
 
         return _tool_result({"status": "escalated", "memory_id": memory_id})
 

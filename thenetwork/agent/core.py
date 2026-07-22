@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from pydantic_ai import Agent, ToolOutput
+from pydantic_ai import Agent, ModelRetry, RunContext, ToolOutput
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
@@ -50,15 +50,15 @@ from thenetwork.memory.recent_context import (
 from thenetwork.security.sender_identifier import optional_sender_identifier
 from thenetwork.settings import get_settings
 
-_UNDISPATCHED_RESPONSE_SUBJECT = "[The Network] Agent response needs review"
-_UNDISPATCHED_RESPONSE_BODY = (
-    "An agent run generated final text without a reply, outreach, or escalate action. "
-    "The text was not sent. Review the correlated audit trace."
-)
 
-
-def build_agent(model: Any = None) -> Agent[AgentDeps, str]:
-    """Construct the pydantic-ai agent with all tools registered."""
+def build_agent(
+    model: Any = None,
+    *,
+    is_proactive: bool = False,
+    proactive_candidate_id: str | None = None,
+    proactive_event_id: str | None = None,
+) -> Agent[AgentDeps, str]:
+    """Construct an agent with the capabilities appropriate to this run."""
     settings = None
     if model is None:
         settings = get_settings()
@@ -84,26 +84,54 @@ def build_agent(model: Any = None) -> Agent[AgentDeps, str]:
             if thinking_level is not None
             else None
         ),
+        retries=1,
     )
 
-    # One retry is exclusively for malformed tool arguments. World-state and
-    # policy outcomes are structured status results, never ModelRetry signals.
-    agent.tool(remember, retries=1)
-    agent.tool(forget, retries=1)
-    agent.tool(search, retries=1)
-    agent.tool(propose_introduction, retries=1)
-    agent.tool(escalate, retries=1)
-    agent.tool(send_first_contact_welcome, retries=1)
-    agent.tool(reply_to_sender, retries=1)
-    agent.tool(send_outreach, retries=1)
-    agent.tool(register_person, retries=1)
-    agent.tool(create_event, retries=1)
-    agent.tool(update_event, retries=1)
-    agent.tool(cancel_event, retries=1)
-    agent.tool(search_events, retries=1)
-    agent.tool(send_event_recommendation, retries=1)
-    agent.tool(stop_event_recommendations, retries=1)
-    agent.tool(resume_event_recommendations, retries=1)
+    @agent.output_validator
+    def require_terminal_action(ctx: RunContext[AgentDeps], output: str) -> str:
+        if (
+            output.strip()
+            and ctx.deps.server_side_send_count == 0
+            and not ctx.deps.terminal_action_taken
+        ):
+            if ctx.deps.is_proactive:
+                instruction = "Call the available bound action or no_action explicitly."
+            else:
+                instruction = (
+                    "Call reply_to_sender, send_outreach, escalate, or no_action "
+                    "explicitly."
+                )
+            raise ModelRetry(f"Bare final text is not a terminal action. {instruction}")
+        return output
+
+    # Synthetic proactive jobs are capability grants for exactly one
+    # server-bound action, not ordinary inbound sessions. Withholding every
+    # unrelated tool makes mutation structurally unavailable to a hijacked
+    # model; the tool implementations retain their own binding checks.
+    if is_proactive:
+        if proactive_candidate_id is not None:
+            agent.tool(propose_introduction, retries=1)
+        elif proactive_event_id is not None:
+            agent.tool(send_event_recommendation, retries=1)
+    else:
+        # One retry is exclusively for malformed tool arguments. World-state
+        # and policy outcomes are structured status results, never ModelRetry.
+        agent.tool(remember, retries=1)
+        agent.tool(forget, retries=1)
+        agent.tool(search, retries=1)
+        agent.tool(propose_introduction, retries=1)
+        agent.tool(escalate, retries=1)
+        agent.tool(send_first_contact_welcome, retries=1)
+        agent.tool(reply_to_sender, retries=1)
+        agent.tool(send_outreach, retries=1)
+        agent.tool(register_person, retries=1)
+        agent.tool(create_event, retries=1)
+        agent.tool(update_event, retries=1)
+        agent.tool(cancel_event, retries=1)
+        agent.tool(search_events, retries=1)
+        agent.tool(send_event_recommendation, retries=1)
+        agent.tool(stop_event_recommendations, retries=1)
+        agent.tool(resume_event_recommendations, retries=1)
 
     return agent
 
@@ -161,7 +189,15 @@ async def run_agent_for_email(
             session_factory=session_factory,
         )
         settings = get_settings()
-        agent = build_agent(model=settings.agent_model)
+        if is_proactive:
+            agent = build_agent(
+                model=settings.agent_model,
+                is_proactive=True,
+                proactive_candidate_id=proactive_candidate_id,
+                proactive_event_id=proactive_event_id,
+            )
+        else:
+            agent = build_agent(model=settings.agent_model)
         usage_limits = UsageLimits(
             request_limit=settings.agent_request_limit,
             total_tokens_limit=settings.agent_total_tokens_limit,
@@ -280,11 +316,5 @@ async def run_agent_for_email(
                 "agent.undispatched_response",
                 body_chars=len(result.output),
                 sender_known=sender_user_id is not None,
-            )
-            notify_admins(
-                settings,
-                _UNDISPATCHED_RESPONSE_SUBJECT,
-                _UNDISPATCHED_RESPONSE_BODY,
-                trace_id=trace_id,
             )
         return result.output

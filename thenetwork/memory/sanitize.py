@@ -7,6 +7,26 @@ from sqlmodel import Session
 from thenetwork.audit import audit_event
 from thenetwork.db.models import Memory
 
+MAX_SANITIZED_GIST_CHARS = 8_000
+_SANITIZER_TRANSCRIPT_MARKERS = (
+    "systempromptpart(",
+    "userpromptpart(",
+    "modelrequest(",
+    "modelresponse(",
+    "textpart(",
+    "toolcallpart(",
+    "toolreturnpart(",
+    "<|assistant|>",
+    "<|system|>",
+    "you are a pii sanitizer",
+    "return only the sanitized text",
+)
+
+
+class _UnsafeSanitizerOutput(ValueError):
+    """The optional model returned content that cannot cross the SEAL."""
+
+
 # NER entity types redacted via Presidio, mapped to the same bracket-token
 # style used throughout sanitized gists.
 _PRESIDIO_ENTITY_LABELS = {
@@ -121,6 +141,29 @@ async def sanitize_text_llm(text: str) -> str:
     return result.output
 
 
+def _validate_llm_gist(candidate: str, deterministic_gist: str) -> str:
+    """Return a bounded model gist or reject it for deterministic fallback."""
+    if not isinstance(candidate, str) or not candidate.strip():
+        raise _UnsafeSanitizerOutput("blank sanitizer output")
+
+    max_chars = min(
+        MAX_SANITIZED_GIST_CHARS,
+        max(512, len(deterministic_gist) * 2),
+    )
+    if len(candidate) > max_chars:
+        raise _UnsafeSanitizerOutput("expanded sanitizer output")
+
+    lowered = candidate.casefold()
+    if any(marker in lowered for marker in _SANITIZER_TRANSCRIPT_MARKERS):
+        raise _UnsafeSanitizerOutput("transcript-shaped sanitizer output")
+
+    # The optional model must not reintroduce a name, address, or phone that
+    # the mandatory deterministic layer can identify.
+    if sanitize_text(candidate) != candidate:
+        raise _UnsafeSanitizerOutput("sanitizer output contains deterministic PII")
+    return candidate
+
+
 async def sanitize_text_high_fidelity(text: str) -> str:
     """Return a SEAL-safe gist, with mandatory Presidio fallback."""
     from thenetwork.settings import get_settings
@@ -132,7 +175,8 @@ async def sanitize_text_high_fidelity(text: str) -> str:
     try:
         # The optional model never sees the PII already caught by mandatory
         # Presidio and therefore cannot reproduce it in its output.
-        return await sanitize_text_llm(deterministic_gist)
+        candidate = await sanitize_text_llm(deterministic_gist)
+        return _validate_llm_gist(candidate, deterministic_gist)
     except Exception as exc:
         audit_event("sanitize.tier_downgrade", error_type=type(exc).__name__)
         return deterministic_gist
@@ -156,7 +200,9 @@ async def sanitize_memory_llm(memory: Memory, session: Session) -> str:
             f"Memory {memory.id} has no refs; only person-referencing memories require sanitization"
         )
 
-    gist = await sanitize_text_llm(memory.text)
+    deterministic_gist = sanitize_text(memory.text)
+    candidate = await sanitize_text_llm(deterministic_gist)
+    gist = _validate_llm_gist(candidate, deterministic_gist)
     memory.gist = gist
     session.add(memory)
     session.flush()

@@ -634,6 +634,47 @@ def test_memory_expectation_fails_when_stated_fact_was_not_remembered():
     assert "unexercised" not in score.findings[0].message
 
 
+def test_memory_expectation_required_groups_can_span_persona_messages():
+    expectation = MemoryExpectation(
+        description="Qualified project experience remembered",
+        gist_contains="pilot",
+        persona_email="leila.sim@example.test",
+        inbound_required_groups=(
+            ("product designer", "design lead"),
+            ("piloted", "deployed"),
+        ),
+    )
+    role_only = MailFacts(
+        sender="Leila <leila.sim@example.test>",
+        recipients=frozenset({"join@example.test"}),
+        subject="Role",
+        body="I am the product designer.",
+    )
+
+    partial = score_memory_expectations((), (expectation,), mail_facts=(role_only,))
+    complete = score_memory_expectations(
+        (),
+        (expectation,),
+        mail_facts=(
+            role_only,
+            MailFacts(
+                sender="Leila <leila.sim@example.test>",
+                recipients=frozenset({"join@example.test"}),
+                subject="Experience",
+                body="I piloted the workflow with two labs.",
+            ),
+        ),
+    )
+
+    assert partial.passed is True
+    assert partial.findings[0].evidence == {
+        "unexercised": True,
+        "persona_inbound_messages_checked": 1,
+    }
+    assert complete.passed is False
+    assert complete.findings[0].evidence == {}
+
+
 def test_memory_expectation_passes_when_stated_fact_is_owner_bound():
     score = score_memory_expectations(
         (
