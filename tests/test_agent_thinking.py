@@ -24,6 +24,7 @@ def test_agent_thinking_level_defaults_to_medium():
 
 def test_agent_thinking_level_can_be_disabled():
     settings = Settings(
+        _env_file=None,
         agent_model="test:model",
         small_agent_model="test:model",
         embed_model="test:embed",
@@ -233,6 +234,7 @@ async def test_successful_dispatch_allows_concise_final_operator_text():
 
     deps = AgentDeps(
         settings=Settings(
+            _env_file=None,
             agent_model="test:model",
             small_agent_model="test:model",
             embed_model="test:embed",
