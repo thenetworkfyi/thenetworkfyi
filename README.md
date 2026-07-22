@@ -403,7 +403,7 @@ migrations apply automatically on every deploy.
 
 `docker-compose.yml` includes an explicitly version-pinned OpenTelemetry Collector contrib service (`otel-collector`) that receives worker JSON logs via the Docker `fluentd` logging driver and forwards structured `LogRecord` events to an environment-configured OTLP destination. Set `OTEL_EXPORTER_OTLP_ENDPOINT` in `.env`; optional authentication headers (`OTEL_EXPORTER_OTLP_HEADERS`, a JSON object string such as `{"Authorization":"Bearer <token>"}`) are substituted directly into the OTLP exporter's `headers:` map. TLS is the default; set `OTEL_EXPORTER_OTLP_INSECURE=true` only for a trusted plaintext endpoint. The collector exposes a healthcheck on port 13133.
 
-The same redacted log pipeline derives a bounded counter catalog for account creation, message processing and rejection, agent runs and tools, introduction transitions, outbound email, and relay forwarding. The worker also exports unlabelled producer-success, runnable-backlog, oldest-pending-age, and durable-intake-state gauges outbound to the Collector over OTLP/HTTP. A version-pinned Prometheus LTS service scrapes those metrics and the collector's own pipeline metrics over the internal Compose network. Prometheus persists its TSDB in `prometheus-data`, retains samples for 30 days, and binds its UI only to `http://127.0.0.1:9090`. The worker opens no metrics port. Collector conditions allow-list every projected counter category value; trace IDs, run IDs, sender pseudonyms, mail content, exception text, job arguments, and opaque person/event identifiers are never metric labels. See [docs/monitoring.md](docs/monitoring.md) for metric semantics, the label policy, reset behavior, and PromQL examples.
+The same redacted log pipeline derives a bounded counter catalog for account creation, message processing and rejection, agent runs and tools, introduction transitions, outbound email, and relay forwarding. The worker also exports unlabelled producer-success, runnable-backlog, oldest-pending-age, and durable-intake-state gauges outbound to the Collector over OTLP/HTTP. A version-pinned Prometheus LTS service scrapes those metrics and the collector's own pipeline metrics over the internal Compose network. Prometheus persists its TSDB in `prometheus-data`, retains samples for 30 days, and binds its UI only to `http://127.0.0.1:9090`. Pinned Alertmanager receives rule state internally, persists notification and silence state, and binds its UI only to `http://127.0.0.1:9093`. Operator email uses a deployment-provided dedicated address and an SMTP password mounted from a gitignored file. The worker opens no metrics port. Collector conditions allow-list every projected counter category value; trace IDs, run IDs, sender pseudonyms, mail content, exception text, job arguments, and opaque person/event identifiers are never metric labels or notification content. See [docs/monitoring.md](docs/monitoring.md) for metric semantics, alert thresholds, secret provisioning, routing, runbooks, and validation.
 
 Rollout and verification commands:
 ```bash
@@ -414,13 +414,14 @@ docker run --rm -e OTEL_EXPORTER_OTLP_ENDPOINT="localhost:4317" \
   -v ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml \
   otel/opentelemetry-collector-contrib:0.118.0 validate --config=/etc/otelcol-contrib/config.yaml
 docker run --rm --entrypoint /bin/promtool \
-  -v ./prometheus.yml:/etc/prometheus/prometheus.yml:ro \
+  -v "$PWD/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
+  -v "$PWD/prometheus-alert-rules.yml:/etc/prometheus/rules/thenetwork.yml:ro" \
   prom/prometheus:v3.5.5 check config /etc/prometheus/prometheus.yml
 docker compose up -d
 curl http://127.0.0.1:9090/api/v1/targets
 ```
 
-The targets page/API should report both `otel-collector-internal` and `thenetwork-audit-activity` as `up`. Run `./validate-monitoring.sh` to exercise the worker-state OTLP path through Prometheus, or query `thenetwork_worker_audit_events_total` after the worker has emitted an audit event. The validator does not inject Docker logs; the bounded counter catalog is covered by the Collector configuration tests. This increment deliberately excludes Grafana, Alertmanager, host exporters, and Postgres exporters.
+The targets page/API should report both `otel-collector-internal` and `thenetwork-audit-activity` as `up`. Run `./validate-monitoring.sh` to exercise the worker-state OTLP path, Prometheus rule tests, and Alertmanager configuration and readiness without sending email. The validator does not inject Docker logs; the bounded counter catalog is covered by the Collector configuration tests. This increment deliberately excludes Grafana, host exporters, and Postgres exporters.
 
 ### Safe redeploys (no lost or half-processed jobs)
 
