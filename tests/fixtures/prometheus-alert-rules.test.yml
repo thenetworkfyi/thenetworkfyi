@@ -1,0 +1,125 @@
+rule_files:
+  - ../../prometheus-alert-rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: backlog moves from pending to firing and resolves
+    interval: 1m
+    input_series:
+      - series: thenetwork_job_queue_depth
+        values: 30x15 0x5
+      - series: thenetwork_oldest_pending_job_age_seconds
+        values: 600x15 0x5
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: WorkerBacklogSustained
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: WorkerBacklogSustained
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              service: thenetwork
+              scope: worker
+              category: backlog
+            exp_annotations:
+              summary: More than 25 runnable jobs have remained queued with the oldest over five minutes.
+              runbook: docs/monitoring.md#workerbacklogsustained
+      - eval_time: 17m
+        alertname: WorkerBacklogSustained
+        exp_alerts: []
+
+  - name: administrator pause is not an automated incident
+    interval: 1m
+    input_series:
+      - series: 'thenetwork_primary_intake_paused{reason="admin"}'
+        values: 1x5
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: AutomatedPrimaryIntakePaused
+        exp_alerts: []
+
+  - name: automated pause fires and resolves
+    interval: 1m
+    input_series:
+      - series: 'thenetwork_primary_intake_paused{reason="coordinated_abuse"}'
+        values: 1x3 0x3
+    alert_rule_test:
+      - eval_time: 0m
+        alertname: AutomatedPrimaryIntakePaused
+        exp_alerts: []
+      - eval_time: 1m
+        alertname: AutomatedPrimaryIntakePaused
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service: thenetwork
+              scope: worker
+              category: control
+            exp_annotations:
+              summary: Automated abuse controls have paused primary intake.
+              runbook: docs/monitoring.md#automatedprimaryintakepaused
+      - eval_time: 5m
+        alertname: AutomatedPrimaryIntakePaused
+        exp_alerts: []
+
+  - name: low traffic does not trigger agent failure rate
+    interval: 1m
+    input_series:
+      - series: 'thenetwork_agent_runs_total{outcome="error"}'
+        values: 0 1 2 3 4 4x15
+      - series: 'thenetwork_agent_runs_total{outcome="success"}'
+        values: 0x20
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: AgentFailureRateElevated
+        exp_alerts: []
+
+  - name: agent failure rate requires traffic and stays elevated
+    interval: 1m
+    input_series:
+      - series: 'thenetwork_agent_runs_total{outcome="error"}'
+        values: 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20
+      - series: 'thenetwork_agent_runs_total{outcome="success"}'
+        values: 0x20
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: AgentFailureRateElevated
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: AgentFailureRateElevated
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              service: thenetwork
+              scope: worker
+              category: agent
+            exp_annotations:
+              summary: Agent failures exceeded 25 percent with at least five failures in 15 minutes.
+              runbook: docs/monitoring.md#agentfailurerateelevated
+
+  - name: system controls notify without a for delay
+    interval: 1m
+    input_series:
+      - series: 'thenetwork_control_actions_total{action="pause",actor="system",reason="coordinated_abuse"}'
+        values: 0 1 1 1 1
+      - series: 'thenetwork_control_actions_total{action="pause",actor="admin",reason="admin"}'
+        values: 0 1 1 1 1
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: SystemControlActionObserved
+        exp_alerts:
+          - exp_labels:
+              action: pause
+              reason: coordinated_abuse
+              severity: critical
+              service: thenetwork
+              scope: worker
+              category: event
+            exp_annotations:
+              summary: An automated safety control changed operational state.
+              runbook: docs/monitoring.md#systemcontrolactionobserved
+      - eval_time: 4m
+        alertname: SystemControlActionObserved
+        exp_alerts: []
