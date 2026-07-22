@@ -40,7 +40,6 @@ from thenetwork.audit import (
     audit_trace,
 )
 from thenetwork.db.session import get_session
-from thenetwork.email.outbound import notify_admins
 from thenetwork.model_config import model_with_api_key
 from thenetwork.memory.recent_context import (
     RECENT_MEMORY_CONTEXT_MAX_CHARS,
@@ -244,18 +243,6 @@ async def run_agent_for_email(
                 error_type=type(exc).__name__,
             )
             record_agent_usage_limit_exceeded()
-            sender_known = sender_user_id is not None
-            subject = "[The Network] Agent run interrupted: usage limit exceeded"
-            body = (
-                f"Email from {sender_email} hit the configured usage limit "
-                "mid-run and was interrupted before producing a reply.\n\n"
-                f"Sender known: {sender_known}\n\n"
-                f"Reason: {exc}\n\n"
-                "The run may have partially completed actions (for example, "
-                "half of a two-person introduction) before being cut off. "
-                "Please review and follow up manually."
-            )
-            notify_admins(settings, subject, body, trace_id=trace_id)
             return ""
         except Exception as exc:
             if deps.server_side_send_count == 0:

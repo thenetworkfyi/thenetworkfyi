@@ -40,7 +40,6 @@ from thenetwork.email.intake_control import is_primary_intake_paused
 from thenetwork.email.outbound import (
     _direct_reply_kwargs,
     _thread_headers,
-    notify_admins,
     send_relay_email,
     send_reply,
 )
@@ -423,13 +422,6 @@ async def process_email(
                 and context.job.attempts >= _PROCESS_EMAIL_MAX_ATTEMPTS
             ):
                 record_job_exhausted()
-                notify_admins(
-                    get_settings(),
-                    "[The Network] Agent processing failed",
-                    "The agent failed on its final processing attempt. "
-                    "Use the trace id in the audit log to investigate.",
-                    trace_id=trace_id,
-                )
             raise
 
 

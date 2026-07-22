@@ -55,10 +55,6 @@ def _database(monkeypatch):
     monkeypatch.setattr(
         "thenetwork.email.intake_observations.get_session", get_test_session
     )
-    monkeypatch.setattr(
-        "thenetwork.email.intake_observations.notify_primary_intake_transition",
-        lambda _transition: None,
-    )
     return engine
 
 

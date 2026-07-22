@@ -1,5 +1,6 @@
 """Contracts for the local Prometheus and Alertmanager stack."""
 
+import ast
 import pathlib
 
 import yaml
@@ -96,6 +97,34 @@ def test_rules_filter_admin_controls_and_low_traffic_noise():
 
     exhausted_expr = rules["ProcessEmailJobExhausted"]["expr"]
     assert "thenetwork_jobs_exhausted_total" in exhausted_expr
+
+
+def test_application_notification_ownership_is_limited_to_agent_escalation():
+    call_sites = []
+    for path in (_REPO_ROOT / "thenetwork").rglob("*.py"):
+        tree = ast.parse(path.read_text())
+        if any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "notify_admins"
+            for node in ast.walk(tree)
+        ):
+            call_sites.append(path.relative_to(_REPO_ROOT).as_posix())
+
+    assert call_sites == ["thenetwork/agent/tools.py"]
+
+    rules = _rules_by_name()
+    assert (
+        "thenetwork_control_actions_total"
+        in rules["SystemControlActionObserved"]["expr"]
+    )
+    assert (
+        "thenetwork_agent_usage_limit_exceeded_total"
+        in rules["AgentUsageLimitExceeded"]["expr"]
+    )
+    assert (
+        "thenetwork_jobs_exhausted_total" in rules["ProcessEmailJobExhausted"]["expr"]
+    )
 
 
 def test_alert_content_is_static_and_seal_safe():

@@ -20,7 +20,6 @@ from thenetwork.email.intake_control import (
     PRIMARY_INTAKE_KEY,
     PrimaryIntakePauseReason,
     PrimaryIntakeTransition,
-    notify_primary_intake_transition,
     set_primary_intake_paused_in_session,
 )
 from thenetwork.security.intake_fingerprint import intake_fingerprints
@@ -153,7 +152,6 @@ def observe_primary_intake_batch(
             record_type="primary_intake",
             outcome="success" if transition.changed else "exists",
         )
-        notify_primary_intake_transition(transition)
     return BurstObservationResult(
         paused=transition is not None and transition.status.paused,
         newly_observed=newly_observed,
