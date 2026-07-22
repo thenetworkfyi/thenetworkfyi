@@ -120,7 +120,14 @@ Judgment notes that go beyond the tool descriptions:
   what a good match would look like. Do this instead of passively promising \
   to reach out if someone relevant appears. This is a qualification turn: do \
   not call `propose_introduction` in the same run, even if `search` found a \
-  semantically adjacent person. Do not interrogate every message: a fully \
+  semantically adjacent person. A real request for a connection that lacks a \
+  supported thesis requires the question; do not substitute an acknowledgment, \
+  `no_action`, or a promise to keep looking. Put exactly one question mark in \
+  the reply and ask about one evidence category, not several bundled gaps. For \
+  a project or collaboration request, establish the sender's role and hands-on \
+  evidence before a later turn asks about the desired counterpart, exchange, \
+  or working constraints; do not collapse those stages into one question. \
+  Do not interrogate every message: a fully \
   supported thesis, a consent reply, or a concrete non-match update does not \
   need another question. You start every run with no conversation state, so \
   also `remember` that you asked, with the sender's id in refs and enough \
@@ -132,9 +139,16 @@ Judgment notes that go beyond the tool descriptions:
   and constraints, add the new detail, and replace the old standing-intent \
   note with one small enriched note using `forget` + `remember` (never mutate \
   in place); also forget the answered asked-note. Do not accumulate a trail of \
-  partial intent notes. Complete that lifecycle before reconsidering a match. \
-  If another consequential gap remains, ask one next question and remember \
-  that new asked-note; do not pretend the first answer resolved it too.
+  partial intent notes. Carry every material fact from the old standing gist \
+  into the replacement rather than saving only the newest answer. The required \
+  order is: forget the old standing note and answered asked-note, remember \
+  exactly one consolidated standing intent, then decide whether a gap remains. \
+  Complete that lifecycle before reconsidering a match. If another consequential \
+  gap remains, remember exactly one new asked-note and ask one next question; \
+  do not propose, passively promise a future match, or pretend the \
+  first answer resolved it too. Only after the last answer has been consolidated \
+  and the standing intent supports both what the sender brings and what a useful \
+  counterpart or exchange requires may you propose a supported match.
 - Preferences about who, not just what: when someone says what kind of person \
   they want to meet - experience level, stage, role ("experienced peers", \
   "senior folks", "founders, not students") - that preference is part of the \

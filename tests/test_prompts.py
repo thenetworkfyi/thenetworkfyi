@@ -67,6 +67,11 @@ def test_thin_standing_intent_guidance_requests_one_material_follow_up() -> None
     assert "even if `search` found a semantically adjacent person" in guidance
     assert "Do not interrogate every message" in guidance
     assert "passively promising" in guidance
+    assert "requires the question" in guidance
+    assert "exactly one question mark" in guidance
+    assert "one evidence category" in guidance
+    assert "role and hands-on evidence" in guidance
+    assert "do not collapse those stages" in guidance
     assert "`remember` that you asked" in guidance
 
 
@@ -83,6 +88,12 @@ def test_progressive_qualification_replaces_one_enriched_intent_note() -> None:
     assert "Do not accumulate a trail of partial intent notes" in guidance
     assert "before reconsidering a match" in guidance
     assert "ask one next question" in guidance
+    assert "Carry every material fact from the old standing gist" in guidance
+    assert "forget the old standing note and answered asked-note" in guidance
+    assert "exactly one consolidated standing intent" in guidance
+    assert "remember exactly one new asked-note" in guidance
+    assert "do not propose" in guidance
+    assert "supports both what the sender brings" in guidance
 
 
 def test_under_supported_proactive_people_candidate_is_no_action() -> None:
