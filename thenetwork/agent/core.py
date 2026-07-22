@@ -216,6 +216,22 @@ async def run_agent_for_email(
             )
             notify_admins(settings, subject, body, trace_id=trace_id)
             return ""
+        except Exception as exc:
+            if deps.server_side_send_count == 0:
+                raise
+
+            # SMTP is an external side effect and cannot be rolled back. Once a
+            # run has sent anything, retrying the whole Procrastinate job with
+            # fresh AgentDeps would forget the in-run replay cache and could
+            # deliver the same message again. Treat a later model/provider
+            # failure as an interrupted completion step instead: the successful
+            # send and its durable summary are already the authoritative result.
+            audit_event(
+                "agent.failed_after_send",
+                outcome="error",
+                error_type=type(exc).__name__,
+            )
+            return ""
         audit_model_trace(
             result,
             pseudonym_secret=getattr(settings, "response_log_redaction_secret", None),
