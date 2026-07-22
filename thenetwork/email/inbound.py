@@ -23,8 +23,6 @@ MAX_SENDER_NAME_CHARS = 300
 MAX_RECIPIENT_CHARS = 320
 MAX_BODY_CHARS = 10_000
 MAX_RAW_BODY_CHARS = 100_000
-MIN_BODY_TEXT_CHARS = 3
-REJECT_BODY_EMPTY = "body_empty"
 REJECT_BODY_OVERSIZE = "body_oversize"
 
 _AUTH_RESULT_RE = re.compile(r"\b(dkim|spf|auth)=(\w+)", re.IGNORECASE)
@@ -129,11 +127,6 @@ def _delivery_recipient(msg, relay_domain: str) -> str | None:
         if is_relay_address_candidate(address, relay_domain):
             return address
     return addresses[0] if addresses else None
-
-
-def is_near_empty_body(body: str) -> bool:
-    """Return True for body text too small to spend an agent run on."""
-    return len(body.strip()) < MIN_BODY_TEXT_CHARS
 
 
 def cap_body(body: str) -> str:

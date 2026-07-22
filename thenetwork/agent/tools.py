@@ -58,12 +58,16 @@ from thenetwork.memory.sanitize import (
 )
 from thenetwork.memory.sent_email import (
     CONSENT_REQUEST_SUMMARY,
+    FIRST_CONTACT_WELCOME_SUMMARY,
     SentEmailMemory,
     event_recommendation_summary,
     record_sent_email_memories,
     record_sent_email_memory,
 )
-from thenetwork.security.rate_limit import PostgresFixedWindowStorage
+from thenetwork.security.rate_limit import (
+    PostgresFixedWindowStorage,
+    normalize_rate_limit_identity,
+)
 from thenetwork.introductions import propose_pair
 from thenetwork.search.match import (
     MAX_CANDIDATE_CONTEXTS,
@@ -84,6 +88,7 @@ _dispatch_limiter: strategies.FixedWindowRateLimiter | None = None
 _dispatch_storage: PostgresFixedWindowStorage | None = None
 _registration_limiter: strategies.FixedWindowRateLimiter | None = None
 _registration_storage: PostgresFixedWindowStorage | None = None
+_WELCOME_LIMIT_PER_DAY = 1
 
 FIRST_EVENT_RECOMMENDATION_NOTICE = EventRecommendationNotice.FIRST.value
 EVENT_RECOMMENDATION_STOP_NOTICE = EventRecommendationNotice.STOP.value
@@ -228,6 +233,34 @@ def _introduction_result(result: dict[str, Any]) -> dict[str, Any]:
 
 def _trace_kwargs(trace_id: str | None) -> dict[str, str]:
     return {"trace_id": trace_id} if trace_id else {}
+
+
+def _unknown_sender_declines_participation(ctx: RunContext[AgentDeps]) -> bool:
+    """Recognize an explicit refusal before an identity has been created.
+
+    This is a narrow safety gate, not an intent classifier. Its only effect is
+    to prevent registration and escalation side effects for an authenticated
+    unknown sender who plainly says not to retain data or participate.
+    """
+    if ctx.deps.sender_user_id is not None:
+        return False
+    text = f"{ctx.deps.inbound_subject}\n{ctx.deps.inbound_body}".casefold()
+    text = text.replace("’", "'")
+    return any(
+        phrase in text
+        for phrase in (
+            "opt out",
+            "opting out",
+            "do not retain",
+            "don't retain",
+            "do not store",
+            "don't store",
+            "do not register",
+            "don't register",
+            "do not want to participate",
+            "don't want to participate",
+        )
+    )
 
 
 def _utc(value: datetime) -> datetime:
@@ -830,31 +863,24 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
 
     Use when intent is ambiguous, the request is outside your capabilities, or
     you have low confidence. A human will follow up with the sender directly.
-    Do not use this for an ordinary first contact that can be registered and
-    answered with reply_to_sender. The fixed welcome/how-to-join reply is only
-    a fallback for authenticated senders who are still unknown when escalation
-    is requested, so they learn how to use the address without giving the model
-    control over that copy.
+    Do not use this for an ordinary first contact that can be answered with
+    reply_to_sender or send_first_contact_welcome. Authenticated unknown
+    senders receive the fixed welcome before the operator is notified, unless
+    another response was already sent or the welcome quota is exhausted.
     """
     with audit_span("agent.tool", tool_name="escalate"):
         s = ctx.deps.settings
         sender = ctx.deps.sender_email
 
         if ctx.deps.sender_authenticated and ctx.deps.sender_user_id is None:
-            send_reply(
-                to_address=sender,
-                subject=reply_subject(ctx.deps.inbound_subject, fallback="How to join"),
-                fixed_template=FixedEmailTemplate.FIRST_CONTACT_WELCOME,
-                fixed_context=FirstContactWelcomeEmailContext(),
-                **_trace_kwargs(ctx.deps.trace_id),
-                **_direct_reply_kwargs(
-                    inbound_message_id=ctx.deps.inbound_message_id,
-                    inbound_body_for_quote=ctx.deps.inbound_body_for_quote,
-                    inbound_date=ctx.deps.inbound_date,
-                    inbound_references=ctx.deps.inbound_references,
-                ),
-            )
-            audit_event("agent.first_contact_welcome_sent")
+            if _unknown_sender_declines_participation(ctx):
+                return _tool_result(
+                    {
+                        "status": "no_action",
+                        "reason": "sender_declined_participation",
+                    }
+                )
+            welcome_result = await _send_first_contact_welcome(ctx)
             subject = f"[The Network] Manual reply needed: {sender}"
             body = (
                 f"Email from {sender} was escalated for human review.\n\n"
@@ -863,7 +889,9 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
                 f"Please reply to {sender} manually."
             )
             notify_admins(s, subject, body, trace_id=ctx.deps.trace_id)
-            return _tool_result({"status": "welcomed_and_escalated"})
+            if welcome_result.get("status") == "sent":
+                return _tool_result({"status": "welcomed_and_escalated"})
+            return _tool_result({"status": "escalated"})
 
         refs = [ctx.deps.sender_user_id] if ctx.deps.sender_user_id else []
 
@@ -940,6 +968,14 @@ async def register_person(
                 }
             )
 
+        if _unknown_sender_declines_participation(ctx):
+            return _tool_result(
+                {
+                    "status": "error",
+                    "reason": "sender_declined_participation",
+                }
+            )
+
         if ctx.deps.sender_user_id is not None:
             audit_event(
                 "database.action",
@@ -1002,7 +1038,7 @@ async def register_person(
 
 async def _send_email(
     ctx: RunContext[AgentDeps],
-    recipient_user_id: str,
+    recipient_user_id: str | None,
     subject: str,
     body_text: str,
     sent_email_summary: str,
@@ -1039,6 +1075,85 @@ async def _send_email(
     )
 
 
+def _welcome_quota_key(sender_email: str) -> str:
+    normalized_sender = normalize_rate_limit_identity(sender_email)
+    sender_hash = hashlib.sha256(normalized_sender.encode("utf-8")).hexdigest()
+    return f"welcome:first-contact:{sender_hash}"
+
+
+async def _send_first_contact_welcome(
+    ctx: RunContext[AgentDeps],
+) -> dict[str, Any]:
+    """Send the fixed welcome through the ordinary outbound capability gates."""
+    if ctx.deps.sender_user_id is not None:
+        with audit_span("agent.tool", tool_name="send_first_contact_welcome"):
+            return _tool_result({"status": "error", "reason": "already_registered"})
+    if not ctx.deps.sender_authenticated or not ctx.deps.sender_email:
+        with audit_span("agent.tool", tool_name="send_first_contact_welcome"):
+            return _tool_result(
+                {"status": "error", "reason": "sender_not_authenticated"}
+            )
+    if _unknown_sender_declines_participation(ctx):
+        with audit_span("agent.tool", tool_name="send_first_contact_welcome"):
+            return _tool_result(
+                {"status": "no_action", "reason": "sender_declined_participation"}
+            )
+
+    quota_key = _welcome_quota_key(ctx.deps.sender_email)
+    if not _check_daily_dispatch_cap(quota_key, _WELCOME_LIMIT_PER_DAY):
+        with audit_span("agent.tool", tool_name="send_first_contact_welcome"):
+            return _tool_result(_limited("welcome_daily_cap", _WELCOME_LIMIT_PER_DAY))
+
+    def deliver(to_address: str) -> None:
+        thread_headers = {}
+        if ctx.deps.inbound_message_id:
+            thread_headers = _direct_reply_kwargs(
+                inbound_message_id=ctx.deps.inbound_message_id,
+                inbound_body_for_quote=ctx.deps.inbound_body_for_quote,
+                inbound_date=ctx.deps.inbound_date,
+                inbound_references=ctx.deps.inbound_references,
+            )
+        send_reply(
+            to_address=to_address,
+            subject=reply_subject(ctx.deps.inbound_subject, fallback="How to join"),
+            fixed_template=FixedEmailTemplate.FIRST_CONTACT_WELCOME,
+            fixed_context=FirstContactWelcomeEmailContext(),
+            **_trace_kwargs(ctx.deps.trace_id),
+            **thread_headers,
+        )
+
+    result = await _dispatch_email(
+        ctx,
+        recipient_user_id=None,
+        is_sender_reply=True,
+        tool_name="send_first_contact_welcome",
+        subject_chars=len(
+            reply_subject(ctx.deps.inbound_subject, fallback="How to join")
+        ),
+        body_chars=0,
+        sent_email_summary=FIRST_CONTACT_WELCOME_SUMMARY,
+        deliver=deliver,
+    )
+    if result.get("status") == "sent":
+        _consume_daily_dispatch_cap(quota_key, _WELCOME_LIMIT_PER_DAY)
+        audit_event("agent.first_contact_welcome_sent")
+    return result
+
+
+@_idempotent_mutation
+async def send_first_contact_welcome(
+    ctx: RunContext[AgentDeps],
+) -> dict[str, Any]:
+    """Send the fixed how-to-use-this-address reply to an unfamiliar sender.
+
+    Use this for an authenticated first contact that is empty, too short, or
+    too unclear to answer substantively. The server owns the recipient,
+    subject, body, threading, and daily quota. Do not register the sender or
+    escalate solely because their first message lacks enough context.
+    """
+    return await _send_first_contact_welcome(ctx)
+
+
 async def _send_event_fyi(
     ctx: RunContext[AgentDeps],
     *,
@@ -1067,7 +1182,7 @@ async def _send_event_fyi(
 async def _dispatch_email(
     ctx: RunContext[AgentDeps],
     *,
-    recipient_user_id: str,
+    recipient_user_id: str | None,
     is_sender_reply: bool,
     tool_name: str,
     subject_chars: int,
@@ -1083,7 +1198,10 @@ async def _dispatch_email(
         body_chars=body_chars,
     ):
         s = ctx.deps.settings
-        if ctx.deps.sender_user_id is None:
+        direct_unknown_sender_reply = (
+            is_sender_reply and ctx.deps.sender_user_id is None
+        )
+        if ctx.deps.sender_user_id is None and not direct_unknown_sender_reply:
             audit_event(
                 "database.action",
                 action="lookup",
@@ -1096,36 +1214,53 @@ async def _dispatch_email(
                     "reason": "sender_not_registered",
                 }
             )
+        if direct_unknown_sender_reply and (
+            not ctx.deps.sender_authenticated or not ctx.deps.sender_email
+        ):
+            return _tool_result(
+                {
+                    "status": "error",
+                    "reason": "sender_not_authenticated",
+                }
+            )
+        if is_sender_reply and ctx.deps.unknown_sender_response_sent:
+            return _tool_result(_limited("max_sends_per_run", 1))
 
         max_sends_per_run = _cap(s.dispatch_max_sends_per_run)
         if ctx.deps.outbound_send_count >= max_sends_per_run:
             return _tool_result(_limited("max_sends_per_run", max_sends_per_run))
 
-        with _get_session(ctx) as session:
-            person = session.get(Person, recipient_user_id)
-            to_address = person.email if person is not None else None
+        if direct_unknown_sender_reply:
+            to_address = ctx.deps.sender_email
+            normalized_sender = normalize_rate_limit_identity(to_address)
+            cap_identity = hashlib.sha256(normalized_sender.encode("utf-8")).hexdigest()
+        else:
+            with _get_session(ctx) as session:
+                person = session.get(Person, recipient_user_id)
+                to_address = person.email if person is not None else None
 
-        audit_event(
-            "database.action",
-            action="lookup",
-            record_type="person",
-            outcome="found" if person is not None else "not_found",
-        )
-        if person is None or to_address is None:
-            return _tool_result(
-                {
-                    "status": "error",
-                    "reason": "recipient_not_found",
-                }
+            audit_event(
+                "database.action",
+                action="lookup",
+                record_type="person",
+                outcome="found" if person is not None else "not_found",
             )
+            if person is None or to_address is None:
+                return _tool_result(
+                    {
+                        "status": "error",
+                        "reason": "recipient_not_found",
+                    }
+                )
+            cap_identity = recipient_user_id
 
         recipient_daily_cap = _cap(s.dispatch_recipient_daily_cap)
-        recipient_cap_key = f"dispatch:recipient:{recipient_user_id}"
+        recipient_cap_key = f"dispatch:recipient:{cap_identity}"
         if not _check_daily_dispatch_cap(recipient_cap_key, recipient_daily_cap):
             return _tool_result(_limited("recipient_daily_cap", recipient_daily_cap))
 
         sender_reply_daily_cap = _cap(s.dispatch_sender_reply_daily_cap)
-        sender_reply_cap_key = f"dispatch:sender-reply:{recipient_user_id}"
+        sender_reply_cap_key = f"dispatch:sender-reply:{cap_identity}"
         if is_sender_reply and not _check_daily_dispatch_cap(
             sender_reply_cap_key, sender_reply_daily_cap
         ):
@@ -1144,24 +1279,27 @@ async def _dispatch_email(
 
         ctx.deps.outbound_send_count += 1
         ctx.deps.server_side_send_count += 1
-        try:
-            await record_sent_email_memory(
-                SentEmailMemory(
-                    recipient_person_id=recipient_user_id,
-                    summary=sent_email_summary,
-                ),
-                session_factory=ctx.deps.session_factory or get_session,
-                settings=s,
-            )
-        except Exception as exc:
-            audit_event(
-                "database.action",
-                action="insert",
-                record_type="sent_email_memory",
-                refs_count=1,
-                outcome="error",
-                error_type=type(exc).__name__,
-            )
+        if direct_unknown_sender_reply:
+            ctx.deps.unknown_sender_response_sent = True
+        if recipient_user_id is not None:
+            try:
+                await record_sent_email_memory(
+                    SentEmailMemory(
+                        recipient_person_id=recipient_user_id,
+                        summary=sent_email_summary,
+                    ),
+                    session_factory=ctx.deps.session_factory or get_session,
+                    settings=s,
+                )
+            except Exception as exc:
+                audit_event(
+                    "database.action",
+                    action="insert",
+                    record_type="sent_email_memory",
+                    refs_count=1,
+                    outcome="error",
+                    error_type=type(exc).__name__,
+                )
         return _tool_result({"status": "sent"})
 
 
@@ -1172,7 +1310,7 @@ async def reply_to_sender(
     body_text: str,
     sent_email_summary: str = "a response to the recipient's message",
 ) -> dict[str, Any]:
-    """Reply to this inbound email's registered sender.
+    """Reply to this inbound email's authenticated sender.
 
     The caller cannot select a recipient. The server derives the recipient
     solely from the inbound sender, and only this capability receives inbound
@@ -1180,20 +1318,6 @@ async def reply_to_sender(
     description of the email's purpose for the recipient's private memory; it
     must not repeat the subject, body, address, or headers.
     """
-    if ctx.deps.sender_user_id is None:
-        with audit_span("agent.tool", tool_name="reply_to_sender"):
-            audit_event(
-                "database.action",
-                action="lookup",
-                record_type="person",
-                outcome="rejected_sender_not_registered",
-            )
-            return _tool_result(
-                {
-                    "status": "error",
-                    "reason": "sender_not_registered",
-                }
-            )
     return await _send_email(
         ctx,
         recipient_user_id=ctx.deps.sender_user_id,

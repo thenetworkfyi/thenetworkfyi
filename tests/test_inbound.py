@@ -493,9 +493,8 @@ def test_is_sender_authenticated_does_not_warn_for_known_failures(
 def test_poll_unseen_does_not_reject_near_empty_body(fake_mailbox: _FakeMailBox):
     """Near-empty bodies must reach process_email, not be dropped at intake -
 
-    worker/tasks.py handles them (rate limit + first-contact welcome reply),
-    and a legitimate short first email (e.g. just "Hi") must not be silently
-    discarded with no reply at all.
+    the worker applies the ordinary safety gates and lets the agent decide
+    whether a short first email needs the fixed welcome or a substantive reply.
     """
     fake_mailbox.fetch.return_value = [_fake_message(body_text=" \n")]
 

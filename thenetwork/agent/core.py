@@ -26,6 +26,7 @@ from thenetwork.agent.tools import (
     search,
     search_events,
     send_event_recommendation,
+    send_first_contact_welcome,
     send_outreach,
     stop_event_recommendations,
     update_event,
@@ -92,6 +93,7 @@ def build_agent(model: Any = None) -> Agent[AgentDeps, str]:
     agent.tool(search, retries=1)
     agent.tool(propose_introduction, retries=1)
     agent.tool(escalate, retries=1)
+    agent.tool(send_first_contact_welcome, retries=1)
     agent.tool(reply_to_sender, retries=1)
     agent.tool(send_outreach, retries=1)
     agent.tool(register_person, retries=1)
@@ -146,6 +148,7 @@ async def run_agent_for_email(
             sender_user_id=sender_user_id,
             sender_authenticated=sender_authenticated,
             inbound_subject=email_subject,
+            inbound_body=email_body,
             inbound_message_id=inbound_message_id,
             inbound_references=inbound_references,
             inbound_body_for_quote=inbound_body_for_quote,
