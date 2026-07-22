@@ -12,10 +12,20 @@ processors:
           - merge_maps(attributes, ParseJSON(body), "upsert") where IsString(body)
           - set(body, "") where IsString(body)
 
+connectors:
+  count/audit:
+    logs:
+      thenetwork.worker.audit.events:
+        description: Count of redacted application audit events processed by the worker log pipeline.
+        conditions:
+          - 'attributes["logger"] == "thenetwork.audit"'
+
 exporters:
   otlp:
     endpoint: ${env:OTEL_EXPORTER_OTLP_ENDPOINT}
     headers: ${env:OTEL_EXPORTER_OTLP_HEADERS}
+  prometheus/audit:
+    endpoint: 0.0.0.0:8889
 
 extensions:
   health_check:
@@ -23,8 +33,14 @@ extensions:
 
 service:
   extensions: [health_check]
+  telemetry:
+    metrics:
+      address: 0.0.0.0:8888
   pipelines:
     logs:
       receivers: [fluentforward]
       processors: [transform, batch]
-      exporters: [otlp]
+      exporters: [otlp, count/audit]
+    metrics/audit:
+      receivers: [count/audit]
+      exporters: [prometheus/audit]

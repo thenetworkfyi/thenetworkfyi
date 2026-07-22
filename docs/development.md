@@ -420,13 +420,17 @@ SIGTERM graceful drain (`stop_grace_period: 300s`), `max_attempts=3`, and idempo
 
 ```bash
 cp .env.example .env
-docker compose up -d --build      # build + start db + worker + otel-collector
+docker compose up -d --build      # build + start db, worker, collector, Prometheus
 docker compose pull && docker compose up -d   # redeploy only changed services
 ```
 
-### OpenTelemetry Logs-Only Deployment
+### OpenTelemetry Logs and Local Prometheus Metrics
 
-The Compose stack runs a logs-only OpenTelemetry Collector contrib service (`otel-collector`) using `otel-collector-config.yaml`. Worker JSON logs are routed via Docker's `fluentd` logging driver over an internal loopback bridge. The collector parses each worker JSON string into structured `LogRecord` fields (preserving `event`, `logger`, `level`, `timestamp`, `trace_id`, and other emitted attributes) and exports them to an environment-configured OTLP destination.
+The Compose stack runs an OpenTelemetry Collector contrib service (`otel-collector`) using `otel-collector-config.yaml`. Worker JSON logs are routed via Docker's `fluentd` logging driver. The collector parses each worker JSON string into structured `LogRecord` fields (preserving `event`, `logger`, `level`, `timestamp`, `trace_id`, and other emitted attributes) and exports them to an environment-configured OTLP destination.
+
+The collector also counts records whose redacted logger is `thenetwork.audit` and exports the unlabelled `thenetwork.worker.audit.events` metric. Prometheus scrapes that endpoint at `otel-collector:8889` and collector pipeline-health metrics at `otel-collector:8888` over the internal Compose network. Prometheus uses the pinned `prom/prometheus:v3.5.5` LTS image, persists its TSDB in the `prometheus-data` volume, retains samples for 30 days, and binds its UI to `127.0.0.1:9090`. The worker exposes no inbound metrics port.
+
+The counter intentionally has no log-derived dimensions. Never add `trace_id`, `run_id`, sender pseudonyms, email/content, or opaque person/event identifiers as metric labels; they are identifying and/or unbounded. The only labels in this increment are Prometheus's bounded `job` and `instance` scrape-target labels.
 
 Required settings:
 - `OTEL_EXPORTER_OTLP_ENDPOINT`: target OTLP endpoint (e.g. `http://localhost:4317`)
@@ -434,10 +438,14 @@ Required settings:
 
 Rollout & verification:
 - Validate compose: `docker compose config`
-- Validate collector configuration: `docker run --rm -e OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4317" -v ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml otel/opentelemetry-collector-contrib:0.118.0 validate --config=/etc/otelcol-contrib/config.yaml`
+- Validate collector configuration: `docker run --rm -e OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4317" -e OTEL_EXPORTER_OTLP_HEADERS='' -v ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml otel/opentelemetry-collector-contrib:0.118.0 validate --config=/etc/otelcol-contrib/config.yaml`
+- Validate Prometheus configuration: `docker run --rm --entrypoint /bin/promtool -v ./prometheus.yml:/etc/prometheus/prometheus.yml:ro prom/prometheus:v3.5.5 check config /etc/prometheus/prometheus.yml`
 - Start service: `docker compose up -d`
+- Open the local UI: `http://127.0.0.1:9090`
+- Verify both targets are up: `curl http://127.0.0.1:9090/api/v1/targets`
+- Query application activity after an audit event: `curl 'http://127.0.0.1:9090/api/v1/query?query=thenetwork_worker_audit_events_total'`
 
-Traces, metrics, Postgres log collection, retention of old journal entries, and historical log migration are out of scope.
+Grafana, Alertmanager, host/Postgres exporters, traces, historical log migration, and migration of old metrics are out of scope for this increment.
 
 All compose builds install the scanner dependencies. To enable model loading and
 scanning, set `CONTENT_SCAN_ENABLED=true` and `HF_TOKEN` for the first start, then run
