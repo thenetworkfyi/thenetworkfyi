@@ -134,6 +134,11 @@ they somehow remain firing. Every receiver sends a resolved notification.
 `CollectorUnavailable` inhibits worker-scoped alerts because those alerts
 cannot be trusted while their metric source is unavailable.
 
+Event rules detect both an increase in an existing counter series and a new
+nonzero series with no sample two minutes earlier. The latter case is required
+for the first event after process start, when Prometheus may first observe the
+counter at one rather than observing an initial zero.
+
 Notification subjects and bodies render only alert status, the static alert
 name, warning/critical severity, bounded control action/reason labels, static
 summary text, and a static runbook reference. Never add metric values, raw error
