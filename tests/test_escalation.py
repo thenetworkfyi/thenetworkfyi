@@ -273,6 +273,7 @@ async def test_escalate_welcomes_and_notifies_admins_for_authenticated_unknown_s
         result = await escalate(ctx, reason="Ambiguous first contact")
 
     assert result == {"status": "welcomed_and_escalated"}
+    assert ctx.deps.terminal_action_taken is True
     mock_completion.assert_called_once_with(tool_outcome="welcomed_and_escalated")
     mock_send.assert_called_once_with(
         to_address="new@example.com",
@@ -326,6 +327,7 @@ async def test_explicit_unknown_sender_opt_out_is_not_welcomed_or_escalated():
         "status": "no_action",
         "reason": "sender_declined_participation",
     }
+    assert ctx.deps.terminal_action_taken is False
     mock_send.assert_not_called()
     mock_notify.assert_not_called()
     mock_session.assert_not_called()

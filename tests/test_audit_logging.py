@@ -944,8 +944,8 @@ async def test_agent_run_audits_trace_id_on_lifecycle_events(caplog):
 
 
 @pytest.mark.asyncio
-async def test_agent_no_tool_call_is_flagged_and_logged(caplog):
-    """Undispatched final text is escalated without sending it to the user."""
+async def test_agent_no_tool_call_is_flagged_without_admin_notification(caplog):
+    """A validator-bypassing double is audited but cannot create an alert."""
     from thenetwork.agent.core import run_agent_for_email
 
     fake_result = SimpleNamespace(
@@ -988,15 +988,8 @@ async def test_agent_no_tool_call_is_flagged_and_logged(caplog):
         e for e in events if e["event"] == "agent.undispatched_response"
     )
     assert undispatched["trace_id"] == "8b8c9907-2d7b-4347-967a-412c6fe63c27"
-    notify_admins.assert_called_once()
-    assert (
-        notify_admins.call_args.args[1] == "[The Network] Agent response needs review"
-    )
-    assert "pizza" not in notify_admins.call_args.args[2]
-    assert (
-        notify_admins.call_args.kwargs["trace_id"]
-        == "8b8c9907-2d7b-4347-967a-412c6fe63c27"
-    )
+    notify_admins.assert_not_called()
+    assert "pizza" not in "\n".join(record.message for record in caplog.records)
 
 
 @pytest.mark.asyncio

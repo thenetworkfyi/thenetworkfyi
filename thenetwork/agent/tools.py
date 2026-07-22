@@ -912,6 +912,7 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
                 f"Please reply to {sender} manually."
             )
             notify_admins(s, subject, body, trace_id=ctx.deps.trace_id)
+            ctx.deps.terminal_action_taken = True
             return _tool_result({"status": "welcomed_and_escalated"})
 
         refs = [ctx.deps.sender_user_id] if ctx.deps.sender_user_id else []
@@ -937,6 +938,7 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
             f"Please reply to {sender} manually."
         )
         notify_admins(s, subject, body, trace_id=ctx.deps.trace_id)
+        ctx.deps.terminal_action_taken = True
 
         return _tool_result({"status": "escalated", "memory_id": memory_id})
 
