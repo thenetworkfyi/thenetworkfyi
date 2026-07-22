@@ -89,8 +89,11 @@ Judgment notes that go beyond the tool descriptions:
   `status=forbidden` for it even if the sender asks.
 - `register_person` is for an unfamiliar sender clearly trying to join \
   (sharing something about themselves, asking to be introduced to people, \
-  etc.). Give it the sender's name if one is available; the server already \
-  knows their authenticated address. If registration succeeds, `remember` \
+  etc.). Do not register someone who is only asking what the service does or \
+  who explicitly declines participation or data retention; answer or \
+  acknowledge them briefly with `reply_to_sender` without saving a memory or \
+  escalating. Give a joining sender's name if one is available; the server \
+  already knows their authenticated address. If registration succeeds, `remember` \
   what they shared with their id in refs, then reply with `reply_to_sender`. \
   If it returns an error, treat the sender as anonymous for this email - do \
   not `remember` facts about them with a fabricated person id. If it returns \
@@ -99,11 +102,10 @@ Judgment notes that go beyond the tool descriptions:
   a retry or a different tool.
 - A `search` result's `person_id` identifies whoever that memory is about - \
   never the current sender. If the sender has no id yet (you have not \
-  successfully called `register_person` this run), you have no id to give \
-  `reply_to_sender` for replying to them: register first, or if registration \
-  fails or does not apply, `escalate` instead. Never use a `person_id` from a \
-  `search` match to reply: `reply_to_sender` resolves the inbound sender \
-  server-side and accepts no recipient ID.
+  successfully called `register_person` this run), `reply_to_sender` can still \
+  answer their authenticated inbound address without registering them. Never \
+  use a `person_id` from a `search` match to reply: `reply_to_sender` resolves \
+  the inbound sender server-side and accepts no recipient ID.
 - Asking for clarification: qualify a standing intent when it is broad or \
   concrete-but-thin enough that one missing detail could materially change \
   fit. "Looking to meet interesting people" is broad; "I mostly use React, am \

@@ -296,6 +296,42 @@ async def test_escalate_welcomes_and_notifies_admins_for_authenticated_unknown_s
 
 
 @pytest.mark.asyncio
+async def test_explicit_unknown_sender_opt_out_is_not_welcomed_or_escalated():
+    from thenetwork.agent.tools import escalate, register_person
+
+    ctx = _ctx(
+        sender_email="private@example.com",
+        sender_authenticated=True,
+        inbound_subject="Privacy request",
+        admin_emails=["admin@example.com"],
+    )
+    ctx.deps.inbound_body = (
+        "Please do not retain information about me. I am opting out and do not "
+        "want to participate."
+    )
+
+    with (
+        patch("thenetwork.agent.tools.notify_admins") as mock_notify,
+        patch("thenetwork.agent.tools.send_reply") as mock_send,
+        patch("thenetwork.agent.tools.get_session") as mock_session,
+    ):
+        registration = await register_person(ctx, name="Private Sender")
+        escalation = await escalate(ctx, reason="Unclear first contact")
+
+    assert registration == {
+        "status": "error",
+        "reason": "sender_declined_participation",
+    }
+    assert escalation == {
+        "status": "no_action",
+        "reason": "sender_declined_participation",
+    }
+    mock_send.assert_not_called()
+    mock_notify.assert_not_called()
+    mock_session.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_escalate_does_not_acknowledge_unauthenticated_sender():
     from thenetwork.agent.tools import escalate
 

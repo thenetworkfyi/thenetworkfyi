@@ -146,6 +146,7 @@ async def run_agent_for_email(
             sender_user_id=sender_user_id,
             sender_authenticated=sender_authenticated,
             inbound_subject=email_subject,
+            inbound_body=email_body,
             inbound_message_id=inbound_message_id,
             inbound_references=inbound_references,
             inbound_body_for_quote=inbound_body_for_quote,
