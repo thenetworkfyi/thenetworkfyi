@@ -430,7 +430,7 @@ The Compose stack runs a logs-only OpenTelemetry Collector contrib service (`ote
 
 Required settings:
 - `OTEL_EXPORTER_OTLP_ENDPOINT`: target OTLP endpoint (e.g. `http://localhost:4317`)
-- `OTEL_EXPORTER_OTLP_HEADERS`: optional authentication headers in `key=value` format (comma-separated for multiple; handled natively by the Collector's OTLP exporter)
+- `OTEL_EXPORTER_OTLP_HEADERS`: optional authentication headers as a JSON object string, e.g. `{"Authorization":"Bearer <token>"}` (the Collector's config resolver substitutes the whole `headers:` map from this single env var, so it must be valid JSON/YAML for a map — not the comma `key=value` format used by OTel SDK auto-instrumentation env vars)
 
 Rollout & verification:
 - Validate compose: `docker compose config`

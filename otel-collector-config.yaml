@@ -15,6 +15,7 @@ processors:
 exporters:
   otlp:
     endpoint: ${env:OTEL_EXPORTER_OTLP_ENDPOINT}
+    headers: ${env:OTEL_EXPORTER_OTLP_HEADERS}
 
 extensions:
   health_check:
