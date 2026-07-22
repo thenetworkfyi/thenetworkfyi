@@ -401,7 +401,7 @@ migrations apply automatically on every deploy.
 
 ### OpenTelemetry Logs-Only Collection
 
-`docker-compose.yml` includes an explicitly version-pinned OpenTelemetry Collector contrib service (`otel-collector`) that receives worker JSON logs via the Docker `fluentd` logging driver and forwards structured `LogRecord` events to an environment-configured OTLP destination. Set `OTEL_EXPORTER_OTLP_ENDPOINT` in `.env`; optional authentication headers (`OTEL_EXPORTER_OTLP_HEADERS` in `key=value` format) are handled natively by the Collector's OTLP exporter. The collector exposes a healthcheck on port 13133.
+`docker-compose.yml` includes an explicitly version-pinned OpenTelemetry Collector contrib service (`otel-collector`) that receives worker JSON logs via the Docker `fluentd` logging driver and forwards structured `LogRecord` events to an environment-configured OTLP destination. Set `OTEL_EXPORTER_OTLP_ENDPOINT` in `.env`; optional authentication headers (`OTEL_EXPORTER_OTLP_HEADERS`, a JSON object string such as `{"Authorization":"Bearer <token>"}`) are substituted directly into the OTLP exporter's `headers:` map. The collector exposes a healthcheck on port 13133.
 
 Rollout and verification commands:
 ```bash

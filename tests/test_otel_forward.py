@@ -99,6 +99,24 @@ def test_collector_config_has_health_check_extension():
     )
 
 
+def test_collector_config_otlp_exporter_wires_headers_env_var():
+    """The otlp exporter must forward OTEL_EXPORTER_OTLP_HEADERS so setting it
+    actually attaches auth headers to exported requests. This env var is
+    documented in .env.example/README.md/docs/development.md and passed into
+    the container's environment by docker-compose.yml; a config that omits
+    the `headers:` field silently makes it a no-op."""
+    otlp = _COLLECTOR_CONFIG.get("exporters", {}).get("otlp", {})
+    assert "headers" in otlp, (
+        "otlp exporter must declare a headers field sourced from "
+        "OTEL_EXPORTER_OTLP_HEADERS, or the documented env var has no effect"
+    )
+    assert otlp["headers"] == "${env:OTEL_EXPORTER_OTLP_HEADERS}", (
+        "otlp exporter headers must resolve from the whole "
+        "OTEL_EXPORTER_OTLP_HEADERS env var so the Collector's config "
+        "resolver can parse it as a map"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Transform simulation tests
 # ---------------------------------------------------------------------------
