@@ -430,7 +430,7 @@ The Compose stack runs a logs-only OpenTelemetry Collector contrib service (`ote
 
 Required settings:
 - `OTEL_EXPORTER_OTLP_ENDPOINT`: target OTLP endpoint (e.g. `http://localhost:4317`)
-- `OTEL_EXPORTER_OTLP_HEADERS`: optional authentication header value
+- `OTEL_EXPORTER_OTLP_HEADERS`: optional authentication headers in `key=value` format (comma-separated for multiple; handled natively by the Collector's OTLP exporter)
 
 Rollout & verification:
 - Validate compose: `docker compose config`
@@ -438,7 +438,6 @@ Rollout & verification:
 - Start service: `docker compose up -d`
 
 Traces, metrics, Postgres log collection, retention of old journal entries, and historical log migration are out of scope.
-
 
 All compose builds install the scanner dependencies. To enable model loading and
 scanning, set `CONTENT_SCAN_ENABLED=true` and `HF_TOKEN` for the first start, then run
