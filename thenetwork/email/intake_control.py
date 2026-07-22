@@ -11,6 +11,12 @@ from thenetwork.db.models import PrimaryIntakeState
 from thenetwork.db.session import get_session
 from thenetwork.email.outbound import notify_admins
 from thenetwork.settings import get_settings
+from thenetwork.worker.metrics import (
+    ControlAction,
+    ControlActor,
+    ControlReason,
+    record_control_action,
+)
 
 PRIMARY_INTAKE_KEY = "primary"
 
@@ -65,7 +71,7 @@ def is_primary_intake_paused() -> bool:
 def pause_primary_intake(
     reason: PrimaryIntakePauseReason,
 ) -> PrimaryIntakeTransition:
-    return _set_primary_intake_state(paused=True, reason=reason.value)
+    return _set_primary_intake_state(paused=True, reason=reason)
 
 
 def resume_primary_intake() -> PrimaryIntakeTransition:
@@ -114,7 +120,7 @@ def notify_primary_intake_transition(transition: PrimaryIntakeTransition) -> Non
 
 
 def _set_primary_intake_state(
-    *, paused: bool, reason: str | None
+    *, paused: bool, reason: PrimaryIntakePauseReason | None
 ) -> PrimaryIntakeTransition:
     now = datetime.now(timezone.utc)
     with get_session() as session:
@@ -129,7 +135,7 @@ def _set_primary_intake_state(
         changed = state.paused != paused
         if changed:
             state.paused = paused
-            state.pause_reason = reason
+            state.pause_reason = reason.value if reason is not None else None
             state.paused_at = now if paused else None
             state.updated_at = now
 
@@ -139,6 +145,16 @@ def _set_primary_intake_state(
             paused_at=state.paused_at,
         )
 
+    if changed:
+        record_control_action(
+            action=ControlAction.PAUSE if paused else ControlAction.RESUME,
+            actor=(
+                ControlActor.ADMIN
+                if reason in {None, PrimaryIntakePauseReason.ADMIN}
+                else ControlActor.SYSTEM
+            ),
+            reason=ControlReason(reason.value if reason is not None else "admin"),
+        )
     audit_event(
         "database.action",
         action="pause" if paused else "resume",

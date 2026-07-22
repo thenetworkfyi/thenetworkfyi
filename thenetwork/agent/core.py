@@ -49,6 +49,7 @@ from thenetwork.memory.recent_context import (
 )
 from thenetwork.security.sender_identifier import optional_sender_identifier
 from thenetwork.settings import get_settings
+from thenetwork.worker.metrics import record_agent_usage_limit_exceeded
 
 
 def build_agent(
@@ -242,6 +243,7 @@ async def run_agent_for_email(
                 outcome="error",
                 error_type=type(exc).__name__,
             )
+            record_agent_usage_limit_exceeded()
             sender_known = sender_user_id is not None
             subject = "[The Network] Agent run interrupted: usage limit exceeded"
             body = (

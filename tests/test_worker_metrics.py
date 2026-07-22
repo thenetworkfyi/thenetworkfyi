@@ -64,14 +64,17 @@ def test_pending_backlog_excludes_future_work_and_uses_due_time_for_age():
 
 
 @pytest.mark.parametrize(
-    ("intake", "expected"),
+    ("intake", "expected", "expected_reason"),
     [
-        (None, 0),
-        (SimpleNamespace(paused=False), 0),
-        (SimpleNamespace(paused=True), 1),
+        (None, 0, "none"),
+        (SimpleNamespace(paused=False), 0, "none"),
+        (SimpleNamespace(paused=True, pause_reason="admin"), 1, "admin"),
+        (SimpleNamespace(paused=True, pause_reason="unbounded-value"), 1, "unknown"),
     ],
 )
-def test_collect_worker_state_reports_backlog_and_durable_intake(intake, expected):
+def test_collect_worker_state_reports_backlog_and_durable_intake(
+    intake, expected, expected_reason
+):
     now = datetime(2026, 7, 22, 15, 0, tzinfo=timezone.utc)
     session = _Session(
         rows=[
@@ -91,6 +94,7 @@ def test_collect_worker_state_reports_backlog_and_durable_intake(intake, expecte
         queue_depth=1,
         oldest_pending_job_age_seconds=45.0,
         primary_intake_paused=expected,
+        primary_intake_pause_reason=expected_reason,
     )
     assert session.parameters == {"now": now}
 
@@ -119,6 +123,21 @@ class _FakeMeter:
         self.instruments.append(instrument)
         return instrument
 
+    def create_counter(self, name, **kwargs):
+        instrument = _FakeCounter(name, **kwargs)
+        self.instruments.append(instrument)
+        return instrument
+
+
+class _FakeCounter:
+    def __init__(self, name, **kwargs):
+        self.name = name
+        self.kwargs = kwargs
+        self.calls = []
+
+    def add(self, value, *, attributes=None):
+        self.calls.append((value, attributes))
+
 
 class _FakeProvider:
     def __init__(self, *, metric_readers):
@@ -134,10 +153,13 @@ class _FakeProvider:
 def _reset_metric_globals(monkeypatch):
     monkeypatch.setattr(metrics, "_meter_provider", None)
     monkeypatch.setattr(metrics, "_instruments", [])
+    monkeypatch.setattr(metrics, "_control_actions_counter", None)
+    monkeypatch.setattr(metrics, "_agent_usage_limit_exceeded_counter", None)
+    monkeypatch.setattr(metrics, "_jobs_exhausted_counter", None)
     monkeypatch.setattr(metrics, "_producer_last_success_timestamp_seconds", 0.0)
 
 
-def test_metric_names_units_values_and_no_labels(monkeypatch):
+def test_metric_names_units_values_and_bounded_labels(monkeypatch):
     settings = SimpleNamespace(
         worker_metrics_otlp_endpoint="http://collector:4318/v1/metrics",
         worker_metrics_export_interval_seconds=30,
@@ -156,7 +178,7 @@ def test_metric_names_units_values_and_no_labels(monkeypatch):
         return object()
 
     observer = metrics._StateObserver(  # noqa: SLF001
-        lambda: metrics.WorkerStateSnapshot(7, 120.5, 1),
+        lambda: metrics.WorkerStateSnapshot(7, 120.5, 1, "coordinated_abuse"),
         cache_seconds=60,
     )
     metrics.record_producer_poll_success(timestamp=1_784_732_400)
@@ -176,15 +198,85 @@ def test_metric_names_units_values_and_no_labels(monkeypatch):
         "export_timeout_millis": 5_000,
     }
     instruments = provider.meter.instruments
-    assert [(item["name"], item["unit"]) for item in instruments] == [
+    gauges = [item for item in instruments if isinstance(item, dict)]
+    assert [(item["name"], item["unit"]) for item in gauges] == [
         (metrics.PRODUCER_LAST_SUCCESS_METRIC, "s"),
         (metrics.JOB_QUEUE_DEPTH_METRIC, "1"),
         (metrics.OLDEST_PENDING_JOB_AGE_METRIC, "s"),
         (metrics.PRIMARY_INTAKE_PAUSED_METRIC, "1"),
     ]
-    observations = [item["callbacks"][0](None)[0] for item in instruments]
+    counters = [item for item in instruments if isinstance(item, _FakeCounter)]
+    assert [item.name for item in counters] == [
+        metrics.CONTROL_ACTIONS_METRIC,
+        metrics.AGENT_USAGE_LIMIT_EXCEEDED_METRIC,
+        metrics.JOBS_EXHAUSTED_METRIC,
+    ]
+    assert all(item.kwargs["unit"] == "1" for item in counters)
+    observations = [item["callbacks"][0](None)[0] for item in gauges]
     assert [item.value for item in observations] == [1_784_732_400, 7, 120.5, 1]
-    assert all(not item.attributes for item in observations)
+    assert all(not item.attributes for item in observations[:3])
+    assert observations[3].attributes == {"reason": "coordinated_abuse"}
+
+
+def test_operational_counters_use_only_closed_dimensions_and_reset_cleanly(monkeypatch):
+    control = _FakeCounter(metrics.CONTROL_ACTIONS_METRIC)
+    usage = _FakeCounter(metrics.AGENT_USAGE_LIMIT_EXCEEDED_METRIC)
+    exhausted = _FakeCounter(metrics.JOBS_EXHAUSTED_METRIC)
+    monkeypatch.setattr(metrics, "_control_actions_counter", control)
+    monkeypatch.setattr(metrics, "_agent_usage_limit_exceeded_counter", usage)
+    monkeypatch.setattr(metrics, "_jobs_exhausted_counter", exhausted)
+
+    metrics.record_control_action(
+        action=metrics.ControlAction.PAUSE,
+        actor=metrics.ControlActor.SYSTEM,
+        reason=metrics.ControlReason.NEW_SENDER_BURST,
+    )
+    metrics.record_agent_usage_limit_exceeded()
+    metrics.record_job_exhausted()
+    metrics.record_control_action(
+        action="attacker-selected",  # type: ignore[arg-type]
+        actor=metrics.ControlActor.SYSTEM,
+        reason=metrics.ControlReason.NEW_SENDER_BURST,
+    )
+
+    assert control.calls == [
+        (
+            1,
+            {
+                "action": "pause",
+                "actor": "system",
+                "reason": "new_sender_burst",
+            },
+        )
+    ]
+    assert usage.calls == [(1, None)]
+    assert exhausted.calls == [(1, None)]
+
+    monkeypatch.setattr(metrics, "_control_actions_counter", None)
+    monkeypatch.setattr(metrics, "_agent_usage_limit_exceeded_counter", None)
+    monkeypatch.setattr(metrics, "_jobs_exhausted_counter", None)
+    metrics.record_agent_usage_limit_exceeded()
+    metrics.record_job_exhausted()
+    assert usage.calls == [(1, None)]
+    assert exhausted.calls == [(1, None)]
+
+
+def test_counter_failure_is_contained():
+    class _FailingCounter:
+        def add(self, _value, *, attributes=None):
+            raise RuntimeError("exporter unavailable")
+
+    metrics._control_actions_counter = _FailingCounter()  # noqa: SLF001
+    metrics._agent_usage_limit_exceeded_counter = _FailingCounter()  # noqa: SLF001
+    metrics._jobs_exhausted_counter = _FailingCounter()  # noqa: SLF001
+
+    metrics.record_control_action(
+        action=metrics.ControlAction.BAN,
+        actor=metrics.ControlActor.SYSTEM,
+        reason=metrics.ControlReason.AUTOMATIC_POLICY,
+    )
+    metrics.record_agent_usage_limit_exceeded()
+    metrics.record_job_exhausted()
 
 
 def test_metric_exporter_setup_failure_is_contained(monkeypatch):

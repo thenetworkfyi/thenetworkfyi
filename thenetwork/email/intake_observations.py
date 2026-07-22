@@ -25,6 +25,12 @@ from thenetwork.email.intake_control import (
 )
 from thenetwork.security.intake_fingerprint import intake_fingerprints
 from thenetwork.security.sender_identifier import normalize_sender_identifier_identity
+from thenetwork.worker.metrics import (
+    ControlAction,
+    ControlActor,
+    ControlReason,
+    record_control_action,
+)
 
 NEW_SENDER_BURST_THRESHOLD = 25
 NEW_SENDER_BURST_WINDOW = timedelta(hours=1)
@@ -135,6 +141,12 @@ def observe_primary_intake_batch(
             )
 
     if transition is not None:
+        if transition.changed:
+            record_control_action(
+                action=ControlAction.PAUSE,
+                actor=ControlActor.SYSTEM,
+                reason=ControlReason.NEW_SENDER_BURST,
+            )
         audit_event(
             "database.action",
             action="pause",

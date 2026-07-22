@@ -11,6 +11,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from enum import StrEnum
 from math import ceil
 from threading import Lock
 from time import monotonic, time
@@ -32,6 +33,37 @@ PRODUCER_LAST_SUCCESS_METRIC = "thenetwork_producer_last_success_timestamp_secon
 JOB_QUEUE_DEPTH_METRIC = "thenetwork_job_queue_depth"
 OLDEST_PENDING_JOB_AGE_METRIC = "thenetwork_oldest_pending_job_age_seconds"
 PRIMARY_INTAKE_PAUSED_METRIC = "thenetwork_primary_intake_paused"
+CONTROL_ACTIONS_METRIC = "thenetwork_control_actions_total"
+AGENT_USAGE_LIMIT_EXCEEDED_METRIC = "thenetwork_agent_usage_limit_exceeded_total"
+JOBS_EXHAUSTED_METRIC = "thenetwork_jobs_exhausted_total"
+
+
+class ControlAction(StrEnum):
+    PAUSE = "pause"
+    RESUME = "resume"
+    BAN = "ban"
+    UNBAN = "unban"
+
+
+class ControlActor(StrEnum):
+    ADMIN = "admin"
+    SYSTEM = "system"
+
+
+class ControlReason(StrEnum):
+    ADMIN = "admin"
+    NEW_SENDER_BURST = "new_sender_burst"
+    COORDINATED_ABUSE = "coordinated_abuse"
+    AUTOMATIC_POLICY = "automatic_policy"
+
+
+_PRIMARY_INTAKE_PAUSE_REASONS = frozenset(
+    {
+        ControlReason.ADMIN.value,
+        ControlReason.NEW_SENDER_BURST.value,
+        ControlReason.COORDINATED_ABUSE.value,
+    }
+)
 
 _PENDING_JOB_TIMINGS = text(
     """
@@ -58,6 +90,7 @@ class WorkerStateSnapshot:
     queue_depth: int
     oldest_pending_job_age_seconds: float
     primary_intake_paused: int
+    primary_intake_pause_reason: str
 
 
 def _utcnow() -> datetime:
@@ -124,10 +157,18 @@ def collect_worker_state(
         intake = session.get(PrimaryIntakeState, "primary")
 
     depth, oldest_age = summarize_pending_jobs(jobs, now=collected_at)
+    intake_paused = bool(intake and intake.paused)
+    pause_reason = "none"
+    if intake_paused:
+        candidate = getattr(intake, "pause_reason", None)
+        pause_reason = (
+            candidate if candidate in _PRIMARY_INTAKE_PAUSE_REASONS else "unknown"
+        )
     return WorkerStateSnapshot(
         queue_depth=depth,
         oldest_pending_job_age_seconds=oldest_age,
-        primary_intake_paused=int(bool(intake and intake.paused)),
+        primary_intake_paused=int(intake_paused),
+        primary_intake_pause_reason=pause_reason,
     )
 
 
@@ -190,6 +231,44 @@ class _StateObserver:
 _provider_lock = Lock()
 _meter_provider: MeterProvider | None = None
 _instruments: list[object] = []
+_control_actions_counter: object | None = None
+_agent_usage_limit_exceeded_counter: object | None = None
+_jobs_exhausted_counter: object | None = None
+
+
+def _add_counter(counter: object | None, *, attributes: dict[str, str] | None) -> None:
+    """Increment one configured counter without affecting application behavior."""
+    if counter is None:
+        return
+    try:
+        counter.add(1, attributes=attributes)
+    except Exception:
+        return
+
+
+def record_control_action(
+    *, action: ControlAction, actor: ControlActor, reason: ControlReason
+) -> None:
+    """Record one committed control transition with closed dimensions."""
+    try:
+        attributes = {
+            "action": ControlAction(action).value,
+            "actor": ControlActor(actor).value,
+            "reason": ControlReason(reason).value,
+        }
+    except (TypeError, ValueError):
+        return
+    _add_counter(_control_actions_counter, attributes=attributes)
+
+
+def record_agent_usage_limit_exceeded() -> None:
+    """Record one agent run interrupted by its configured usage limit."""
+    _add_counter(_agent_usage_limit_exceeded_counter, attributes=None)
+
+
+def record_job_exhausted() -> None:
+    """Record one process_email job reaching its final failed attempt."""
+    _add_counter(_jobs_exhausted_counter, attributes=None)
 
 
 def _state_callback(
@@ -212,6 +291,8 @@ def configure_worker_metrics(
     state_observer: _StateObserver | None = None,
 ) -> MeterProvider | None:
     """Start background OTLP export, returning ``None`` on setup failure."""
+    global _agent_usage_limit_exceeded_counter
+    global _control_actions_counter, _jobs_exhausted_counter
     global _meter_provider, _instruments
     with _provider_lock:
         if _meter_provider is not None:
@@ -234,7 +315,7 @@ def configure_worker_metrics(
             provider = provider_factory(metric_readers=[reader])
             meter = provider.get_meter("thenetwork.worker")
             observer = state_observer or _StateObserver()
-            _instruments = [
+            instruments = [
                 meter.create_observable_gauge(
                     PRODUCER_LAST_SUCCESS_METRIC,
                     callbacks=[
@@ -261,11 +342,50 @@ def configure_worker_metrics(
                 ),
                 meter.create_observable_gauge(
                     PRIMARY_INTAKE_PAUSED_METRIC,
-                    callbacks=[_state_callback(observer, "primary_intake_paused")],
+                    callbacks=[
+                        lambda _options: (
+                            [
+                                Observation(
+                                    snapshot.primary_intake_paused,
+                                    attributes={
+                                        "reason": snapshot.primary_intake_pause_reason
+                                    },
+                                )
+                            ]
+                            if (snapshot := observer.snapshot()) is not None
+                            else []
+                        )
+                    ],
                     unit="1",
                     description="Whether durable primary intake state is paused.",
                 ),
             ]
+            control_actions_counter = meter.create_counter(
+                CONTROL_ACTIONS_METRIC,
+                unit="1",
+                description="Committed operator and automated control transitions.",
+            )
+            agent_usage_limit_exceeded_counter = meter.create_counter(
+                AGENT_USAGE_LIMIT_EXCEEDED_METRIC,
+                unit="1",
+                description="Agent runs interrupted by configured usage limits.",
+            )
+            jobs_exhausted_counter = meter.create_counter(
+                JOBS_EXHAUSTED_METRIC,
+                unit="1",
+                description="Process-email jobs that exhausted all retry attempts.",
+            )
+            instruments.extend(
+                [
+                    control_actions_counter,
+                    agent_usage_limit_exceeded_counter,
+                    jobs_exhausted_counter,
+                ]
+            )
+            _instruments = instruments
+            _control_actions_counter = control_actions_counter
+            _agent_usage_limit_exceeded_counter = agent_usage_limit_exceeded_counter
+            _jobs_exhausted_counter = jobs_exhausted_counter
             _meter_provider = provider
             return provider
         except Exception as exc:

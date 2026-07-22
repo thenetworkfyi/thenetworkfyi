@@ -445,9 +445,12 @@ def test_worker_state_metrics_use_internal_outbound_otlp_path():
         "thenetwork_job_queue_depth",
         "thenetwork_oldest_pending_job_age_seconds",
         "thenetwork_primary_intake_paused",
+        "thenetwork_control_actions_total",
+        "thenetwork_agent_usage_limit_exceeded_total",
+        "thenetwork_jobs_exhausted_total",
     }
     sample_names = {
-        line.split()[0]
+        line.split()[0].split("{", 1)[0]
         for line in fixture.splitlines()
         if line and not line.startswith("#")
     }

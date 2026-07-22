@@ -5,7 +5,7 @@ set -euo pipefail
 readonly VALIDATION_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-agent-fixes-prometheus-validation}"
 readonly QUERY_URL="http://prometheus:9090/api/v1/query"
-readonly STATE_QUERY='{__name__=~"thenetwork_(producer_last_success_timestamp_seconds|job_queue_depth|oldest_pending_job_age_seconds|primary_intake_paused)"}'
+readonly METRICS_QUERY='{__name__=~"thenetwork_(producer_last_success_timestamp_seconds|job_queue_depth|oldest_pending_job_age_seconds|primary_intake_paused|control_actions_total|agent_usage_limit_exceeded_total|jobs_exhausted_total)"}'
 readonly METRIC_FIXTURE_NAME="${COMPOSE_PROJECT_NAME}-metric-fixture-$$"
 readonly METRIC_SOURCE_NAME="${COMPOSE_PROJECT_NAME}-metric-source-$$"
 
@@ -38,6 +38,7 @@ cleanup() {
     docker rm --force \
         "$METRIC_SOURCE_NAME" \
         "$METRIC_FIXTURE_NAME" >/dev/null 2>&1 || true
+    docker compose down --remove-orphans >/dev/null 2>&1 || true
     exit "$exit_code"
 }
 trap cleanup EXIT
@@ -84,7 +85,7 @@ metrics_ready=0
 for _attempt in $(seq 1 30); do
     if metrics_json="$(
         docker exec "$METRIC_FIXTURE_NAME" \
-            wget -qO- --post-data "query=$STATE_QUERY" \
+            wget -qO- --post-data "query=$METRICS_QUERY" \
             "$QUERY_URL" 2>/dev/null
     )" && jq --exit-status '
         (.status == "success")
@@ -95,11 +96,14 @@ for _attempt in $(seq 1 30); do
             }]
             | from_entries
         ) as $values
-        | ($values | length == 4)
+        | ($values | length == 7)
           and $values.thenetwork_producer_last_success_timestamp_seconds == 1784732400
           and $values.thenetwork_job_queue_depth == 3
           and $values.thenetwork_oldest_pending_job_age_seconds == 120
-          and $values.thenetwork_primary_intake_paused == 1)
+          and $values.thenetwork_primary_intake_paused == 1
+          and $values.thenetwork_control_actions_total == 1
+          and $values.thenetwork_agent_usage_limit_exceeded_total == 1
+          and $values.thenetwork_jobs_exhausted_total == 1)
     ' <<<"$metrics_json" >/dev/null; then
         metrics_ready=1
         break
@@ -108,7 +112,7 @@ for _attempt in $(seq 1 30); do
 done
 
 if ((metrics_ready == 0)); then
-    echo "worker state metrics did not reach Prometheus" >&2
+    echo "worker operational metrics did not reach Prometheus" >&2
     exit 1
 fi
 
@@ -116,8 +120,4 @@ jq '[.data.result[] | {metric: .metric.__name__, value: .value[1]}]' \
     <<<"$metrics_json"
 docker compose ps otel-collector prometheus
 
-trap - EXIT
-docker rm --force \
-    "$METRIC_SOURCE_NAME" \
-    "$METRIC_FIXTURE_NAME" >/dev/null
 echo "worker metrics validation passed"

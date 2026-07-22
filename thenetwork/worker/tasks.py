@@ -65,6 +65,7 @@ from thenetwork.security.rate_limit import (
 )
 from thenetwork.security.sender_identifier import optional_sender_identifier
 from thenetwork.settings import get_settings
+from thenetwork.worker.metrics import record_job_exhausted
 
 app = procrastinate.App(
     # Procrastinate's own DSN (plain postgresql://); Procrastinate 3.x takes
@@ -421,6 +422,7 @@ async def process_email(
                 context is not None
                 and context.job.attempts >= _PROCESS_EMAIL_MAX_ATTEMPTS
             ):
+                record_job_exhausted()
                 notify_admins(
                     get_settings(),
                     "[The Network] Agent processing failed",

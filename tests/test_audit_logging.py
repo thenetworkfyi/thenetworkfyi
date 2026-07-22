@@ -763,6 +763,9 @@ async def test_agent_usage_limit_breach_notifies_admins(caplog):
         patch("thenetwork.agent.core.UsageLimits", side_effect=FakeUsageLimits),
         patch("thenetwork.agent.core.UsageLimitExceeded", FakeUsageLimitExceeded),
         patch("thenetwork.agent.core.notify_admins") as mock_notify,
+        patch(
+            "thenetwork.agent.core.record_agent_usage_limit_exceeded"
+        ) as record_usage_limit,
     ):
         result = await run_agent_for_email(
             sender_email=secrets["sender"],
@@ -772,6 +775,7 @@ async def test_agent_usage_limit_breach_notifies_admins(caplog):
         )
 
     assert result == ""
+    record_usage_limit.assert_called_once_with()
     mock_notify.assert_called_once()
     call_args = mock_notify.call_args
     assert call_args.args[0] is settings
@@ -1729,6 +1733,7 @@ async def test_agent_failure_is_audited_and_reraised_for_retry(caplog):
             AsyncMock(side_effect=RuntimeError("provider unavailable")),
         ),
         patch("thenetwork.worker.tasks.notify_admins") as notify,
+        patch("thenetwork.worker.tasks.record_job_exhausted") as record_exhausted,
     ):
         with pytest.raises(RuntimeError, match="provider unavailable"):
             await process_email.func(
@@ -1739,6 +1744,7 @@ async def test_agent_failure_is_audited_and_reraised_for_retry(caplog):
             )
 
     notify.assert_not_called()
+    record_exhausted.assert_not_called()
     assert any(
         event["event"] == "worker.agent_failed"
         and event["error_type"] == "RuntimeError"
@@ -1767,6 +1773,7 @@ async def test_agent_failure_notifies_admins_on_final_retry_only():
             AsyncMock(side_effect=RuntimeError()),
         ),
         patch("thenetwork.worker.tasks.notify_admins") as notify,
+        patch("thenetwork.worker.tasks.record_job_exhausted") as record_exhausted,
     ):
         with pytest.raises(RuntimeError):
             await process_email.func(
@@ -1778,6 +1785,7 @@ async def test_agent_failure_notifies_admins_on_final_retry_only():
             )
 
     notify.assert_called_once()
+    record_exhausted.assert_called_once_with()
 
 
 @pytest.mark.asyncio
