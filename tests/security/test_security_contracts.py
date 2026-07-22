@@ -331,6 +331,64 @@ async def test_dispatch_threads_reply_to_inbound_sender_only():
 
 
 @pytest.mark.asyncio
+async def test_authenticated_unknown_sender_can_receive_direct_reply_without_identity(
+    _stub_sent_email_memory,
+):
+    """The authenticated inbound address is enough authority for a direct reply."""
+    _reset_dispatch_limiter()
+    record_one, _ = _stub_sent_email_memory
+    ctx = FakeCtx(
+        sender_email="new@example.com",
+        sender_user_id=None,
+        sender_authenticated=True,
+    )
+    ctx.deps.settings.dispatch_max_sends_per_run = 99
+    ctx.deps.settings.dispatch_recipient_daily_cap = 99
+    ctx.deps.settings.dispatch_sender_reply_daily_cap = 99
+    ctx.deps.inbound_message_id = "<new-message@example.com>"
+    ctx.deps.inbound_body_for_quote = "What does this service do?"
+
+    with patch("thenetwork.agent.tools.send_reply") as mock_send:
+        result = await reply_to_sender(
+            ctx,
+            subject="Re: Question",
+            body_text="A concise explanation.",
+        )
+
+    assert result == {"status": "sent"}
+    assert mock_send.call_args.kwargs["to_address"] == "new@example.com"
+    assert mock_send.call_args.kwargs["in_reply_to"] == "<new-message@example.com>"
+    ctx._mock_sess.get.assert_not_called()
+    ctx._mock_sess.add.assert_not_called()
+    record_one.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_unauthenticated_unknown_sender_cannot_receive_direct_reply(
+    _stub_sent_email_memory,
+):
+    _reset_dispatch_limiter()
+    record_one, _ = _stub_sent_email_memory
+    ctx = FakeCtx(
+        sender_email="spoof@example.com",
+        sender_user_id=None,
+        sender_authenticated=False,
+    )
+
+    with patch("thenetwork.agent.tools.send_reply") as mock_send:
+        result = await reply_to_sender(
+            ctx,
+            subject="Re: Question",
+            body_text="A response.",
+        )
+
+    assert result == {"status": "error", "reason": "sender_not_authenticated"}
+    mock_send.assert_not_called()
+    ctx._mock_sess.get.assert_not_called()
+    record_one.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     (
         "sender_user_id",

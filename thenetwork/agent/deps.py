@@ -18,6 +18,9 @@ class AgentDeps:
     sender_email: str = ""
     sender_user_id: str | None = None
     inbound_subject: str = ""
+    # The current untrusted message body. Tools may inspect it only to enforce
+    # server-side policy; it is never an identity or recipient authority.
+    inbound_body: str = ""
     inbound_message_id: str | None = None
     inbound_references: str | None = None
     inbound_body_for_quote: str | None = None
