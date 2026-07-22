@@ -434,7 +434,7 @@ Required settings:
 
 Rollout & verification:
 - Validate compose: `docker compose config`
-- Validate collector configuration: `docker run --rm -e OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4317" -v $(pwd)/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml otel/opentelemetry-collector-contrib:0.118.0 validate --config=/etc/otelcol-contrib/config.yaml`
+- Validate collector configuration: `docker run --rm -e OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4317" -v ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml otel/opentelemetry-collector-contrib:0.118.0 validate --config=/etc/otelcol-contrib/config.yaml`
 - Start service: `docker compose up -d`
 
 Traces, metrics, Postgres log collection, retention of old journal entries, and historical log migration are out of scope.
