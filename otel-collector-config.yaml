@@ -72,11 +72,6 @@ connectors:
           - 'attributes["logger"] == "thenetwork.audit" and attributes["event"] == "worker.relay_forwarded" and attributes["outcome"] == "success"'
 
 exporters:
-  otlp:
-    endpoint: ${env:OTEL_EXPORTER_OTLP_ENDPOINT}
-    headers: ${env:OTEL_EXPORTER_OTLP_HEADERS}
-    tls:
-      insecure: ${env:OTEL_EXPORTER_OTLP_INSECURE}
   prometheus/audit:
     endpoint: 0.0.0.0:8889
 
@@ -93,7 +88,7 @@ service:
     logs:
       receivers: [fluentforward]
       processors: [transform, batch]
-      exporters: [otlp, count/audit]
+      exporters: [count/audit]
     metrics/audit:
       receivers: [count/audit, otlp/worker_metrics]
       exporters: [prometheus/audit]

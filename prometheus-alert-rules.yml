@@ -85,18 +85,6 @@ groups:
           summary: Prometheus cannot scrape an OpenTelemetry Collector metrics endpoint.
           runbook: docs/monitoring.md#collectorunavailable
 
-      - alert: CollectorPipelineDegraded
-        expr: sum(increase(otelcol_exporter_send_failed_log_records_total[10m])) > 0 or max(otelcol_exporter_queue_size / clamp_min(otelcol_exporter_queue_capacity, 1)) > 0.8
-        for: 5m
-        labels:
-          severity: critical
-          service: thenetwork
-          scope: monitoring
-          category: telemetry
-        annotations:
-          summary: The Collector failed to export logs or its exporter queue exceeded 80 percent capacity.
-          runbook: docs/monitoring.md#collectorpipelinedegraded
-
       - alert: SystemControlActionObserved
         expr: sum by (action, reason) (increase(thenetwork_control_actions_total{actor="system",action=~"pause|ban"}[2m])) > 0 or sum by (action, reason) ((thenetwork_control_actions_total{actor="system",action=~"pause|ban"} > 0) unless thenetwork_control_actions_total{actor="system",action=~"pause|ban"} offset 2m)
         labels:

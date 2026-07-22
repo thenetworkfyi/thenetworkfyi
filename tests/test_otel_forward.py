@@ -128,19 +128,6 @@ def test_collector_config_has_transform_processor():
     )
 
 
-def test_collector_config_uses_consistent_env_syntax():
-    """All env var references in the collector config use ${env:...} syntax."""
-    config_text = (_REPO_ROOT / "otel-collector-config.yaml").read_text()
-    # Find all ${...} patterns and verify they use env: prefix
-    import re
-
-    refs = re.findall(r"\$\{([^}]+)\}", config_text)
-    for ref in refs:
-        assert ref.startswith("env:"), (
-            f"env var reference ${{{ref}}} should use ${{env:...}} syntax"
-        )
-
-
 def test_collector_config_has_health_check_extension():
     """The collector config enables the health_check extension for Docker
     healthcheck support."""
@@ -154,26 +141,14 @@ def test_collector_config_has_health_check_extension():
     )
 
 
-def test_collector_config_otlp_exporter_wires_transport_env_vars():
-    """OTLP headers and explicit plaintext opt-in reach the exporter."""
-    otlp = _COLLECTOR_CONFIG.get("exporters", {}).get("otlp", {})
-    assert "headers" in otlp, (
-        "otlp exporter must declare a headers field sourced from "
-        "OTEL_EXPORTER_OTLP_HEADERS, or the documented env var has no effect"
-    )
-    assert otlp["headers"] == "${env:OTEL_EXPORTER_OTLP_HEADERS}", (
-        "otlp exporter headers must resolve from the whole "
-        "OTEL_EXPORTER_OTLP_HEADERS env var so the Collector's config "
-        "resolver can parse it as a map"
-    )
-    assert otlp["tls"]["insecure"] == "${env:OTEL_EXPORTER_OTLP_INSECURE}"
-
-    collector_environment = _COMPOSE_CONFIG["services"]["otel-collector"]["environment"]
-    assert collector_environment == {
-        "OTEL_EXPORTER_OTLP_ENDPOINT": "${OTEL_EXPORTER_OTLP_ENDPOINT:-}",
-        "OTEL_EXPORTER_OTLP_HEADERS": "${OTEL_EXPORTER_OTLP_HEADERS:-}",
-        "OTEL_EXPORTER_OTLP_INSECURE": ("${OTEL_EXPORTER_OTLP_INSECURE:-false}"),
-    }
+def test_collector_has_no_required_external_exporter():
+    """The local monitoring stack starts without an external OTLP backend."""
+    collector = _COMPOSE_CONFIG["services"]["otel-collector"]
+    assert "environment" not in collector
+    assert set(_COLLECTOR_CONFIG["exporters"]) == {"prometheus/audit"}
+    assert _COLLECTOR_CONFIG["service"]["pipelines"]["logs"]["exporters"] == [
+        "count/audit"
+    ]
 
 
 def test_collector_derives_bounded_counter_catalog_from_redacted_audit_logs():
@@ -216,7 +191,7 @@ def test_collector_derives_bounded_counter_catalog_from_redacted_audit_logs():
             assert f'IsMatch(attributes["{label_name}"]' in condition
 
     pipelines = _COLLECTOR_CONFIG["service"]["pipelines"]
-    assert pipelines["logs"]["exporters"] == ["otlp", "count/audit"]
+    assert pipelines["logs"]["exporters"] == ["count/audit"]
     assert pipelines["metrics/audit"] == {
         "receivers": ["count/audit", "otlp/worker_metrics"],
         "exporters": ["prometheus/audit"],

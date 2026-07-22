@@ -13,11 +13,6 @@ export COMPOSE_PROJECT_NAME
 export POSTGRES_DB="${POSTGRES_DB:-network_db}"
 export POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-validation-only}"
 export POSTGRES_USER="${POSTGRES_USER:-network}"
-# Keep validation traffic away from a caller's configured log backend. This
-# script does not inject logs; the endpoint only satisfies Collector startup.
-export OTEL_EXPORTER_OTLP_ENDPOINT="http://127.0.0.1:4317"
-export OTEL_EXPORTER_OTLP_HEADERS=""
-export OTEL_EXPORTER_OTLP_INSECURE="true"
 export ALERTMANAGER_OPERATOR_EMAIL="operator-validation-$$@example.invalid"
 export ALERTMANAGER_SMTP_SMARTHOST="smtp.invalid:587"
 export ALERTMANAGER_SMTP_FROM="monitoring-validation-$$@example.invalid"
@@ -53,9 +48,6 @@ trap cleanup EXIT
 docker compose config --quiet
 
 docker run --rm \
-    -e OTEL_EXPORTER_OTLP_ENDPOINT \
-    -e OTEL_EXPORTER_OTLP_HEADERS \
-    -e OTEL_EXPORTER_OTLP_INSECURE \
     -v "$VALIDATION_ROOT/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro" \
     otel/opentelemetry-collector-contrib:0.118.0 \
     validate --config=/etc/otelcol-contrib/config.yaml
