@@ -99,14 +99,18 @@ def _get_llamafirewall_types() -> tuple[Any, Any]:
 
 
 def _prompt_guard_text(scanner: Any, text: str) -> str:
-    """Remove embedded BOMs before applying Prompt Guard preprocessing.
+    """Replace embedded BOMs before applying Prompt Guard preprocessing.
 
     ``U+FEFF`` is valid as a byte-order mark at the start of a stream, but mail
     bodies can contain it anywhere as a zero-width no-break space. Prompt
-    Guard's preprocessing does not accept that character, so remove it before
-    both token-window construction and the scanner's own preprocessing pass.
+    Guard's preprocessing does not accept that character. Replace it with a
+    space before token-window construction and the scanner's own preprocessing
+    pass so attacker-controlled text cannot join two words across the removed
+    character.
     """
-    return scanner.pg._preprocess_text_for_promptguard(text.replace(ZERO_WIDTH_BOM, ""))
+    return scanner.pg._preprocess_text_for_promptguard(
+        text.replace(ZERO_WIDTH_BOM, " ")
+    )
 
 
 def _encoded_length(scanner: Any, text: str) -> int:
