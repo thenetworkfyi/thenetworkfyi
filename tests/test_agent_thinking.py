@@ -86,3 +86,50 @@ async def test_no_action_output_ends_run_without_another_model_request():
         if getattr(part, "part_kind", None) == "tool-call"
     ]
     assert [part.tool_name for part in tool_calls] == ["no_action"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("candidate_id", "event_id", "expected_tools"),
+    [
+        ("person-candidate", None, ["propose_introduction"]),
+        (None, "event-bound", ["send_event_recommendation"]),
+        (None, None, []),
+    ],
+)
+async def test_proactive_agent_exposes_only_its_bound_action(
+    candidate_id: str | None,
+    event_id: str | None,
+    expected_tools: list[str],
+):
+    observed_tools: list[str] = []
+
+    async def capture_tools(
+        _messages: list[ModelMessage], info: AgentInfo
+    ) -> ModelResponse:
+        observed_tools.extend(tool.name for tool in info.function_tools)
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name="no_action",
+                    args={"reason": "no supported proactive action"},
+                )
+            ]
+        )
+
+    agent = build_agent(
+        model=FunctionModel(capture_tools),
+        is_proactive=True,
+        proactive_candidate_id=candidate_id,
+        proactive_event_id=event_id,
+    )
+    deps = AgentDeps(
+        is_proactive=True,
+        proactive_candidate_id=candidate_id,
+        proactive_event_id=event_id,
+    )
+
+    result = await agent.run("Synthetic trigger", deps=deps)
+
+    assert observed_tools == expected_tools
+    assert result.output == ""

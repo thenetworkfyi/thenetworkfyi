@@ -56,8 +56,14 @@ _UNDISPATCHED_RESPONSE_BODY = (
 )
 
 
-def build_agent(model: Any = None) -> Agent[AgentDeps, str]:
-    """Construct the pydantic-ai agent with all tools registered."""
+def build_agent(
+    model: Any = None,
+    *,
+    is_proactive: bool = False,
+    proactive_candidate_id: str | None = None,
+    proactive_event_id: str | None = None,
+) -> Agent[AgentDeps, str]:
+    """Construct an agent with the capabilities appropriate to this run."""
     settings = None
     if model is None:
         settings = get_settings()
@@ -85,23 +91,33 @@ def build_agent(model: Any = None) -> Agent[AgentDeps, str]:
         ),
     )
 
-    # One retry is exclusively for malformed tool arguments. World-state and
-    # policy outcomes are structured status results, never ModelRetry signals.
-    agent.tool(remember, retries=1)
-    agent.tool(forget, retries=1)
-    agent.tool(search, retries=1)
-    agent.tool(propose_introduction, retries=1)
-    agent.tool(escalate, retries=1)
-    agent.tool(reply_to_sender, retries=1)
-    agent.tool(send_outreach, retries=1)
-    agent.tool(register_person, retries=1)
-    agent.tool(create_event, retries=1)
-    agent.tool(update_event, retries=1)
-    agent.tool(cancel_event, retries=1)
-    agent.tool(search_events, retries=1)
-    agent.tool(send_event_recommendation, retries=1)
-    agent.tool(stop_event_recommendations, retries=1)
-    agent.tool(resume_event_recommendations, retries=1)
+    # Synthetic proactive jobs are capability grants for exactly one
+    # server-bound action, not ordinary inbound sessions. Withholding every
+    # unrelated tool makes mutation structurally unavailable to a hijacked
+    # model; the tool implementations retain their own binding checks.
+    if is_proactive:
+        if proactive_candidate_id is not None:
+            agent.tool(propose_introduction, retries=1)
+        elif proactive_event_id is not None:
+            agent.tool(send_event_recommendation, retries=1)
+    else:
+        # One retry is exclusively for malformed tool arguments. World-state
+        # and policy outcomes are structured status results, never ModelRetry.
+        agent.tool(remember, retries=1)
+        agent.tool(forget, retries=1)
+        agent.tool(search, retries=1)
+        agent.tool(propose_introduction, retries=1)
+        agent.tool(escalate, retries=1)
+        agent.tool(reply_to_sender, retries=1)
+        agent.tool(send_outreach, retries=1)
+        agent.tool(register_person, retries=1)
+        agent.tool(create_event, retries=1)
+        agent.tool(update_event, retries=1)
+        agent.tool(cancel_event, retries=1)
+        agent.tool(search_events, retries=1)
+        agent.tool(send_event_recommendation, retries=1)
+        agent.tool(stop_event_recommendations, retries=1)
+        agent.tool(resume_event_recommendations, retries=1)
 
     return agent
 
@@ -159,7 +175,15 @@ async def run_agent_for_email(
             session_factory=session_factory,
         )
         settings = get_settings()
-        agent = build_agent(model=settings.agent_model)
+        if is_proactive:
+            agent = build_agent(
+                model=settings.agent_model,
+                is_proactive=True,
+                proactive_candidate_id=proactive_candidate_id,
+                proactive_event_id=proactive_event_id,
+            )
+        else:
+            agent = build_agent(model=settings.agent_model)
         usage_limits = UsageLimits(
             request_limit=settings.agent_request_limit,
             total_tokens_limit=settings.agent_total_tokens_limit,

@@ -15,6 +15,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from thenetwork.agent.deps import AgentDeps
 from thenetwork.agent.tools import (
+    create_event,
+    escalate,
+    forget,
+    remember,
     reply_to_sender,
     send_outreach,
     propose_introduction,
@@ -209,6 +213,46 @@ def _fake_person(email: str = "bob@example.com"):
     fake_person = MagicMock(spec=Person)
     fake_person.email = email
     return fake_person
+
+
+@pytest.mark.asyncio
+async def test_proactive_context_rejects_unrelated_mutating_capabilities():
+    """A synthetic trigger cannot become an ordinary user session."""
+    ctx = FakeCtx(sender_authenticated=True)
+    ctx.deps.is_proactive = True
+    ctx.deps.proactive_candidate_id = "user-bob"
+
+    with (
+        patch("thenetwork.agent.tools.send_reply") as send,
+        patch("thenetwork.agent.tools.notify_admins") as notify,
+        patch("thenetwork.agent.tools.embed_text", new_callable=AsyncMock) as embed,
+    ):
+        results = [
+            await remember(ctx, text="synthetic memory", refs=["user-alice"]),
+            await forget(ctx, memory_id="memory-id"),
+            await register_person(ctx, name="Synthetic Person"),
+            await reply_to_sender(ctx, subject="Synthetic", body_text="Synthetic"),
+            await send_outreach(
+                ctx,
+                recipient_user_id="user-bob",
+                subject="Synthetic",
+                body_text="Synthetic",
+            ),
+            await escalate(ctx, reason="Synthetic escalation"),
+            await create_event(
+                ctx,
+                text="Synthetic event",
+                expires_at="2099-01-01T00:00:00+00:00",
+            ),
+        ]
+
+    assert results == [{"status": "forbidden", "reason": "proactive_read_only"}] * 7
+    send.assert_not_called()
+    notify.assert_not_called()
+    embed.assert_not_awaited()
+    ctx._mock_sess.add.assert_not_called()
+    ctx._mock_sess.delete.assert_not_called()
+    ctx._mock_sess.commit.assert_not_called()
 
 
 @pytest.mark.asyncio
