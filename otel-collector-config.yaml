@@ -10,12 +10,12 @@ processors:
       - context: log
         statements:
           - merge_maps(attributes, ParseJSON(body), "upsert") where IsString(body)
+          - set(body, "") where IsString(body)
 
 exporters:
   otlp:
     endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT}
-    headers:
-      api-key: ${OTEL_EXPORTER_OTLP_HEADERS}
+    headers: ${env:OTEL_EXPORTER_OTLP_HEADERS}
 
 service:
   pipelines:

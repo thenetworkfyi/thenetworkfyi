@@ -10,6 +10,11 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     # Bind to loopback only: nothing outside the host (or the compose network)
     # should reach Postgres. The worker talks to it over the internal network.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
@@ -52,6 +57,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      otel-collector:
+        condition: service_started
     # Let in-flight agent runs finish on redeploy/stop before SIGKILL.
     # Procrastinate drains gracefully on SIGTERM; size this to your slowest job.
     stop_grace_period: 300s
