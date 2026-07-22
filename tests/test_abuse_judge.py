@@ -30,6 +30,7 @@ from thenetwork.worker.abuse_judge import (
     _run_abuse_judge,
     judge_primary_email_abuse,
 )
+from thenetwork.worker.metrics import ControlAction, ControlActor, ControlReason
 
 
 def _observation(
@@ -268,7 +269,7 @@ async def test_coordinated_abuse_pauses_once_and_repeat_run_is_idempotent(
         reason=AbuseReason.MULTI_SENDER_CAMPAIGN,
     )
     run_model = AsyncMock(return_value=judgment)
-    notify = Mock()
+    record_control = Mock()
     audit = Mock()
     monkeypatch.setattr(
         "thenetwork.worker.abuse_judge.get_settings",
@@ -276,7 +277,7 @@ async def test_coordinated_abuse_pauses_once_and_repeat_run_is_idempotent(
     )
     monkeypatch.setattr("thenetwork.worker.abuse_judge._run_abuse_judge", run_model)
     monkeypatch.setattr(
-        "thenetwork.worker.abuse_judge.notify_primary_intake_transition", notify
+        "thenetwork.worker.abuse_judge.record_control_action", record_control
     )
     monkeypatch.setattr("thenetwork.worker.abuse_judge.audit_event", audit)
 
@@ -284,10 +285,11 @@ async def test_coordinated_abuse_pauses_once_and_repeat_run_is_idempotent(
     await judge_primary_email_abuse.func(1)
 
     run_model.assert_awaited_once()
-    notify.assert_called_once()
-    transition = notify.call_args.args[0]
-    assert transition.changed is True
-    assert transition.status.reason == "coordinated_abuse"
+    record_control.assert_called_once_with(
+        action=ControlAction.PAUSE,
+        actor=ControlActor.SYSTEM,
+        reason=ControlReason.COORDINATED_ABUSE,
+    )
     with Session(engine) as session:
         intake = session.get(PrimaryIntakeState, "primary")
         state = session.get(PrimaryIntakeJudgeState, "primary")

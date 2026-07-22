@@ -98,9 +98,11 @@ PGP/MIME admin requests continue. After clearing unwanted unread mail, send a si
 message with `COMMAND: resume-intake`. Use `COMMAND: intake-status` to inspect the current
 state or `COMMAND: pause-intake` to pause intake manually.
 
-The transition email sent to `ADMIN_EMAILS` is fixed server-authored copy and contains no
-sender or campaign metadata. Resume establishes a fresh burst-counting baseline; previously
-observed traffic cannot immediately re-pause intake.
+Automated pauses increment a bounded system-control metric; Prometheus and Alertmanager own
+the operator notification. Signed administrator pause and resume commands still receive
+their normal command reply and are excluded from automated-control alerts. Resume establishes
+a fresh burst-counting baseline; previously observed traffic cannot immediately re-pause
+intake.
 
 `RELAY_DOMAIN` must be a bare domain already handled by the deployment's Dovecot
 catch-all. Deliver every address at that domain into `RELAY_IMAP_ACCOUNT` when the
@@ -420,24 +422,41 @@ SIGTERM graceful drain (`stop_grace_period: 300s`), `max_attempts=3`, and idempo
 
 ```bash
 cp .env.example .env
-docker compose up -d --build      # build + start db + worker + otel-collector
+docker compose up -d --build      # build + start db, worker, collector, Prometheus
 docker compose pull && docker compose up -d   # redeploy only changed services
 ```
 
-### OpenTelemetry Logs-Only Deployment
+### OpenTelemetry Logs and Local Prometheus Metrics
 
-The Compose stack runs a logs-only OpenTelemetry Collector contrib service (`otel-collector`) using `otel-collector-config.yaml`. Worker JSON logs are routed via Docker's `fluentd` logging driver over an internal loopback bridge. The collector parses each worker JSON string into structured `LogRecord` fields (preserving `event`, `logger`, `level`, `timestamp`, `trace_id`, and other emitted attributes) and exports them to an environment-configured OTLP destination.
+The Compose stack runs an OpenTelemetry Collector contrib service (`otel-collector`) using `otel-collector-config.yaml`. Worker JSON logs are routed via Docker's `fluentd` logging driver. The collector parses each worker JSON string into structured `LogRecord` fields (preserving `event`, `logger`, `level`, `timestamp`, `trace_id`, and other emitted attributes) and exports them to an environment-configured OTLP destination.
+
+The collector counts selected records whose redacted logger is `thenetwork.audit` and exports the bounded catalog documented in [monitoring.md](monitoring.md). Prometheus scrapes that endpoint at `otel-collector:8889` and collector pipeline-health metrics at `otel-collector:8888` over the internal Compose network. Prometheus uses the pinned `prom/prometheus:v3.5.5` LTS image, persists its TSDB in the `prometheus-data` volume, retains samples for 30 days, and binds its UI to `127.0.0.1:9090`. It sends alert state to pinned Alertmanager `v0.32.1` over the internal network. Alertmanager persists notification and silence state in `alertmanager-data` and binds its UI only to `127.0.0.1:9093`. The worker exposes no inbound metrics port.
+
+The worker's background OpenTelemetry reader sends unlabelled liveness, queue, and durable intake gauges to the Collector's internal OTLP/HTTP receiver at `otel-collector:4318`. Its database reads and exports are best effort and cannot gate the producer or worker. State collection uses an isolated connection with a two-second default connect and statement timeout; OTLP export has a five-second default timeout. `WORKER_METRICS_OTLP_ENDPOINT`, `WORKER_METRICS_EXPORT_INTERVAL_SECONDS`, `WORKER_METRICS_EXPORT_TIMEOUT_SECONDS`, and `WORKER_METRICS_COLLECTION_TIMEOUT_SECONDS` configure this outbound path. See [monitoring.md](monitoring.md) for exact queue and timestamp semantics.
+
+Every projected label is a closed audit category and is independently allow-listed in the Collector condition before a series can be created. Never add `trace_id`, `run_id`, sender pseudonyms, email/content, exception text, or opaque person/event identifiers as metric labels; they are identifying and/or unbounded. Prometheus also adds its bounded `job` and `instance` scrape-target labels.
 
 Required settings:
-- `OTEL_EXPORTER_OTLP_ENDPOINT`: target OTLP endpoint (e.g. `http://localhost:4317`)
+- `OTEL_EXPORTER_OTLP_ENDPOINT`: target OTLP/gRPC endpoint (e.g. `otlp.example.com:4317`)
 - `OTEL_EXPORTER_OTLP_HEADERS`: optional authentication headers as a JSON object string, e.g. `{"Authorization":"Bearer <token>"}` (the Collector's config resolver substitutes the whole `headers:` map from this single env var, so it must be valid JSON/YAML for a map — not the comma `key=value` format used by OTel SDK auto-instrumentation env vars)
+- `OTEL_EXPORTER_OTLP_INSECURE`: `false` by default; set `true` only for a trusted plaintext endpoint
+- `ALERTMANAGER_OPERATOR_EMAIL`: dedicated operator mailbox, never an application intake address
+- `ALERTMANAGER_SMTP_SMARTHOST`, `ALERTMANAGER_SMTP_FROM`, and optional `ALERTMANAGER_SMTP_USERNAME`: operator-notification SMTP connection
+- `ALERTMANAGER_SMTP_PASSWORD_FILE`: host path to a mode-`0600`, gitignored password file mounted read-only into Alertmanager
+- `ALERTMANAGER_SMTP_REQUIRE_TLS`: keep `true` in production
 
 Rollout & verification:
 - Validate compose: `docker compose config`
-- Validate collector configuration: `docker run --rm -e OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4317" -v ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml otel/opentelemetry-collector-contrib:0.118.0 validate --config=/etc/otelcol-contrib/config.yaml`
+- Validate collector configuration: `docker run --rm -e OTEL_EXPORTER_OTLP_ENDPOINT="localhost:4317" -e OTEL_EXPORTER_OTLP_HEADERS='' -e OTEL_EXPORTER_OTLP_INSECURE=true -v ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml otel/opentelemetry-collector-contrib:0.118.0 validate --config=/etc/otelcol-contrib/config.yaml`
+- Validate Prometheus configuration and rules: `docker run --rm --entrypoint /bin/promtool -v "$PWD/prometheus.yml:/etc/prometheus/prometheus.yml:ro" -v "$PWD/prometheus-alert-rules.yml:/etc/prometheus/rules/thenetwork.yml:ro" prom/prometheus:v3.5.5 check config /etc/prometheus/prometheus.yml`
 - Start service: `docker compose up -d`
+- Open the local UI: `http://127.0.0.1:9090`
+- Open the local Alertmanager UI: `http://127.0.0.1:9093`
+- Verify both targets are up: `curl http://127.0.0.1:9090/api/v1/targets`
+- Query application activity after an audit event: `curl 'http://127.0.0.1:9090/api/v1/query?query=thenetwork_worker_audit_events_total'`
+- Exercise the worker-state OTLP path through Prometheus: `./validate-monitoring.sh`
 
-Traces, metrics, Postgres log collection, retention of old journal entries, and historical log migration are out of scope.
+Grafana, host/Postgres exporters, traces, historical log migration, and migration of old metrics are out of scope for this increment. See [monitoring.md](monitoring.md) for alert thresholds, routing, secret provisioning, silencing, validation, and runbooks.
 
 All compose builds install the scanner dependencies. To enable model loading and
 scanning, set `CONTENT_SCAN_ENABLED=true` and `HF_TOKEN` for the first start, then run

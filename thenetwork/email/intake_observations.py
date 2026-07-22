@@ -20,11 +20,16 @@ from thenetwork.email.intake_control import (
     PRIMARY_INTAKE_KEY,
     PrimaryIntakePauseReason,
     PrimaryIntakeTransition,
-    notify_primary_intake_transition,
     set_primary_intake_paused_in_session,
 )
 from thenetwork.security.intake_fingerprint import intake_fingerprints
 from thenetwork.security.sender_identifier import normalize_sender_identifier_identity
+from thenetwork.worker.metrics import (
+    ControlAction,
+    ControlActor,
+    ControlReason,
+    record_control_action,
+)
 
 NEW_SENDER_BURST_THRESHOLD = 25
 NEW_SENDER_BURST_WINDOW = timedelta(hours=1)
@@ -135,13 +140,18 @@ def observe_primary_intake_batch(
             )
 
     if transition is not None:
+        if transition.changed:
+            record_control_action(
+                action=ControlAction.PAUSE,
+                actor=ControlActor.SYSTEM,
+                reason=ControlReason.NEW_SENDER_BURST,
+            )
         audit_event(
             "database.action",
             action="pause",
             record_type="primary_intake",
             outcome="success" if transition.changed else "exists",
         )
-        notify_primary_intake_transition(transition)
     return BurstObservationResult(
         paused=transition is not None and transition.status.paused,
         newly_observed=newly_observed,

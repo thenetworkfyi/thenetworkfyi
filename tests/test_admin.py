@@ -862,6 +862,7 @@ def test_handle_admin_command_ban_unban():
     import asyncio
     from thenetwork.admin.commands import handle_admin_command
     from thenetwork.db.models import BannedEmail
+    from thenetwork.worker.metrics import ControlAction, ControlActor, ControlReason
 
     # Test ban
     session = MagicMock()
@@ -873,6 +874,7 @@ def test_handle_admin_command_ban_unban():
     with (
         patch("thenetwork.admin.commands.get_session", return_value=cm),
         patch("thenetwork.admin.commands.audit_event") as mock_audit,
+        patch("thenetwork.admin.commands.record_control_action") as record_control,
     ):
         result = asyncio.run(handle_admin_command("ban baduser@example.com", ""))
 
@@ -885,6 +887,11 @@ def test_handle_admin_command_ban_unban():
     mock_audit.assert_called_once_with(
         "database.action", action="ban", record_type="person", outcome="success"
     )
+    record_control.assert_called_once_with(
+        action=ControlAction.BAN,
+        actor=ControlActor.ADMIN,
+        reason=ControlReason.ADMIN,
+    )
 
     # Test ban already banned
     session = MagicMock()
@@ -893,10 +900,14 @@ def test_handle_admin_command_ban_unban():
     cm.__enter__ = MagicMock(return_value=session)
     cm.__exit__ = MagicMock(return_value=False)
 
-    with patch("thenetwork.admin.commands.get_session", return_value=cm):
+    with (
+        patch("thenetwork.admin.commands.get_session", return_value=cm),
+        patch("thenetwork.admin.commands.record_control_action") as record_control,
+    ):
         result = asyncio.run(handle_admin_command("ban baduser@example.com", ""))
     assert "already banned" in result
     session.add.assert_not_called()
+    record_control.assert_not_called()
 
     # Test unban
     session = MagicMock()
@@ -909,6 +920,7 @@ def test_handle_admin_command_ban_unban():
     with (
         patch("thenetwork.admin.commands.get_session", return_value=cm),
         patch("thenetwork.admin.commands.audit_event") as mock_audit,
+        patch("thenetwork.admin.commands.record_control_action") as record_control,
     ):
         result = asyncio.run(handle_admin_command("unban baduser@example.com", ""))
 
@@ -918,6 +930,11 @@ def test_handle_admin_command_ban_unban():
     mock_audit.assert_called_once_with(
         "database.action", action="unban", record_type="person", outcome="success"
     )
+    record_control.assert_called_once_with(
+        action=ControlAction.UNBAN,
+        actor=ControlActor.ADMIN,
+        reason=ControlReason.ADMIN,
+    )
 
     # Test unban not banned
     session = MagicMock()
@@ -926,9 +943,13 @@ def test_handle_admin_command_ban_unban():
     cm.__enter__ = MagicMock(return_value=session)
     cm.__exit__ = MagicMock(return_value=False)
 
-    with patch("thenetwork.admin.commands.get_session", return_value=cm):
+    with (
+        patch("thenetwork.admin.commands.get_session", return_value=cm),
+        patch("thenetwork.admin.commands.record_control_action") as record_control,
+    ):
         result = asyncio.run(handle_admin_command("unban baduser@example.com", ""))
     assert "not banned" in result
+    record_control.assert_not_called()
     session.delete.assert_not_called()
 
 

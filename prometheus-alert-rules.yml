@@ -1,0 +1,131 @@
+groups:
+  - name: thenetwork-operational
+    rules:
+      - alert: ProducerPollingStale
+        expr: thenetwork_producer_last_success_timestamp_seconds > 0 and (time() - thenetwork_producer_last_success_timestamp_seconds > 900)
+        for: 10m
+        labels:
+          severity: critical
+          service: thenetwork
+          scope: worker
+          category: availability
+        annotations:
+          summary: The producer has not completed an IMAP poll for at least 15 minutes.
+          runbook: docs/monitoring.md#producerpollingstale
+
+      - alert: WorkerBacklogSustained
+        expr: thenetwork_job_queue_depth > 25 and thenetwork_oldest_pending_job_age_seconds > 300
+        for: 10m
+        labels:
+          severity: warning
+          service: thenetwork
+          scope: worker
+          category: backlog
+        annotations:
+          summary: More than 25 runnable jobs have remained queued with the oldest over five minutes.
+          runbook: docs/monitoring.md#workerbacklogsustained
+
+      - alert: AutomatedPrimaryIntakePaused
+        expr: max(thenetwork_primary_intake_paused{reason=~"new_sender_burst|coordinated_abuse"}) == 1
+        for: 1m
+        labels:
+          severity: critical
+          service: thenetwork
+          scope: worker
+          category: control
+        annotations:
+          summary: Automated abuse controls have paused primary intake.
+          runbook: docs/monitoring.md#automatedprimaryintakepaused
+
+      - alert: OutboundEmailFailuresRepeated
+        expr: sum(increase(thenetwork_outbound_emails_total{outcome="error"}[15m])) >= 3
+        for: 5m
+        labels:
+          severity: critical
+          service: thenetwork
+          scope: worker
+          category: delivery
+        annotations:
+          summary: At least three outbound SMTP attempts failed within 15 minutes.
+          runbook: docs/monitoring.md#outboundemailfailuresrepeated
+
+      - alert: AgentFailureRateElevated
+        expr: sum(increase(thenetwork_agent_runs_total{outcome="error"}[15m])) >= 5 and (sum(increase(thenetwork_agent_runs_total{outcome="error"}[15m])) / clamp_min(sum(increase(thenetwork_agent_runs_total[15m])), 1)) > 0.25
+        for: 10m
+        labels:
+          severity: warning
+          service: thenetwork
+          scope: worker
+          category: agent
+        annotations:
+          summary: Agent failures exceeded 25 percent with at least five failures in 15 minutes.
+          runbook: docs/monitoring.md#agentfailurerateelevated
+
+      - alert: MessageRejectionsSpiking
+        expr: sum(increase(thenetwork_messages_rejected_total[10m])) >= 20
+        for: 5m
+        labels:
+          severity: warning
+          service: thenetwork
+          scope: worker
+          category: intake
+        annotations:
+          summary: At least 20 messages were rejected within 10 minutes.
+          runbook: docs/monitoring.md#messagerejectionsspiking
+
+      - alert: CollectorUnavailable
+        expr: up{job=~"otel-collector-internal|thenetwork-audit-activity"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: thenetwork
+          scope: monitoring
+          category: telemetry
+        annotations:
+          summary: Prometheus cannot scrape an OpenTelemetry Collector metrics endpoint.
+          runbook: docs/monitoring.md#collectorunavailable
+
+      - alert: CollectorPipelineDegraded
+        expr: sum(increase(otelcol_exporter_send_failed_log_records_total[10m])) > 0 or max(otelcol_exporter_queue_size / clamp_min(otelcol_exporter_queue_capacity, 1)) > 0.8
+        for: 5m
+        labels:
+          severity: critical
+          service: thenetwork
+          scope: monitoring
+          category: telemetry
+        annotations:
+          summary: The Collector failed to export logs or its exporter queue exceeded 80 percent capacity.
+          runbook: docs/monitoring.md#collectorpipelinedegraded
+
+      - alert: SystemControlActionObserved
+        expr: sum by (action, reason) (increase(thenetwork_control_actions_total{actor="system",action=~"pause|ban"}[2m])) > 0 or sum by (action, reason) ((thenetwork_control_actions_total{actor="system",action=~"pause|ban"} > 0) unless thenetwork_control_actions_total{actor="system",action=~"pause|ban"} offset 2m)
+        labels:
+          severity: critical
+          service: thenetwork
+          scope: worker
+          category: event
+        annotations:
+          summary: An automated safety control changed operational state.
+          runbook: docs/monitoring.md#systemcontrolactionobserved
+
+      - alert: AgentUsageLimitExceeded
+        expr: increase(thenetwork_agent_usage_limit_exceeded_total[2m]) > 0 or (thenetwork_agent_usage_limit_exceeded_total > 0 unless thenetwork_agent_usage_limit_exceeded_total offset 2m)
+        labels:
+          severity: warning
+          service: thenetwork
+          scope: worker
+          category: event
+        annotations:
+          summary: An agent run stopped at the configured usage limit.
+          runbook: docs/monitoring.md#agentusagelimitexceeded
+
+      - alert: ProcessEmailJobExhausted
+        expr: increase(thenetwork_jobs_exhausted_total[2m]) > 0 or (thenetwork_jobs_exhausted_total > 0 unless thenetwork_jobs_exhausted_total offset 2m)
+        labels:
+          severity: critical
+          service: thenetwork
+          scope: worker
+          category: event
+        annotations:
+          summary: A process-email job exhausted all configured attempts.
+          runbook: docs/monitoring.md#processemailjobexhausted

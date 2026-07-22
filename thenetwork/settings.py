@@ -117,6 +117,13 @@ class Settings(BaseSettings):
     # Procrastinate worker concurrency (global LLM-spend ceiling)
     worker_concurrency: int = 4
 
+    # Outbound-only worker state metrics. The application opens no listener;
+    # the Compose default reaches the Collector over its internal network.
+    worker_metrics_otlp_endpoint: str = "http://otel-collector:4318/v1/metrics"
+    worker_metrics_export_interval_seconds: float = 30.0
+    worker_metrics_export_timeout_seconds: float = 5.0
+    worker_metrics_collection_timeout_seconds: float = 2.0
+
     # Rate limiting: max inbound emails per hour
     rate_limit_per_hour: int = 20
     unauthenticated_rate_limit_per_hour: int = 6

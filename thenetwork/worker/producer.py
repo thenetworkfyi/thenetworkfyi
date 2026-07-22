@@ -39,6 +39,7 @@ from thenetwork.email.intake_observations import observe_primary_intake_batch
 from thenetwork.email.relay import is_relay_address_candidate
 from thenetwork.security.sender_identifier import optional_sender_identifier
 from thenetwork.settings import get_settings
+from thenetwork.worker.metrics import record_producer_poll_success
 from thenetwork.worker.tasks import app, process_email
 
 REJECT_DISPOSABLE_DOMAIN = "disposable_domain"
@@ -200,7 +201,8 @@ def _poll_and_enqueue() -> int:
         if relay_configured:
             count += _poll_mailbox_and_enqueue("relay")
         audit_event("producer.poll_completed", message_count=count, outcome="success")
-        return count
+    record_producer_poll_success()
+    return count
 
 
 def run_producer_cycle() -> int:

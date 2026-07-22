@@ -9,22 +9,14 @@ from enum import StrEnum
 from thenetwork.audit import audit_event
 from thenetwork.db.models import PrimaryIntakeState
 from thenetwork.db.session import get_session
-from thenetwork.email.outbound import notify_admins
-from thenetwork.settings import get_settings
+from thenetwork.worker.metrics import (
+    ControlAction,
+    ControlActor,
+    ControlReason,
+    record_control_action,
+)
 
 PRIMARY_INTAKE_KEY = "primary"
-
-_PAUSED_SUBJECT = "[The Network] Primary intake paused"
-_PAUSED_BODY = (
-    "Primary email intake has been paused. Ordinary primary messages will remain "
-    "unread until a PGP-authenticated administrator resumes intake. Relay delivery "
-    "continues separately."
-)
-_RESUMED_SUBJECT = "[The Network] Primary intake resumed"
-_RESUMED_BODY = (
-    "Primary email intake has been resumed. Unread primary messages are eligible "
-    "for processing again."
-)
 
 
 class PrimaryIntakePauseReason(StrEnum):
@@ -65,7 +57,7 @@ def is_primary_intake_paused() -> bool:
 def pause_primary_intake(
     reason: PrimaryIntakePauseReason,
 ) -> PrimaryIntakeTransition:
-    return _set_primary_intake_state(paused=True, reason=reason.value)
+    return _set_primary_intake_state(paused=True, reason=reason)
 
 
 def resume_primary_intake() -> PrimaryIntakeTransition:
@@ -103,18 +95,8 @@ def set_primary_intake_paused_in_session(
     )
 
 
-def notify_primary_intake_transition(transition: PrimaryIntakeTransition) -> None:
-    if not transition.changed:
-        return
-    settings = get_settings()
-    if transition.status.paused:
-        notify_admins(settings, _PAUSED_SUBJECT, _PAUSED_BODY)
-    else:
-        notify_admins(settings, _RESUMED_SUBJECT, _RESUMED_BODY)
-
-
 def _set_primary_intake_state(
-    *, paused: bool, reason: str | None
+    *, paused: bool, reason: PrimaryIntakePauseReason | None
 ) -> PrimaryIntakeTransition:
     now = datetime.now(timezone.utc)
     with get_session() as session:
@@ -129,7 +111,7 @@ def _set_primary_intake_state(
         changed = state.paused != paused
         if changed:
             state.paused = paused
-            state.pause_reason = reason
+            state.pause_reason = reason.value if reason is not None else None
             state.paused_at = now if paused else None
             state.updated_at = now
 
@@ -139,12 +121,20 @@ def _set_primary_intake_state(
             paused_at=state.paused_at,
         )
 
+    if changed:
+        record_control_action(
+            action=ControlAction.PAUSE if paused else ControlAction.RESUME,
+            actor=(
+                ControlActor.ADMIN
+                if reason in {None, PrimaryIntakePauseReason.ADMIN}
+                else ControlActor.SYSTEM
+            ),
+            reason=ControlReason(reason.value if reason is not None else "admin"),
+        )
     audit_event(
         "database.action",
         action="pause" if paused else "resume",
         record_type="primary_intake",
         outcome="success" if changed else "exists",
     )
-    transition = PrimaryIntakeTransition(status=status, changed=changed)
-    notify_primary_intake_transition(transition)
-    return transition
+    return PrimaryIntakeTransition(status=status, changed=changed)

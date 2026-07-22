@@ -93,12 +93,11 @@ def notify_admins(
     body: str,
     trace_id: str | None = None,
 ) -> None:
-    """Send an internal ops notification to every configured admin address.
+    """Send an explicit agent escalation to every configured admin address.
 
-    Shared by `agent/tools.py::escalate` and `agent/core.py`'s
-    usage-limit-exceeded handler - both need to alert a human operator
-    without routing through the user-facing growth surface, so this uses the
-    closed internal plain-only delivery path and is a no-op when no admin
+    `agent/tools.py::escalate` uses this closed internal plain-only delivery
+    path for a human-review request. Operational conditions are owned by
+    Prometheus and Alertmanager instead. This is a no-op when no admin
     addresses are configured.
     """
     if not settings.admin_emails:

@@ -730,7 +730,9 @@ async def test_agent_usage_limit_breach_is_audited_without_raising(caplog):
 
 
 @pytest.mark.asyncio
-async def test_agent_usage_limit_breach_notifies_admins(caplog):
+async def test_agent_usage_limit_breach_records_metric_without_direct_notification(
+    caplog,
+):
     from thenetwork.agent.core import run_agent_for_email
 
     class FakeUsageLimitExceeded(Exception):
@@ -762,7 +764,10 @@ async def test_agent_usage_limit_breach_notifies_admins(caplog):
         patch("thenetwork.agent.core.build_agent", return_value=fake_agent),
         patch("thenetwork.agent.core.UsageLimits", side_effect=FakeUsageLimits),
         patch("thenetwork.agent.core.UsageLimitExceeded", FakeUsageLimitExceeded),
-        patch("thenetwork.agent.core.notify_admins") as mock_notify,
+        patch("thenetwork.email.outbound.notify_admins") as mock_notify,
+        patch(
+            "thenetwork.agent.core.record_agent_usage_limit_exceeded"
+        ) as record_usage_limit,
     ):
         result = await run_agent_for_email(
             sender_email=secrets["sender"],
@@ -772,16 +777,8 @@ async def test_agent_usage_limit_breach_notifies_admins(caplog):
         )
 
     assert result == ""
-    mock_notify.assert_called_once()
-    call_args = mock_notify.call_args
-    assert call_args.args[0] is settings
-    notified_subject = call_args.args[1]
-    notified_body = call_args.args[2]
-    assert secrets["subject"] not in notified_subject
-    assert secrets["subject"] not in notified_body
-    assert secrets["body"] not in notified_body
-    assert secrets["sender"] in notified_body
-    assert "Sender known: False" in notified_body
+    record_usage_limit.assert_called_once_with()
+    mock_notify.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -922,7 +919,7 @@ async def test_agent_trace_logs_structure_but_never_content(caplog):
 
     with (
         patch("thenetwork.agent.core.build_agent", return_value=fake_agent),
-        patch("thenetwork.agent.core.notify_admins"),
+        patch("thenetwork.email.outbound.notify_admins"),
     ):
         result = await run_agent_for_email(
             sender_email=secrets["sender"],
@@ -1023,7 +1020,7 @@ async def test_agent_run_audits_trace_id_on_lifecycle_events(caplog):
 
     with (
         patch("thenetwork.agent.core.build_agent", return_value=fake_agent),
-        patch("thenetwork.agent.core.notify_admins"),
+        patch("thenetwork.email.outbound.notify_admins"),
         patch(
             "thenetwork.security.sender_identifier.get_settings",
             return_value=SimpleNamespace(sender_identifier_secret="audit-secret"),
@@ -1074,7 +1071,7 @@ async def test_agent_no_tool_call_is_flagged_without_admin_notification(caplog):
 
     with (
         patch("thenetwork.agent.core.build_agent", return_value=fake_agent),
-        patch("thenetwork.agent.core.notify_admins") as notify_admins,
+        patch("thenetwork.email.outbound.notify_admins") as notify_admins,
     ):
         await run_agent_for_email(
             sender_email="mike@mkly.io",
@@ -1107,7 +1104,7 @@ async def test_empty_agent_output_does_not_escalate_as_undispatched():
 
     with (
         patch("thenetwork.agent.core.build_agent", return_value=fake_agent),
-        patch("thenetwork.agent.core.notify_admins") as notify_admins,
+        patch("thenetwork.email.outbound.notify_admins") as notify_admins,
     ):
         await run_agent_for_email(
             sender_email="mike@mkly.io",
@@ -1132,7 +1129,7 @@ async def test_proactive_no_action_is_audited_without_admin_notification(caplog)
 
     with (
         patch("thenetwork.agent.core.build_agent", return_value=fake_agent),
-        patch("thenetwork.agent.core.notify_admins") as notify_admins,
+        patch("thenetwork.email.outbound.notify_admins") as notify_admins,
     ):
         await run_agent_for_email(
             sender_email="mike@mkly.io",
@@ -1162,7 +1159,7 @@ async def test_proactive_no_op_alert_regression_fixture_has_no_admin_messages(ca
 
     with (
         patch("thenetwork.agent.core.build_agent", return_value=fake_agent),
-        patch("thenetwork.agent.core.notify_admins") as notify_admins,
+        patch("thenetwork.email.outbound.notify_admins") as notify_admins,
     ):
         for _ in range(17):
             await run_agent_for_email(
@@ -1196,7 +1193,7 @@ async def test_server_side_send_prevents_undispatched_escalation():
 
     with (
         patch("thenetwork.agent.core.build_agent", return_value=fake_agent),
-        patch("thenetwork.agent.core.notify_admins") as notify_admins,
+        patch("thenetwork.email.outbound.notify_admins") as notify_admins,
     ):
         await run_agent_for_email(
             sender_email="mike@mkly.io",
@@ -1229,7 +1226,7 @@ async def test_reply_tool_call_prevents_undispatched_escalation():
 
     with (
         patch("thenetwork.agent.core.build_agent", return_value=fake_agent),
-        patch("thenetwork.agent.core.notify_admins") as notify_admins,
+        patch("thenetwork.email.outbound.notify_admins") as notify_admins,
     ):
         await run_agent_for_email(
             sender_email="mike@mkly.io",
@@ -1262,7 +1259,7 @@ async def test_no_action_tool_call_prevents_undispatched_escalation():
 
     with (
         patch("thenetwork.agent.core.build_agent", return_value=fake_agent),
-        patch("thenetwork.agent.core.notify_admins") as notify_admins,
+        patch("thenetwork.email.outbound.notify_admins") as notify_admins,
     ):
         await run_agent_for_email(
             sender_email="mike@mkly.io",
@@ -1728,7 +1725,8 @@ async def test_agent_failure_is_audited_and_reraised_for_retry(caplog):
             "thenetwork.worker.tasks.run_agent_for_email",
             AsyncMock(side_effect=RuntimeError("provider unavailable")),
         ),
-        patch("thenetwork.worker.tasks.notify_admins") as notify,
+        patch("thenetwork.email.outbound.notify_admins") as notify,
+        patch("thenetwork.worker.tasks.record_job_exhausted") as record_exhausted,
     ):
         with pytest.raises(RuntimeError, match="provider unavailable"):
             await process_email.func(
@@ -1739,6 +1737,7 @@ async def test_agent_failure_is_audited_and_reraised_for_retry(caplog):
             )
 
     notify.assert_not_called()
+    record_exhausted.assert_not_called()
     assert any(
         event["event"] == "worker.agent_failed"
         and event["error_type"] == "RuntimeError"
@@ -1747,7 +1746,7 @@ async def test_agent_failure_is_audited_and_reraised_for_retry(caplog):
 
 
 @pytest.mark.asyncio
-async def test_agent_failure_notifies_admins_on_final_retry_only():
+async def test_final_agent_failure_records_metric_without_direct_notification():
     from thenetwork.worker.tasks import process_email
 
     final_context = SimpleNamespace(job=SimpleNamespace(attempts=3))
@@ -1766,7 +1765,8 @@ async def test_agent_failure_notifies_admins_on_final_retry_only():
             "thenetwork.worker.tasks.run_agent_for_email",
             AsyncMock(side_effect=RuntimeError()),
         ),
-        patch("thenetwork.worker.tasks.notify_admins") as notify,
+        patch("thenetwork.email.outbound.notify_admins") as notify,
+        patch("thenetwork.worker.tasks.record_job_exhausted") as record_exhausted,
     ):
         with pytest.raises(RuntimeError):
             await process_email.func(
@@ -1777,7 +1777,8 @@ async def test_agent_failure_notifies_admins_on_final_retry_only():
                 sender_authenticated=True,
             )
 
-    notify.assert_called_once()
+    notify.assert_not_called()
+    record_exhausted.assert_called_once_with()
 
 
 @pytest.mark.asyncio

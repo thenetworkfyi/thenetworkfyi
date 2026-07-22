@@ -22,11 +22,16 @@ from thenetwork.db.session import get_session
 from thenetwork.email.intake_control import (
     PrimaryIntakePauseReason,
     PrimaryIntakeTransition,
-    notify_primary_intake_transition,
     set_primary_intake_paused_in_session,
 )
 from thenetwork.model_config import model_with_api_key
 from thenetwork.settings import get_settings
+from thenetwork.worker.metrics import (
+    ControlAction,
+    ControlActor,
+    ControlReason,
+    record_control_action,
+)
 from thenetwork.worker.tasks import app
 
 ABUSE_JUDGE_LOOKBACK = timedelta(hours=24)
@@ -294,10 +299,15 @@ async def judge_primary_email_abuse(timestamp: int) -> None:
         else "success",
     )
     if transition is not None:
+        if transition.changed:
+            record_control_action(
+                action=ControlAction.PAUSE,
+                actor=ControlActor.SYSTEM,
+                reason=ControlReason.COORDINATED_ABUSE,
+            )
         audit_event(
             "database.action",
             action="pause",
             record_type="primary_intake",
             outcome="success" if transition.changed else "exists",
         )
-        notify_primary_intake_transition(transition)
