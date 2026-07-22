@@ -58,6 +58,7 @@ from thenetwork.memory.sanitize import (
 )
 from thenetwork.memory.sent_email import (
     CONSENT_REQUEST_SUMMARY,
+    FIRST_CONTACT_WELCOME_SUMMARY,
     SentEmailMemory,
     event_recommendation_summary,
     record_sent_email_memories,
@@ -87,6 +88,7 @@ _dispatch_limiter: strategies.FixedWindowRateLimiter | None = None
 _dispatch_storage: PostgresFixedWindowStorage | None = None
 _registration_limiter: strategies.FixedWindowRateLimiter | None = None
 _registration_storage: PostgresFixedWindowStorage | None = None
+_WELCOME_LIMIT_PER_DAY = 1
 
 FIRST_EVENT_RECOMMENDATION_NOTICE = EventRecommendationNotice.FIRST.value
 EVENT_RECOMMENDATION_STOP_NOTICE = EventRecommendationNotice.STOP.value
@@ -861,11 +863,10 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
 
     Use when intent is ambiguous, the request is outside your capabilities, or
     you have low confidence. A human will follow up with the sender directly.
-    Do not use this for an ordinary first contact that can be registered and
-    answered with reply_to_sender. The fixed welcome/how-to-join reply is only
-    a fallback for authenticated senders who are still unknown when escalation
-    is requested, so they learn how to use the address without giving the model
-    control over that copy.
+    Do not use this for an ordinary first contact that can be answered with
+    reply_to_sender or send_first_contact_welcome. Authenticated unknown
+    senders receive the fixed welcome before the operator is notified, unless
+    another response was already sent or the welcome quota is exhausted.
     """
     with audit_span("agent.tool", tool_name="escalate"):
         s = ctx.deps.settings
@@ -879,20 +880,7 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
                         "reason": "sender_declined_participation",
                     }
                 )
-            send_reply(
-                to_address=sender,
-                subject=reply_subject(ctx.deps.inbound_subject, fallback="How to join"),
-                fixed_template=FixedEmailTemplate.FIRST_CONTACT_WELCOME,
-                fixed_context=FirstContactWelcomeEmailContext(),
-                **_trace_kwargs(ctx.deps.trace_id),
-                **_direct_reply_kwargs(
-                    inbound_message_id=ctx.deps.inbound_message_id,
-                    inbound_body_for_quote=ctx.deps.inbound_body_for_quote,
-                    inbound_date=ctx.deps.inbound_date,
-                    inbound_references=ctx.deps.inbound_references,
-                ),
-            )
-            audit_event("agent.first_contact_welcome_sent")
+            welcome_result = await _send_first_contact_welcome(ctx)
             subject = f"[The Network] Manual reply needed: {sender}"
             body = (
                 f"Email from {sender} was escalated for human review.\n\n"
@@ -901,7 +889,9 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
                 f"Please reply to {sender} manually."
             )
             notify_admins(s, subject, body, trace_id=ctx.deps.trace_id)
-            return _tool_result({"status": "welcomed_and_escalated"})
+            if welcome_result.get("status") == "sent":
+                return _tool_result({"status": "welcomed_and_escalated"})
+            return _tool_result({"status": "escalated"})
 
         refs = [ctx.deps.sender_user_id] if ctx.deps.sender_user_id else []
 
@@ -1085,6 +1075,85 @@ async def _send_email(
     )
 
 
+def _welcome_quota_key(sender_email: str) -> str:
+    normalized_sender = normalize_rate_limit_identity(sender_email)
+    sender_hash = hashlib.sha256(normalized_sender.encode("utf-8")).hexdigest()
+    return f"welcome:first-contact:{sender_hash}"
+
+
+async def _send_first_contact_welcome(
+    ctx: RunContext[AgentDeps],
+) -> dict[str, Any]:
+    """Send the fixed welcome through the ordinary outbound capability gates."""
+    if ctx.deps.sender_user_id is not None:
+        with audit_span("agent.tool", tool_name="send_first_contact_welcome"):
+            return _tool_result({"status": "error", "reason": "already_registered"})
+    if not ctx.deps.sender_authenticated or not ctx.deps.sender_email:
+        with audit_span("agent.tool", tool_name="send_first_contact_welcome"):
+            return _tool_result(
+                {"status": "error", "reason": "sender_not_authenticated"}
+            )
+    if _unknown_sender_declines_participation(ctx):
+        with audit_span("agent.tool", tool_name="send_first_contact_welcome"):
+            return _tool_result(
+                {"status": "no_action", "reason": "sender_declined_participation"}
+            )
+
+    quota_key = _welcome_quota_key(ctx.deps.sender_email)
+    if not _check_daily_dispatch_cap(quota_key, _WELCOME_LIMIT_PER_DAY):
+        with audit_span("agent.tool", tool_name="send_first_contact_welcome"):
+            return _tool_result(_limited("welcome_daily_cap", _WELCOME_LIMIT_PER_DAY))
+
+    def deliver(to_address: str) -> None:
+        thread_headers = {}
+        if ctx.deps.inbound_message_id:
+            thread_headers = _direct_reply_kwargs(
+                inbound_message_id=ctx.deps.inbound_message_id,
+                inbound_body_for_quote=ctx.deps.inbound_body_for_quote,
+                inbound_date=ctx.deps.inbound_date,
+                inbound_references=ctx.deps.inbound_references,
+            )
+        send_reply(
+            to_address=to_address,
+            subject=reply_subject(ctx.deps.inbound_subject, fallback="How to join"),
+            fixed_template=FixedEmailTemplate.FIRST_CONTACT_WELCOME,
+            fixed_context=FirstContactWelcomeEmailContext(),
+            **_trace_kwargs(ctx.deps.trace_id),
+            **thread_headers,
+        )
+
+    result = await _dispatch_email(
+        ctx,
+        recipient_user_id=None,
+        is_sender_reply=True,
+        tool_name="send_first_contact_welcome",
+        subject_chars=len(
+            reply_subject(ctx.deps.inbound_subject, fallback="How to join")
+        ),
+        body_chars=0,
+        sent_email_summary=FIRST_CONTACT_WELCOME_SUMMARY,
+        deliver=deliver,
+    )
+    if result.get("status") == "sent":
+        _consume_daily_dispatch_cap(quota_key, _WELCOME_LIMIT_PER_DAY)
+        audit_event("agent.first_contact_welcome_sent")
+    return result
+
+
+@_idempotent_mutation
+async def send_first_contact_welcome(
+    ctx: RunContext[AgentDeps],
+) -> dict[str, Any]:
+    """Send the fixed how-to-use-this-address reply to an unfamiliar sender.
+
+    Use this for an authenticated first contact that is empty, too short, or
+    too unclear to answer substantively. The server owns the recipient,
+    subject, body, threading, and daily quota. Do not register the sender or
+    escalate solely because their first message lacks enough context.
+    """
+    return await _send_first_contact_welcome(ctx)
+
+
 async def _send_event_fyi(
     ctx: RunContext[AgentDeps],
     *,
@@ -1154,6 +1223,8 @@ async def _dispatch_email(
                     "reason": "sender_not_authenticated",
                 }
             )
+        if is_sender_reply and ctx.deps.unknown_sender_response_sent:
+            return _tool_result(_limited("max_sends_per_run", 1))
 
         max_sends_per_run = _cap(s.dispatch_max_sends_per_run)
         if ctx.deps.outbound_send_count >= max_sends_per_run:
@@ -1208,6 +1279,8 @@ async def _dispatch_email(
 
         ctx.deps.outbound_send_count += 1
         ctx.deps.server_side_send_count += 1
+        if direct_unknown_sender_reply:
+            ctx.deps.unknown_sender_response_sent = True
         if recipient_user_id is not None:
             try:
                 await record_sent_email_memory(
