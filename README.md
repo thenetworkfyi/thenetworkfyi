@@ -399,6 +399,20 @@ LlamaFirewall code and require neither model weights nor Hugging Face credential
 The container entrypoint runs `alembic upgrade head` before starting, so
 migrations apply automatically on every deploy.
 
+### OpenTelemetry Logs-Only Collection
+
+`docker-compose.yml` includes an explicitly version-pinned OpenTelemetry Collector contrib service (`otel-collector`) that receives worker JSON logs via the Docker `fluentd` logging driver and forwards structured `LogRecord` events to an environment-configured OTLP destination (`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS`).
+
+Rollout and verification commands:
+```bash
+docker compose config
+docker run --rm -e OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4317" -v $(pwd)/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml otel/opentelemetry-collector-contrib:0.118.0 validate --config=/etc/otelcol-contrib/config.yaml
+docker compose up -d
+```
+
+Traces, metrics, Postgres log collection, retention of old journal entries, and log migration are explicitly out of scope.
+
+
 ### Safe redeploys (no lost or half-processed jobs)
 
 Procrastinate makes this safe by design - durable job rows in Postgres,
