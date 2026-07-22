@@ -478,7 +478,6 @@ def test_process_email_rejects_failed_admin_auth_before_ordinary_processing(
         patch("thenetwork.worker.tasks.audit_event") as audit_event,
         patch("thenetwork.worker.tasks.check_rate_limit") as check_rate_limit,
         patch("thenetwork.worker.tasks.scan_content", new_callable=AsyncMock) as scan,
-        patch("thenetwork.worker.tasks._send_first_contact_welcome_reply") as welcome,
         patch("thenetwork.worker.tasks.process_consent_reply") as consent,
         patch(
             "thenetwork.worker.tasks.record_sent_email_memories",
@@ -509,7 +508,6 @@ def test_process_email_rejects_failed_admin_auth_before_ordinary_processing(
     )
     check_rate_limit.assert_not_called()
     scan.assert_not_awaited()
-    welcome.assert_not_called()
     consent.assert_not_called()
     record_memories.assert_not_awaited()
     send_reply.assert_not_called()

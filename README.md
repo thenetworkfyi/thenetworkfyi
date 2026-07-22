@@ -139,14 +139,15 @@ reference mapping at write time.
 
 ## Agent surface
 
-The agent has sixteen tools (`thenetwork/agent/tools.py`):
+The agent has seventeen tools (`thenetwork/agent/tools.py`):
 
 | tool | description |
 |---|---|
 | `remember(text, refs)` | write a chunk; a PII-stripped gist is produced automatically for any memory with refs |
 | `forget(memory_id)` | delete a sender-owned, single-ref chunk (edit = forget + remember, so embeddings never go stale) |
 | `search(query) -> [{person_id, evidence: [{gist}], similarity}]` | semantic candidate discovery returning bounded, grouped **opaque ids + sealed gists only** for other people; sender-owned evidence items also carry their own `memory_id` for edits |
-| `reply_to_sender(subject, body_text, sent_email_summary)` | reply only to the registered inbound sender; after SMTP succeeds, remember only the separate concise summary |
+| `reply_to_sender(subject, body_text, sent_email_summary)` | reply only to the authenticated inbound sender; an unfamiliar sender can be answered without registration, while known recipients get a post-SMTP summary memory |
+| `send_first_contact_welcome()` | send fixed server-owned usage guidance to an authenticated unfamiliar sender, with the recipient, copy, threading, and daily quota outside model control |
 | `send_outreach(recipient_user_id, subject, body_text, sent_email_summary)` | send unthreaded outreach by opaque id and remember only the post-SMTP summary; resolve the address server-side |
 | `propose_introduction(other_person_id, sender_gist, other_gist)` | create a sealed pairwise proposal; server-owned consent controls the anonymous relay handoff |
 | `register_person(name)` | self-register an authenticated first-contact sender; the server supplies the sender address |
@@ -192,7 +193,10 @@ column." Instead:
    that sees raw cross-user data stays small and auditable; the main agent never
    self-censors.
 5. **Capability-style email tools (confused-deputy fix).** `reply_to_sender`
-   derives its only recipient from the inbound sender. `send_outreach` accepts an
+   derives its only recipient from the authenticated inbound sender, including an
+   unfamiliar sender who does not need to be registered just to receive an answer.
+   `send_first_contact_welcome` derives the same recipient and sends only fixed copy.
+   `send_outreach` accepts an
    opaque `recipient_user_id`; the address is resolved server-side at send time.
    `send_event_recommendation` accepts only a server-bound opaque event id, derives the
    recipient from authenticated context, and composes fixed mail from a sanitized gist.

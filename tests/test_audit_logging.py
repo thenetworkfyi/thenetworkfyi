@@ -2104,8 +2104,9 @@ async def test_worker_keeps_infrastructure_rejection_silent_for_unauthenticated_
 
 
 @pytest.mark.asyncio
-async def test_worker_skips_empty_body_after_rate_limit_without_agent(caplog):
-    from thenetwork.email.inbound import REJECT_BODY_EMPTY
+async def test_worker_routes_authenticated_empty_body_to_agent_after_safety_gates(
+    caplog,
+):
     from thenetwork.worker.tasks import process_email
 
     caplog.set_level(logging.INFO, logger=LOGGER_NAME)
@@ -2113,9 +2114,20 @@ async def test_worker_skips_empty_body_after_rate_limit_without_agent(caplog):
         patch(
             "thenetwork.worker.tasks.check_rate_limit", return_value=True
         ) as check_rate_limit,
-        patch("thenetwork.worker.tasks.scan_content") as scan_content,
+        patch(
+            "thenetwork.worker.tasks.scan_content",
+            new=AsyncMock(return_value=(True, None)),
+        ) as scan_content,
         patch("thenetwork.worker.tasks.send_reply") as send_reply,
         patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()) as mock_agent,
+        patch(
+            "thenetwork.worker.tasks.process_consent_reply",
+            return_value=SimpleNamespace(handled=False, sent_email_memories=[]),
+        ),
+        patch(
+            "thenetwork.worker.tasks.record_sent_email_memories",
+            new_callable=AsyncMock,
+        ),
         patch(
             "thenetwork.worker.tasks.get_session",
             return_value=_mock_sender_lookup(None),
@@ -2125,17 +2137,18 @@ async def test_worker_skips_empty_body_after_rate_limit_without_agent(caplog):
             sender_email="alice@example.com",
             subject="Hello",
             body=" \n",
+            sender_authenticated=True,
         )
 
     check_rate_limit.assert_called_once_with(
         "alice@example.com",
-        sender_authenticated=False,
+        sender_authenticated=True,
     )
-    scan_content.assert_not_called()
+    scan_content.assert_awaited_once_with(" \n")
     send_reply.assert_not_called()
-    mock_agent.assert_not_called()
-    assert any(
+    mock_agent.assert_awaited_once()
+    assert not any(
         event["event"] == "worker.message_rejected"
-        and event["reason"] == REJECT_BODY_EMPTY
+        and event.get("reason") == "body_empty"
         for event in _events(caplog)
     )

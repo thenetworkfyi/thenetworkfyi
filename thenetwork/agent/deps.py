@@ -18,6 +18,9 @@ class AgentDeps:
     sender_email: str = ""
     sender_user_id: str | None = None
     inbound_subject: str = ""
+    # The current untrusted message body. Tools may inspect it only to enforce
+    # server-side policy; it is never an identity or recipient authority.
+    inbound_body: str = ""
     inbound_message_id: str | None = None
     inbound_references: str | None = None
     inbound_body_for_quote: str | None = None
@@ -46,6 +49,10 @@ class AgentDeps:
     session_factory: Callable | None = None
     outbound_send_count: int = 0
     server_side_send_count: int = 0
+    # An authenticated sender without a Person record may receive either one
+    # fixed welcome or one model-written direct reply. Keep that choice
+    # mutually exclusive even when the model calls more than one tool.
+    unknown_sender_response_sent: bool = False
     introduction_proposal_count: int = 0
     # Server-owned replay state for mutating tools within one model run. Keys
     # are canonical argument fingerprints plus their occurrence in the first

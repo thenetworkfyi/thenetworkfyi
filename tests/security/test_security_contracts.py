@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from thenetwork.agent.deps import AgentDeps
 from thenetwork.agent.tools import (
     reply_to_sender,
+    send_first_contact_welcome,
     send_outreach,
     propose_introduction,
     register_person,
@@ -225,6 +226,16 @@ async def test_reply_to_sender_has_no_model_selected_recipient():
 
 
 @pytest.mark.asyncio
+async def test_first_contact_welcome_has_no_model_selected_recipient_or_copy():
+    """The fixed welcome exposes no address, subject, or body arguments."""
+    import inspect
+
+    sig = inspect.signature(send_first_contact_welcome)
+    params = list(sig.parameters.keys())
+    assert params == ["ctx"]
+
+
+@pytest.mark.asyncio
 async def test_outreach_resolves_address_not_from_caller():
     """Intentional outreach takes only an opaque ID, never a raw address."""
     import inspect
@@ -328,6 +339,64 @@ async def test_dispatch_threads_reply_to_inbound_sender_only():
     assert (
         mock_send.call_args.kwargs["quoted_date"] == "Sat, 04 Jul 2026 12:00:00 -0700"
     )
+
+
+@pytest.mark.asyncio
+async def test_authenticated_unknown_sender_can_receive_direct_reply_without_identity(
+    _stub_sent_email_memory,
+):
+    """The authenticated inbound address is enough authority for a direct reply."""
+    _reset_dispatch_limiter()
+    record_one, _ = _stub_sent_email_memory
+    ctx = FakeCtx(
+        sender_email="new@example.com",
+        sender_user_id=None,
+        sender_authenticated=True,
+    )
+    ctx.deps.settings.dispatch_max_sends_per_run = 99
+    ctx.deps.settings.dispatch_recipient_daily_cap = 99
+    ctx.deps.settings.dispatch_sender_reply_daily_cap = 99
+    ctx.deps.inbound_message_id = "<new-message@example.com>"
+    ctx.deps.inbound_body_for_quote = "What does this service do?"
+
+    with patch("thenetwork.agent.tools.send_reply") as mock_send:
+        result = await reply_to_sender(
+            ctx,
+            subject="Re: Question",
+            body_text="A concise explanation.",
+        )
+
+    assert result == {"status": "sent"}
+    assert mock_send.call_args.kwargs["to_address"] == "new@example.com"
+    assert mock_send.call_args.kwargs["in_reply_to"] == "<new-message@example.com>"
+    ctx._mock_sess.get.assert_not_called()
+    ctx._mock_sess.add.assert_not_called()
+    record_one.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_unauthenticated_unknown_sender_cannot_receive_direct_reply(
+    _stub_sent_email_memory,
+):
+    _reset_dispatch_limiter()
+    record_one, _ = _stub_sent_email_memory
+    ctx = FakeCtx(
+        sender_email="spoof@example.com",
+        sender_user_id=None,
+        sender_authenticated=False,
+    )
+
+    with patch("thenetwork.agent.tools.send_reply") as mock_send:
+        result = await reply_to_sender(
+            ctx,
+            subject="Re: Question",
+            body_text="A response.",
+        )
+
+    assert result == {"status": "error", "reason": "sender_not_authenticated"}
+    mock_send.assert_not_called()
+    ctx._mock_sess.get.assert_not_called()
+    record_one.assert_not_awaited()
 
 
 @pytest.mark.asyncio

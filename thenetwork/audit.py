@@ -282,8 +282,11 @@ _SAFE_CATEGORIES = {
             "self_introduction",
             "self_event",
             "sender_not_authenticated",
+            "sender_declined_participation",
+            "sender_not_registered",
             "sender_reply_daily_cap",
             "use_reply_to_sender",
+            "welcome_daily_cap",
         }
     ),
     "reason": frozenset(
@@ -347,6 +350,7 @@ _SAFE_CATEGORIES = {
             "search",
             "search_events",
             "send_event_recommendation",
+            "send_first_contact_welcome",
             "send_outreach",
             "stop_event_recommendations",
             "update_event",
