@@ -209,12 +209,14 @@ administrator controls are deliberately excluded to avoid duplicate emails.
 ### AgentUsageLimitExceeded
 
 Inspect the redacted run lifecycle and configured usage ceiling. The alert is
-one notification for the new counter event and carries no run identifier.
+the sole operational notification for the new counter event and carries no run
+identifier. The application does not send a second admin email.
 
 ### ProcessEmailJobExhausted
 
 Inspect restricted worker logs for the terminal job failure and resolve the
-underlying dependency. Only the final exhausted attempt alerts.
+underlying dependency. Only the final exhausted attempt alerts, and the
+application does not send a second admin email.
 
 ## Operator workflow
 

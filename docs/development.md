@@ -98,9 +98,11 @@ PGP/MIME admin requests continue. After clearing unwanted unread mail, send a si
 message with `COMMAND: resume-intake`. Use `COMMAND: intake-status` to inspect the current
 state or `COMMAND: pause-intake` to pause intake manually.
 
-The transition email sent to `ADMIN_EMAILS` is fixed server-authored copy and contains no
-sender or campaign metadata. Resume establishes a fresh burst-counting baseline; previously
-observed traffic cannot immediately re-pause intake.
+Automated pauses increment a bounded system-control metric; Prometheus and Alertmanager own
+the operator notification. Signed administrator pause and resume commands still receive
+their normal command reply and are excluded from automated-control alerts. Resume establishes
+a fresh burst-counting baseline; previously observed traffic cannot immediately re-pause
+intake.
 
 `RELAY_DOMAIN` must be a bare domain already handled by the deployment's Dovecot
 catch-all. Deliver every address at that domain into `RELAY_IMAP_ACCOUNT` when the

@@ -22,7 +22,6 @@ from thenetwork.db.session import get_session
 from thenetwork.email.intake_control import (
     PrimaryIntakePauseReason,
     PrimaryIntakeTransition,
-    notify_primary_intake_transition,
     set_primary_intake_paused_in_session,
 )
 from thenetwork.model_config import model_with_api_key
@@ -312,4 +311,3 @@ async def judge_primary_email_abuse(timestamp: int) -> None:
             record_type="primary_intake",
             outcome="success" if transition.changed else "exists",
         )
-        notify_primary_intake_transition(transition)

@@ -80,23 +80,19 @@ async def test_campaign_pause_review_resume_and_relay_continuity(monkeypatch):
     monkeypatch.setattr("thenetwork.worker.producer.get_settings", lambda: settings)
     monkeypatch.setattr("thenetwork.worker.abuse_judge.get_settings", lambda: settings)
     monkeypatch.setattr(
-        "thenetwork.email.intake_control.get_settings", lambda: settings
-    )
-    monkeypatch.setattr(
         "thenetwork.worker.producer.is_disposable", lambda _email: False
     )
 
     campaign = [
         _message(str(index), f"campaign-{index}@example.com") for index in range(25)
     ]
-    pause_notifications = Mock()
     campaign_jobs = Mock()
     campaign_seen = Mock()
     with (
         patch("thenetwork.worker.producer.poll_unseen", return_value=campaign),
         patch("thenetwork.worker.producer.process_email", campaign_jobs),
         patch("thenetwork.worker.producer.mark_messages_seen", campaign_seen),
-        patch("thenetwork.email.intake_control.notify_admins", pause_notifications),
+        patch("thenetwork.email.outbound.notify_admins") as app_notifications,
     ):
         assert _poll_mailbox_and_enqueue("primary") == 0
 
@@ -113,10 +109,7 @@ async def test_campaign_pause_review_resume_and_relay_continuity(monkeypatch):
 
     campaign_jobs.defer.assert_not_called()
     campaign_seen.assert_called_once_with([], mailbox="primary")
-    assert pause_notifications.call_count == 1
-    assert pause_notifications.call_args.args[1] == (
-        "[The Network] Primary intake paused"
-    )
+    app_notifications.assert_not_called()
 
     with Session(engine) as session:
         intake = session.get(PrimaryIntakeState, "primary")
@@ -146,10 +139,9 @@ async def test_campaign_pause_review_resume_and_relay_continuity(monkeypatch):
         "Primary intake: paused\nReason: new_sender_burst\nPaused at: "
         f"{intake.paused_at.isoformat()}"
     )
-    resume_notifications = Mock()
-    with patch("thenetwork.email.intake_control.notify_admins", resume_notifications):
+    with patch("thenetwork.email.outbound.notify_admins") as app_notifications:
         assert "resumed" in await handle_admin_command("resume-intake", "")
-    assert resume_notifications.call_count == 1
+    app_notifications.assert_not_called()
 
     ordinary = _message("ordinary-1", "ordinary@example.com")
     with (

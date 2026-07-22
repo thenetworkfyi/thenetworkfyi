@@ -9,8 +9,6 @@ from enum import StrEnum
 from thenetwork.audit import audit_event
 from thenetwork.db.models import PrimaryIntakeState
 from thenetwork.db.session import get_session
-from thenetwork.email.outbound import notify_admins
-from thenetwork.settings import get_settings
 from thenetwork.worker.metrics import (
     ControlAction,
     ControlActor,
@@ -19,18 +17,6 @@ from thenetwork.worker.metrics import (
 )
 
 PRIMARY_INTAKE_KEY = "primary"
-
-_PAUSED_SUBJECT = "[The Network] Primary intake paused"
-_PAUSED_BODY = (
-    "Primary email intake has been paused. Ordinary primary messages will remain "
-    "unread until a PGP-authenticated administrator resumes intake. Relay delivery "
-    "continues separately."
-)
-_RESUMED_SUBJECT = "[The Network] Primary intake resumed"
-_RESUMED_BODY = (
-    "Primary email intake has been resumed. Unread primary messages are eligible "
-    "for processing again."
-)
 
 
 class PrimaryIntakePauseReason(StrEnum):
@@ -109,16 +95,6 @@ def set_primary_intake_paused_in_session(
     )
 
 
-def notify_primary_intake_transition(transition: PrimaryIntakeTransition) -> None:
-    if not transition.changed:
-        return
-    settings = get_settings()
-    if transition.status.paused:
-        notify_admins(settings, _PAUSED_SUBJECT, _PAUSED_BODY)
-    else:
-        notify_admins(settings, _RESUMED_SUBJECT, _RESUMED_BODY)
-
-
 def _set_primary_intake_state(
     *, paused: bool, reason: PrimaryIntakePauseReason | None
 ) -> PrimaryIntakeTransition:
@@ -161,6 +137,4 @@ def _set_primary_intake_state(
         record_type="primary_intake",
         outcome="success" if changed else "exists",
     )
-    transition = PrimaryIntakeTransition(status=status, changed=changed)
-    notify_primary_intake_transition(transition)
-    return transition
+    return PrimaryIntakeTransition(status=status, changed=changed)
