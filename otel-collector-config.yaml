@@ -1,6 +1,10 @@
 receivers:
   fluentforward:
     endpoint: 0.0.0.0:24224
+  otlp/worker_metrics:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
 
 processors:
   batch:
@@ -91,5 +95,5 @@ service:
       processors: [transform, batch]
       exporters: [otlp, count/audit]
     metrics/audit:
-      receivers: [count/audit]
+      receivers: [count/audit, otlp/worker_metrics]
       exporters: [prometheus/audit]

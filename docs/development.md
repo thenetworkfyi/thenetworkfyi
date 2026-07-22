@@ -430,6 +430,8 @@ The Compose stack runs an OpenTelemetry Collector contrib service (`otel-collect
 
 The collector counts selected records whose redacted logger is `thenetwork.audit` and exports the bounded catalog documented in [monitoring.md](monitoring.md). Prometheus scrapes that endpoint at `otel-collector:8889` and collector pipeline-health metrics at `otel-collector:8888` over the internal Compose network. Prometheus uses the pinned `prom/prometheus:v3.5.5` LTS image, persists its TSDB in the `prometheus-data` volume, retains samples for 30 days, and binds its UI to `127.0.0.1:9090`. The worker exposes no inbound metrics port.
 
+The worker's background OpenTelemetry reader sends unlabelled liveness, queue, and durable intake gauges to the Collector's internal OTLP/HTTP receiver at `otel-collector:4318`. Its database reads and exports are best effort and cannot gate the producer or worker. State collection uses an isolated connection with a two-second default connect and statement timeout; OTLP export has a five-second default timeout. `WORKER_METRICS_OTLP_ENDPOINT`, `WORKER_METRICS_EXPORT_INTERVAL_SECONDS`, `WORKER_METRICS_EXPORT_TIMEOUT_SECONDS`, and `WORKER_METRICS_COLLECTION_TIMEOUT_SECONDS` configure this outbound path. See [monitoring.md](monitoring.md) for exact queue and timestamp semantics.
+
 Every projected label is a closed audit category and is independently allow-listed in the Collector condition before a series can be created. Never add `trace_id`, `run_id`, sender pseudonyms, email/content, exception text, or opaque person/event identifiers as metric labels; they are identifying and/or unbounded. Prometheus also adds its bounded `job` and `instance` scrape-target labels.
 
 Required settings:
@@ -445,7 +447,7 @@ Rollout & verification:
 - Open the local UI: `http://127.0.0.1:9090`
 - Verify both targets are up: `curl http://127.0.0.1:9090/api/v1/targets`
 - Query application activity after an audit event: `curl 'http://127.0.0.1:9090/api/v1/query?query=thenetwork_worker_audit_events_total'`
-- Exercise every catalog counter end to end: `./validate-monitoring.sh`
+- Exercise the worker-state OTLP path through Prometheus: `./validate-monitoring.sh`
 
 Grafana, Alertmanager, host/Postgres exporters, traces, historical log migration, and migration of old metrics are out of scope for this increment.
 

@@ -48,6 +48,10 @@ services:
       # LlamaFirewall stores its downloaded Prompt Guard model here. The named
       # volume makes startup preload a one-time download when scanning is on.
       HF_HOME: /home/appuser/.cache/huggingface
+      WORKER_METRICS_OTLP_ENDPOINT: ${WORKER_METRICS_OTLP_ENDPOINT:-http://otel-collector:4318/v1/metrics}
+      WORKER_METRICS_EXPORT_INTERVAL_SECONDS: ${WORKER_METRICS_EXPORT_INTERVAL_SECONDS:-30}
+      WORKER_METRICS_EXPORT_TIMEOUT_SECONDS: ${WORKER_METRICS_EXPORT_TIMEOUT_SECONDS:-5}
+      WORKER_METRICS_COLLECTION_TIMEOUT_SECONDS: ${WORKER_METRICS_COLLECTION_TIMEOUT_SECONDS:-2}
     logging:
       driver: fluentd
       options:
