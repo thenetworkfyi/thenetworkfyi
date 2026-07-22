@@ -19,6 +19,7 @@ def _rendered_alertmanager_config() -> dict:
         "${ALERTMANAGER_SMTP_SMARTHOST:-}": "smtp.invalid:587",
         "${ALERTMANAGER_SMTP_FROM:-}": "monitoring@validation.invalid",
         "${ALERTMANAGER_SMTP_USERNAME:-}": "",
+        "${ALERTMANAGER_SMTP_PASSWORD:-}": "validation-only",
         "${ALERTMANAGER_SMTP_REQUIRE_TLS:-true}": "false",
         "${ALERTMANAGER_GROUP_WAIT:-30s}": "30s",
         "${ALERTMANAGER_GROUP_INTERVAL:-5m}": "5m",
@@ -160,7 +161,7 @@ def test_prometheus_sends_rules_to_internal_alertmanager():
     assert prometheus["depends_on"]["alertmanager"]["condition"] == ("service_started")
 
 
-def test_alertmanager_is_pinned_private_persistent_and_file_secreted():
+def test_alertmanager_is_pinned_private_persistent_and_env_configured():
     alertmanager = _COMPOSE_CONFIG["services"]["alertmanager"]
     assert alertmanager["image"] == "prom/alertmanager:v0.32.1"
     assert alertmanager["ports"] == ["127.0.0.1:9093:9093"]
@@ -172,16 +173,11 @@ def test_alertmanager_is_pinned_private_persistent_and_file_secreted():
             "target": "/etc/alertmanager/alertmanager.yml",
         }
     ]
-    assert alertmanager["secrets"] == [
-        {
-            "source": "alertmanager-smtp-password",
-            "target": "alertmanager-smtp-password",
-        }
-    ]
-    assert _COMPOSE_CONFIG["secrets"]["alertmanager-smtp-password"] == {
-        "file": "${ALERTMANAGER_SMTP_PASSWORD_FILE:-/dev/null}"
-    }
+    assert "secrets" not in alertmanager
+    assert "secrets" not in _COMPOSE_CONFIG
     assert "ALERTMANAGER_OPERATOR_EMAIL" in _COMPOSE_TEXT
+    assert "ALERTMANAGER_SMTP_PASSWORD" in _COMPOSE_TEXT
+    assert "ALERTMANAGER_SMTP_PASSWORD_FILE" not in _COMPOSE_TEXT
     assert "@example.com" not in _COMPOSE_TEXT
 
 
@@ -215,10 +211,8 @@ def test_alertmanager_groups_routes_resolves_and_inhibits_safely():
     email = config["receivers"][0]["email_configs"][0]
     assert email["to"] == "operator@validation.invalid"
     assert email["send_resolved"] is True
-    assert config["global"]["smtp_auth_password_file"] == (
-        "/run/secrets/alertmanager-smtp-password"
-    )
-    assert "smtp_auth_password" not in config["global"]
+    assert config["global"]["smtp_auth_password"] == "validation-only"
+    assert "smtp_auth_password_file" not in config["global"]
     for field in ("alertname", "severity", "action", "reason"):
         assert f".Labels.{field} }}" in email["text"]
     for field in ("summary", "runbook"):

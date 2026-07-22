@@ -113,18 +113,17 @@ ALERTMANAGER_OPERATOR_EMAIL=
 ALERTMANAGER_SMTP_SMARTHOST=smtp.example.net:587
 ALERTMANAGER_SMTP_FROM=
 ALERTMANAGER_SMTP_USERNAME=
-ALERTMANAGER_SMTP_PASSWORD_FILE=./secrets/alertmanager-smtp-password
+ALERTMANAGER_SMTP_PASSWORD=
 ALERTMANAGER_SMTP_REQUIRE_TLS=true
 ```
 
 `ALERTMANAGER_OPERATOR_EMAIL` must be a dedicated, operator-controlled mailbox.
 It must not equal `IMAP_ACCOUNT`, `EMAIL_FROM`, a relay address, or any other
 application intake address. No production recipient is stored in this
-repository. Create the password file outside version control with mode `0600`;
-Compose mounts it read-only at `/run/secrets/alertmanager-smtp-password`, and
-the rendered Alertmanager configuration contains only that path, never the
-credential. Leave `ALERTMANAGER_SMTP_USERNAME` empty only for an SMTP relay that
-does not authenticate. Keep TLS required in production.
+repository. Store `ALERTMANAGER_SMTP_PASSWORD` in the same gitignored `.env`
+used for the application's other deployment credentials. Leave
+`ALERTMANAGER_SMTP_USERNAME` empty only for an SMTP relay that does not
+authenticate. Keep TLS required in production.
 
 Alertmanager groups by alert name, severity, and category. Event alerts have no
 group wait and a one-minute group interval so a short burst is sent once rather
