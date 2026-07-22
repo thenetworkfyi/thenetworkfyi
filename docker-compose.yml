@@ -125,9 +125,6 @@ services:
     configs:
       - source: alertmanager-config
         target: /etc/alertmanager/alertmanager.yml
-    secrets:
-      - source: alertmanager-smtp-password
-        target: alertmanager-smtp-password
     volumes:
       - alertmanager-data:/alertmanager
     # Alertmanager is reachable by Prometheus on the internal Compose network.
@@ -147,22 +144,17 @@ volumes:
   prometheus-data:
   alertmanager-data:
 
-secrets:
-  alertmanager-smtp-password:
-    file: ${ALERTMANAGER_SMTP_PASSWORD_FILE:-/dev/null}
-
 configs:
   alertmanager-config:
     # Compose interpolation supplies deployment-specific addressing without
-    # committing an operator address. Alertmanager reads the SMTP credential
-    # only from the mounted secret file above.
+    # committing an operator address or SMTP credential.
     content: |
       global:
         resolve_timeout: 5m
         smtp_smarthost: "${ALERTMANAGER_SMTP_SMARTHOST:-}"
         smtp_from: "${ALERTMANAGER_SMTP_FROM:-}"
         smtp_auth_username: "${ALERTMANAGER_SMTP_USERNAME:-}"
-        smtp_auth_password_file: /run/secrets/alertmanager-smtp-password
+        smtp_auth_password: "${ALERTMANAGER_SMTP_PASSWORD:-}"
         smtp_require_tls: ${ALERTMANAGER_SMTP_REQUIRE_TLS:-true}
 
       route:

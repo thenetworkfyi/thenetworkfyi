@@ -441,8 +441,7 @@ Required settings:
 - `OTEL_EXPORTER_OTLP_HEADERS`: optional authentication headers as a JSON object string, e.g. `{"Authorization":"Bearer <token>"}` (the Collector's config resolver substitutes the whole `headers:` map from this single env var, so it must be valid JSON/YAML for a map — not the comma `key=value` format used by OTel SDK auto-instrumentation env vars)
 - `OTEL_EXPORTER_OTLP_INSECURE`: `false` by default; set `true` only for a trusted plaintext endpoint
 - `ALERTMANAGER_OPERATOR_EMAIL`: dedicated operator mailbox, never an application intake address
-- `ALERTMANAGER_SMTP_SMARTHOST`, `ALERTMANAGER_SMTP_FROM`, and optional `ALERTMANAGER_SMTP_USERNAME`: operator-notification SMTP connection
-- `ALERTMANAGER_SMTP_PASSWORD_FILE`: host path to a mode-`0600`, gitignored password file mounted read-only into Alertmanager
+- `ALERTMANAGER_SMTP_SMARTHOST`, `ALERTMANAGER_SMTP_FROM`, `ALERTMANAGER_SMTP_PASSWORD`, and optional `ALERTMANAGER_SMTP_USERNAME`: operator-notification SMTP connection
 - `ALERTMANAGER_SMTP_REQUIRE_TLS`: keep `true` in production
 
 Rollout & verification:

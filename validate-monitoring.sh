@@ -8,7 +8,6 @@ readonly QUERY_URL="http://prometheus:9090/api/v1/query"
 readonly METRICS_QUERY='{__name__=~"thenetwork_(producer_last_success_timestamp_seconds|job_queue_depth|oldest_pending_job_age_seconds|primary_intake_paused|control_actions_total|agent_usage_limit_exceeded_total|jobs_exhausted_total)"}'
 readonly METRIC_FIXTURE_NAME="${COMPOSE_PROJECT_NAME}-metric-fixture-$$"
 readonly METRIC_SOURCE_NAME="${COMPOSE_PROJECT_NAME}-metric-source-$$"
-readonly SMTP_PASSWORD_FILE="$(mktemp)"
 
 export COMPOSE_PROJECT_NAME
 export POSTGRES_DB="${POSTGRES_DB:-network_db}"
@@ -23,11 +22,8 @@ export ALERTMANAGER_OPERATOR_EMAIL="operator-validation-$$@example.invalid"
 export ALERTMANAGER_SMTP_SMARTHOST="smtp.invalid:587"
 export ALERTMANAGER_SMTP_FROM="monitoring-validation-$$@example.invalid"
 export ALERTMANAGER_SMTP_USERNAME=""
-export ALERTMANAGER_SMTP_PASSWORD_FILE="$SMTP_PASSWORD_FILE"
+export ALERTMANAGER_SMTP_PASSWORD="validation-only"
 export ALERTMANAGER_SMTP_REQUIRE_TLS="false"
-
-printf '\n' >"$SMTP_PASSWORD_FILE"
-chmod 600 "$SMTP_PASSWORD_FILE"
 
 cd "$VALIDATION_ROOT"
 
@@ -50,7 +46,6 @@ cleanup() {
         "$METRIC_SOURCE_NAME" \
         "$METRIC_FIXTURE_NAME" >/dev/null 2>&1 || true
     docker compose down --remove-orphans >/dev/null 2>&1 || true
-    rm -f "$SMTP_PASSWORD_FILE"
     exit "$exit_code"
 }
 trap cleanup EXIT
