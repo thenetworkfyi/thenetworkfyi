@@ -55,7 +55,7 @@ services:
     logging:
       driver: fluentd
       options:
-        fluentd-address: "127.0.0.1:24224"
+        fluentd-address: "127.0.0.1:${OTEL_FLUENT_FORWARD_HOST_PORT:-24224}"
         fluentd-async: "true"
         mode: non-blocking
     depends_on:
@@ -81,7 +81,27 @@ services:
         max-size: "10m"
         max-file: "3"
     ports:
-      - "127.0.0.1:24224:24224"
+      - "127.0.0.1:${OTEL_FLUENT_FORWARD_HOST_PORT:-24224}:24224"
+    depends_on:
+      loki:
+        condition: service_started
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:3.6.11
+    command: ["-config.file=/etc/loki/config.yaml"]
+    volumes:
+      - ./loki-config.yaml:/etc/loki/config.yaml:ro
+      - loki-data:/loki
+    # Loki has an HTTP API but no Grafana dependency. Keep it on loopback and
+    # use the API or logcli locally (or through an authenticated SSH tunnel).
+    ports:
+      - "127.0.0.1:${LOKI_HOST_PORT:-3100}:3100"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
 
   prometheus:
@@ -97,9 +117,11 @@ services:
     # The UI is for local operator access only. Prometheus reaches collector
     # metric endpoints over the internal Compose network.
     ports:
-      - "127.0.0.1:9090:9090"
+      - "127.0.0.1:${PROMETHEUS_HOST_PORT:-9090}:9090"
     depends_on:
       otel-collector:
+        condition: service_started
+      loki:
         condition: service_started
       alertmanager:
         condition: service_started
@@ -126,7 +148,7 @@ services:
     # Alertmanager is reachable by Prometheus on the internal Compose network.
     # Its operator UI is not exposed beyond the local host.
     ports:
-      - "127.0.0.1:9093:9093"
+      - "127.0.0.1:${ALERTMANAGER_HOST_PORT:-9093}:9093"
     logging:
       driver: json-file
       options:
@@ -139,6 +161,7 @@ volumes:
   hf-cache:
   prometheus-data:
   alertmanager-data:
+  loki-data:
 
 configs:
   alertmanager-config:
@@ -176,6 +199,9 @@ configs:
       inhibit_rules:
         - source_matchers: ['alertname="CollectorUnavailable"']
           target_matchers: ['scope="worker"']
+          equal: [service]
+        - source_matchers: ['alertname="LokiUnavailable"']
+          target_matchers: ['alertname="CollectorPipelineDegraded"']
           equal: [service]
 
       receivers:

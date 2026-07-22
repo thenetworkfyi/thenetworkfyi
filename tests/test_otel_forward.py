@@ -2,7 +2,7 @@
 
 Validates that the collector's transform pipeline (as configured in
 otel-collector-config.yaml) correctly parses worker JSON log bodies into
-structured LogRecord attributes and clears the body after parsing.
+structured LogRecord attributes while preserving the original readable body.
 """
 
 from collections import Counter
@@ -22,6 +22,7 @@ _COLLECTOR_CONFIG = yaml.safe_load(
 )
 _COMPOSE_CONFIG = yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text())
 _PROMETHEUS_CONFIG = yaml.safe_load((_REPO_ROOT / "prometheus.yml").read_text())
+_LOKI_CONFIG = yaml.safe_load((_REPO_ROOT / "loki-config.yaml").read_text())
 _WORKER_METRIC_SOURCE_CONFIG = yaml.safe_load(
     (_REPO_ROOT / "tests/fixtures/otel-worker-metrics-source.yaml").read_text()
 )
@@ -80,17 +81,16 @@ def _derived_metric_counts(records: list[dict]) -> Counter:
 def _process_json_log_record(raw_record: dict) -> dict:
     """Simulate the OpenTelemetry Collector transform processor.
 
-    Mirrors the two OTTL statements in otel-collector-config.yaml:
-      1. merge_maps(attributes, ParseJSON(body), "upsert") where IsString(body)
-      2. set(body, "") where IsString(body)
+    Mirrors the JSON parsing OTTL statement in otel-collector-config.yaml while
+    retaining the original log line for Loki.
 
     The fluentd logging driver delivers each container log line as a record
     with the JSON payload in the ``log`` field plus Docker-added metadata
     (``container_name``, ``source``).  The Collector's fluentforward receiver
     maps the ``log`` field to the LogRecord body.
 
-    Returns a dict with ``body`` (cleared after successful parse) and all
-    attributes (Docker metadata merged with parsed JSON fields).
+    Returns a dict with the readable ``body`` and all attributes (Docker
+    metadata merged with parsed JSON fields).
     """
     body = raw_record.get("log", "")
     attributes = {k: v for k, v in raw_record.items() if k != "log"}
@@ -101,8 +101,6 @@ def _process_json_log_record(raw_record: dict) -> dict:
             if isinstance(parsed, dict):
                 # OTTL: merge_maps(attributes, ParseJSON(body), "upsert")
                 attributes.update(parsed)
-                # OTTL: set(body, "") where IsString(body)
-                body = ""
         except json.JSONDecodeError:
             # Non-JSON lines (e.g. raw stderr) keep their body intact.
             pass
@@ -115,16 +113,15 @@ def _process_json_log_record(raw_record: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def test_collector_config_has_transform_processor():
-    """The collector config includes the transform processor with the expected
-    OTTL statements for JSON parsing and body clearing."""
+def test_collector_config_parses_json_and_preserves_readable_body():
+    """The transform extracts fields without blanking the Loki log line."""
     transform = _COLLECTOR_CONFIG.get("processors", {}).get("transform", {})
     stmts = transform.get("log_statements", [{}])[0].get("statements", [])
     assert any("ParseJSON" in s for s in stmts), (
         "transform processor must parse JSON body"
     )
-    assert any('set(body, "")' in s for s in stmts), (
-        "transform processor must clear body after parse"
+    assert not any("set(body" in s for s in stmts), (
+        "transform processor must preserve the original log body for Loki"
     )
 
 
@@ -141,13 +138,20 @@ def test_collector_config_has_health_check_extension():
     )
 
 
-def test_collector_has_no_required_external_exporter():
+def test_collector_exports_logs_to_local_loki_without_external_settings():
     """The local monitoring stack starts without an external OTLP backend."""
     collector = _COMPOSE_CONFIG["services"]["otel-collector"]
     assert "environment" not in collector
-    assert set(_COLLECTOR_CONFIG["exporters"]) == {"prometheus/audit"}
+    assert set(_COLLECTOR_CONFIG["exporters"]) == {
+        "otlphttp/loki",
+        "prometheus/audit",
+    }
+    assert _COLLECTOR_CONFIG["exporters"]["otlphttp/loki"]["endpoint"] == (
+        "http://loki:3100/otlp"
+    )
     assert _COLLECTOR_CONFIG["service"]["pipelines"]["logs"]["exporters"] == [
-        "count/audit"
+        "otlphttp/loki",
+        "count/audit",
     ]
 
 
@@ -191,7 +195,7 @@ def test_collector_derives_bounded_counter_catalog_from_redacted_audit_logs():
             assert f'IsMatch(attributes["{label_name}"]' in condition
 
     pipelines = _COLLECTOR_CONFIG["service"]["pipelines"]
-    assert pipelines["logs"]["exporters"] == ["count/audit"]
+    assert pipelines["logs"]["exporters"] == ["otlphttp/loki", "count/audit"]
     assert pipelines["metrics/audit"] == {
         "receivers": ["count/audit", "otlp/worker_metrics"],
         "exporters": ["prometheus/audit"],
@@ -354,7 +358,7 @@ def test_malformed_records_and_registration_failures_create_no_product_series():
     } == set()
 
 
-def test_prometheus_scrapes_collector_health_and_audit_activity():
+def test_prometheus_scrapes_collector_health_audit_activity_and_loki():
     assert _COLLECTOR_CONFIG["service"]["telemetry"]["metrics"]["address"] == (
         "0.0.0.0:8888"
     )
@@ -365,7 +369,38 @@ def test_prometheus_scrapes_collector_health_and_audit_activity():
     assert jobs == {
         "otel-collector-internal": ["otel-collector:8888"],
         "thenetwork-audit-activity": ["otel-collector:8889"],
+        "loki": ["loki:3100"],
     }
+
+
+def test_loki_service_is_pinned_private_persistent_and_retained():
+    compose = _COMPOSE_CONFIG
+    loki = compose["services"]["loki"]
+
+    assert loki["image"] == "grafana/loki:3.6.11"
+    assert loki["ports"] == ["127.0.0.1:${LOKI_HOST_PORT:-3100}:3100"]
+    assert "loki-data:/loki" in loki["volumes"]
+    assert "loki-data" in compose["volumes"]
+    assert _LOKI_CONFIG["schema_config"]["configs"][0]["store"] == "tsdb"
+    assert _LOKI_CONFIG["schema_config"]["configs"][0]["schema"] == "v13"
+    assert _LOKI_CONFIG["limits_config"]["retention_period"] == "720h"
+    assert _LOKI_CONFIG["compactor"]["retention_enabled"] is True
+    assert _LOKI_CONFIG["compactor"]["delete_request_store"] == "filesystem"
+    assert "grafana" not in compose["services"]
+
+
+def test_loki_uses_one_static_service_label_and_structured_metadata():
+    resource = _COLLECTOR_CONFIG["processors"]["resource/loki"]
+    assert resource == {
+        "attributes": [
+            {
+                "key": "service.name",
+                "value": "thenetwork-worker",
+                "action": "upsert",
+            }
+        ]
+    }
+    assert _LOKI_CONFIG["limits_config"]["allow_structured_metadata"] is True
 
 
 def test_prometheus_service_is_pinned_private_and_persistent():
@@ -373,7 +408,7 @@ def test_prometheus_service_is_pinned_private_and_persistent():
     prometheus = compose["services"]["prometheus"]
 
     assert prometheus["image"] == "prom/prometheus:v3.5.5"
-    assert prometheus["ports"] == ["127.0.0.1:9090:9090"]
+    assert prometheus["ports"] == ["127.0.0.1:${PROMETHEUS_HOST_PORT:-9090}:9090"]
     assert "prometheus-data:/prometheus" in prometheus["volumes"]
     assert "prometheus-data" in compose["volumes"]
     assert "--storage.tsdb.retention.time=30d" in prometheus["command"]
@@ -458,8 +493,7 @@ def test_metrics_configs_do_not_project_identifiers_into_labels():
 
 
 def test_audit_log_structured_processing():
-    """Audit event records are parsed into structured attributes with body
-    cleared."""
+    """Audit event records remain readable and gain structured attributes."""
     audit_payload = {
         "event": "inbound_email_processed",
         "logger": "thenetwork.audit",
@@ -485,8 +519,7 @@ def test_audit_log_structured_processing():
     # Docker metadata preserved
     assert result["container_name"] == "/worker-1"
     assert result["source"] == "stdout"
-    # Body cleared after parse (matches OTTL: set(body, ""))
-    assert result["body"] == ""
+    assert json.loads(result["body"]) == audit_payload
 
 
 def test_procrastinate_log_structured_processing():
@@ -511,7 +544,7 @@ def test_procrastinate_log_structured_processing():
     assert result["logger"] == "procrastinate.worker"
     assert result["job_id"] == 42
     assert result["queue"] == "default"
-    assert result["body"] == ""
+    assert json.loads(result["body"]) == proc_payload
 
 
 def test_non_json_log_body_preserved():

@@ -52,6 +52,8 @@ def test_alert_catalog_covers_worker_collector_and_event_failures():
         "AgentFailureRateElevated",
         "MessageRejectionsSpiking",
         "CollectorUnavailable",
+        "LokiUnavailable",
+        "CollectorPipelineDegraded",
         "SystemControlActionObserved",
         "AgentUsageLimitExceeded",
         "ProcessEmailJobExhausted",
@@ -163,7 +165,7 @@ def test_prometheus_sends_rules_to_internal_alertmanager():
 def test_alertmanager_is_pinned_private_persistent_and_env_configured():
     alertmanager = _COMPOSE_CONFIG["services"]["alertmanager"]
     assert alertmanager["image"] == "prom/alertmanager:v0.32.1"
-    assert alertmanager["ports"] == ["127.0.0.1:9093:9093"]
+    assert alertmanager["ports"] == ["127.0.0.1:${ALERTMANAGER_HOST_PORT:-9093}:9093"]
     assert "alertmanager-data:/alertmanager" in alertmanager["volumes"]
     assert "alertmanager-data" in _COMPOSE_CONFIG["volumes"]
     assert alertmanager["configs"] == [
@@ -204,7 +206,12 @@ def test_alertmanager_groups_routes_resolves_and_inhibits_safely():
             "source_matchers": ['alertname="CollectorUnavailable"'],
             "target_matchers": ['scope="worker"'],
             "equal": ["service"],
-        }
+        },
+        {
+            "source_matchers": ['alertname="LokiUnavailable"'],
+            "target_matchers": ['alertname="CollectorPipelineDegraded"'],
+            "equal": ["service"],
+        },
     ]
 
     email = config["receivers"][0]["email_configs"][0]
@@ -245,4 +252,6 @@ def test_promtool_fixture_covers_pending_firing_and_resolution():
         "agent failure rate requires traffic and stays elevated",
         "system controls notify without a for delay",
         "event alerts catch first samples later increments and resolutions",
+        "loki availability moves from pending to firing and resolves",
+        "loki exporter queue moves from pending to firing and resolves",
     }

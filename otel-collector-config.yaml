@@ -8,13 +8,17 @@ receivers:
 
 processors:
   batch:
+  resource/loki:
+    attributes:
+      - key: service.name
+        value: thenetwork-worker
+        action: upsert
   transform:
     error_mode: ignore
     log_statements:
       - context: log
         statements:
           - merge_maps(attributes, ParseJSON(body), "upsert") where IsString(body)
-          - set(body, "") where IsString(body)
 
 connectors:
   count/audit:
@@ -72,6 +76,14 @@ connectors:
           - 'attributes["logger"] == "thenetwork.audit" and attributes["event"] == "worker.relay_forwarded" and attributes["outcome"] == "success"'
 
 exporters:
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+    retry_on_failure:
+      enabled: true
+    sending_queue:
+      enabled: true
+      num_consumers: 2
+      queue_size: 1000
   prometheus/audit:
     endpoint: 0.0.0.0:8889
 
@@ -87,8 +99,8 @@ service:
   pipelines:
     logs:
       receivers: [fluentforward]
-      processors: [transform, batch]
-      exporters: [count/audit]
+      processors: [transform, resource/loki, batch]
+      exporters: [otlphttp/loki, count/audit]
     metrics/audit:
       receivers: [count/audit, otlp/worker_metrics]
       exporters: [prometheus/audit]
