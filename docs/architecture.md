@@ -171,18 +171,19 @@ exists because some memory references both, edge weight comes from count/recency
 memories. NetworkX does multi-hop proximity math; the LLM does the language→reference
 mapping at write time. Semantic match over memories lives in `search/match.py`.
 
-## Agent surface - sixteen tools (`agent/tools.py`)
+## Agent surface - seventeen tools (`agent/tools.py`)
 
 | tool | description |
 |---|---|
 | `remember(text, refs)` | write a chunk; a PII-stripped gist is auto-produced for any memory with refs |
 | `forget(memory_id)` | delete a sender-owned, single-ref chunk (edit = forget + remember, so embeddings never go stale) |
 | `search(query) -> [{person_id, evidence: [{gist}], similarity}]` | semantic candidate discovery grouped by opaque person id, with deterministic count/character bounds and **sealed gists only** for other people; sender-owned evidence items include their own `memory_id` for forget-plus-remember edits |
-| `reply_to_sender(subject, body_text, sent_email_summary)` | reply only to the registered inbound sender; the model cannot select a recipient, and only this tool receives inbound threading and quoted-message context. After SMTP succeeds, the separate concise summary becomes a normal sealed memory for that recipient |
+| `reply_to_sender(subject, body_text, sent_email_summary)` | reply only to the authenticated inbound sender; the model cannot select a recipient, and only this tool receives inbound threading and quoted-message context. An unfamiliar sender can be answered without registration; after SMTP succeeds, a known recipient gets the separate concise summary as a normal sealed memory |
+| `send_first_contact_welcome()` | send fixed usage guidance to an authenticated unfamiliar sender; recipient, subject, body, threading, one-response-per-run enforcement, and daily quota are server-owned |
 | `send_outreach(recipient_user_id, subject, body_text, sent_email_summary)` | send a new, unthreaded message to another user by opaque id; the address is resolved server-side, and the post-SMTP summary is remembered without storing the subject, body, address, or headers |
 | `propose_introduction(other_person_id, sender_gist, other_gist)` | creates a pairwise proposal and sends fixed anonymous opt-in requests; authenticated replies are handled server-side before the model runs |
 | `register_person(name)` | onboard an authenticated sender on first contact; self-registration only, with the address supplied from the verified inbound sender - the id it returns is what later `remember` calls key off |
-| `escalate(reason)` | flag this email for human review and notify `admin_emails`; no auto-reply is sent for true escalations. For authenticated unknown senders, it sends the fixed first-contact welcome instead of escalating. The fallback when no safe, useful action is clear (e.g. an unauthenticated first contact) |
+| `escalate(reason)` | flag this email for human review and notify `admin_emails`; authenticated unknown senders also receive the fixed first-contact welcome when its server-side gates allow it. The fallback when no safe, useful action is clear |
 | `no_action(reason)` | record that no reply, outreach, or memory is warranted (spam, automated mail, no genuine ask); a no-op that notifies no one - the explicit way to end a run without dispatching anything, so a deliberate no-op is distinguishable from a dropped response |
 | `create_event(text, expires_at, recurrence)` | create one authenticated sender-owned event or recurring series; sanitize and embed its cross-user gist |
 | `update_event(event_id, text, expires_at, recurrence)` | replace an authenticated owner's event content while preserving its stable id and refreshing its gist/embedding |

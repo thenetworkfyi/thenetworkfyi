@@ -179,6 +179,24 @@ def test_unknown_sender_can_be_answered_without_registration_guidance() -> None:
     assert "authenticated inbound address without registering" in guidance
 
 
+def test_first_contact_is_model_directed_and_uses_plain_public_language() -> None:
+    guidance = SYSTEM_PROMPT.split("- First contact is a judgment call", 1)[1].split(
+        "- A `search` result's `person_id`", 1
+    )[0]
+    guidance = " ".join(guidance.split())
+
+    assert "not a character-count rule" in guidance
+    assert "`send_first_contact_welcome`" in guidance
+    assert "without registering the sender or notifying an operator" in guidance
+    assert "answer the actual question with `reply_to_sender`" in guidance
+    assert "asks both people" in guidance
+    assert '"autonomous connector,"' in guidance
+    assert '"profile database,"' in guidance
+    assert '"two-sided match thesis"' in guidance
+    assert "internal design terms, not product copy" in guidance
+    assert "do not send both" in guidance
+
+
 def _event_guidance() -> str:
     guidance = SYSTEM_PROMPT.split("- Events are secondary:", 1)[1].split(
         "- First contact", 1
