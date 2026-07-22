@@ -280,6 +280,33 @@ def _default_outcome() -> ScenarioOutcome:
                 subject="Re: The Network",
                 body="What kind of peer exchange and working rhythm would be useful?",
             ),
+            MailFacts(
+                sender=LEILA_EMAIL,
+                recipients=frozenset({"join@example.test"}),
+                subject="Lab tools",
+                body=(
+                    "I am building inventory software for community science labs and "
+                    "would like to meet someone else working on lab tools."
+                ),
+            ),
+            MailFacts(
+                sender=LEILA_EMAIL,
+                recipients=frozenset({"join@example.test"}),
+                subject="Re: Lab tools",
+                body=(
+                    "I am the product designer and have piloted the tool with two "
+                    "volunteer-run community science labs."
+                ),
+            ),
+            MailFacts(
+                sender=LEILA_EMAIL,
+                recipients=frozenset({"join@example.test"}),
+                subject="Re: Lab tools",
+                body=(
+                    "I want a peer product designer with hands-on workflow-adoption "
+                    "experience. I can meet remotely every other week for three months."
+                ),
+            ),
         ),
         memory_counts={"vic.sim@example.test": 6, LEILA_EMAIL: 1},
         event_rows=(
@@ -642,6 +669,20 @@ def test_tofu_scope_question_evidence_does_not_expose_mail_content():
         (19, replace(_default_outcome(), memory_counts={LEILA_EMAIL: 2})),
         (
             19,
+            replace(
+                _default_outcome(),
+                mail_facts=tuple(
+                    message
+                    for message in _default_outcome().mail_facts
+                    if not (
+                        message.sender == LEILA_EMAIL
+                        and "product designer" in message.body
+                    )
+                ),
+            ),
+        ),
+        (
+            19,
             _with_leila_tool_sequence(
                 _default_outcome(),
                 ("remember", "remember", "forget", "forget", "remember"),
@@ -658,6 +699,20 @@ def test_tofu_scope_question_evidence_does_not_expose_mail_content():
                     "forget",
                     "remember",
                     "propose_introduction",
+                ),
+            ),
+        ),
+        (
+            20,
+            replace(
+                _default_outcome(),
+                mail_facts=tuple(
+                    message
+                    for message in _default_outcome().mail_facts
+                    if not (
+                        message.sender == LEILA_EMAIL
+                        and "peer product designer" in message.body
+                    )
                 ),
             ),
         ),
@@ -1011,15 +1066,22 @@ def test_default_memory_expectations_have_pass_and_fail_fixtures(
     gist: str,
     expected: bool,
 ):
+    expectation = DEFAULT_EXPECTATIONS[expectation_index]
+    if expectation.inbound_required_groups:
+        inbound_body = " ".join(
+            group[0] for group in expectation.inbound_required_groups
+        )
+    else:
+        inbound_body = expectation.inbound_contains_any[0]
     score = score_memory_expectations(
         (Memory(id="memory-1", text="raw", refs=[owner_email], gist=gist),),
-        (DEFAULT_EXPECTATIONS[expectation_index],),
+        (expectation,),
         mail_facts=(
             MailFacts(
                 sender=owner_email,
                 recipients=frozenset({"join@example.test"}),
                 subject="A note",
-                body=DEFAULT_EXPECTATIONS[expectation_index].inbound_contains_any[0],
+                body=inbound_body,
             ),
         ),
     )
@@ -1035,6 +1097,70 @@ def test_match_depth_memory_expectations_are_unexercised_without_persona_mail():
         finding.evidence == {"unexercised": True, "persona_inbound_messages_checked": 0}
         for finding in score.findings
     )
+
+
+def test_match_depth_memory_expectation_waits_for_every_prerequisite_group():
+    expectation = DEFAULT_EXPECTATIONS[4]
+    opening_only = MailFacts(
+        sender=LEILA_EMAIL,
+        recipients=frozenset({"join@example.test"}),
+        subject="Lab tools",
+        body="I am building inventory software for community science labs.",
+    )
+
+    unexercised = score_memory_expectations(
+        (), (expectation,), mail_facts=(opening_only,)
+    )
+    exercised = score_memory_expectations(
+        (),
+        (expectation,),
+        mail_facts=(
+            opening_only,
+            MailFacts(
+                sender=LEILA_EMAIL,
+                recipients=frozenset({"join@example.test"}),
+                subject="Re: Lab tools",
+                body="I have piloted it with two volunteer-run community science labs.",
+            ),
+        ),
+    )
+
+    assert unexercised.passed is True
+    assert unexercised.findings[0].evidence["unexercised"] is True
+    assert exercised.passed is False
+    assert exercised.findings[0].evidence == {}
+
+
+def test_hugo_scope_memory_waits_for_the_clarifying_reply():
+    expectation = DEFAULT_EXPECTATIONS[2]
+    vague_opening = MailFacts(
+        sender=HUGO_EMAIL,
+        recipients=frozenset({"join@example.test"}),
+        subject="Clinic systems",
+        body="I want an introduction to someone working with community health clinics.",
+    )
+
+    unexercised = score_memory_expectations(
+        (), (expectation,), mail_facts=(vague_opening,)
+    )
+    exercised = score_memory_expectations(
+        (),
+        (expectation,),
+        mail_facts=(
+            vague_opening,
+            MailFacts(
+                sender=HUGO_EMAIL,
+                recipients=frozenset({"join@example.test"}),
+                subject="Re: Clinic systems",
+                body="The scope is patient-scheduling systems.",
+            ),
+        ),
+    )
+
+    assert unexercised.passed is True
+    assert unexercised.findings[0].evidence["unexercised"] is True
+    assert exercised.passed is False
+    assert exercised.findings[0].evidence == {}
 
 
 def test_default_memory_expectations_reject_wrong_persona_owner():

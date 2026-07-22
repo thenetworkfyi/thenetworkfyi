@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from email.utils import parseaddr
 from typing import Any
 
 from thenetwork.sim.personas.persona import (
@@ -87,6 +88,14 @@ _PREMATURE_PROPOSAL_MARKERS = (
 )
 _MATCH_DEPTH_MIN_FORGETS = 4
 _MATCH_DEPTH_MIN_REMEMBERS = 5
+_LEILA_PROFILE_EVIDENCE_GROUPS = (
+    ("product designer",),
+    ("piloted", "volunteer-run community science labs"),
+)
+_LEILA_MATCH_EVIDENCE_GROUPS = (
+    ("peer product designer", "workflow-adoption"),
+    ("remotely", "every other week", "three months"),
+)
 
 
 _EMAIL_PRESENTATIONS = {
@@ -427,6 +436,29 @@ def _match_depth_question_replies(outcome: ScenarioOutcome):
     )
 
 
+def _leila_inbound_bodies(outcome: ScenarioOutcome) -> tuple[str, ...]:
+    return tuple(
+        message.body.casefold()
+        for message in outcome.mail_facts
+        if parseaddr(message.sender)[1].casefold() == LEILA_EMAIL
+    )
+
+
+def _leila_prerequisites(outcome: ScenarioOutcome) -> tuple[bool, bool]:
+    bodies = _leila_inbound_bodies(outcome)
+
+    def exercised(groups: tuple[tuple[str, ...], ...]) -> bool:
+        return all(
+            any(marker in body for body in bodies for marker in group)
+            for group in groups
+        )
+
+    return (
+        exercised(_LEILA_PROFILE_EVIDENCE_GROUPS),
+        exercised(_LEILA_MATCH_EVIDENCE_GROUPS),
+    )
+
+
 def _has_no_passive_match_promise(outcome: ScenarioOutcome) -> bool:
     replies = (
         message.body.casefold()
@@ -507,8 +539,11 @@ def _has_progressive_memory_lifecycle(outcome: ScenarioOutcome) -> bool:
     remember_positions = [
         index for index, tool_name in enumerate(tool_names) if tool_name == "remember"
     ]
+    profile_exercised, match_exercised = _leila_prerequisites(outcome)
     return (
-        outcome.memory_counts.get(LEILA_EMAIL, 0) == 1
+        profile_exercised
+        and match_exercised
+        and outcome.memory_counts.get(LEILA_EMAIL, 0) == 1
         and len(forget_positions) >= _MATCH_DEPTH_MIN_FORGETS
         and len(remember_positions) >= _MATCH_DEPTH_MIN_REMEMBERS
         and all(
@@ -520,16 +555,21 @@ def _has_progressive_memory_lifecycle(outcome: ScenarioOutcome) -> bool:
 
 def _progressive_memory_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
     tool_names = [event["tool_name"] for event in _match_depth_tool_events(outcome)]
+    profile_exercised, match_exercised = _leila_prerequisites(outcome)
     return {
         "memory_count": outcome.memory_counts.get(LEILA_EMAIL, 0),
         "forget_count": tool_names.count("forget"),
         "remember_count": tool_names.count("remember"),
         "minimum_forget_count": _MATCH_DEPTH_MIN_FORGETS,
         "minimum_remember_count": _MATCH_DEPTH_MIN_REMEMBERS,
+        "profile_evidence_exercised": profile_exercised,
+        "match_evidence_exercised": match_exercised,
     }
 
 
 def _has_supported_match_after_qualification(outcome: ScenarioOutcome) -> bool:
+    if not all(_leila_prerequisites(outcome)):
+        return False
     leila_pairs = [
         row for row in outcome.consent_rows if _pair_involves(row, LEILA_EMAIL)
     ]
@@ -558,6 +598,7 @@ def _has_supported_match_after_qualification(outcome: ScenarioOutcome) -> bool:
 
 def _supported_match_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
     tool_names = [event["tool_name"] for event in _match_depth_tool_events(outcome)]
+    profile_exercised, match_exercised = _leila_prerequisites(outcome)
     return {
         "tool_sequence": tool_names,
         "pair_count": sum(
@@ -568,6 +609,8 @@ def _supported_match_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
             for row in outcome.consent_rows
             if row.participant_emails == frozenset((LEILA_EMAIL, MATEO_EMAIL))
         ],
+        "profile_evidence_exercised": profile_exercised,
+        "match_evidence_exercised": match_exercised,
     }
 
 
@@ -979,24 +1022,37 @@ DEFAULT_EXPECTATIONS = (
         gist_contains="patient-scheduling",
         persona_email=HUGO_EMAIL,
         inbound_contains_any=("community health clinics", "patient-scheduling"),
+        inbound_required_groups=(
+            ("community health clinics",),
+            ("patient-scheduling",),
+        ),
     ),
     MemoryExpectation(
         description="Tariq's public-school heat-pump scope is remembered",
         gist_contains="heat-pump",
         persona_email=TARIQ_EMAIL,
         inbound_contains_any=("heat-pump retrofits", "public schools"),
+        inbound_required_groups=(("heat-pump retrofits",), ("public schools",)),
     ),
     MemoryExpectation(
         description="Leila's community-lab product-design experience is preserved",
         gist_contains="community lab",
         persona_email=LEILA_EMAIL,
         inbound_contains_any=("community science labs", "product designer"),
+        inbound_required_groups=(
+            ("community science labs",),
+            ("piloted", "two volunteer-run community science labs"),
+        ),
     ),
     MemoryExpectation(
         description="Leila's remote peer-exchange constraints are preserved",
         gist_contains="remote",
         persona_email=LEILA_EMAIL,
         inbound_contains_any=("remote", "every other week", "three months"),
+        inbound_required_groups=(
+            ("peer product designer", "workflow-adoption"),
+            ("remote", "every other week", "three months"),
+        ),
     ),
 )
 
