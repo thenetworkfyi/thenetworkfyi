@@ -10,8 +10,6 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     # Bind to loopback only: nothing outside the host (or the compose network)
     # should reach Postgres. The worker talks to it over the internal network.
-    logging:
-      driver: journald
     ports:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
@@ -46,7 +44,11 @@ services:
       # volume makes startup preload a one-time download when scanning is on.
       HF_HOME: /home/appuser/.cache/huggingface
     logging:
-      driver: journald
+      driver: fluentd
+      options:
+        fluentd-address: "127.0.0.1:24224"
+        fluentd-async: "true"
+        mode: non-blocking
     depends_on:
       db:
         condition: service_healthy
