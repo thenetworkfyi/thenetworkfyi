@@ -1,0 +1,19 @@
+receivers:
+  fluentforward:
+    endpoint: 0.0.0.0:24224
+
+processors:
+  batch:
+
+exporters:
+  otlp:
+    endpoint: ${OTEL_EXPORTER_OTLP_ENDPOINT}
+    headers:
+      api-key: ${OTEL_EXPORTER_OTLP_HEADERS}
+
+service:
+  pipelines:
+    logs:
+      receivers: [fluentforward]
+      processors: [batch]
+      exporters: [otlp]
