@@ -49,6 +49,10 @@ class AgentDeps:
     session_factory: Callable | None = None
     outbound_send_count: int = 0
     server_side_send_count: int = 0
+    # Set only when a non-email terminal capability (currently escalation)
+    # completed its server-owned side effect. Output validation uses this
+    # together with server_side_send_count to reject bare final text.
+    terminal_action_taken: bool = False
     introduction_proposal_count: int = 0
     # Server-owned replay state for mutating tools within one model run. Keys
     # are canonical argument fingerprints plus their occurrence in the first

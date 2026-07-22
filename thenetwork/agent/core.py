@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from pydantic_ai import Agent, ToolOutput
+from pydantic_ai import Agent, ModelRetry, RunContext, ToolOutput
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
@@ -49,12 +49,6 @@ from thenetwork.memory.recent_context import (
 from thenetwork.security.sender_identifier import optional_sender_identifier
 from thenetwork.settings import get_settings
 
-_UNDISPATCHED_RESPONSE_SUBJECT = "[The Network] Agent response needs review"
-_UNDISPATCHED_RESPONSE_BODY = (
-    "An agent run generated final text without a reply, outreach, or escalate action. "
-    "The text was not sent. Review the correlated audit trace."
-)
-
 
 def build_agent(
     model: Any = None,
@@ -89,7 +83,25 @@ def build_agent(
             if thinking_level is not None
             else None
         ),
+        retries=1,
     )
+
+    @agent.output_validator
+    def require_terminal_action(ctx: RunContext[AgentDeps], output: str) -> str:
+        if (
+            output.strip()
+            and ctx.deps.server_side_send_count == 0
+            and not ctx.deps.terminal_action_taken
+        ):
+            if ctx.deps.is_proactive:
+                instruction = "Call the available bound action or no_action explicitly."
+            else:
+                instruction = (
+                    "Call reply_to_sender, send_outreach, escalate, or no_action "
+                    "explicitly."
+                )
+            raise ModelRetry(f"Bare final text is not a terminal action. {instruction}")
+        return output
 
     # Synthetic proactive jobs are capability grants for exactly one
     # server-bound action, not ordinary inbound sessions. Withholding every
@@ -286,11 +298,5 @@ async def run_agent_for_email(
                 "agent.undispatched_response",
                 body_chars=len(result.output),
                 sender_known=sender_user_id is not None,
-            )
-            notify_admins(
-                settings,
-                _UNDISPATCHED_RESPONSE_SUBJECT,
-                _UNDISPATCHED_RESPONSE_BODY,
-                trace_id=trace_id,
             )
         return result.output

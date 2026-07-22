@@ -61,6 +61,19 @@ async def test_onboarding_registers_sender_then_remembers_under_sender_id():
                     )
                 ]
             )
+        if call_count == 3:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="reply_to_sender",
+                        args={
+                            "subject": "Re: Welcome",
+                            "body_text": "I recorded what you are looking for.",
+                            "sent_email_summary": "confirmed the sender's standing intent",
+                        },
+                    )
+                ]
+            )
         return ModelResponse(parts=[TextPart(content="Onboarding recorded.")])
 
     mock_session = MagicMock()
@@ -89,6 +102,13 @@ async def test_onboarding_registers_sender_then_remembers_under_sender_id():
             "thenetwork.agent.tools.sanitize_memory_high_fidelity",
             new=AsyncMock(side_effect=fake_sanitize),
         ),
+        patch("thenetwork.agent.tools._check_daily_dispatch_cap", return_value=True),
+        patch("thenetwork.agent.tools._consume_daily_dispatch_cap"),
+        patch("thenetwork.agent.tools.send_reply") as send,
+        patch(
+            "thenetwork.agent.tools.record_sent_email_memory",
+            new_callable=AsyncMock,
+        ),
     ):
         deps = AgentDeps(
             sender_email="priya@example.com",
@@ -106,9 +126,14 @@ async def test_onboarding_registers_sender_then_remembers_under_sender_id():
         for part in message.parts
         if isinstance(part, ToolCallPart)
     ]
-    assert [call.tool_name for call in tool_calls] == ["register_person", "remember"]
+    assert [call.tool_name for call in tool_calls] == [
+        "register_person",
+        "remember",
+        "reply_to_sender",
+    ]
     assert tool_calls[1].args_as_dict()["refs"] == ["user-priya"]
     assert deps.sender_user_id == "user-priya"
+    send.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
