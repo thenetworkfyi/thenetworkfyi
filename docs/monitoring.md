@@ -1,12 +1,12 @@
 # Monitoring
 
-The Compose stack derives Prometheus counters from the same redacted audit log
-records that the OpenTelemetry Collector forwards to the configured OTLP
-destination. The worker does not expose an inbound metrics port. Prometheus
-scrapes the Collector over the internal Compose network and binds its UI only
-to `127.0.0.1:9090`. Prometheus sends firing and resolved alerts to the pinned
-Alertmanager service at `alertmanager:9093`; Alertmanager persists its state and
-binds its operator UI only to `127.0.0.1:9093`.
+The Compose stack derives Prometheus counters from redacted audit log records
+received by the OpenTelemetry Collector. The worker does not expose an inbound
+metrics port. Prometheus scrapes the Collector over the internal Compose
+network and binds its UI only to `127.0.0.1:9090`. Prometheus sends firing and
+resolved alerts to the pinned Alertmanager service at `alertmanager:9093`;
+Alertmanager persists its state and binds its operator UI only to
+`127.0.0.1:9093`.
 
 ## Counter catalog
 
@@ -155,7 +155,6 @@ opaque entity IDs, or job arguments to rules or notification templates.
 | `AgentFailureRateElevated` | warning | More than 25 percent failures and at least five failures in 15 minutes. | 10m |
 | `MessageRejectionsSpiking` | warning | At least 20 rejected messages in 10 minutes. | 5m |
 | `CollectorUnavailable` | critical | Either Collector scrape target is down. | 2m |
-| `CollectorPipelineDegraded` | critical | A failed log export in 10 minutes or exporter queue use over 80 percent. | 5m |
 | `SystemControlActionObserved` | critical | A new system pause or future automatic ban counter increment. Administrator controls are excluded. | immediate |
 | `AgentUsageLimitExceeded` | warning | A new agent usage-limit interruption. | immediate |
 | `ProcessEmailJobExhausted` | critical | A final `process_email` attempt exhausted retries. Intermediate failures never increment this counter. | immediate |
@@ -197,12 +196,6 @@ changes. Investigate using restricted logs; never add sender-level labels.
 
 Check the Collector container and its ports `8888` and `8889` on the internal
 Compose network. Worker alerts are inhibited until this source recovers.
-
-### CollectorPipelineDegraded
-
-Check the configured OTLP destination, Collector exporter retries, and queue
-capacity. Restore export before restarting the Collector so queued data is not
-discarded unnecessarily.
 
 ### SystemControlActionObserved
 
@@ -280,7 +273,7 @@ seven with one Prometheus query. Promtool covers pending, firing, and resolved
 rule behavior without starting another service or sending email. The
 fixed-metric container performs queries over the internal Compose network,
 independent of host-port forwarding. The script does not inject Docker logs,
-connect to port `24224`, send SMTP traffic, or contact the configured production
-OTLP log backend. The worker remains stopped and exposes no inbound port.
+connect to port `24224`, or send SMTP traffic. The worker remains stopped and
+exposes no inbound port.
 Validation containers and their network are removed before the script returns;
 named Prometheus and Alertmanager data volumes are preserved.

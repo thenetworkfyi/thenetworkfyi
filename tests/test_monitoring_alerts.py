@@ -52,7 +52,6 @@ def test_alert_catalog_covers_worker_collector_and_event_failures():
         "AgentFailureRateElevated",
         "MessageRejectionsSpiking",
         "CollectorUnavailable",
-        "CollectorPipelineDegraded",
         "SystemControlActionObserved",
         "AgentUsageLimitExceeded",
         "ProcessEmailJobExhausted",
