@@ -291,6 +291,7 @@ _SAFE_CATEGORIES = {
     ),
     "reason": frozenset(
         {
+            "admin_auth_failed",
             "body_empty",
             "body_oversize",
             "content_scan",
@@ -303,6 +304,8 @@ _SAFE_CATEGORIES = {
             "person_memory_limit_exceeded",
             "rate_limit",
             "recipient_not_found",
+            "relay_forbidden",
+            "relay_invalid",
             "established_sender_traffic",
             "multi_sender_campaign",
             "routine_variation",
@@ -312,6 +315,21 @@ _SAFE_CATEGORIES = {
             "unauthenticated_unknown_sender",
             "unusual_new_sender_volume",
             "banned",
+        }
+    ),
+    "template_id": frozenset(
+        {
+            "consent_acknowledgment",
+            "consent_already_declined",
+            "consent_clarification",
+            "consent_declined",
+            "consent_request",
+            "conversational",
+            "event_recommendation",
+            "first_contact_welcome",
+            "infrastructure_rejection",
+            "introduction",
+            "introduction_relay",
         }
     ),
     "model_endpoint": frozenset(

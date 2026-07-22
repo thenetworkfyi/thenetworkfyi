@@ -401,15 +401,16 @@ migrations apply automatically on every deploy.
 
 ### OpenTelemetry Logs and Local Prometheus Metrics
 
-`docker-compose.yml` includes an explicitly version-pinned OpenTelemetry Collector contrib service (`otel-collector`) that receives worker JSON logs via the Docker `fluentd` logging driver and forwards structured `LogRecord` events to an environment-configured OTLP destination. Set `OTEL_EXPORTER_OTLP_ENDPOINT` in `.env`; optional authentication headers (`OTEL_EXPORTER_OTLP_HEADERS`, a JSON object string such as `{"Authorization":"Bearer <token>"}`) are substituted directly into the OTLP exporter's `headers:` map. The collector exposes a healthcheck on port 13133.
+`docker-compose.yml` includes an explicitly version-pinned OpenTelemetry Collector contrib service (`otel-collector`) that receives worker JSON logs via the Docker `fluentd` logging driver and forwards structured `LogRecord` events to an environment-configured OTLP destination. Set `OTEL_EXPORTER_OTLP_ENDPOINT` in `.env`; optional authentication headers (`OTEL_EXPORTER_OTLP_HEADERS`, a JSON object string such as `{"Authorization":"Bearer <token>"}`) are substituted directly into the OTLP exporter's `headers:` map. TLS is the default; set `OTEL_EXPORTER_OTLP_INSECURE=true` only for a trusted plaintext endpoint. The collector exposes a healthcheck on port 13133.
 
-The same redacted log pipeline derives one unlabelled application counter, `thenetwork.worker.audit.events`, for records emitted by `thenetwork.audit`. A version-pinned Prometheus LTS service scrapes that counter and the collector's own pipeline metrics over the internal Compose network. Prometheus persists its TSDB in `prometheus-data`, retains samples for 30 days, and binds its UI only to `http://127.0.0.1:9090`. The worker opens no metrics port. Metric labels are limited to Prometheus's bounded scrape-target labels; trace IDs, run IDs, sender pseudonyms, mail content, and opaque person/event identifiers are never projected from logs into labels.
+The same redacted log pipeline derives a bounded counter catalog for account creation, message processing and rejection, agent runs and tools, introduction transitions, outbound email, and relay forwarding. A version-pinned Prometheus LTS service scrapes those counters and the collector's own pipeline metrics over the internal Compose network. Prometheus persists its TSDB in `prometheus-data`, retains samples for 30 days, and binds its UI only to `http://127.0.0.1:9090`. The worker opens no metrics port. Collector conditions allow-list every projected category value; trace IDs, run IDs, sender pseudonyms, mail content, exception text, and opaque person/event identifiers are never metric labels. See [docs/monitoring.md](docs/monitoring.md) for the metric-to-audit-event map, reset semantics, label policy, and PromQL examples.
 
 Rollout and verification commands:
 ```bash
 docker compose config
-docker run --rm -e OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4317" \
+docker run --rm -e OTEL_EXPORTER_OTLP_ENDPOINT="localhost:4317" \
   -e OTEL_EXPORTER_OTLP_HEADERS='' \
+  -e OTEL_EXPORTER_OTLP_INSECURE=true \
   -v ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml \
   otel/opentelemetry-collector-contrib:0.118.0 validate --config=/etc/otelcol-contrib/config.yaml
 docker run --rm --entrypoint /bin/promtool \
@@ -419,7 +420,7 @@ docker compose up -d
 curl http://127.0.0.1:9090/api/v1/targets
 ```
 
-The targets page/API should report both `otel-collector-internal` and `thenetwork-audit-activity` as `up`. Query `thenetwork_worker_audit_events_total` to see the application activity counter after the worker has emitted an audit event. This increment deliberately excludes Grafana, Alertmanager, host exporters, and Postgres exporters.
+The targets page/API should report both `otel-collector-internal` and `thenetwork-audit-activity` as `up`. Run `./validate-monitoring.sh` for the end-to-end catalog check, or query `thenetwork_worker_audit_events_total` after the worker has emitted an audit event. This increment deliberately excludes Grafana, Alertmanager, host exporters, and Postgres exporters.
 
 ### Safe redeploys (no lost or half-processed jobs)
 
