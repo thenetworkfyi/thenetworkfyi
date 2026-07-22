@@ -19,11 +19,60 @@ connectors:
         description: Count of redacted application audit events processed by the worker log pipeline.
         conditions:
           - 'attributes["logger"] == "thenetwork.audit"'
+      thenetwork.accounts.created:
+        description: Count of successfully created person accounts.
+        conditions:
+          - 'attributes["logger"] == "thenetwork.audit" and attributes["event"] == "database.action" and attributes["action"] == "insert" and attributes["record_type"] == "person" and attributes["outcome"] == "success"'
+      thenetwork.messages.processed:
+        description: Count of completed worker message-processing attempts.
+        conditions:
+          - 'attributes["logger"] == "thenetwork.audit" and attributes["event"] == "worker.process_email.completed" and IsString(attributes["outcome"]) and IsMatch(attributes["outcome"], "^(success|error)$")'
+        attributes:
+          - key: outcome
+      thenetwork.messages.rejected:
+        description: Count of messages rejected before agent processing.
+        conditions:
+          - 'attributes["logger"] == "thenetwork.audit" and attributes["event"] == "worker.message_rejected" and IsString(attributes["reason"]) and IsMatch(attributes["reason"], "^(admin_auth_failed|banned|body_oversize|content_scan|primary_intake_paused|prompt_injection_detected|rate_limit|relay_forbidden|relay_invalid|scanner_error|unauthenticated_unknown_sender)$")'
+        attributes:
+          - key: reason
+      thenetwork.agent.runs:
+        description: Count of completed agent runs.
+        conditions:
+          - 'attributes["logger"] == "thenetwork.audit" and attributes["event"] == "agent.run.completed" and IsString(attributes["outcome"]) and IsMatch(attributes["outcome"], "^(success|error)$")'
+        attributes:
+          - key: outcome
+      thenetwork.agent.tool.calls:
+        description: Count of completed agent tool calls.
+        conditions:
+          - 'attributes["logger"] == "thenetwork.audit" and attributes["event"] == "agent.tool.completed" and IsString(attributes["tool_name"]) and IsMatch(attributes["tool_name"], "^(cancel_event|create_event|escalate|forget|no_action|propose_introduction|register_person|remember|reply_to_sender|resume_event_recommendations|search|search_events|send_event_recommendation|send_first_contact_welcome|send_outreach|stop_event_recommendations|update_event)$") and IsString(attributes["tool_outcome"]) and IsMatch(attributes["tool_outcome"], "^(already_cancelled|already_enabled|already_suppressed|cancelled|created|deferred|deleted|error|escalated|exists|forbidden|limited|no_action|not_found|proposed|replayed|resumed|sent|success|suppressed|updated|welcomed|welcomed_and_escalated)$")'
+        attributes:
+          - key: tool_name
+          - key: tool_outcome
+      thenetwork.introduction.transitions:
+        description: Count of successful introduction consent transition events.
+        conditions:
+          - 'attributes["logger"] == "thenetwork.audit" and attributes["event"] == "introduction.consent_transition" and attributes["outcome"] == "success" and IsString(attributes["action"]) and IsMatch(attributes["action"], "^(clarify|consent|decline|propose|revoke)$") and IsString(attributes["consent_state"]) and IsMatch(attributes["consent_state"], "^(declined|introduced|one_consented|proposed|revoked)$")'
+        attributes:
+          - key: action
+          - key: consent_state
+      thenetwork.outbound.emails:
+        description: Count of completed outbound SMTP attempts.
+        conditions:
+          - 'attributes["logger"] == "thenetwork.audit" and attributes["event"] == "email.smtp_send.completed" and IsString(attributes["outcome"]) and IsMatch(attributes["outcome"], "^(success|error)$") and IsString(attributes["template_id"]) and IsMatch(attributes["template_id"], "^(consent_acknowledgment|consent_already_declined|consent_clarification|consent_declined|consent_request|conversational|event_recommendation|first_contact_welcome|infrastructure_rejection|introduction|introduction_relay)$")'
+        attributes:
+          - key: outcome
+          - key: template_id
+      thenetwork.relay.messages.forwarded:
+        description: Count of successfully forwarded participant relay messages.
+        conditions:
+          - 'attributes["logger"] == "thenetwork.audit" and attributes["event"] == "worker.relay_forwarded" and attributes["outcome"] == "success"'
 
 exporters:
   otlp:
     endpoint: ${env:OTEL_EXPORTER_OTLP_ENDPOINT}
     headers: ${env:OTEL_EXPORTER_OTLP_HEADERS}
+    tls:
+      insecure: ${env:OTEL_EXPORTER_OTLP_INSECURE}
   prometheus/audit:
     endpoint: 0.0.0.0:8889
 
