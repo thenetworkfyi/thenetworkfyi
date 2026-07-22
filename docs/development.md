@@ -420,9 +420,25 @@ SIGTERM graceful drain (`stop_grace_period: 300s`), `max_attempts=3`, and idempo
 
 ```bash
 cp .env.example .env
-docker compose up -d --build      # build + start db + worker
+docker compose up -d --build      # build + start db + worker + otel-collector
 docker compose pull && docker compose up -d   # redeploy only changed services
 ```
+
+### OpenTelemetry Logs-Only Deployment
+
+The Compose stack runs a logs-only OpenTelemetry Collector contrib service (`otel-collector`) using `otel-collector-config.yaml`. Worker JSON logs are routed via Docker's `fluentd` logging driver over an internal loopback bridge. The collector parses each worker JSON string into structured `LogRecord` fields (preserving `event`, `logger`, `level`, `timestamp`, `trace_id`, and other emitted attributes) and exports them to an environment-configured OTLP destination.
+
+Required settings:
+- `OTEL_EXPORTER_OTLP_ENDPOINT`: target OTLP endpoint (e.g. `http://localhost:4317`)
+- `OTEL_EXPORTER_OTLP_HEADERS`: optional authentication header value
+
+Rollout & verification:
+- Validate compose: `docker compose config`
+- Validate collector configuration: `docker run --rm -e OTEL_EXPORTER_OTLP_ENDPOINT="http://localhost:4317" -v $(pwd)/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml otel/opentelemetry-collector-contrib:0.118.0 validate --config=/etc/otelcol-contrib/config.yaml`
+- Start service: `docker compose up -d`
+
+Traces, metrics, Postgres log collection, retention of old journal entries, and historical log migration are out of scope.
+
 
 All compose builds install the scanner dependencies. To enable model loading and
 scanning, set `CONTENT_SCAN_ENABLED=true` and `HF_TOKEN` for the first start, then run
