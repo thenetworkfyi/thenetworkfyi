@@ -15,17 +15,17 @@ from typing import Any, Iterable
 
 from pydantic_evals.evaluators import LLMJudge
 
-from thenetwork.agent.core import _UNDISPATCHED_RESPONSE_SUBJECT
 from thenetwork.db.models import Memory
 from thenetwork.introductions import _TOKEN_RE
 from thenetwork.sim.html_validation import inspect_html_email
 from thenetwork.sim.personas.consent import _visible_lines
-from thenetwork.sim.run.mail import _extract_body
 from thenetwork.sim.personas.persona import PersonaConfig
+from thenetwork.sim.run.mail import _extract_body
 
 
 _CONSENT_REQUEST_SUBJECT_PREFIX = "Possible introduction"
 _SIM_DIRECTION_PERSONA_TO_AGENT = "persona->agent"
+_LEGACY_UNDISPATCHED_RESPONSE_SUBJECT = "[The Network] Agent response needs review"
 _PRESENTATION_SIGNATURE_TEXT = (
     "The Network",
     "join@thenetwork.fyi",
@@ -96,6 +96,11 @@ class MemoryExpectation:
     gist_contains: str | None = None
     persona_email: str | None = None
     inbound_contains_any: tuple[str, ...] = ()
+    # Every inner group is a set of alternative markers; every group must be
+    # present somewhere in that persona's visible inbound mail before the
+    # expectation is considered exercised. This distinguishes an opening
+    # premise from later qualification facts the persona has not supplied yet.
+    inbound_required_groups: tuple[tuple[str, ...], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -460,25 +465,33 @@ def _memory_expectation_exercise(
     mail_facts: Iterable[MailFacts],
 ) -> tuple[bool, int] | None:
     """Return whether a persona stated the fact and how many messages were checked."""
-    if not expectation.inbound_contains_any:
+    if not expectation.inbound_contains_any and not expectation.inbound_required_groups:
         return None
     if expectation.persona_email is None:
         raise ValueError(
-            "inbound_contains_any requires a persona-bound memory expectation"
+            "inbound exercise markers require a persona-bound memory expectation"
         )
 
     expected_sender = expectation.persona_email.casefold()
-    needles = tuple(value.casefold() for value in expectation.inbound_contains_any)
     persona_bodies = []
     for fact in mail_facts:
         sender = parseaddr(fact.sender)[1].casefold()
         if sender != expected_sender:
             continue
         persona_bodies.append("\n".join(_visible_lines(fact.body)).casefold())
-    return (
-        any(needle in body for body in persona_bodies for needle in needles),
-        len(persona_bodies),
-    )
+    if expectation.inbound_required_groups:
+        groups = tuple(
+            tuple(value.casefold() for value in group)
+            for group in expectation.inbound_required_groups
+        )
+        exercised = all(
+            any(needle in body for body in persona_bodies for needle in group)
+            for group in groups
+        )
+    else:
+        needles = tuple(value.casefold() for value in expectation.inbound_contains_any)
+        exercised = any(needle in body for body in persona_bodies for needle in needles)
+    return exercised, len(persona_bodies)
 
 
 def score_response_quality(
@@ -574,7 +587,7 @@ def score_response_quality(
                         },
                     )
                 )
-        if subject == _UNDISPATCHED_RESPONSE_SUBJECT:
+        if subject == _LEGACY_UNDISPATCHED_RESPONSE_SUBJECT:
             noop_alert_indices.append(index)
         if subject.startswith(_CONSENT_REQUEST_SUBJECT_PREFIX):
             token_match = _TOKEN_RE.search(subject)

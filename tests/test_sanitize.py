@@ -6,8 +6,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from thenetwork.agent.deps import AgentDeps
 from thenetwork.db.models import Memory
 from thenetwork.memory import sanitize as sanitize_mod
+from thenetwork.settings import Settings
 
 
 class FakeSession:
@@ -327,6 +329,15 @@ async def test_llm_sanitizer_uses_fixed_no_tools_prompt(monkeypatch):
     )
     session = FakeSession()
     captured: dict[str, object] = {}
+    deterministic = (
+        "[name] wants climate hardware intros. Reach [email], "
+        "call [phone], or visit 7 Market Street."
+    )
+
+    def deterministic_sanitize(text: str) -> str:
+        return deterministic if text == memory.text else text
+
+    monkeypatch.setattr(sanitize_mod, "sanitize_text", deterministic_sanitize)
 
     class FakeAgent:
         def __init__(self, *args: object, **kwargs: object) -> None:
@@ -382,7 +393,10 @@ async def test_llm_sanitizer_uses_fixed_no_tools_prompt(monkeypatch):
     assert "URLs" in kwargs["system_prompt"] or "links" in kwargs["system_prompt"]
     assert "quasi-identifying combinations" in kwargs["system_prompt"]
     assert "Return only the sanitized text" in kwargs["system_prompt"]
-    assert captured["prompt"] == memory.text
+    assert captured["prompt"] == deterministic
+    assert "Dana Jones" not in captured["prompt"]
+    assert "dana@example.com" not in captured["prompt"]
+    assert "212-555-1212" not in captured["prompt"]
     assert "Dana Jones" not in result
     assert "dana@example.com" not in result
     assert "212-555-1212" not in result
@@ -410,6 +424,12 @@ async def test_llm_sanitizer_prompt_contract_via_function_model(monkeypatch):
     )
     session = FakeSession()
     captured: dict[str, object] = {}
+    deterministic = "[name] works at Globex and tweets @erincodes, see erin.dev."
+
+    def deterministic_sanitize(text: str) -> str:
+        return deterministic if text == memory.text else text
+
+    monkeypatch.setattr(sanitize_mod, "sanitize_text", deterministic_sanitize)
 
     async def capture_and_respond(
         messages: list[ModelMessage], info: AgentInfo
@@ -456,3 +476,106 @@ async def test_llm_sanitizer_prompt_contract_via_function_model(monkeypatch):
     assert "Globex" not in result
     assert "@erincodes" not in result
     assert "erin.dev" not in result
+    messages = captured["messages"]
+    assert "Erin Cole" not in repr(messages)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        "ModelResponse(parts=[TextPart(content='sealed gist')])",
+        "You are a PII sanitizer. Return only the sanitized text.",
+        "x" * (sanitize_mod.MAX_SANITIZED_GIST_CHARS + 1),
+        "   ",
+    ],
+)
+async def test_high_fidelity_sanitizer_downgrades_malformed_model_output(
+    monkeypatch,
+    malformed: str,
+):
+    raw = "Alice can help with compiler performance at alice@example.com."
+    deterministic = "[name] can help with compiler performance at [email]."
+    seen_by_model: list[str] = []
+
+    def deterministic_sanitize(text: str) -> str:
+        if text == raw:
+            return deterministic
+        return text
+
+    async def malformed_llm(text: str) -> str:
+        seen_by_model.append(text)
+        return malformed
+
+    _enable_llm_tier(monkeypatch)
+    monkeypatch.setattr(sanitize_mod, "sanitize_text", deterministic_sanitize)
+    monkeypatch.setattr(sanitize_mod, "sanitize_text_llm", malformed_llm)
+    audit = MagicMock()
+    monkeypatch.setattr(sanitize_mod, "audit_event", audit)
+
+    result = await sanitize_mod.sanitize_text_high_fidelity(raw)
+
+    assert seen_by_model == [deterministic]
+    assert result == deterministic
+    assert malformed not in result
+    audit.assert_called_once_with(
+        "sanitize.tier_downgrade", error_type="_UnsafeSanitizerOutput"
+    )
+
+
+@pytest.mark.asyncio
+async def test_malformed_sanitizer_output_never_reaches_memory_embedding(
+    monkeypatch,
+):
+    from thenetwork.agent.tools import remember
+
+    raw = "Alice builds compilers; alice@example.com"
+    deterministic = "[name] builds compilers; [email]"
+
+    def deterministic_sanitize(text: str) -> str:
+        if text == raw:
+            return deterministic
+        return text
+
+    _enable_llm_tier(monkeypatch)
+    monkeypatch.setattr(sanitize_mod, "sanitize_text", deterministic_sanitize)
+    monkeypatch.setattr(
+        sanitize_mod,
+        "sanitize_text_llm",
+        AsyncMock(return_value="ModelResponse(parts=[TextPart(content='leak')])"),
+    )
+    session = MagicMock()
+    session.__enter__ = MagicMock(return_value=session)
+    session.__exit__ = MagicMock(return_value=False)
+    session.exec.return_value.one.return_value = 0
+    ctx = SimpleNamespace(
+        deps=AgentDeps(
+            settings=Settings(
+                agent_model="test:model",
+                small_agent_model="test:model",
+                embed_model="test:embed",
+                remember_text_max_chars=8_000,
+                person_memory_limit=100,
+            ),
+            sender_email="alice@example.com",
+            sender_user_id="user-alice",
+            sender_authenticated=True,
+            session_factory=lambda: session,
+        )
+    )
+    embedded: list[str] = []
+
+    async def embed(text: str) -> list[float]:
+        embedded.append(text)
+        return [0.0] * 1536
+
+    monkeypatch.setattr("thenetwork.agent.tools.embed_text", embed)
+    monkeypatch.setattr("thenetwork.agent.tools.match_memories", lambda *a, **k: [])
+
+    result = await remember(ctx, text=raw, refs=["user-alice"])
+
+    stored = session.add.call_args_list[0].args[0]
+    assert result.get("memory_id") == stored.id
+    assert stored.gist == deterministic
+    assert embedded == [deterministic]
+    assert "ModelResponse" not in repr(stored.gist)

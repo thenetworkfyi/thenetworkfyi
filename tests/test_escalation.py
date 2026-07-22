@@ -285,6 +285,7 @@ async def test_escalate_welcomes_and_notifies_admins_for_authenticated_unknown_s
         result = await escalate(ctx, reason="Ambiguous first contact")
 
     assert result == {"status": "welcomed_and_escalated"}
+    assert ctx.deps.terminal_action_taken is True
     assert mock_completion.call_count == 2
     mock_completion.assert_any_call(tool_outcome="sent")
     mock_completion.assert_any_call(tool_outcome="welcomed_and_escalated")
@@ -307,6 +308,30 @@ async def test_escalate_welcomes_and_notifies_admins_for_authenticated_unknown_s
         "Please reply to new@example.com manually.",
         trace_id="trace-test-123",
     )
+
+
+@pytest.mark.asyncio
+async def test_unknown_sender_escalation_remains_terminal_when_welcome_is_limited():
+    from thenetwork.agent.tools import escalate
+
+    with (
+        patch("thenetwork.agent.tools._check_daily_dispatch_cap", return_value=False),
+        patch("thenetwork.agent.tools.notify_admins") as notify_admins,
+        patch("thenetwork.agent.tools.send_reply") as send_reply,
+    ):
+        ctx = _ctx(
+            sender_email="new@example.com",
+            sender_authenticated=True,
+            inbound_subject="Question",
+            admin_emails=["admin@example.com"],
+        )
+        result = await escalate(ctx, reason="Ambiguous first contact")
+
+    assert result == {"status": "escalated"}
+    assert ctx.deps.terminal_action_taken is True
+    assert ctx.deps.server_side_send_count == 0
+    send_reply.assert_not_called()
+    notify_admins.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -340,6 +365,7 @@ async def test_explicit_unknown_sender_opt_out_is_not_welcomed_or_escalated():
         "status": "no_action",
         "reason": "sender_declined_participation",
     }
+    assert ctx.deps.terminal_action_taken is False
     mock_send.assert_not_called()
     mock_notify.assert_not_called()
     mock_session.assert_not_called()
