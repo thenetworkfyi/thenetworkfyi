@@ -228,7 +228,6 @@ def test_postgres_rate_limit_state_survives_limiter_rebuild(pg_engine, monkeypat
 
 def test_outbound_registration_and_welcome_quotas_fail_closed_when_storage_is_unavailable():
     from thenetwork.agent import tools
-    from thenetwork.worker import tasks
 
     with (
         patch.object(
@@ -239,9 +238,6 @@ def test_outbound_registration_and_welcome_quotas_fail_closed_when_storage_is_un
             "_get_registration_limiter",
             return_value=(UnavailableLimiter(), None),
         ),
-        patch.object(
-            tasks, "_get_welcome_limiter", return_value=(UnavailableLimiter(), None)
-        ),
     ):
         assert not tools._check_daily_dispatch_cap("dispatch:test", 1)
         assert not tools._hit_registration_quota(
@@ -251,7 +247,7 @@ def test_outbound_registration_and_welcome_quotas_fail_closed_when_storage_is_un
                 )
             )
         )
-        assert not tasks._check_welcome_quota("person@example.com")
+        assert not tools._check_daily_dispatch_cap("welcome:test", 1)
 
 
 @pytest.mark.integration
@@ -261,7 +257,6 @@ def test_outbound_registration_and_welcome_limiters_use_durable_storage(
     """All non-inbound quotas share Postgres state across limiter recreation."""
     import thenetwork.db.session as sess_mod
     from thenetwork.agent import tools
-    from thenetwork.worker import tasks
 
     monkeypatch.setattr(sess_mod, "_engine", pg_engine)
     with pg_engine.begin() as conn:
@@ -282,13 +277,6 @@ def test_outbound_registration_and_welcome_limiters_use_durable_storage(
             "_registration_storage",
             tools._get_registration_limiter,
             "test:registration",
-        ),
-        (
-            tasks,
-            "_welcome_limiter",
-            "_welcome_storage",
-            tasks._get_welcome_limiter,
-            "test:welcome",
         ),
     ]
     for module, limiter_attr, storage_attr, factory, key in cases:

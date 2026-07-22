@@ -785,6 +785,112 @@ async def test_agent_usage_limit_breach_notifies_admins(caplog):
 
 
 @pytest.mark.asyncio
+async def test_agent_failure_after_successful_reply_does_not_escape_for_job_retry(
+    caplog,
+):
+    from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    from thenetwork.agent.core import build_agent, run_agent_for_email
+    from thenetwork.db.models import Person
+
+    model_calls = 0
+
+    async def reply_then_timeout(
+        _messages: list[ModelMessage], _info: AgentInfo
+    ) -> ModelResponse:
+        nonlocal model_calls
+        model_calls += 1
+        if model_calls == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name="reply_to_sender",
+                        args={
+                            "subject": "Re: What?",
+                            "body_text": "A plain explanation.",
+                            "sent_email_summary": "explained the service",
+                        },
+                    )
+                ]
+            )
+        raise RuntimeError("provider timed out after delivery")
+
+    session = MagicMock()
+    session.__enter__ = MagicMock(return_value=session)
+    session.__exit__ = MagicMock(return_value=False)
+    session.get.side_effect = lambda model, row_id: (
+        SimpleNamespace(email="sender@example.test")
+        if model is Person and row_id == "person-sender"
+        else None
+    )
+    settings = SimpleNamespace(
+        agent_model="test:model",
+        agent_request_limit=6,
+        agent_total_tokens_limit=10_000,
+        response_log_redaction_secret="",
+        dispatch_max_sends_per_run=12,
+        dispatch_recipient_daily_cap=12,
+        dispatch_sender_reply_daily_cap=12,
+    )
+    test_agent = build_agent(model=FunctionModel(reply_then_timeout))
+    delivered = MagicMock()
+    recorded_summary = AsyncMock(return_value=True)
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    with (
+        patch("thenetwork.agent.core.get_settings", return_value=settings),
+        patch("thenetwork.agent.core.build_agent", return_value=test_agent),
+        patch("thenetwork.agent.tools._check_daily_dispatch_cap", return_value=True),
+        patch("thenetwork.agent.tools._consume_daily_dispatch_cap"),
+        patch("thenetwork.agent.tools.send_reply", delivered),
+        patch(
+            "thenetwork.agent.tools.record_sent_email_memory",
+            recorded_summary,
+        ),
+    ):
+        result = await run_agent_for_email(
+            sender_email="sender@example.test",
+            sender_user_id="person-sender",
+            sender_authenticated=True,
+            email_subject="What?",
+            email_body="What is this?",
+            trace_id="trace-post-send-timeout",
+            session_factory=lambda: session,
+        )
+
+    assert result == ""
+    assert model_calls == 2
+    delivered.assert_called_once()
+    recorded_summary.assert_awaited_once()
+    assert any(
+        event["event"] == "agent.failed_after_send"
+        and event["outcome"] == "error"
+        and event["error_type"] == "RuntimeError"
+        for event in _events(caplog)
+    )
+
+
+@pytest.mark.asyncio
+async def test_agent_failure_before_any_send_still_escapes_for_job_retry():
+    from thenetwork.agent.core import run_agent_for_email
+
+    fake_agent = SimpleNamespace(
+        run=AsyncMock(side_effect=RuntimeError("provider unavailable"))
+    )
+
+    with patch("thenetwork.agent.core.build_agent", return_value=fake_agent):
+        with pytest.raises(RuntimeError, match="provider unavailable"):
+            await run_agent_for_email(
+                sender_email="sender@example.test",
+                sender_user_id="person-sender",
+                sender_authenticated=True,
+                email_subject="Hello",
+                email_body="Please respond.",
+            )
+
+
+@pytest.mark.asyncio
 async def test_agent_trace_logs_structure_but_never_content(caplog):
     from thenetwork.agent.core import run_agent_for_email
 
@@ -1991,8 +2097,9 @@ async def test_worker_keeps_infrastructure_rejection_silent_for_unauthenticated_
 
 
 @pytest.mark.asyncio
-async def test_worker_skips_empty_body_after_rate_limit_without_agent(caplog):
-    from thenetwork.email.inbound import REJECT_BODY_EMPTY
+async def test_worker_routes_authenticated_empty_body_to_agent_after_safety_gates(
+    caplog,
+):
     from thenetwork.worker.tasks import process_email
 
     caplog.set_level(logging.INFO, logger=LOGGER_NAME)
@@ -2000,9 +2107,20 @@ async def test_worker_skips_empty_body_after_rate_limit_without_agent(caplog):
         patch(
             "thenetwork.worker.tasks.check_rate_limit", return_value=True
         ) as check_rate_limit,
-        patch("thenetwork.worker.tasks.scan_content") as scan_content,
+        patch(
+            "thenetwork.worker.tasks.scan_content",
+            new=AsyncMock(return_value=(True, None)),
+        ) as scan_content,
         patch("thenetwork.worker.tasks.send_reply") as send_reply,
         patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()) as mock_agent,
+        patch(
+            "thenetwork.worker.tasks.process_consent_reply",
+            return_value=SimpleNamespace(handled=False, sent_email_memories=[]),
+        ),
+        patch(
+            "thenetwork.worker.tasks.record_sent_email_memories",
+            new_callable=AsyncMock,
+        ),
         patch(
             "thenetwork.worker.tasks.get_session",
             return_value=_mock_sender_lookup(None),
@@ -2012,17 +2130,18 @@ async def test_worker_skips_empty_body_after_rate_limit_without_agent(caplog):
             sender_email="alice@example.com",
             subject="Hello",
             body=" \n",
+            sender_authenticated=True,
         )
 
     check_rate_limit.assert_called_once_with(
         "alice@example.com",
-        sender_authenticated=False,
+        sender_authenticated=True,
     )
-    scan_content.assert_not_called()
+    scan_content.assert_awaited_once_with(" \n")
     send_reply.assert_not_called()
-    mock_agent.assert_not_called()
-    assert any(
+    mock_agent.assert_awaited_once()
+    assert not any(
         event["event"] == "worker.message_rejected"
-        and event["reason"] == REJECT_BODY_EMPTY
+        and event.get("reason") == "body_empty"
         for event in _events(caplog)
     )

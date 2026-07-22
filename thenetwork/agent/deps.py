@@ -49,6 +49,10 @@ class AgentDeps:
     session_factory: Callable | None = None
     outbound_send_count: int = 0
     server_side_send_count: int = 0
+    # An authenticated sender without a Person record may receive either one
+    # fixed welcome or one model-written direct reply. Keep that choice
+    # mutually exclusive even when the model calls more than one tool.
+    unknown_sender_response_sent: bool = False
     # Set only when a non-email terminal capability (currently escalation)
     # completed its server-owned side effect. Output validation uses this
     # together with server_side_send_count to reject bare final text.

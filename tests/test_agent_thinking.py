@@ -137,6 +137,48 @@ async def test_proactive_agent_exposes_only_its_bound_action(
 
 
 @pytest.mark.asyncio
+async def test_inbound_agent_retains_first_contact_and_full_tool_surface():
+    observed_tools: set[str] = set()
+
+    async def capture_tools(
+        _messages: list[ModelMessage], info: AgentInfo
+    ) -> ModelResponse:
+        observed_tools.update(tool.name for tool in info.function_tools)
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name="no_action",
+                    args={"reason": "nothing useful to do"},
+                )
+            ]
+        )
+
+    result = await build_agent(model=FunctionModel(capture_tools)).run(
+        "FYI", deps=AgentDeps()
+    )
+
+    assert observed_tools == {
+        "remember",
+        "forget",
+        "search",
+        "propose_introduction",
+        "escalate",
+        "send_first_contact_welcome",
+        "reply_to_sender",
+        "send_outreach",
+        "register_person",
+        "create_event",
+        "update_event",
+        "cancel_event",
+        "search_events",
+        "send_event_recommendation",
+        "stop_event_recommendations",
+        "resume_event_recommendations",
+    }
+    assert result.output == ""
+
+
+@pytest.mark.asyncio
 async def test_large_bare_text_is_retried_into_explicit_no_action():
     calls = 0
 
