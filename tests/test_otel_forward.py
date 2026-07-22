@@ -18,6 +18,8 @@ _REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 _COLLECTOR_CONFIG = yaml.safe_load(
     (_REPO_ROOT / "otel-collector-config.yaml").read_text()
 )
+_COMPOSE_CONFIG = yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text())
+_PROMETHEUS_CONFIG = yaml.safe_load((_REPO_ROOT / "prometheus.yml").read_text())
 
 
 def _process_json_log_record(raw_record: dict) -> dict:
@@ -91,9 +93,7 @@ def test_collector_config_has_health_check_extension():
     assert "health_check" in extensions, (
         "collector config must include health_check extension"
     )
-    service_extensions = (
-        _COLLECTOR_CONFIG.get("service", {}).get("extensions", [])
-    )
+    service_extensions = _COLLECTOR_CONFIG.get("service", {}).get("extensions", [])
     assert "health_check" in service_extensions, (
         "health_check must be listed in service.extensions"
     )
@@ -115,6 +115,80 @@ def test_collector_config_otlp_exporter_wires_headers_env_var():
         "OTEL_EXPORTER_OTLP_HEADERS env var so the Collector's config "
         "resolver can parse it as a map"
     )
+
+
+def test_collector_derives_one_unlabelled_counter_from_redacted_audit_logs():
+    count_config = _COLLECTOR_CONFIG["connectors"]["count/audit"]["logs"]
+    assert set(count_config) == {"thenetwork.worker.audit.events"}
+    metric = count_config["thenetwork.worker.audit.events"]
+    assert metric["conditions"] == ['attributes["logger"] == "thenetwork.audit"']
+    assert "attributes" not in metric, (
+        "the audit counter must not project log attributes into metric labels"
+    )
+
+    pipelines = _COLLECTOR_CONFIG["service"]["pipelines"]
+    assert pipelines["logs"]["exporters"] == ["otlp", "count/audit"]
+    assert pipelines["metrics/audit"] == {
+        "receivers": ["count/audit"],
+        "exporters": ["prometheus/audit"],
+    }
+    assert _COLLECTOR_CONFIG["exporters"]["prometheus/audit"]["endpoint"] == (
+        "0.0.0.0:8889"
+    )
+
+
+def test_prometheus_scrapes_collector_health_and_audit_activity():
+    assert _COLLECTOR_CONFIG["service"]["telemetry"]["metrics"]["address"] == (
+        "0.0.0.0:8888"
+    )
+    jobs = {
+        job["job_name"]: job["static_configs"][0]["targets"]
+        for job in _PROMETHEUS_CONFIG["scrape_configs"]
+    }
+    assert jobs == {
+        "otel-collector-internal": ["otel-collector:8888"],
+        "thenetwork-audit-activity": ["otel-collector:8889"],
+    }
+
+
+def test_prometheus_service_is_pinned_private_and_persistent():
+    compose = _COMPOSE_CONFIG
+    prometheus = compose["services"]["prometheus"]
+
+    assert prometheus["image"] == "prom/prometheus:v3.5.5"
+    assert prometheus["ports"] == ["127.0.0.1:9090:9090"]
+    assert "prometheus-data:/prometheus" in prometheus["volumes"]
+    assert "prometheus-data" in compose["volumes"]
+    assert "--storage.tsdb.retention.time=30d" in prometheus["command"]
+    assert prometheus["depends_on"]["otel-collector"]["condition"] == (
+        "service_started"
+    )
+    assert "healthcheck" not in compose["services"]["otel-collector"], (
+        "the collector image has no wget/curl; scrape targets prove readiness"
+    )
+    assert "ports" not in compose["services"]["worker"], (
+        "worker metrics must remain collector-derived with no inbound port"
+    )
+
+
+def test_metrics_configs_do_not_project_identifiers_into_labels():
+    metrics_config = {
+        "connector": _COLLECTOR_CONFIG["connectors"]["count/audit"],
+        "prometheus": _PROMETHEUS_CONFIG,
+    }
+    serialized = yaml.safe_dump(metrics_config).lower()
+    prohibited_labels = {
+        "trace_id",
+        "run_id",
+        "sender_id_hash",
+        "email",
+        "content",
+        "person_id",
+        "event_id",
+    }
+    for label in prohibited_labels:
+        assert f"{label}:" not in serialized
+        assert f'["{label}"]' not in serialized
 
 
 # ---------------------------------------------------------------------------
