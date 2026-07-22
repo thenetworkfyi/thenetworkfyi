@@ -27,6 +27,12 @@ from thenetwork.email.intake_control import (
 )
 from thenetwork.model_config import model_with_api_key
 from thenetwork.settings import get_settings
+from thenetwork.worker.metrics import (
+    ControlAction,
+    ControlActor,
+    ControlReason,
+    record_control_action,
+)
 from thenetwork.worker.tasks import app
 
 ABUSE_JUDGE_LOOKBACK = timedelta(hours=24)
@@ -294,6 +300,12 @@ async def judge_primary_email_abuse(timestamp: int) -> None:
         else "success",
     )
     if transition is not None:
+        if transition.changed:
+            record_control_action(
+                action=ControlAction.PAUSE,
+                actor=ControlActor.SYSTEM,
+                reason=ControlReason.COORDINATED_ABUSE,
+            )
         audit_event(
             "database.action",
             action="pause",

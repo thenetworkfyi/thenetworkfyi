@@ -1,7 +1,7 @@
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 from thenetwork.db.models import PrimaryIntakeState
 from thenetwork.email.intake_control import (
@@ -10,6 +10,7 @@ from thenetwork.email.intake_control import (
     pause_primary_intake,
     resume_primary_intake,
 )
+from thenetwork.worker.metrics import ControlAction, ControlActor, ControlReason
 
 
 def _session_context(session):
@@ -51,6 +52,9 @@ def test_pause_and_resume_notify_once_per_state_transition():
         ),
         patch("thenetwork.email.intake_control.get_settings", return_value=settings),
         patch("thenetwork.email.intake_control.notify_admins") as notify_admins,
+        patch(
+            "thenetwork.email.intake_control.record_control_action"
+        ) as record_control,
     ):
         first_pause = pause_primary_intake(PrimaryIntakePauseReason.ADMIN)
         repeated_pause = pause_primary_intake(PrimaryIntakePauseReason.ADMIN)
@@ -62,6 +66,18 @@ def test_pause_and_resume_notify_once_per_state_transition():
     assert resumed.changed is True
     assert repeated_resume.changed is False
     assert notify_admins.call_count == 2
+    assert record_control.call_args_list == [
+        call(
+            action=ControlAction.PAUSE,
+            actor=ControlActor.ADMIN,
+            reason=ControlReason.ADMIN,
+        ),
+        call(
+            action=ControlAction.RESUME,
+            actor=ControlActor.ADMIN,
+            reason=ControlReason.ADMIN,
+        ),
+    ]
     pause_notice, resume_notice = notify_admins.call_args_list
     assert pause_notice.args[0] is settings
     assert pause_notice.args[1:] == (

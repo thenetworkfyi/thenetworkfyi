@@ -12,6 +12,7 @@ from thenetwork.db.models import (
 )
 from thenetwork.email.inbound import InboundMessage
 from thenetwork.email.intake_observations import observe_primary_intake_batch
+from thenetwork.worker.metrics import ControlAction, ControlActor, ControlReason
 
 
 def _message(index: int, *, sender: str | None = None, authenticated=False):
@@ -64,6 +65,11 @@ def _database(monkeypatch):
 def test_twenty_five_distinct_unregistered_senders_atomically_pause(monkeypatch):
     engine = _database(monkeypatch)
     messages = [_message(index) for index in range(25)]
+    recorded = []
+    monkeypatch.setattr(
+        "thenetwork.email.intake_observations.record_control_action",
+        lambda **kwargs: recorded.append(kwargs),
+    )
 
     result = observe_primary_intake_batch(messages, secret="monitor-secret")
 
@@ -77,6 +83,13 @@ def test_twenty_five_distinct_unregistered_senders_atomically_pause(monkeypatch)
     assert state.paused is True
     assert state.pause_reason == "new_sender_burst"
     assert len(rows) == 25
+    assert recorded == [
+        {
+            "action": ControlAction.PAUSE,
+            "actor": ControlActor.SYSTEM,
+            "reason": ControlReason.NEW_SENDER_BURST,
+        }
+    ]
 
     stored = "\n".join(
         str(
