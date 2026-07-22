@@ -1,0 +1,12 @@
+# HELP thenetwork_producer_last_success_timestamp_seconds Unix timestamp of the last completed IMAP poll.
+# TYPE thenetwork_producer_last_success_timestamp_seconds gauge
+thenetwork_producer_last_success_timestamp_seconds 1784732400
+# HELP thenetwork_job_queue_depth Runnable or overdue Procrastinate jobs.
+# TYPE thenetwork_job_queue_depth gauge
+thenetwork_job_queue_depth 3
+# HELP thenetwork_oldest_pending_job_age_seconds Age of the oldest runnable or overdue job.
+# TYPE thenetwork_oldest_pending_job_age_seconds gauge
+thenetwork_oldest_pending_job_age_seconds 120
+# HELP thenetwork_primary_intake_paused Whether durable primary intake state is paused.
+# TYPE thenetwork_primary_intake_paused gauge
+thenetwork_primary_intake_paused 1

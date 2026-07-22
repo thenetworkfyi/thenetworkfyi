@@ -22,6 +22,9 @@ _COLLECTOR_CONFIG = yaml.safe_load(
 )
 _COMPOSE_CONFIG = yaml.safe_load((_REPO_ROOT / "docker-compose.yml").read_text())
 _PROMETHEUS_CONFIG = yaml.safe_load((_REPO_ROOT / "prometheus.yml").read_text())
+_WORKER_METRIC_SOURCE_CONFIG = yaml.safe_load(
+    (_REPO_ROOT / "tests/fixtures/otel-worker-metrics-source.yaml").read_text()
+)
 
 
 def _condition_matches(condition: str, attributes: dict) -> bool:
@@ -215,8 +218,11 @@ def test_collector_derives_bounded_counter_catalog_from_redacted_audit_logs():
     pipelines = _COLLECTOR_CONFIG["service"]["pipelines"]
     assert pipelines["logs"]["exporters"] == ["otlp", "count/audit"]
     assert pipelines["metrics/audit"] == {
-        "receivers": ["count/audit"],
+        "receivers": ["count/audit", "otlp/worker_metrics"],
         "exporters": ["prometheus/audit"],
+    }
+    assert _COLLECTOR_CONFIG["receivers"]["otlp/worker_metrics"] == {
+        "protocols": {"http": {"endpoint": "0.0.0.0:4318"}}
     }
     assert _COLLECTOR_CONFIG["exporters"]["prometheus/audit"]["endpoint"] == (
         "0.0.0.0:8889"
@@ -405,6 +411,47 @@ def test_prometheus_service_is_pinned_private_and_persistent():
     assert "ports" not in compose["services"]["worker"], (
         "worker metrics must remain collector-derived with no inbound port"
     )
+
+
+def test_worker_state_metrics_use_internal_outbound_otlp_path():
+    worker = _COMPOSE_CONFIG["services"]["worker"]
+    expected_environment = {
+        "WORKER_METRICS_OTLP_ENDPOINT": (
+            "${WORKER_METRICS_OTLP_ENDPOINT:-http://otel-collector:4318/v1/metrics}"
+        ),
+        "WORKER_METRICS_EXPORT_INTERVAL_SECONDS": (
+            "${WORKER_METRICS_EXPORT_INTERVAL_SECONDS:-30}"
+        ),
+        "WORKER_METRICS_EXPORT_TIMEOUT_SECONDS": (
+            "${WORKER_METRICS_EXPORT_TIMEOUT_SECONDS:-5}"
+        ),
+        "WORKER_METRICS_COLLECTION_TIMEOUT_SECONDS": (
+            "${WORKER_METRICS_COLLECTION_TIMEOUT_SECONDS:-2}"
+        ),
+    }
+    for name, value in expected_environment.items():
+        assert worker["environment"][name] == value
+    assert "ports" not in worker
+
+    pipeline = _WORKER_METRIC_SOURCE_CONFIG["service"]["pipelines"]["metrics"]
+    assert pipeline == {"receivers": ["prometheus"], "exporters": ["otlphttp"]}
+    assert _WORKER_METRIC_SOURCE_CONFIG["exporters"]["otlphttp"]["endpoint"] == (
+        "http://otel-collector:4318"
+    )
+
+    fixture = (_REPO_ROOT / "tests/fixtures/worker-metrics/metrics").read_text()
+    expected_metrics = {
+        "thenetwork_producer_last_success_timestamp_seconds",
+        "thenetwork_job_queue_depth",
+        "thenetwork_oldest_pending_job_age_seconds",
+        "thenetwork_primary_intake_paused",
+    }
+    sample_names = {
+        line.split()[0]
+        for line in fixture.splitlines()
+        if line and not line.startswith("#")
+    }
+    assert sample_names == expected_metrics
 
 
 def test_metrics_configs_do_not_project_identifiers_into_labels():

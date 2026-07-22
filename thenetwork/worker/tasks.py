@@ -448,9 +448,11 @@ def main() -> None:
     import asyncio
     from thenetwork.embed.embeddings import validate_embedding_configuration
     from thenetwork.security.content_scan import assert_content_scanner_ready
+    from thenetwork.worker.metrics import configure_worker_metrics
 
     validate_embedding_configuration()
     configure_audit_logging()
+    configure_worker_metrics()
     assert_presidio_ready()
     assert_content_scanner_ready()
     asyncio.run(run_worker())
