@@ -48,6 +48,10 @@ services:
       # LlamaFirewall stores its downloaded Prompt Guard model here. The named
       # volume makes startup preload a one-time download when scanning is on.
       HF_HOME: /home/appuser/.cache/huggingface
+      WORKER_METRICS_OTLP_ENDPOINT: ${WORKER_METRICS_OTLP_ENDPOINT:-http://otel-collector:4318/v1/metrics}
+      WORKER_METRICS_EXPORT_INTERVAL_SECONDS: ${WORKER_METRICS_EXPORT_INTERVAL_SECONDS:-30}
+      WORKER_METRICS_EXPORT_TIMEOUT_SECONDS: ${WORKER_METRICS_EXPORT_TIMEOUT_SECONDS:-5}
+      WORKER_METRICS_COLLECTION_TIMEOUT_SECONDS: ${WORKER_METRICS_COLLECTION_TIMEOUT_SECONDS:-2}
     logging:
       driver: fluentd
       options:
@@ -74,6 +78,7 @@ services:
     environment:
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
       OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
+      OTEL_EXPORTER_OTLP_INSECURE: ${OTEL_EXPORTER_OTLP_INSECURE:-false}
     logging:
       driver: json-file
       options:
@@ -81,14 +86,125 @@ services:
         max-file: "3"
     ports:
       - "127.0.0.1:24224:24224"
-    healthcheck:
-      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:13133/ || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.5.5
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus-alert-rules.yml:/etc/prometheus/rules/thenetwork.yml:ro
+      - prometheus-data:/prometheus
+    # The UI is for local operator access only. Prometheus reaches collector
+    # metric endpoints over the internal Compose network.
+    ports:
+      - "127.0.0.1:9090:9090"
+    depends_on:
+      otel-collector:
+        condition: service_started
+      alertmanager:
+        condition: service_started
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+  alertmanager:
+    image: prom/alertmanager:v0.32.1
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+      - "--web.listen-address=0.0.0.0:9093"
+      - "--cluster.listen-address="
+      - "--enable-feature=utf8-strict-mode"
+    configs:
+      - source: alertmanager-config
+        target: /etc/alertmanager/alertmanager.yml
+    secrets:
+      - source: alertmanager-smtp-password
+        target: alertmanager-smtp-password
+    volumes:
+      - alertmanager-data:/alertmanager
+    # Alertmanager is reachable by Prometheus on the internal Compose network.
+    # Its operator UI is not exposed beyond the local host.
+    ports:
+      - "127.0.0.1:9093:9093"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     restart: unless-stopped
 
 volumes:
   pgdata:
   hf-cache:
+  prometheus-data:
+  alertmanager-data:
 
+secrets:
+  alertmanager-smtp-password:
+    file: ${ALERTMANAGER_SMTP_PASSWORD_FILE:-/dev/null}
+
+configs:
+  alertmanager-config:
+    # Compose interpolation supplies deployment-specific addressing without
+    # committing an operator address. Alertmanager reads the SMTP credential
+    # only from the mounted secret file above.
+    content: |
+      global:
+        resolve_timeout: 5m
+        smtp_smarthost: "${ALERTMANAGER_SMTP_SMARTHOST:-}"
+        smtp_from: "${ALERTMANAGER_SMTP_FROM:-}"
+        smtp_auth_username: "${ALERTMANAGER_SMTP_USERNAME:-}"
+        smtp_auth_password_file: /run/secrets/alertmanager-smtp-password
+        smtp_require_tls: ${ALERTMANAGER_SMTP_REQUIRE_TLS:-true}
+
+      route:
+        receiver: operator-email
+        group_by: [alertname, severity, category]
+        group_wait: ${ALERTMANAGER_GROUP_WAIT:-30s}
+        group_interval: ${ALERTMANAGER_GROUP_INTERVAL:-5m}
+        repeat_interval: ${ALERTMANAGER_WARNING_REPEAT_INTERVAL:-12h}
+        routes:
+          - receiver: operator-email
+            matchers: ['category="event"']
+            group_wait: 0s
+            group_interval: ${ALERTMANAGER_EVENT_GROUP_INTERVAL:-1m}
+            repeat_interval: ${ALERTMANAGER_EVENT_REPEAT_INTERVAL:-24h}
+          - receiver: operator-email
+            matchers: ['severity="critical"']
+            group_wait: ${ALERTMANAGER_CRITICAL_GROUP_WAIT:-10s}
+            repeat_interval: ${ALERTMANAGER_CRITICAL_REPEAT_INTERVAL:-1h}
+          - receiver: operator-email
+            matchers: ['severity="warning"']
+            repeat_interval: ${ALERTMANAGER_WARNING_REPEAT_INTERVAL:-12h}
+
+      inhibit_rules:
+        - source_matchers: ['alertname="CollectorUnavailable"']
+          target_matchers: ['scope="worker"']
+          equal: [service]
+
+      receivers:
+        - name: operator-email
+          email_configs:
+            - to: "${ALERTMANAGER_OPERATOR_EMAIL:-}"
+              send_resolved: true
+              html: ""
+              headers:
+                Subject: '[{{ .Status }}] The Network {{ .CommonLabels.alertname }}'
+              text: |-
+                Status: {{ .Status }}
+                {{ range .Alerts -}}
+                Alert: {{ .Labels.alertname }}
+                Severity: {{ .Labels.severity }}
+                Action: {{ .Labels.action }}
+                Reason: {{ .Labels.reason }}
+                Summary: {{ .Annotations.summary }}
+                Runbook: {{ .Annotations.runbook }}
+                {{ end }}

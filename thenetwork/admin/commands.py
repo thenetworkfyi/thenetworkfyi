@@ -33,6 +33,12 @@ from thenetwork.email.intake_control import (
 )
 from thenetwork.memory.sanitize import sanitize_memory_high_fidelity
 from thenetwork.security.rate_limit import normalize_rate_limit_identity
+from thenetwork.worker.metrics import (
+    ControlAction,
+    ControlActor,
+    ControlReason,
+    record_control_action,
+)
 
 
 async def handle_admin_command(command: str, body_text: str) -> str:
@@ -250,6 +256,11 @@ async def _cmd_ban(email: str) -> str:
     audit_event(
         "database.action", action="ban", record_type="person", outcome="success"
     )
+    record_control_action(
+        action=ControlAction.BAN,
+        actor=ControlActor.ADMIN,
+        reason=ControlReason.ADMIN,
+    )
     return f"Banned email: {email}"
 
 
@@ -266,5 +277,10 @@ async def _cmd_unban(email: str) -> str:
         session.commit()
     audit_event(
         "database.action", action="unban", record_type="person", outcome="success"
+    )
+    record_control_action(
+        action=ControlAction.UNBAN,
+        actor=ControlActor.ADMIN,
+        reason=ControlReason.ADMIN,
     )
     return f"Unbanned email: {email}"

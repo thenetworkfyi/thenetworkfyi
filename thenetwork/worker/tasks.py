@@ -40,7 +40,6 @@ from thenetwork.email.intake_control import is_primary_intake_paused
 from thenetwork.email.outbound import (
     _direct_reply_kwargs,
     _thread_headers,
-    notify_admins,
     send_relay_email,
     send_reply,
 )
@@ -65,6 +64,7 @@ from thenetwork.security.rate_limit import (
 )
 from thenetwork.security.sender_identifier import optional_sender_identifier
 from thenetwork.settings import get_settings
+from thenetwork.worker.metrics import record_job_exhausted
 
 app = procrastinate.App(
     # Procrastinate's own DSN (plain postgresql://); Procrastinate 3.x takes
@@ -421,13 +421,7 @@ async def process_email(
                 context is not None
                 and context.job.attempts >= _PROCESS_EMAIL_MAX_ATTEMPTS
             ):
-                notify_admins(
-                    get_settings(),
-                    "[The Network] Agent processing failed",
-                    "The agent failed on its final processing attempt. "
-                    "Use the trace id in the audit log to investigate.",
-                    trace_id=trace_id,
-                )
+                record_job_exhausted()
             raise
 
 
@@ -448,9 +442,11 @@ def main() -> None:
     import asyncio
     from thenetwork.embed.embeddings import validate_embedding_configuration
     from thenetwork.security.content_scan import assert_content_scanner_ready
+    from thenetwork.worker.metrics import configure_worker_metrics
 
     validate_embedding_configuration()
     configure_audit_logging()
+    configure_worker_metrics()
     assert_presidio_ready()
     assert_content_scanner_ready()
     asyncio.run(run_worker())

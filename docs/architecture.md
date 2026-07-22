@@ -52,8 +52,9 @@ a manual one-shot poll for cron/debugging.
   and body fingerprints before enqueue; a 25-distinct-new-sender rolling-hour burst pauses
   the primary batch before it can be marked seen. The hourly fixed-policy judge sees only a
   bounded, sender-diverse 24-hour sample with run-local opaque labels. A strict
-  `coordinated_abuse` verdict can only pause primary intake and send fixed operator copy.
-  It has no tools, raw content, identities, relay input, or resume capability. While paused,
+  `coordinated_abuse` verdict can only pause primary intake and increment a bounded system
+  control metric that Alertmanager owns. It has no tools, raw content, identities, relay
+  input, direct mail path, or resume capability. While paused,
   ordinary primary messages remain unread; verified admin and relay candidates still run.
 - **Inbound body extraction** (`email/inbound.py`): prefers imap-tools'
   `MailMessage.text`, falling back to `MailMessage.html` run through BeautifulSoup to
