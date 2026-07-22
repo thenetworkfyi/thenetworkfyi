@@ -36,7 +36,9 @@ prompt-injection exfiltrate it, so the privacy boundary cannot be "withhold a co
    that sees raw cross-user data stays small and auditable; the main agent never
    self-censors.
 5. **Capability-style email tools (confused-deputy fix).** `reply_to_sender` has no
-   recipient argument and derives its only recipient from the inbound sender.
+   recipient argument and derives its only recipient from the authenticated inbound
+   sender, whether or not that sender has registered. `send_first_contact_welcome`
+   derives the same recipient and exposes no model-controlled subject or body.
    `send_outreach` takes an opaque `recipient_user_id`; the address is resolved
    server-side at send time. `send_event_recommendation` accepts only the opaque event
    id and content version bound into a server-authored trigger, derives the recipient

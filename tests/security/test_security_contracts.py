@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from thenetwork.agent.deps import AgentDeps
 from thenetwork.agent.tools import (
     reply_to_sender,
+    send_first_contact_welcome,
     send_outreach,
     propose_introduction,
     register_person,
@@ -222,6 +223,16 @@ async def test_reply_to_sender_has_no_model_selected_recipient():
     assert "to_address" not in params
     assert "email" not in params
     assert "body_html" not in params
+
+
+@pytest.mark.asyncio
+async def test_first_contact_welcome_has_no_model_selected_recipient_or_copy():
+    """The fixed welcome exposes no address, subject, or body arguments."""
+    import inspect
+
+    sig = inspect.signature(send_first_contact_welcome)
+    params = list(sig.parameters.keys())
+    assert params == ["ctx"]
 
 
 @pytest.mark.asyncio

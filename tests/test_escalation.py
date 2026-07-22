@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from limits import storage, strategies
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from thenetwork.agent.deps import AgentDeps
@@ -12,7 +13,18 @@ from thenetwork.settings import Settings
 def _make_settings(admin_emails=None):
     s = MagicMock(spec=Settings)
     s.admin_emails = admin_emails or []
+    s.dispatch_max_sends_per_run = 99
+    s.dispatch_recipient_daily_cap = 99
+    s.dispatch_sender_reply_daily_cap = 99
     return s
+
+
+@pytest.fixture(autouse=True)
+def _use_in_memory_dispatch_limiter():
+    from thenetwork.agent import tools
+
+    tools._dispatch_storage = storage.MemoryStorage()
+    tools._dispatch_limiter = strategies.FixedWindowRateLimiter(tools._dispatch_storage)
 
 
 def _ctx(
@@ -273,7 +285,9 @@ async def test_escalate_welcomes_and_notifies_admins_for_authenticated_unknown_s
         result = await escalate(ctx, reason="Ambiguous first contact")
 
     assert result == {"status": "welcomed_and_escalated"}
-    mock_completion.assert_called_once_with(tool_outcome="welcomed_and_escalated")
+    assert mock_completion.call_count == 2
+    mock_completion.assert_any_call(tool_outcome="sent")
+    mock_completion.assert_any_call(tool_outcome="welcomed_and_escalated")
     mock_send.assert_called_once_with(
         to_address="new@example.com",
         subject="Re: Question",

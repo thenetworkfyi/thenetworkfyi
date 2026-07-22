@@ -49,6 +49,10 @@ class AgentDeps:
     session_factory: Callable | None = None
     outbound_send_count: int = 0
     server_side_send_count: int = 0
+    # An authenticated sender without a Person record may receive either one
+    # fixed welcome or one model-written direct reply. Keep that choice
+    # mutually exclusive even when the model calls more than one tool.
+    unknown_sender_response_sent: bool = False
     introduction_proposal_count: int = 0
     # Server-owned replay state for mutating tools within one model run. Keys
     # are canonical argument fingerprints plus their occurrence in the first

@@ -9,7 +9,6 @@ from __future__ import annotations
 import base64
 
 import procrastinate
-from limits import parse, strategies
 from sqlmodel import select
 
 from thenetwork.admin.auth import (
@@ -32,19 +31,16 @@ from thenetwork.db.models import BannedEmail, Person
 from thenetwork.db.session import get_session
 from thenetwork.email.inbound import (
     MailboxKind,
-    REJECT_BODY_EMPTY,
     REJECT_BODY_OVERSIZE,
     BodyTooLargeError,
     cap_body,
     cap_subject,
-    is_near_empty_body,
 )
 from thenetwork.email.intake_control import is_primary_intake_paused
 from thenetwork.email.outbound import (
     _direct_reply_kwargs,
     _thread_headers,
     notify_admins,
-    reply_subject,
     send_relay_email,
     send_reply,
 )
@@ -55,7 +51,6 @@ from thenetwork.email.relay import (
     resolve_relay_destination,
 )
 from thenetwork.email.render import (
-    FirstContactWelcomeEmailContext,
     FixedEmailTemplate,
     InfrastructureRejectionEmailContext,
     InfrastructureRejectionReason,
@@ -65,7 +60,6 @@ from thenetwork.memory.sent_email import record_sent_email_memories
 from thenetwork.introductions import process_consent_reply
 from thenetwork.security.content_scan import scan_content
 from thenetwork.security.rate_limit import (
-    PostgresFixedWindowStorage,
     check_rate_limit,
     normalize_rate_limit_identity,
 )
@@ -95,38 +89,6 @@ app = procrastinate.App(
 REJECT_RATE_LIMIT = "rate_limit"
 REJECT_CONTENT_SCAN = "content_scan"
 REJECT_ADMIN_AUTH = "admin_auth_failed"
-
-_WELCOME_LIMIT = parse("1/day")
-_welcome_limiter: strategies.FixedWindowRateLimiter | None = None
-_welcome_storage: PostgresFixedWindowStorage | None = None
-
-
-def _get_welcome_limiter() -> tuple[strategies.FixedWindowRateLimiter, object]:
-    global _welcome_limiter, _welcome_storage
-    if _welcome_limiter is None:
-        _welcome_storage = PostgresFixedWindowStorage()
-        _welcome_limiter = strategies.FixedWindowRateLimiter(_welcome_storage)
-    return _welcome_limiter, _welcome_storage
-
-
-def _welcome_quota_key(sender_email: str) -> str:
-    identity = normalize_rate_limit_identity(sender_email)
-    return f"welcome:first-contact:{identity}"
-
-
-def _check_welcome_quota(sender_email: str) -> bool:
-    """Return whether the sender can receive a welcome, without consuming it."""
-    limiter, _ = _get_welcome_limiter()
-    try:
-        return limiter.test(_WELCOME_LIMIT, _welcome_quota_key(sender_email))
-    except Exception:
-        return False
-
-
-def _consume_welcome_quota(sender_email: str) -> None:
-    """Consume a welcome only after SMTP delivery succeeds."""
-    limiter, _ = _get_welcome_limiter()
-    limiter.hit(_WELCOME_LIMIT, _welcome_quota_key(sender_email))
 
 
 def _trace_kwargs(trace_id: str | None) -> dict[str, str]:
@@ -190,44 +152,6 @@ def _send_infrastructure_rejection_reply(
             inbound_references=inbound_references,
         ),
     )
-
-
-def _send_first_contact_welcome_reply(
-    *,
-    sender_email: str,
-    subject: str,
-    sender_authenticated: bool,
-    inbound_message_id: str | None = None,
-    inbound_references: str | None = None,
-    inbound_body_for_quote: str | None = None,
-    inbound_date: str | None = None,
-    trace_id: str | None = None,
-) -> bool:
-    if not sender_authenticated:
-        return False
-    if (
-        _sender_id_for_authenticated_sender(sender_email, sender_authenticated)
-        is not None
-    ):
-        return False
-    if not _check_welcome_quota(sender_email):
-        return False
-
-    send_reply(
-        to_address=sender_email,
-        subject=reply_subject(subject, fallback="How to join"),
-        fixed_template=FixedEmailTemplate.FIRST_CONTACT_WELCOME,
-        fixed_context=FirstContactWelcomeEmailContext(),
-        **_trace_kwargs(trace_id),
-        **_direct_reply_kwargs(
-            inbound_message_id=inbound_message_id,
-            inbound_body_for_quote=inbound_body_for_quote,
-            inbound_date=inbound_date,
-            inbound_references=inbound_references,
-        ),
-    )
-    _consume_welcome_quota(sender_email)
-    return True
 
 
 def _consent_remainder_body(remainder: str, outcome: str | None) -> str:
@@ -390,31 +314,6 @@ async def process_email(
 
         if source_mailbox == "primary" and is_primary_intake_paused():
             audit_event("worker.message_rejected", reason="primary_intake_paused")
-            return
-
-        if is_near_empty_body(body):
-            rate_limit_kwargs = {"sender_authenticated": sender_authenticated}
-            if is_proactive:
-                rate_limit_kwargs["skip_sender_limit"] = True
-            if not check_rate_limit(
-                sender_email,
-                **rate_limit_kwargs,
-            ):
-                audit_event("worker.message_rejected", reason=REJECT_RATE_LIMIT)
-                return
-            audit_event("worker.message_rejected", reason=REJECT_BODY_EMPTY)
-            welcomed = _send_first_contact_welcome_reply(
-                sender_email=sender_email,
-                subject=subject,
-                sender_authenticated=sender_authenticated,
-                inbound_message_id=inbound_message_id,
-                inbound_references=inbound_references,
-                inbound_body_for_quote=inbound_body_for_quote or body,
-                inbound_date=inbound_date,
-                trace_id=trace_id,
-            )
-            if welcomed:
-                audit_event("worker.first_contact_welcome_sent")
             return
 
         rate_limit_kwargs = {"sender_authenticated": sender_authenticated}
