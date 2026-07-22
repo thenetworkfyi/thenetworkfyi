@@ -399,9 +399,9 @@ LlamaFirewall code and require neither model weights nor Hugging Face credential
 The container entrypoint runs `alembic upgrade head` before starting, so
 migrations apply automatically on every deploy.
 
-### OpenTelemetry Logs and Local Prometheus Metrics
+### OpenTelemetry Logs, Loki, and Local Prometheus Metrics
 
-`docker-compose.yml` includes an explicitly version-pinned OpenTelemetry Collector contrib service (`otel-collector`) that receives worker JSON logs via the Docker `fluentd` logging driver and derives local Prometheus counters from selected redacted audit records. The default stack requires no external telemetry backend. The collector exposes a healthcheck on port 13133.
+`docker-compose.yml` includes explicitly version-pinned OpenTelemetry Collector contrib and Loki services. The Collector receives worker JSON logs via Docker's `fluentd` logging driver, preserves and sends every original line to Loki, and derives local Prometheus counters from selected redacted audit records on the same pipeline. Loki retains 30 days in the persistent `loki-data` volume and exposes its API only at `127.0.0.1:3100`. The default stack requires no external telemetry backend and does not include Grafana.
 
 The same redacted log pipeline derives a bounded counter catalog for account creation, message processing and rejection, agent runs and tools, introduction transitions, outbound email, and relay forwarding. The worker also exports unlabelled producer-success, runnable-backlog, oldest-pending-age, and durable-intake-state gauges outbound to the Collector over OTLP/HTTP. A version-pinned Prometheus LTS service scrapes those metrics and the collector's own pipeline metrics over the internal Compose network. Prometheus persists its TSDB in `prometheus-data`, retains samples for 30 days, and binds its UI only to `http://127.0.0.1:9090`. Pinned Alertmanager receives rule state internally, persists notification and silence state, and binds its UI only to `http://127.0.0.1:9093`. Operator email uses deployment-provided SMTP settings from `.env`. The worker opens no metrics port. Collector conditions allow-list every projected counter category value; trace IDs, run IDs, sender pseudonyms, mail content, exception text, job arguments, and opaque person/event identifiers are never metric labels or notification content. See [docs/monitoring.md](docs/monitoring.md) for metric semantics, alert thresholds, routing, runbooks, and validation.
 
@@ -417,9 +417,12 @@ docker run --rm --entrypoint /bin/promtool \
   prom/prometheus:v3.5.5 check config /etc/prometheus/prometheus.yml
 docker compose up -d
 curl http://127.0.0.1:9090/api/v1/targets
+curl --get http://127.0.0.1:3100/loki/api/v1/query_range \
+  --data-urlencode 'query={service_name="thenetwork-worker"}' \
+  --data-urlencode 'since=1h'
 ```
 
-The targets page/API should report both `otel-collector-internal` and `thenetwork-audit-activity` as `up`. Run `./validate-monitoring.sh` to exercise the worker-state OTLP path, Prometheus rule tests, and Alertmanager configuration and readiness without sending email. The validator does not inject Docker logs; the bounded counter catalog is covered by the Collector configuration tests. This increment deliberately excludes Grafana, host exporters, and Postgres exporters.
+The targets page/API should report `otel-collector-internal`, `thenetwork-audit-activity`, and `loki` as `up`. Run `./validate-monitoring.sh` to exercise the worker-state OTLP path and the complete Fluent Forward → Collector → Loki path, including a direct LogQL query and exactly-once metric derivation. It validates rules and Alertmanager without sending email. This increment deliberately excludes Grafana, host exporters, and Postgres exporters.
 
 ### Safe redeploys (no lost or half-processed jobs)
 

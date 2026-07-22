@@ -1,12 +1,49 @@
 # Monitoring
 
-The Compose stack derives Prometheus counters from redacted audit log records
-received by the OpenTelemetry Collector. The worker does not expose an inbound
-metrics port. Prometheus scrapes the Collector over the internal Compose
-network and binds its UI only to `127.0.0.1:9090`. Prometheus sends firing and
-resolved alerts to the pinned Alertmanager service at `alertmanager:9093`;
-Alertmanager persists its state and binds its operator UI only to
-`127.0.0.1:9093`.
+The Compose stack retains worker logs in Loki and derives Prometheus counters
+from the same records received by the OpenTelemetry Collector. Loki,
+Prometheus, and Alertmanager persist their data in separate named volumes and
+bind their operator endpoints only to loopback. The worker does not expose an
+inbound metrics port.
+
+## Log storage and querying
+
+The Collector sends every worker log to `loki:3100` over Loki's native OTLP
+endpoint while also sending the same record to the existing `count/audit`
+connector. The transform extracts JSON fields as structured metadata without
+clearing the original body, so the complete emitted JSON line remains readable
+in query results. The static resource value `service.name=thenetwork-worker`
+becomes the indexed Loki label `service_name`; per-event values remain
+structured metadata rather than indexed labels.
+
+Loki stores its TSDB index and chunks in the `loki-data` volume. The Compactor
+enforces a 30-day (`720h`) retention period. Loki does not enforce a disk-size
+limit, so host free space still needs normal operational monitoring. No Loki
+credentials or other new environment variables are required for this internal,
+single-tenant deployment. The HTTP API binds to `127.0.0.1:3100`; it is not
+publicly exposed, and Grafana is not installed.
+
+Query the last hour directly through the Loki API:
+
+```bash
+curl --get 'http://127.0.0.1:3100/loki/api/v1/query_range' \
+  --data-urlencode 'query={service_name="thenetwork-worker"}' \
+  --data-urlencode 'since=1h' \
+  --data-urlencode 'limit=100' | jq
+```
+
+Or use a locally installed `logcli` binary:
+
+```bash
+logcli --addr=http://127.0.0.1:3100 \
+  query '{service_name="thenetwork-worker"}' --since=1h --limit=100
+```
+
+Filter the retained JSON lines with LogQL, for example:
+
+```logql
+{service_name="thenetwork-worker"} | json | level="error"
+```
 
 ## Counter catalog
 
@@ -131,7 +168,9 @@ than once per Prometheus evaluation. Critical alerts repeat hourly, warnings
 repeat every 12 hours, and one-shot event alerts repeat after 24 hours only if
 they somehow remain firing. Every receiver sends a resolved notification.
 `CollectorUnavailable` inhibits worker-scoped alerts because those alerts
-cannot be trusted while their metric source is unavailable.
+cannot be trusted while their metric source is unavailable. `LokiUnavailable`
+inhibits `CollectorPipelineDegraded` so a single Loki outage produces one
+notification rather than an availability alert plus its downstream symptom.
 
 Event rules detect both an increase in an existing counter series and a new
 nonzero series with no sample two minutes earlier. The latter case is required
@@ -155,6 +194,8 @@ opaque entity IDs, or job arguments to rules or notification templates.
 | `AgentFailureRateElevated` | warning | More than 25 percent failures and at least five failures in 15 minutes. | 10m |
 | `MessageRejectionsSpiking` | warning | At least 20 rejected messages in 10 minutes. | 5m |
 | `CollectorUnavailable` | critical | Either Collector scrape target is down. | 2m |
+| `LokiUnavailable` | critical | The Loki scrape target is down. | 2m |
+| `CollectorPipelineDegraded` | critical | The Collector failed to send logs to Loki in 10 minutes or the Loki exporter queue exceeded 80 percent. | 5m |
 | `SystemControlActionObserved` | critical | A new system pause or future automatic ban counter increment. Administrator controls are excluded. | immediate |
 | `AgentUsageLimitExceeded` | warning | A new agent usage-limit interruption. | immediate |
 | `ProcessEmailJobExhausted` | critical | A final `process_email` attempt exhausted retries. Intermediate failures never increment this counter. | immediate |
@@ -197,6 +238,19 @@ changes. Investigate using restricted logs; never add sender-level labels.
 Check the Collector container and its ports `8888` and `8889` on the internal
 Compose network. Worker alerts are inhibited until this source recovers.
 
+### LokiUnavailable
+
+Check `docker compose ps loki` and `docker compose logs loki`, then request
+`http://127.0.0.1:3100/ready`. Confirm the `loki-data` volume is mounted and the
+host has free disk space before restarting. `CollectorPipelineDegraded` is
+inhibited while this root-cause alert is firing.
+
+### CollectorPipelineDegraded
+
+Check the Collector's `otlphttp/loki` exporter failures and queue metrics, then
+check Loki readiness and disk space. Restore delivery before restarting the
+Collector so queued records are not discarded unnecessarily.
+
 ### SystemControlActionObserved
 
 Confirm the bounded `action` and `reason`, inspect the corresponding current
@@ -220,7 +274,8 @@ application does not send a second admin email.
 Open the local UIs directly on the host or through an authenticated SSH tunnel:
 
 ```bash
-ssh -L 9090:127.0.0.1:9090 -L 9093:127.0.0.1:9093 operator@server
+ssh -L 3100:127.0.0.1:3100 -L 9090:127.0.0.1:9090 \
+  -L 9093:127.0.0.1:9093 operator@server
 ```
 
 Use `http://127.0.0.1:9090/alerts` for rule state and
@@ -248,8 +303,9 @@ docker compose run --rm --no-deps --entrypoint amtool alertmanager \
   check-config /etc/alertmanager/alertmanager.yml
 ```
 
-After rollout, verify both Prometheus targets are up and the Alertmanager status
-page reports the expected receiver. Verify the dedicated operator mailbox with
+After rollout, verify all three Prometheus targets (`otel-collector-internal`,
+`thenetwork-audit-activity`, and `loki`) are up and the Alertmanager status page
+reports the expected receiver. Verify the dedicated operator mailbox with
 a separately planned notification test during deployment. Silence only a
 specific alert for a bounded maintenance window; do not silence
 `CollectorUnavailable` globally.
@@ -266,14 +322,19 @@ Run the repository-root validation script on a host with Docker and `jq`:
 ./validate-monitoring.sh
 ```
 
-It validates the Compose, Collector, worker-metric fixture, Prometheus rules,
-and Alertmanager configuration; starts only the Collector, Prometheus, and
-Alertmanager; sends seven fixed worker metrics over OTLP/HTTP; and checks all
-seven with one Prometheus query. Promtool covers pending, firing, and resolved
-rule behavior without starting another service or sending email. The
-fixed-metric container performs queries over the internal Compose network,
-independent of host-port forwarding. The script does not inject Docker logs,
-connect to port `24224`, or send SMTP traffic. The worker remains stopped and
-exposes no inbound port.
-Validation containers and their network are removed before the script returns;
-named Prometheus and Alertmanager data volumes are preserved.
+It validates the Compose, Loki, Collector, worker-metric fixture, Prometheus
+rules, and Alertmanager configuration. It starts an isolated validation project
+on ephemeral loopback ports, sends seven fixed worker metrics over OTLP/HTTP,
+and checks them with Prometheus. It also injects one fixed worker JSON record
+through Docker's Fluent Forward logging driver, checks that Loki returns the
+original line exactly once, and checks that the derived Prometheus counter is
+exactly one. Promtool covers pending, firing, and resolved alert behavior; the
+script does not send email or start the worker or Grafana. Its containers,
+network, and validation-only named volumes are removed before it returns.
+
+For rollout recovery, keep `loki-data` when recreating services. A normal
+`docker compose up -d` reuses it. Do not use `docker compose down --volumes` in
+production unless deleting retained logs is intentional. If Loki cannot start,
+validate `loki-config.yaml`, inspect the volume mount and free space, then start
+Loki before the Collector. Existing Prometheus metrics remain separate in
+`prometheus-data`.

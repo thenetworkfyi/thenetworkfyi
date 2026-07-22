@@ -4,6 +4,57 @@ rule_files:
 evaluation_interval: 1m
 
 tests:
+  - name: loki availability moves from pending to firing and resolves
+    interval: 1m
+    input_series:
+      - series: 'up{job="loki"}'
+        values: 0x4 1x3
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: LokiUnavailable
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: LokiUnavailable
+        exp_alerts:
+          - exp_labels:
+              job: loki
+              severity: critical
+              service: thenetwork
+              scope: monitoring
+              category: telemetry
+            exp_annotations:
+              summary: Prometheus cannot scrape the local Loki service.
+              runbook: docs/monitoring.md#lokiunavailable
+      - eval_time: 5m
+        alertname: LokiUnavailable
+        exp_alerts: []
+
+  - name: loki exporter queue moves from pending to firing and resolves
+    interval: 1m
+    input_series:
+      - series: 'otelcol_exporter_queue_size{exporter="otlphttp/loki"}'
+        values: 900x7 0x3
+      - series: 'otelcol_exporter_queue_capacity{exporter="otlphttp/loki"}'
+        values: 1000x10
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: CollectorPipelineDegraded
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: CollectorPipelineDegraded
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service: thenetwork
+              scope: monitoring
+              category: telemetry
+            exp_annotations:
+              summary: The Collector failed to send logs to Loki or its Loki exporter queue exceeded 80 percent capacity.
+              runbook: docs/monitoring.md#collectorpipelinedegraded
+      - eval_time: 8m
+        alertname: CollectorPipelineDegraded
+        exp_alerts: []
+
   - name: backlog moves from pending to firing and resolves
     interval: 1m
     input_series:
