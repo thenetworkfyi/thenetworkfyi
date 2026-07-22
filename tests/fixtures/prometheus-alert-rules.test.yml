@@ -123,3 +123,104 @@ tests:
       - eval_time: 4m
         alertname: SystemControlActionObserved
         exp_alerts: []
+
+  - name: event alerts catch first samples later increments and resolutions
+    interval: 1m
+    input_series:
+      - series: 'thenetwork_control_actions_total{action="pause",actor="system",reason="new_sender_burst"}'
+        values: _ 1 1 1 1 1 2 2 2 2
+      - series: 'thenetwork_control_actions_total{action="pause",actor="admin",reason="admin"}'
+        values: _ 1 1 1 1 1 2 2 2 2
+      - series: thenetwork_agent_usage_limit_exceeded_total
+        values: _ 1 1 1 1 1 2 2 2 2
+      - series: thenetwork_jobs_exhausted_total
+        values: _ 1 1 1 1 1 2 2 2 2
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: SystemControlActionObserved
+        exp_alerts:
+          - exp_labels:
+              action: pause
+              reason: new_sender_burst
+              severity: critical
+              service: thenetwork
+              scope: worker
+              category: event
+            exp_annotations:
+              summary: An automated safety control changed operational state.
+              runbook: docs/monitoring.md#systemcontrolactionobserved
+      - eval_time: 1m
+        alertname: AgentUsageLimitExceeded
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              service: thenetwork
+              scope: worker
+              category: event
+            exp_annotations:
+              summary: An agent run stopped at the configured usage limit.
+              runbook: docs/monitoring.md#agentusagelimitexceeded
+      - eval_time: 1m
+        alertname: ProcessEmailJobExhausted
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service: thenetwork
+              scope: worker
+              category: event
+            exp_annotations:
+              summary: A process-email job exhausted all configured attempts.
+              runbook: docs/monitoring.md#processemailjobexhausted
+      - eval_time: 4m
+        alertname: SystemControlActionObserved
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: AgentUsageLimitExceeded
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: ProcessEmailJobExhausted
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: SystemControlActionObserved
+        exp_alerts:
+          - exp_labels:
+              action: pause
+              reason: new_sender_burst
+              severity: critical
+              service: thenetwork
+              scope: worker
+              category: event
+            exp_annotations:
+              summary: An automated safety control changed operational state.
+              runbook: docs/monitoring.md#systemcontrolactionobserved
+      - eval_time: 6m
+        alertname: AgentUsageLimitExceeded
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              service: thenetwork
+              scope: worker
+              category: event
+            exp_annotations:
+              summary: An agent run stopped at the configured usage limit.
+              runbook: docs/monitoring.md#agentusagelimitexceeded
+      - eval_time: 6m
+        alertname: ProcessEmailJobExhausted
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              service: thenetwork
+              scope: worker
+              category: event
+            exp_annotations:
+              summary: A process-email job exhausted all configured attempts.
+              runbook: docs/monitoring.md#processemailjobexhausted
+      - eval_time: 9m
+        alertname: SystemControlActionObserved
+        exp_alerts: []
+      - eval_time: 9m
+        alertname: AgentUsageLimitExceeded
+        exp_alerts: []
+      - eval_time: 9m
+        alertname: ProcessEmailJobExhausted
+        exp_alerts: []

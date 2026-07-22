@@ -85,6 +85,7 @@ def test_rules_filter_admin_controls_and_low_traffic_noise():
     assert 'actor="system"' in control_expr
     assert 'action=~"pause|ban"' in control_expr
     assert "admin" not in control_expr
+    assert "offset 2m" in control_expr
 
     intake_expr = rules["AutomatedPrimaryIntakePaused"]["expr"]
     assert 'reason=~"new_sender_burst|coordinated_abuse"' in intake_expr
@@ -97,6 +98,8 @@ def test_rules_filter_admin_controls_and_low_traffic_noise():
 
     exhausted_expr = rules["ProcessEmailJobExhausted"]["expr"]
     assert "thenetwork_jobs_exhausted_total" in exhausted_expr
+    assert "offset 2m" in exhausted_expr
+    assert "offset 2m" in rules["AgentUsageLimitExceeded"]["expr"]
 
 
 def test_application_notification_ownership_is_limited_to_agent_escalation():
@@ -248,4 +251,5 @@ def test_promtool_fixture_covers_pending_firing_and_resolution():
         "low traffic does not trigger agent failure rate",
         "agent failure rate requires traffic and stays elevated",
         "system controls notify without a for delay",
+        "event alerts catch first samples later increments and resolutions",
     }

@@ -98,7 +98,7 @@ groups:
           runbook: docs/monitoring.md#collectorpipelinedegraded
 
       - alert: SystemControlActionObserved
-        expr: sum by (action, reason) (increase(thenetwork_control_actions_total{actor="system",action=~"pause|ban"}[2m])) > 0
+        expr: sum by (action, reason) (increase(thenetwork_control_actions_total{actor="system",action=~"pause|ban"}[2m])) > 0 or sum by (action, reason) ((thenetwork_control_actions_total{actor="system",action=~"pause|ban"} > 0) unless thenetwork_control_actions_total{actor="system",action=~"pause|ban"} offset 2m)
         labels:
           severity: critical
           service: thenetwork
@@ -109,7 +109,7 @@ groups:
           runbook: docs/monitoring.md#systemcontrolactionobserved
 
       - alert: AgentUsageLimitExceeded
-        expr: increase(thenetwork_agent_usage_limit_exceeded_total[2m]) > 0
+        expr: increase(thenetwork_agent_usage_limit_exceeded_total[2m]) > 0 or (thenetwork_agent_usage_limit_exceeded_total > 0 unless thenetwork_agent_usage_limit_exceeded_total offset 2m)
         labels:
           severity: warning
           service: thenetwork
@@ -120,7 +120,7 @@ groups:
           runbook: docs/monitoring.md#agentusagelimitexceeded
 
       - alert: ProcessEmailJobExhausted
-        expr: increase(thenetwork_jobs_exhausted_total[2m]) > 0
+        expr: increase(thenetwork_jobs_exhausted_total[2m]) > 0 or (thenetwork_jobs_exhausted_total > 0 unless thenetwork_jobs_exhausted_total offset 2m)
         labels:
           severity: critical
           service: thenetwork
