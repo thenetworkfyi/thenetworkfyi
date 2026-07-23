@@ -192,10 +192,32 @@ def test_email_lifecycle_rolls_up_multiple_requests_and_cache_tokens(caplog):
     assert event["cache_write_tokens"] == 8
     assert event["estimated_cost_usd"] == 0.005
     assert event["model_duration_ms"] == 50
+    assert event["agent_observed"] is True
     assert event["total_duration_ms"] >= 1000
     assert event["queue_duration_ms"] >= 1000
     metrics.assert_called_once()
     assert metrics.call_args.kwargs["outcome"] == "success"
+    assert metrics.call_args.kwargs["agent_duration_seconds"] is not None
+
+
+def test_email_lifecycle_without_agent_skips_agent_histogram(caplog):
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    with (
+        patch("thenetwork.llm_observability.record_email_lifecycle_metrics") as metrics,
+        audit_trace("trace-no-agent"),
+        observe_email_lifecycle(time() - 1),
+    ):
+        pass
+
+    event = next(
+        item for item in _events(caplog) if item["event"] == "email.lifecycle.completed"
+    )
+    assert event["trace_id"] == "trace-no-agent"
+    assert event["agent_observed"] is False
+    assert event["agent_duration_ms"] == 0
+    metrics.assert_called_once()
+    assert metrics.call_args.kwargs["agent_duration_seconds"] is None
 
 
 def test_unknown_price_is_explicit_and_not_added_as_zero(caplog):
@@ -263,26 +285,27 @@ async def test_process_email_rollup_matches_request_metric_totals(caplog):
     metric_calls: list[dict] = []
 
     async def fake_agent(**_kwargs):
-        record_llm_request(
-            workload=LLMWorkload.EMAIL_AGENT,
-            configured_model_name="gpt-4.1-mini",
-            provider="openai",
-            duration_ms=100,
-            response=_response(input_tokens=100, output_tokens=20),
-        )
-        embedding_usage = RequestUsage(input_tokens=30, output_tokens=0)
-        record_llm_request(
-            workload=LLMWorkload.EMBEDDING,
-            configured_model_name="text-embedding-3-small",
-            provider="openai",
-            duration_ms=50,
-            response=ModelResponse(
-                parts=[],
-                usage=embedding_usage,
-                model_name="text-embedding-3-small",
-                provider_name="openai",
-            ),
-        )
+        with observe_agent_duration():
+            record_llm_request(
+                workload=LLMWorkload.EMAIL_AGENT,
+                configured_model_name="gpt-4.1-mini",
+                provider="openai",
+                duration_ms=100,
+                response=_response(input_tokens=100, output_tokens=20),
+            )
+            embedding_usage = RequestUsage(input_tokens=30, output_tokens=0)
+            record_llm_request(
+                workload=LLMWorkload.EMBEDDING,
+                configured_model_name="text-embedding-3-small",
+                provider="openai",
+                duration_ms=50,
+                response=ModelResponse(
+                    parts=[],
+                    usage=embedding_usage,
+                    model_name="text-embedding-3-small",
+                    provider_name="openai",
+                ),
+            )
 
     with (
         patch.object(
@@ -331,6 +354,7 @@ async def test_process_email_rollup_matches_request_metric_totals(caplog):
         item for item in _events(caplog) if item["event"] == "email.lifecycle.completed"
     )
     assert rollup["trace_id"] == "trace-process-email"
+    assert rollup["agent_observed"] is True
     assert rollup["model_request_count"] == len(metric_calls) == 2
     assert rollup["input_tokens"] == sum(
         item["input_tokens"] or 0 for item in metric_calls

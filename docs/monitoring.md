@@ -133,7 +133,7 @@ to the Collector over OTLP/HTTP. The worker still opens no listener:
 | `thenetwork_llm_request_duration_seconds` | `workload`, `provider`, `model`, `outcome` | Logical request latency, including the provider SDK's internal retries. |
 | `thenetwork_email_lifecycle_duration_seconds` | `outcome` | Poll-observed intake to task completion for jobs carrying an intake timestamp. |
 | `thenetwork_email_queue_duration_seconds` | `outcome` | Poll-observed intake to `process_email` start. |
-| `thenetwork_agent_run_duration_seconds` | `outcome` | Time spent in the agent path during each `process_email` attempt. |
+| `thenetwork_agent_run_duration_seconds` | `outcome` | Time spent in genuine agent runs. Attempts handled or rejected before the agent do not add zero-duration samples. |
 
 Database sampling and OTLP export are best effort. A failed state read emits no
 state-gauge observations for that collection interval, while producer polling,

@@ -70,6 +70,7 @@ class _LifecycleTotals:
     estimated_cost_usd: Decimal = Decimal("0")
     model_duration_ms: float = 0.0
     agent_duration_ms: float = 0.0
+    agent_observed: bool = False
 
 
 _lifecycle_totals: ContextVar[_LifecycleTotals | None] = ContextVar(
@@ -233,10 +234,12 @@ def observe_model(model: Model, *, workload: LLMWorkload) -> Model:
 @contextmanager
 def observe_agent_duration() -> Iterator[None]:
     started = monotonic()
+    totals = _lifecycle_totals.get()
+    if totals is not None:
+        totals.agent_observed = True
     try:
         yield
     finally:
-        totals = _lifecycle_totals.get()
         if totals is not None:
             totals.agent_duration_ms += max(0.0, (monotonic() - started) * 1000)
 
@@ -278,6 +281,7 @@ def observe_email_lifecycle(
             "queue_duration_ms": (
                 round(queue_duration_ms, 3) if queue_duration_ms is not None else None
             ),
+            "agent_observed": totals.agent_observed,
             "agent_duration_ms": round(totals.agent_duration_ms, 3),
             "model_duration_ms": round(totals.model_duration_ms, 3),
             "model_request_count": totals.model_request_count,
@@ -301,6 +305,8 @@ def observe_email_lifecycle(
             queue_duration_seconds=(
                 queue_duration_ms / 1000 if queue_duration_ms is not None else None
             ),
-            agent_duration_seconds=totals.agent_duration_ms / 1000,
+            agent_duration_seconds=(
+                totals.agent_duration_ms / 1000 if totals.agent_observed else None
+            ),
         )
         _lifecycle_totals.reset(token)
