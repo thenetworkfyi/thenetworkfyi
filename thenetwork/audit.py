@@ -147,6 +147,7 @@ _SAFE_FIELDS = frozenset(
         "cost_status",
         "duration_ms",
         "agent_duration_ms",
+        "agent_observed",
         "error_type",
         "estimated_cost_usd",
         "header_names",

@@ -403,6 +403,15 @@ def test_email_lifecycle_metrics_skip_missing_intake_duration(monkeypatch):
     assert queue.calls == []
     assert agent.calls == [(2.5, {"outcome": "success"})]
 
+    metrics.record_email_lifecycle_metrics(
+        outcome="success",
+        total_duration_seconds=None,
+        queue_duration_seconds=None,
+        agent_duration_seconds=None,
+    )
+
+    assert agent.calls == [(2.5, {"outcome": "success"})]
+
 
 def test_metric_exporter_setup_failure_is_contained(monkeypatch):
     monkeypatch.setattr(

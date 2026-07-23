@@ -1,9 +1,9 @@
-"""Best-effort outbound worker state metrics.
+"""Best-effort outbound worker operational and model-accounting metrics.
 
 The worker never opens a metrics listener. A background OpenTelemetry metric
-reader exports four unlabelled gauges to the Collector over OTLP/HTTP. Metric
-callbacks contain database and exporter failures so observability cannot alter
-email, queue, or intake behavior.
+reader exports state, event, model-accounting, and lifecycle instruments to the
+Collector over OTLP/HTTP. Metric callbacks and recorders contain database and
+exporter failures so observability cannot alter email, queue, or intake behavior.
 """
 
 from __future__ import annotations
@@ -420,7 +420,7 @@ def record_email_lifecycle_metrics(
     outcome: str,
     total_duration_seconds: float | None,
     queue_duration_seconds: float | None,
-    agent_duration_seconds: float,
+    agent_duration_seconds: float | None,
 ) -> None:
     if outcome not in _LLM_OUTCOMES:
         return
@@ -439,12 +439,13 @@ def record_email_lifecycle_metrics(
             max(0.0, queue_duration_seconds),
             attributes,
         )
-    _record_value(
-        _agent_run_duration_histogram,
-        "record",
-        max(0.0, agent_duration_seconds),
-        attributes,
-    )
+    if agent_duration_seconds is not None:
+        _record_value(
+            _agent_run_duration_histogram,
+            "record",
+            max(0.0, agent_duration_seconds),
+            attributes,
+        )
 
 
 def _state_callback(
