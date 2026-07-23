@@ -54,9 +54,10 @@ from thenetwork.email.render import (
     InfrastructureRejectionEmailContext,
     InfrastructureRejectionReason,
 )
+from thenetwork.llm_observability import observe_email_lifecycle
+from thenetwork.introductions import process_consent_reply
 from thenetwork.memory.sanitize import assert_presidio_ready
 from thenetwork.memory.sent_email import record_sent_email_memories
-from thenetwork.introductions import process_consent_reply
 from thenetwork.security.content_scan import scan_content
 from thenetwork.security.rate_limit import (
     check_rate_limit,
@@ -203,6 +204,7 @@ async def process_email(
     proactive_event_id: str | None = None,
     proactive_event_version: int | None = None,
     source_mailbox: MailboxKind | None = None,
+    intake_observed_at_epoch_seconds: float | None = None,
 ) -> None:
     """Procrastinate worker task: run the agent for one inbound email.
 
@@ -223,6 +225,7 @@ async def process_email(
         audit_run(),
         audit_trace(trace_id),
         audit_sender(optional_sender_identifier(sender_email)),
+        observe_email_lifecycle(intake_observed_at_epoch_seconds),
         audit_span(
             "worker.process_email",
             sender_present=bool(sender_email),

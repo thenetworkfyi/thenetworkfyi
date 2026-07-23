@@ -126,13 +126,17 @@ def sanitize_memory(memory: Memory, session: Session) -> str:
 async def sanitize_text_llm(text: str) -> str:
     """Apply the fixed, tool-free high-fidelity sanitizer to freeform text."""
     from pydantic_ai import Agent
+    from thenetwork.llm_observability import LLMWorkload
     from thenetwork.model_config import model_with_api_key
     from thenetwork.settings import get_settings
 
     s = get_settings()
     sanitizer: Agent[None, str] = Agent(
         model=model_with_api_key(
-            s.small_agent_model, s.small_agent_api_key, s.model_request_timeout_seconds
+            s.small_agent_model,
+            s.small_agent_api_key,
+            s.model_request_timeout_seconds,
+            workload=LLMWorkload.MEMORY_SANITIZER,
         ),
         system_prompt=SANITIZER_SYSTEM_PROMPT,
         output_type=str,

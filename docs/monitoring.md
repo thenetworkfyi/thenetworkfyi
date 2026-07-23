@@ -45,6 +45,52 @@ Filter the retained JSON lines with LogQL, for example:
 {service_name="thenetwork-worker"} | json | level="error"
 ```
 
+## LLM request and email lifecycle accounting
+
+Every logical Pydantic AI request emits a content-free
+`llm.request.completed` record. This is above the provider SDK's transport
+retry layer, so `model.http_attempt.completed` remains the place to diagnose
+individual HTTP attempts while `llm.request.completed` counts a successfully
+returned or terminally failed logical request once. LlamaIndex embedding
+batches emit the same accounting record without changing its batching or retry
+behavior.
+
+The request record includes the existing opaque `trace_id`, one of the bounded
+workloads `email_agent`, `memory_sanitizer`, `abuse_judge`, or `embedding`, the
+provider and model, request outcome and duration, input/output/cache token
+counts when available, and `estimated_cost_usd`. `cost_status="unavailable"`
+and a null cost distinguish missing price metadata or a failed request from a
+genuine zero-cost request. Prompts, completions, embedding text, tool arguments,
+and exception messages are never included in this record.
+
+Find a recent intake record, copy its `trace_id`, and then inspect the complete
+application timeline for that email:
+
+```bash
+logcli --addr=http://127.0.0.1:3100 --quiet --output=raw \
+  query --since=24h --limit=100 \
+  '{service_name="thenetwork-worker"} | json | event="intake.message_received"'
+
+TRACE_ID='copy-the-opaque-trace-id'
+logcli --addr=http://127.0.0.1:3100 --quiet --output=raw --forward \
+  query --since=24h --limit=500 \
+  "{service_name=\"thenetwork-worker\"} | json | trace_id=\"$TRACE_ID\""
+```
+
+Each `process_email` attempt finishes with one `email.lifecycle.completed`
+record. It rolls up request counts, tokens, estimated cost, model time, and
+agent time for that attempt. For ordinary IMAP intake it also reports queue
+time and total observed time from `intake.message_received` to task completion.
+That clock starts when the one-minute poll first sees the message, not at the
+mail provider's original delivery timestamp. Retries reuse the same `trace_id`
+and produce another attempt rollup; sum the trace's `llm.request.completed`
+records when investigating total cost across all attempts.
+
+Recorded dollar values are point-in-time estimates from the model, provider,
+request timestamp, and bundled pricing metadata. They are useful for
+attribution and trends but do not replace the provider's invoice, which remains
+authoritative.
+
 ## Counter catalog
 
 All names below are the Prometheus names returned by the query API. The
@@ -63,7 +109,7 @@ exporter normalizes dots to underscores and adds the `_total` suffix.
 | `thenetwork_outbound_emails_total` | `email.smtp_send.completed` | `outcome`, `template_id` | Completed SMTP attempts. Each recipient delivery has its own span, including the two deliveries for a completed introduction. |
 | `thenetwork_relay_messages_forwarded_total` | Successful `worker.relay_forwarded` | None from logs | Participant relay messages handed to the outbound path successfully. |
 
-The worker also sends four state gauges and three operational counters outbound
+The worker also sends state, operational, and model-accounting metrics outbound
 to the Collector over OTLP/HTTP. The worker still opens no listener:
 
 | Prometheus gauge | Labels | Meaning |
@@ -78,6 +124,16 @@ to the Collector over OTLP/HTTP. The worker still opens no listener:
 | `thenetwork_control_actions_total` | `action`, `actor`, `reason` | Committed state-changing pause, resume, ban, and unban operations. No-op requests do not increment it. `actor` is `admin` or `system`; reasons are closed server-owned categories. |
 | `thenetwork_agent_usage_limit_exceeded_total` | None | Agent runs interrupted by the configured Pydantic AI usage limit. Each interrupted run increments once. |
 | `thenetwork_jobs_exhausted_total` | None | `process_email` jobs that failed their final configured Procrastinate attempt. Intermediate retry failures do not increment it. |
+| `thenetwork_llm_requests_total` | `workload`, `provider`, `model`, `outcome`, `cost_status` | Logical model and embedding requests. `cost_status` distinguishes priced estimates from unavailable pricing. |
+| `thenetwork_llm_tokens_total` | `workload`, `provider`, `model`, `outcome`, `token_type` | Input, output, cache-read, and cache-write tokens reported or locally counted for embedding batches. |
+| `thenetwork_llm_estimated_cost_usd_total` | `workload`, `provider`, `model` | Point-in-time estimated USD cost. Requests without price metadata do not add a synthetic zero. |
+
+| Prometheus histogram | Labels | Meaning |
+| --- | --- | --- |
+| `thenetwork_llm_request_duration_seconds` | `workload`, `provider`, `model`, `outcome` | Logical request latency, including the provider SDK's internal retries. |
+| `thenetwork_email_lifecycle_duration_seconds` | `outcome` | Poll-observed intake to task completion for jobs carrying an intake timestamp. |
+| `thenetwork_email_queue_duration_seconds` | `outcome` | Poll-observed intake to `process_email` start. |
+| `thenetwork_agent_run_duration_seconds` | `outcome` | Time spent in the agent path during each `process_email` attempt. |
 
 Database sampling and OTLP export are best effort. A failed state read emits no
 state-gauge observations for that collection interval, while producer polling,
@@ -135,6 +191,22 @@ sum(increase(thenetwork_control_actions_total{actor="system"}[1h])) by (action, 
 increase(thenetwork_agent_usage_limit_exceeded_total[1h])
 
 increase(thenetwork_jobs_exhausted_total[1h])
+
+sum(increase(thenetwork_llm_estimated_cost_usd_total[24h])) by (workload, provider, model)
+
+sum(increase(thenetwork_llm_tokens_total[24h])) by (workload, token_type)
+
+sum(increase(thenetwork_llm_requests_total{outcome="error"}[1h])) by (workload, provider, model)
+
+histogram_quantile(
+  0.95,
+  sum(rate(thenetwork_llm_request_duration_seconds_bucket[15m])) by (le, workload, provider, model)
+)
+
+histogram_quantile(
+  0.95,
+  sum(rate(thenetwork_email_lifecycle_duration_seconds_bucket[1h])) by (le)
+)
 ```
 
 Low-volume deployments generally get more useful whole-number results from

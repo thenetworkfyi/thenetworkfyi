@@ -7,6 +7,7 @@ import pytest
 from pydantic_ai.models.test import TestModel
 
 from thenetwork.audit import LOGGER_NAME, audit_run, audit_trace
+from thenetwork.llm_observability import LLMWorkload, ObservedModel
 from thenetwork.model_config import _TimedProviderClient, model_with_api_key
 
 
@@ -40,6 +41,17 @@ def test_model_with_api_key_preserves_concrete_test_model():
     model = TestModel()
 
     assert model_with_api_key(model, "unused", 90.0) is model
+
+
+def test_model_with_api_key_wraps_the_requested_workload():
+    resolved = model_with_api_key(
+        TestModel(),
+        "unused",
+        90.0,
+        workload=LLMWorkload.EMAIL_AGENT,
+    )
+
+    assert isinstance(resolved, ObservedModel)
 
 
 @pytest.mark.asyncio

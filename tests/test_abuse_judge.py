@@ -30,6 +30,7 @@ from thenetwork.worker.abuse_judge import (
     _run_abuse_judge,
     judge_primary_email_abuse,
 )
+from thenetwork.llm_observability import LLMWorkload
 from thenetwork.worker.metrics import ControlAction, ControlActor, ControlReason
 
 
@@ -207,7 +208,12 @@ async def test_model_judge_uses_small_model_fixed_prompt_and_no_tools(monkeypatc
     judgment = await _run_abuse_judge(snapshot)
 
     assert judgment.verdict is AbuseVerdict.NORMAL
-    resolve_model.assert_called_once_with("provider:small-model", "role-key", 12.0)
+    resolve_model.assert_called_once_with(
+        "provider:small-model",
+        "role-key",
+        12.0,
+        workload=LLMWorkload.ABUSE_JUDGE,
+    )
     assert captured["kwargs"]["model"] == "resolved-small-model"
     assert captured["kwargs"]["output_type"] is AbuseJudgment
     assert "tools" not in captured["kwargs"]

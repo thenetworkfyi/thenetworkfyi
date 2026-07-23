@@ -26,7 +26,8 @@ def test_validate_embedding_configuration_rejects_incompatible_models(model: str
 @pytest.mark.parametrize("model", ["text-embedding-3-small", "text-embedding-3-large"])
 def test_make_embed_client_requests_schema_dimensions_for_v3_models(model: str):
     with patch(
-        "thenetwork.embed.embeddings.OpenAIEmbedding", return_value=MagicMock()
+        "thenetwork.embed.embeddings._ObservedOpenAIEmbedding",
+        return_value=MagicMock(),
     ) as client:
         _make_embed_client(model, "key")
 
@@ -37,7 +38,8 @@ def test_make_embed_client_requests_schema_dimensions_for_v3_models(model: str):
 
 def test_make_embed_client_uses_native_dimensions_for_ada():
     with patch(
-        "thenetwork.embed.embeddings.OpenAIEmbedding", return_value=MagicMock()
+        "thenetwork.embed.embeddings._ObservedOpenAIEmbedding",
+        return_value=MagicMock(),
     ) as client:
         _make_embed_client("text-embedding-ada-002", "key")
 

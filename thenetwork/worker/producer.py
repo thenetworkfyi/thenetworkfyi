@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from time import time
 
 from disposable_email import is_disposable
 
@@ -147,6 +148,7 @@ def _poll_mailbox_and_enqueue(
                 )
                 handled_uids.append(msg.uid)
                 continue
+            intake_observed_at_epoch_seconds = time()
             audit_event(
                 "intake.message_received",
                 sender_present=bool(msg.sender),
@@ -167,6 +169,7 @@ def _poll_mailbox_and_enqueue(
                 "raw_message_b64": raw_message_b64,
                 "trace_id": msg.trace_id,
                 "source_mailbox": mailbox,
+                "intake_observed_at_epoch_seconds": intake_observed_at_epoch_seconds,
             }
             if msg.recipient_address:
                 job_kwargs["recipient_address"] = msg.recipient_address

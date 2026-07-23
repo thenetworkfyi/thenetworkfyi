@@ -10,6 +10,7 @@ from pydantic_ai.models import infer_model
 from pydantic_ai.providers import infer_provider_class
 
 from thenetwork.audit import audit_event
+from thenetwork.llm_observability import LLMWorkload, observe_model
 
 
 class _TimedProviderClient(httpx.AsyncClient):
@@ -65,7 +66,13 @@ def _retry_count(request: httpx.Request) -> int:
         return 0
 
 
-def model_with_api_key(model: Any, api_key: str, timeout: float) -> Any:
+def model_with_api_key(
+    model: Any,
+    api_key: str,
+    timeout: float,
+    *,
+    workload: LLMWorkload | None = None,
+) -> Any:
     """Resolve a configured model string using only the supplied API key.
 
     Every provider constructed here also gets an explicit httpx timeout
@@ -76,7 +83,9 @@ def model_with_api_key(model: Any, api_key: str, timeout: float) -> Any:
     returned unchanged.
     """
     if not isinstance(model, str):
-        return model
+        return (
+            observe_model(model, workload=workload) if workload is not None else model
+        )
 
     http_timeout = httpx.Timeout(timeout, connect=5.0)
 
@@ -86,4 +95,7 @@ def model_with_api_key(model: Any, api_key: str, timeout: float) -> Any:
             api_key=api_key, http_client=_TimedProviderClient(timeout=http_timeout)
         )
 
-    return infer_model(model, provider_factory=provider_factory)
+    resolved = infer_model(model, provider_factory=provider_factory)
+    return (
+        observe_model(resolved, workload=workload) if workload is not None else resolved
+    )

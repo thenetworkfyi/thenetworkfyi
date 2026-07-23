@@ -7,7 +7,7 @@ import json
 import logging
 import sys
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -1346,6 +1346,7 @@ def test_intake_logs_header_metadata_without_values(caplog):
         raw_message_b64=None,
         trace_id=message.trace_id,
         source_mailbox="primary",
+        intake_observed_at_epoch_seconds=ANY,
     )
     mark_seen.assert_called_once_with(["123"], mailbox="primary")
     serialized = "\n".join(record.message for record in caplog.records)
@@ -1396,6 +1397,7 @@ def test_intake_enqueues_inbound_message_id_when_present(caplog):
         raw_message_b64=None,
         trace_id=message.trace_id,
         source_mailbox="primary",
+        intake_observed_at_epoch_seconds=ANY,
         inbound_message_id=message.message_id,
         inbound_references=message.message_references,
         inbound_body_for_quote=message.body,

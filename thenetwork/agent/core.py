@@ -40,6 +40,11 @@ from thenetwork.audit import (
     audit_trace,
 )
 from thenetwork.db.session import get_session
+from thenetwork.llm_observability import (
+    LLMWorkload,
+    observe_agent_duration,
+    observe_model,
+)
 from thenetwork.model_config import model_with_api_key
 from thenetwork.memory.recent_context import (
     RECENT_MEMORY_CONTEXT_MAX_CHARS,
@@ -66,8 +71,13 @@ def build_agent(
     if isinstance(model, str):
         settings = settings or get_settings()
         model = model_with_api_key(
-            model, settings.agent_api_key, settings.model_request_timeout_seconds
+            model,
+            settings.agent_api_key,
+            settings.model_request_timeout_seconds,
+            workload=LLMWorkload.EMAIL_AGENT,
         )
+    else:
+        model = observe_model(model, workload=LLMWorkload.EMAIL_AGENT)
 
     thinking_level = settings.agent_thinking_level if settings is not None else None
 
@@ -164,6 +174,7 @@ async def run_agent_for_email(
         audit_run(),
         audit_trace(trace_id),
         audit_sender(optional_sender_identifier(sender_email)),
+        observe_agent_duration(),
         audit_span(
             "agent.run",
             sender_known=sender_user_id is not None,
