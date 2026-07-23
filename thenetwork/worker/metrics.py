@@ -36,6 +36,41 @@ PRIMARY_INTAKE_PAUSED_METRIC = "thenetwork_primary_intake_paused"
 CONTROL_ACTIONS_METRIC = "thenetwork_control_actions_total"
 AGENT_USAGE_LIMIT_EXCEEDED_METRIC = "thenetwork_agent_usage_limit_exceeded_total"
 JOBS_EXHAUSTED_METRIC = "thenetwork_jobs_exhausted_total"
+LLM_REQUESTS_METRIC = "thenetwork_llm_requests_total"
+LLM_TOKENS_METRIC = "thenetwork_llm_tokens_total"
+LLM_ESTIMATED_COST_METRIC = "thenetwork_llm_estimated_cost_usd_total"
+LLM_REQUEST_DURATION_METRIC = "thenetwork_llm_request_duration_seconds"
+EMAIL_LIFECYCLE_DURATION_METRIC = "thenetwork_email_lifecycle_duration_seconds"
+EMAIL_QUEUE_DURATION_METRIC = "thenetwork_email_queue_duration_seconds"
+AGENT_RUN_DURATION_METRIC = "thenetwork_agent_run_duration_seconds"
+
+_LLM_WORKLOADS = frozenset(
+    {"email_agent", "memory_sanitizer", "abuse_judge", "embedding"}
+)
+_LLM_PROVIDERS = frozenset(
+    {
+        "anthropic",
+        "bedrock",
+        "cerebras",
+        "cohere",
+        "fireworks",
+        "google-gla",
+        "google-vertex",
+        "groq",
+        "huggingface",
+        "mistral",
+        "ollama",
+        "openai",
+        "openrouter",
+        "other",
+        "test",
+        "xai",
+    }
+)
+_LLM_OUTCOMES = frozenset({"success", "error"})
+_LLM_COST_STATUSES = frozenset({"estimated", "unavailable"})
+_LLM_TOKEN_TYPES = frozenset({"input", "output", "cache_read", "cache_write"})
+_MAX_LLM_MODEL_LABELS = 8
 
 
 class ControlAction(StrEnum):
@@ -234,6 +269,15 @@ _instruments: list[object] = []
 _control_actions_counter: object | None = None
 _agent_usage_limit_exceeded_counter: object | None = None
 _jobs_exhausted_counter: object | None = None
+_llm_requests_counter: object | None = None
+_llm_tokens_counter: object | None = None
+_llm_estimated_cost_counter: object | None = None
+_llm_request_duration_histogram: object | None = None
+_email_lifecycle_duration_histogram: object | None = None
+_email_queue_duration_histogram: object | None = None
+_agent_run_duration_histogram: object | None = None
+_llm_model_labels_lock = Lock()
+_registered_llm_model_labels = {"unknown"}
 
 
 def _add_counter(counter: object | None, *, attributes: dict[str, str] | None) -> None:
@@ -271,6 +315,138 @@ def record_job_exhausted() -> None:
     _add_counter(_jobs_exhausted_counter, attributes=None)
 
 
+def register_llm_model_label(model: str) -> str:
+    """Admit a deployment-configured model label into a small fixed registry."""
+    candidate = model if model and len(model) <= 80 else "unknown"
+    with _llm_model_labels_lock:
+        if candidate in _registered_llm_model_labels:
+            return candidate
+        if len(_registered_llm_model_labels) >= _MAX_LLM_MODEL_LABELS:
+            return "unknown"
+        _registered_llm_model_labels.add(candidate)
+        return candidate
+
+
+def _registered_model_or_unknown(model: str) -> str:
+    with _llm_model_labels_lock:
+        return model if model in _registered_llm_model_labels else "unknown"
+
+
+def _record_value(
+    instrument: object | None,
+    method: str,
+    value: float | int,
+    attributes: dict[str, str],
+) -> None:
+    if instrument is None:
+        return
+    try:
+        getattr(instrument, method)(value, attributes=attributes)
+    except Exception:
+        return
+
+
+def record_llm_request_metrics(
+    *,
+    workload: str,
+    provider: str,
+    model: str,
+    outcome: str,
+    cost_status: str,
+    duration_seconds: float,
+    input_tokens: int | None,
+    output_tokens: int | None,
+    cache_read_tokens: int | None,
+    cache_write_tokens: int | None,
+    estimated_cost_usd: float | None,
+) -> None:
+    """Record one request using only closed or deployment-bounded dimensions."""
+    if (
+        workload not in _LLM_WORKLOADS
+        or provider not in _LLM_PROVIDERS
+        or outcome not in _LLM_OUTCOMES
+        or cost_status not in _LLM_COST_STATUSES
+    ):
+        return
+    model = _registered_model_or_unknown(model)
+    base_attributes = {
+        "workload": workload,
+        "provider": provider,
+        "model": model,
+        "outcome": outcome,
+    }
+    _record_value(
+        _llm_requests_counter,
+        "add",
+        1,
+        {**base_attributes, "cost_status": cost_status},
+    )
+    _record_value(
+        _llm_request_duration_histogram,
+        "record",
+        max(0.0, duration_seconds),
+        base_attributes,
+    )
+    token_values = {
+        "input": input_tokens,
+        "output": output_tokens,
+        "cache_read": cache_read_tokens,
+        "cache_write": cache_write_tokens,
+    }
+    for token_type, token_count in token_values.items():
+        if token_type not in _LLM_TOKEN_TYPES or token_count is None:
+            continue
+        _record_value(
+            _llm_tokens_counter,
+            "add",
+            max(0, token_count),
+            {**base_attributes, "token_type": token_type},
+        )
+    if estimated_cost_usd is not None:
+        _record_value(
+            _llm_estimated_cost_counter,
+            "add",
+            max(0.0, estimated_cost_usd),
+            {
+                "workload": workload,
+                "provider": provider,
+                "model": model,
+            },
+        )
+
+
+def record_email_lifecycle_metrics(
+    *,
+    outcome: str,
+    total_duration_seconds: float | None,
+    queue_duration_seconds: float | None,
+    agent_duration_seconds: float,
+) -> None:
+    if outcome not in _LLM_OUTCOMES:
+        return
+    attributes = {"outcome": outcome}
+    if total_duration_seconds is not None:
+        _record_value(
+            _email_lifecycle_duration_histogram,
+            "record",
+            max(0.0, total_duration_seconds),
+            attributes,
+        )
+    if queue_duration_seconds is not None:
+        _record_value(
+            _email_queue_duration_histogram,
+            "record",
+            max(0.0, queue_duration_seconds),
+            attributes,
+        )
+    _record_value(
+        _agent_run_duration_histogram,
+        "record",
+        max(0.0, agent_duration_seconds),
+        attributes,
+    )
+
+
 def _state_callback(
     observer: _StateObserver, attribute: str
 ) -> Callable[[object], list[Observation]]:
@@ -293,6 +469,10 @@ def configure_worker_metrics(
     """Start background OTLP export, returning ``None`` on setup failure."""
     global _agent_usage_limit_exceeded_counter
     global _control_actions_counter, _jobs_exhausted_counter
+    global _agent_run_duration_histogram
+    global _email_lifecycle_duration_histogram, _email_queue_duration_histogram
+    global _llm_estimated_cost_counter, _llm_request_duration_histogram
+    global _llm_requests_counter, _llm_tokens_counter
     global _meter_provider, _instruments
     with _provider_lock:
         if _meter_provider is not None:
@@ -375,17 +555,66 @@ def configure_worker_metrics(
                 unit="1",
                 description="Process-email jobs that exhausted all retry attempts.",
             )
+            llm_requests_counter = meter.create_counter(
+                LLM_REQUESTS_METRIC,
+                unit="1",
+                description="Logical model and embedding requests.",
+            )
+            llm_tokens_counter = meter.create_counter(
+                LLM_TOKENS_METRIC,
+                unit="{token}",
+                description="Model and embedding tokens by token type.",
+            )
+            llm_estimated_cost_counter = meter.create_counter(
+                LLM_ESTIMATED_COST_METRIC,
+                unit="USD",
+                description="Estimated model and embedding request cost in USD.",
+            )
+            llm_request_duration_histogram = meter.create_histogram(
+                LLM_REQUEST_DURATION_METRIC,
+                unit="s",
+                description="Logical model and embedding request duration.",
+            )
+            email_lifecycle_duration_histogram = meter.create_histogram(
+                EMAIL_LIFECYCLE_DURATION_METRIC,
+                unit="s",
+                description="Observed duration from inbox polling to task completion.",
+            )
+            email_queue_duration_histogram = meter.create_histogram(
+                EMAIL_QUEUE_DURATION_METRIC,
+                unit="s",
+                description="Observed duration from inbox polling to task start.",
+            )
+            agent_run_duration_histogram = meter.create_histogram(
+                AGENT_RUN_DURATION_METRIC,
+                unit="s",
+                description="Agent-run duration within a process-email attempt.",
+            )
             instruments.extend(
                 [
                     control_actions_counter,
                     agent_usage_limit_exceeded_counter,
                     jobs_exhausted_counter,
+                    llm_requests_counter,
+                    llm_tokens_counter,
+                    llm_estimated_cost_counter,
+                    llm_request_duration_histogram,
+                    email_lifecycle_duration_histogram,
+                    email_queue_duration_histogram,
+                    agent_run_duration_histogram,
                 ]
             )
             _instruments = instruments
             _control_actions_counter = control_actions_counter
             _agent_usage_limit_exceeded_counter = agent_usage_limit_exceeded_counter
             _jobs_exhausted_counter = jobs_exhausted_counter
+            _llm_requests_counter = llm_requests_counter
+            _llm_tokens_counter = llm_tokens_counter
+            _llm_estimated_cost_counter = llm_estimated_cost_counter
+            _llm_request_duration_histogram = llm_request_duration_histogram
+            _email_lifecycle_duration_histogram = email_lifecycle_duration_histogram
+            _email_queue_duration_histogram = email_queue_duration_histogram
+            _agent_run_duration_histogram = agent_run_duration_histogram
             _meter_provider = provider
             return provider
         except Exception as exc:

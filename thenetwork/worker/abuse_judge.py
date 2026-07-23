@@ -24,6 +24,7 @@ from thenetwork.email.intake_control import (
     PrimaryIntakeTransition,
     set_primary_intake_paused_in_session,
 )
+from thenetwork.llm_observability import LLMWorkload
 from thenetwork.model_config import model_with_api_key
 from thenetwork.settings import get_settings
 from thenetwork.worker.metrics import (
@@ -216,6 +217,7 @@ async def _run_abuse_judge(snapshot: _JudgeSnapshot) -> AbuseJudgment:
             settings.small_agent_model,
             settings.small_agent_api_key,
             settings.model_request_timeout_seconds,
+            workload=LLMWorkload.ABUSE_JUDGE,
         ),
         system_prompt=ABUSE_JUDGE_SYSTEM_PROMPT,
         output_type=AbuseJudgment,

@@ -8,6 +8,7 @@ import pytest
 
 from thenetwork.agent.deps import AgentDeps
 from thenetwork.db.models import Memory
+from thenetwork.llm_observability import LLMWorkload
 from thenetwork.memory import sanitize as sanitize_mod
 from thenetwork.settings import Settings
 
@@ -354,10 +355,12 @@ async def test_llm_sanitizer_uses_fixed_no_tools_prompt(monkeypatch):
             )
 
     monkeypatch.setattr("pydantic_ai.Agent", FakeAgent)
-    monkeypatch.setattr(
-        "thenetwork.model_config.model_with_api_key",
-        lambda model, api_key, timeout: model,
-    )
+
+    def resolve_model(model, api_key, timeout, *, workload):
+        captured["workload"] = workload
+        return model
+
+    monkeypatch.setattr("thenetwork.model_config.model_with_api_key", resolve_model)
     monkeypatch.setattr(
         "thenetwork.settings.get_settings",
         lambda: SimpleNamespace(
@@ -377,6 +380,7 @@ async def test_llm_sanitizer_uses_fixed_no_tools_prompt(monkeypatch):
     assert session.added == [memory]
     assert session.flushes == 1
     assert captured["args"] == ()
+    assert captured["workload"] is LLMWorkload.MEMORY_SANITIZER
     kwargs = captured["kwargs"]
     assert kwargs["model"] == "test:model"
     assert kwargs["output_type"] is str

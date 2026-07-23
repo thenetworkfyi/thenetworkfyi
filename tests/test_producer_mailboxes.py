@@ -113,6 +113,11 @@ def test_established_provider_is_accepted(domain):
     ):
         assert _poll_mailbox_and_enqueue("primary") == 1
 
+    assert isinstance(
+        process_email.defer.call_args.kwargs["intake_observed_at_epoch_seconds"],
+        float,
+    )
+
     process_email.defer.assert_called_once()
     mark_seen.assert_called_once_with(["8"], mailbox="primary")
 

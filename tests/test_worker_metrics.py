@@ -128,6 +128,11 @@ class _FakeMeter:
         self.instruments.append(instrument)
         return instrument
 
+    def create_histogram(self, name, **kwargs):
+        instrument = _FakeHistogram(name, **kwargs)
+        self.instruments.append(instrument)
+        return instrument
+
 
 class _FakeCounter:
     def __init__(self, name, **kwargs):
@@ -136,6 +141,16 @@ class _FakeCounter:
         self.calls = []
 
     def add(self, value, *, attributes=None):
+        self.calls.append((value, attributes))
+
+
+class _FakeHistogram:
+    def __init__(self, name, **kwargs):
+        self.name = name
+        self.kwargs = kwargs
+        self.calls = []
+
+    def record(self, value, *, attributes=None):
         self.calls.append((value, attributes))
 
 
@@ -156,6 +171,14 @@ def _reset_metric_globals(monkeypatch):
     monkeypatch.setattr(metrics, "_control_actions_counter", None)
     monkeypatch.setattr(metrics, "_agent_usage_limit_exceeded_counter", None)
     monkeypatch.setattr(metrics, "_jobs_exhausted_counter", None)
+    monkeypatch.setattr(metrics, "_llm_requests_counter", None)
+    monkeypatch.setattr(metrics, "_llm_tokens_counter", None)
+    monkeypatch.setattr(metrics, "_llm_estimated_cost_counter", None)
+    monkeypatch.setattr(metrics, "_llm_request_duration_histogram", None)
+    monkeypatch.setattr(metrics, "_email_lifecycle_duration_histogram", None)
+    monkeypatch.setattr(metrics, "_email_queue_duration_histogram", None)
+    monkeypatch.setattr(metrics, "_agent_run_duration_histogram", None)
+    monkeypatch.setattr(metrics, "_registered_llm_model_labels", {"unknown"})
     monkeypatch.setattr(metrics, "_producer_last_success_timestamp_seconds", 0.0)
 
 
@@ -210,8 +233,26 @@ def test_metric_names_units_values_and_bounded_labels(monkeypatch):
         metrics.CONTROL_ACTIONS_METRIC,
         metrics.AGENT_USAGE_LIMIT_EXCEEDED_METRIC,
         metrics.JOBS_EXHAUSTED_METRIC,
+        metrics.LLM_REQUESTS_METRIC,
+        metrics.LLM_TOKENS_METRIC,
+        metrics.LLM_ESTIMATED_COST_METRIC,
     ]
-    assert all(item.kwargs["unit"] == "1" for item in counters)
+    assert [item.kwargs["unit"] for item in counters] == [
+        "1",
+        "1",
+        "1",
+        "1",
+        "{token}",
+        "USD",
+    ]
+    histograms = [item for item in instruments if isinstance(item, _FakeHistogram)]
+    assert [item.name for item in histograms] == [
+        metrics.LLM_REQUEST_DURATION_METRIC,
+        metrics.EMAIL_LIFECYCLE_DURATION_METRIC,
+        metrics.EMAIL_QUEUE_DURATION_METRIC,
+        metrics.AGENT_RUN_DURATION_METRIC,
+    ]
+    assert all(item.kwargs["unit"] == "s" for item in histograms)
     observations = [item["callbacks"][0](None)[0] for item in gauges]
     assert [item.value for item in observations] == [1_784_732_400, 7, 120.5, 1]
     assert all(not item.attributes for item in observations[:3])
@@ -277,6 +318,90 @@ def test_counter_failure_is_contained():
     )
     metrics.record_agent_usage_limit_exceeded()
     metrics.record_job_exhausted()
+
+
+def test_llm_metrics_use_registered_bounded_dimensions(monkeypatch):
+    requests = _FakeCounter(metrics.LLM_REQUESTS_METRIC)
+    tokens = _FakeCounter(metrics.LLM_TOKENS_METRIC)
+    cost = _FakeCounter(metrics.LLM_ESTIMATED_COST_METRIC)
+    duration = _FakeHistogram(metrics.LLM_REQUEST_DURATION_METRIC)
+    monkeypatch.setattr(metrics, "_llm_requests_counter", requests)
+    monkeypatch.setattr(metrics, "_llm_tokens_counter", tokens)
+    monkeypatch.setattr(metrics, "_llm_estimated_cost_counter", cost)
+    monkeypatch.setattr(metrics, "_llm_request_duration_histogram", duration)
+
+    assert metrics.register_llm_model_label("gpt-4.1-mini") == "gpt-4.1-mini"
+    metrics.record_llm_request_metrics(
+        workload="email_agent",
+        provider="openai",
+        model="gpt-4.1-mini",
+        outcome="success",
+        cost_status="estimated",
+        duration_seconds=1.25,
+        input_tokens=100,
+        output_tokens=20,
+        cache_read_tokens=10,
+        cache_write_tokens=0,
+        estimated_cost_usd=0.004,
+    )
+    metrics.record_llm_request_metrics(
+        workload="attacker-selected",
+        provider="openai",
+        model="unregistered-model",
+        outcome="success",
+        cost_status="estimated",
+        duration_seconds=1,
+        input_tokens=1,
+        output_tokens=1,
+        cache_read_tokens=0,
+        cache_write_tokens=0,
+        estimated_cost_usd=1,
+    )
+
+    base = {
+        "workload": "email_agent",
+        "provider": "openai",
+        "model": "gpt-4.1-mini",
+        "outcome": "success",
+    }
+    assert requests.calls == [(1, {**base, "cost_status": "estimated"})]
+    assert duration.calls == [(1.25, base)]
+    assert tokens.calls == [
+        (100, {**base, "token_type": "input"}),
+        (20, {**base, "token_type": "output"}),
+        (10, {**base, "token_type": "cache_read"}),
+        (0, {**base, "token_type": "cache_write"}),
+    ]
+    assert cost.calls == [
+        (
+            0.004,
+            {
+                "workload": "email_agent",
+                "provider": "openai",
+                "model": "gpt-4.1-mini",
+            },
+        )
+    ]
+
+
+def test_email_lifecycle_metrics_skip_missing_intake_duration(monkeypatch):
+    lifecycle = _FakeHistogram(metrics.EMAIL_LIFECYCLE_DURATION_METRIC)
+    queue = _FakeHistogram(metrics.EMAIL_QUEUE_DURATION_METRIC)
+    agent = _FakeHistogram(metrics.AGENT_RUN_DURATION_METRIC)
+    monkeypatch.setattr(metrics, "_email_lifecycle_duration_histogram", lifecycle)
+    monkeypatch.setattr(metrics, "_email_queue_duration_histogram", queue)
+    monkeypatch.setattr(metrics, "_agent_run_duration_histogram", agent)
+
+    metrics.record_email_lifecycle_metrics(
+        outcome="success",
+        total_duration_seconds=None,
+        queue_duration_seconds=None,
+        agent_duration_seconds=2.5,
+    )
+
+    assert lifecycle.calls == []
+    assert queue.calls == []
+    assert agent.calls == [(2.5, {"outcome": "success"})]
 
 
 def test_metric_exporter_setup_failure_is_contained(monkeypatch):
