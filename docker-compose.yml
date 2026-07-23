@@ -156,6 +156,24 @@ services:
         max-file: "3"
     restart: unless-stopped
 
+  grafana:
+    image: grafana/grafana:11.5.0
+    volumes:
+      - ./grafana/provisioning/datasources/datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
+    ports:
+      - "127.0.0.1:${GRAFANA_HOST_PORT:-3000}:3000"
+    depends_on:
+      prometheus:
+        condition: service_started
+      loki:
+        condition: service_started
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
 volumes:
   pgdata:
   hf-cache:

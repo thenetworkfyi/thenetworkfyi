@@ -21,7 +21,7 @@ enforces a 30-day (`720h`) retention period. Loki does not enforce a disk-size
 limit, so host free space still needs normal operational monitoring. No Loki
 credentials or other new environment variables are required for this internal,
 single-tenant deployment. The HTTP API binds to `127.0.0.1:3100`; it is not
-publicly exposed, and Grafana is not installed.
+publicly exposed. Grafana runs bound to `127.0.0.1:3000` with automated Prometheus and Loki data source provisioning via `grafana/provisioning/datasources/datasources.yaml`.
 
 Query the last hour directly through the Loki API:
 
