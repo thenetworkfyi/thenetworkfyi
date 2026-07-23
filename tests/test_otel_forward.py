@@ -386,7 +386,13 @@ def test_loki_service_is_pinned_private_persistent_and_retained():
     assert _LOKI_CONFIG["limits_config"]["retention_period"] == "720h"
     assert _LOKI_CONFIG["compactor"]["retention_enabled"] is True
     assert _LOKI_CONFIG["compactor"]["delete_request_store"] == "filesystem"
-    assert "grafana" not in compose["services"]
+    grafana = compose["services"]["grafana"]
+    assert grafana["image"] == "grafana/grafana:11.5.0"
+    assert grafana["ports"] == ["127.0.0.1:${GRAFANA_HOST_PORT:-3000}:3000"]
+    assert (
+        "./grafana/provisioning/datasources/datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro"
+        in grafana["volumes"]
+    )
 
 
 def test_loki_uses_one_static_service_label_and_structured_metadata():
