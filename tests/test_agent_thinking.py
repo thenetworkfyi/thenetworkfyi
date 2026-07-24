@@ -17,6 +17,7 @@ def test_agent_thinking_level_defaults_to_medium():
         agent_model="test:model",
         small_agent_model="test:model",
         embed_model="test:embed",
+        relay_domain="example.com",
     )
 
     assert settings.agent_thinking_level == "medium"
@@ -28,6 +29,7 @@ def test_agent_thinking_level_can_be_disabled():
         agent_model="test:model",
         small_agent_model="test:model",
         embed_model="test:embed",
+        relay_domain="example.com",
         agent_thinking_level=None,
     )
 
@@ -238,6 +240,7 @@ async def test_successful_dispatch_allows_concise_final_operator_text():
             agent_model="test:model",
             small_agent_model="test:model",
             embed_model="test:embed",
+            relay_domain="example.com",
             dispatch_max_sends_per_run=3,
             dispatch_recipient_daily_cap=10,
             dispatch_sender_reply_daily_cap=10,
