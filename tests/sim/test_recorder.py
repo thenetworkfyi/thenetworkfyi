@@ -29,6 +29,7 @@ from thenetwork.db.models import (
 from thenetwork.email.outbound import send_proxy_introduction, send_relay_email
 from thenetwork.memory.sanitize import SANITIZER_SYSTEM_PROMPT
 from thenetwork.security import log_redaction
+from thenetwork.security.sender_identifier import optional_sender_identifier
 from thenetwork.sim.cli import main, run_sim
 from thenetwork.sim.scoring.compare import compare_runs, load_run_metrics
 from thenetwork.sim.run.mail import SimPostOffice, publish_redacted_mbox
@@ -1008,7 +1009,9 @@ async def test_real_process_run_logs_each_deferred_proactive_trigger(tmp_path):
             "event": "sim.proactive_job_deferred",
             "event_key": _event_correlation_key("event-1"),
             "event_version": 1,
-            "recipient_sender_id_hash": None,
+            "recipient_sender_id_hash": optional_sender_identifier(
+                "alice@example.test"
+            ),
             "subject": "[Proactive] Possible event",
             "trace_id": "event-trace",
             "trigger_kind": "event",
