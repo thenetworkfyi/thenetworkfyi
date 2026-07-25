@@ -17,6 +17,7 @@ _limiter: strategies.FixedWindowRateLimiter | None = None
 _storage: PostgresFixedWindowStorage | None = None
 
 _BUDGET_KEY = "daily-agent-token-budget"
+_DEFERRAL_NOTICE_PREFIX = "daily-agent-token-budget-deferral-notice"
 
 
 def _get_limiter() -> tuple[
@@ -64,5 +65,24 @@ def consume_daily_token_budget(tokens: int, cap: int) -> bool:
     limiter, _ = _get_limiter()
     try:
         return limiter.hit(parse(f"{cap}/day"), _BUDGET_KEY, cost=tokens)
+    except Exception:
+        return False
+
+
+def should_send_deferral_notice(sender_identity: str) -> bool:
+    """Atomically claim the single daily deferral notice for one sender identity.
+
+    A message deferred while the daily token budget is exhausted is re-seen on
+    every one-minute poll until the day's window resets, so this must be
+    consumed (not just tested) the first time it returns True, or the sender
+    would be notified again on the next poll. `sender_identity` must already
+    be normalized (`security.rate_limit.normalize_rate_limit_identity`) so a
+    single mailbox cannot mint unlimited distinct notice quotas. Fails closed
+    (no notice) if the durable store is unavailable.
+    """
+    limiter, _ = _get_limiter()
+    key = f"{_DEFERRAL_NOTICE_PREFIX}:{sender_identity}"
+    try:
+        return limiter.hit(parse("1/day"), key)
     except Exception:
         return False

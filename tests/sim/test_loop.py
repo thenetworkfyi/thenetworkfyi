@@ -341,18 +341,34 @@ def test_override_rate_limits_restores_settings():
         settings.rate_limit_per_hour,
         settings.unauthenticated_rate_limit_per_hour,
         settings.global_email_rate_limit_per_hour,
+        settings.daily_agent_token_cap,
     )
 
     with override_rate_limits(1234):
         assert settings.rate_limit_per_hour == 1234
         assert settings.unauthenticated_rate_limit_per_hour == 1234
         assert settings.global_email_rate_limit_per_hour >= 1234
+        assert settings.daily_agent_token_cap >= 1_000_000_000
 
     assert (
         settings.rate_limit_per_hour,
         settings.unauthenticated_rate_limit_per_hour,
         settings.global_email_rate_limit_per_hour,
+        settings.daily_agent_token_cap,
     ) == old
+
+
+def test_override_rate_limits_never_lowers_an_already_generous_token_cap():
+    settings = get_settings()
+    old_cap = settings.daily_agent_token_cap
+    settings.daily_agent_token_cap = 5_000_000_000
+
+    try:
+        with override_rate_limits(1234):
+            assert settings.daily_agent_token_cap == 5_000_000_000
+        assert settings.daily_agent_token_cap == 5_000_000_000
+    finally:
+        settings.daily_agent_token_cap = old_cap
 
 
 @pytest.mark.asyncio
