@@ -101,6 +101,57 @@ async def test_scan_enqueues_high_proximity_pair():
 
 
 @pytest.mark.asyncio
+async def test_scan_records_network_density_from_the_same_graph_build():
+    """Density must come from the scan's own build_graph() call, not a second one."""
+    from thenetwork.worker.proactive import scan_for_opportunities
+
+    G = nx.Graph()
+    G.add_edge("alice", "dave")
+    G.add_edge("bob", "dave")
+
+    people = [
+        _person("alice", "alice@test.com"),
+        _person("bob", "bob@test.com"),
+        _person("dave", "dave@test.com"),
+    ]
+
+    with (
+        patch(
+            "thenetwork.worker.proactive.build_graph", return_value=G
+        ) as mock_build_graph,
+        patch(
+            "thenetwork.worker.proactive.get_session",
+            return_value=_mock_session(people),
+        ),
+        patch("thenetwork.worker.proactive.process_email"),
+        patch(
+            "thenetwork.worker.proactive.record_network_density"
+        ) as mock_record_density,
+    ):
+        await scan_for_opportunities.func(0)
+
+    mock_build_graph.assert_called_once_with()
+    mock_record_density.assert_called_once_with(avg_degree=2 * 2 / 3)
+
+
+@pytest.mark.asyncio
+async def test_scan_records_zero_density_for_an_empty_graph():
+    from thenetwork.worker.proactive import scan_for_opportunities
+
+    with (
+        patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()),
+        patch("thenetwork.worker.proactive.process_email") as mock_pe,
+        patch(
+            "thenetwork.worker.proactive.record_network_density"
+        ) as mock_record_density,
+    ):
+        await scan_for_opportunities.func(0)
+
+    mock_record_density.assert_called_once_with(avg_degree=0.0)
+    assert not mock_pe.defer.called
+
+
+@pytest.mark.asyncio
 async def test_scan_skips_low_proximity_pairs():
     """Direct edge with no common neighbors → Jaccard=0 → no defer."""
     from thenetwork.worker.proactive import scan_for_opportunities

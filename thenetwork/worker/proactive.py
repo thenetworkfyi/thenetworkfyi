@@ -45,6 +45,7 @@ from thenetwork.introductions import (
     pair_is_suppressed,
     recently_surfaced_pairs,
 )
+from thenetwork.worker.metrics import record_network_density
 from thenetwork.worker.tasks import app, process_email
 
 PROXIMITY_THRESHOLD = 0.3
@@ -78,6 +79,9 @@ async def scan_for_opportunities(timestamp: int) -> None:
     """Hourly scan: find person pairs with high graph proximity, enqueue agent jobs."""
     G = build_graph()
     person_ids = list(G.nodes())
+    record_network_density(
+        avg_degree=(2 * G.number_of_edges() / len(person_ids)) if person_ids else 0.0
+    )
 
     if len(person_ids) < 2:
         return

@@ -10,12 +10,12 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 from math import ceil
 from threading import Lock
 from time import monotonic, time
-from typing import Callable, Iterable
+from typing import Callable, Generic, Iterable, TypeVar
 
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.metrics import Observation
@@ -43,6 +43,12 @@ LLM_REQUEST_DURATION_METRIC = "thenetwork_llm_request_duration_seconds"
 EMAIL_LIFECYCLE_DURATION_METRIC = "thenetwork_email_lifecycle_duration_seconds"
 EMAIL_QUEUE_DURATION_METRIC = "thenetwork_email_queue_duration_seconds"
 AGENT_RUN_DURATION_METRIC = "thenetwork_agent_run_duration_seconds"
+PEOPLE_TOTAL_METRIC = "thenetwork_people_total"
+ACTIVATED_PEOPLE_TOTAL_METRIC = "thenetwork_activated_people_total"
+ACTIVE_SENDERS_WEEKLY_METRIC = "thenetwork_active_senders_weekly"
+NETWORK_DENSITY_METRIC = "thenetwork_network_density"
+
+ACTIVE_SENDERS_WINDOW_DAYS = 7
 
 _LLM_WORKLOADS = frozenset(
     {"email_agent", "memory_sanitizer", "abuse_judge", "embedding"}
@@ -128,6 +134,25 @@ class WorkerStateSnapshot:
     primary_intake_pause_reason: str
 
 
+@dataclass(frozen=True, slots=True)
+class GrowthStateSnapshot:
+    people_total: int
+    activated_people_total: int
+    active_senders_weekly: int
+
+
+_GROWTH_STATE_QUERY = text(
+    """
+    SELECT
+        (SELECT count(*) FROM people) AS people_total,
+        (SELECT count(DISTINCT ref) FROM memories, unnest(refs) AS ref)
+            AS activated_people_total,
+        (SELECT count(DISTINCT ref) FROM memories, unnest(refs) AS ref
+            WHERE created_at >= :cutoff) AS active_senders_weekly
+    """
+)
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -207,6 +232,30 @@ def collect_worker_state(
     )
 
 
+def collect_growth_state(
+    *, session_factory=None, now: datetime | None = None
+) -> GrowthStateSnapshot:
+    """Read only aggregate people/memory counts, never per-person identity.
+
+    ``active_senders_weekly`` is a proxy: people referenced by a memory created
+    in the trailing window, not a literal distinct-authenticated-sender count -
+    no table tracks per-person send timestamps without adding schema, which
+    this observability addition must not do.
+    """
+    collected_at = now or _utcnow()
+    cutoff = collected_at - timedelta(days=ACTIVE_SENDERS_WINDOW_DAYS)
+    factory = session_factory or _metrics_session
+    with factory() as session:
+        row = next(
+            iter(session.execute(_GROWTH_STATE_QUERY, {"cutoff": cutoff}).mappings())
+        )
+    return GrowthStateSnapshot(
+        people_total=row["people_total"] or 0,
+        activated_people_total=row["activated_people_total"] or 0,
+        active_senders_weekly=row["active_senders_weekly"] or 0,
+    )
+
+
 _producer_lock = Lock()
 _producer_last_success_timestamp_seconds = 0.0
 
@@ -228,12 +277,40 @@ def producer_last_success_timestamp_seconds() -> float:
         return _producer_last_success_timestamp_seconds
 
 
-class _StateObserver:
-    """Share one contained database read across three gauge callbacks."""
+_network_density_lock = Lock()
+_network_density_avg_degree = 0.0
+
+
+def record_network_density(*, avg_degree: float) -> None:
+    """Record the latest graph density sample without performing I/O or raising.
+
+    Populated out-of-band from the existing hourly ``scan_for_opportunities``
+    graph build (`thenetwork/worker/proactive.py`) - this never triggers a
+    second graph computation.
+    """
+    global _network_density_avg_degree
+    try:
+        sampled = max(0.0, float(avg_degree))
+        with _network_density_lock:
+            _network_density_avg_degree = sampled
+    except Exception:
+        return
+
+
+def network_density_avg_degree() -> float:
+    with _network_density_lock:
+        return _network_density_avg_degree
+
+
+_SnapshotT = TypeVar("_SnapshotT")
+
+
+class _StateObserver(Generic[_SnapshotT]):
+    """Share one contained database read across several gauge callbacks."""
 
     def __init__(
         self,
-        collector: Callable[[], WorkerStateSnapshot] = collect_worker_state,
+        collector: Callable[[], _SnapshotT] = collect_worker_state,
         *,
         cache_seconds: float = 1.0,
     ) -> None:
@@ -241,9 +318,9 @@ class _StateObserver:
         self._cache_seconds = cache_seconds
         self._lock = Lock()
         self._refresh_after = 0.0
-        self._snapshot: WorkerStateSnapshot | None = None
+        self._snapshot: _SnapshotT | None = None
 
-    def snapshot(self) -> WorkerStateSnapshot | None:
+    def snapshot(self) -> _SnapshotT | None:
         current = monotonic()
         with self._lock:
             if current < self._refresh_after:
@@ -466,6 +543,7 @@ def configure_worker_metrics(
     reader_factory=PeriodicExportingMetricReader,
     provider_factory=MeterProvider,
     state_observer: _StateObserver | None = None,
+    growth_state_observer: _StateObserver | None = None,
 ) -> MeterProvider | None:
     """Start background OTLP export, returning ``None`` on setup failure."""
     global _agent_usage_limit_exceeded_counter
@@ -496,6 +574,9 @@ def configure_worker_metrics(
             provider = provider_factory(metric_readers=[reader])
             meter = provider.get_meter("thenetwork.worker")
             observer = state_observer or _StateObserver()
+            growth_observer = growth_state_observer or _StateObserver(
+                collect_growth_state
+            )
             instruments = [
                 meter.create_observable_gauge(
                     PRODUCER_LAST_SUCCESS_METRIC,
@@ -539,6 +620,43 @@ def configure_worker_metrics(
                     ],
                     unit="1",
                     description="Whether durable primary intake state is paused.",
+                ),
+                meter.create_observable_gauge(
+                    PEOPLE_TOTAL_METRIC,
+                    callbacks=[_state_callback(growth_observer, "people_total")],
+                    unit="1",
+                    description="Live count of registered people.",
+                ),
+                meter.create_observable_gauge(
+                    ACTIVATED_PEOPLE_TOTAL_METRIC,
+                    callbacks=[
+                        _state_callback(growth_observer, "activated_people_total")
+                    ],
+                    unit="1",
+                    description="Count of people referenced by at least one memory.",
+                ),
+                meter.create_observable_gauge(
+                    ACTIVE_SENDERS_WEEKLY_METRIC,
+                    callbacks=[
+                        _state_callback(growth_observer, "active_senders_weekly")
+                    ],
+                    unit="1",
+                    description=(
+                        "People referenced by a memory created in the trailing "
+                        f"{ACTIVE_SENDERS_WINDOW_DAYS}-day window, an "
+                        "unlabeled proxy for distinct active senders."
+                    ),
+                ),
+                meter.create_observable_gauge(
+                    NETWORK_DENSITY_METRIC,
+                    callbacks=[
+                        lambda _options: [Observation(network_density_avg_degree())]
+                    ],
+                    unit="1",
+                    description=(
+                        "Average graph degree (2 * edges / nodes) sampled from "
+                        "the hourly scan_for_opportunities graph build."
+                    ),
                 ),
             ]
             control_actions_counter = meter.create_counter(
