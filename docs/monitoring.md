@@ -22,6 +22,11 @@ limit, so host free space still needs normal operational monitoring. No Loki
 credentials or other new environment variables are required for this internal,
 single-tenant deployment. The HTTP API binds to `127.0.0.1:3100`; it is not
 publicly exposed. Grafana runs bound to `127.0.0.1:3000` with automated Prometheus and Loki data source provisioning via `grafana/provisioning/datasources/datasources.yaml`.
+Dashboards are provisioned the same way: `grafana/provisioning/dashboards/dashboards.yaml`
+registers a file-based provider that loads every `*.json` dashboard dropped into
+`grafana/dashboards/` into "The Network" folder, with a 10-second
+`updateIntervalSeconds` so a new or edited dashboard file is picked up without
+restarting the `grafana` container.
 
 Query the last hour directly through the Loki API:
 
