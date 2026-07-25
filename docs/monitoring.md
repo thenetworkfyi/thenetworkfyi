@@ -84,6 +84,25 @@ degree sampled from the existing hourly `scan_for_opportunities` graph
 projection - the network-effects flywheel signal). See the gauge table above
 for exact semantics and the proxy caveats on the two people-activity metrics.
 
+`grafana/dashboards/system-resources.json` is "The Network - System Resources":
+host, database, and worker-process infrastructure health, as distinct from the
+product/reliability signals above. It has three row sections. **Host** reads
+the `hostmetrics` receiver's `system_*` series: CPU busy percent and time by
+state, load averages, memory usage by state, filesystem free/used bytes by
+mount, network I/O/errors/drops, and disk I/O. **PostgreSQL** reads the
+`postgresql` receiver's `postgresql_*` series: active backends, database size,
+table count, configured connection limit, commit/rollback rate, row operation
+rate, block cache hit ratio, and background writer activity. **Worker process
+and cgroup** reads the worker's own OTLP-pushed `thenetwork_worker_*` gauges
+and counters: process resident memory, open file descriptors, thread count,
+and CPU time by state from `/proc/self`, plus cgroup v2 memory
+current/max/peak and CPU scheduling-period/throttling counters from
+`/sys/fs/cgroup`. See the [host, Postgres, and worker resource
+metrics](#host-postgres-and-worker-resource-metrics) section below for the
+full catalog, exact label sets, and the `docker_stats` rejection rationale.
+Every panel here queries only those documented names and labels; none use
+`trace_id`, `run_id`, a sender pseudonym, or any opaque person/event id.
+
 Query the last hour directly through the Loki API:
 
 ```bash
@@ -226,6 +245,120 @@ alert that filters or breaks down by `model="unknown"` for an OpenRouter
 deployment will see that series stop accumulating and a new one appear under
 the actual id - this is expected, not a data loss, but a saved dashboard query
 pinned to `model="unknown"` will silently go quiet rather than error.
+
+## Host, Postgres, and worker resource metrics
+
+Two additional Collector receivers export infrastructure-health metrics
+alongside the redacted-audit counters above, and the worker pushes ten more
+process/cgroup self-metrics over its existing OTLP path. All of these exit
+through the separate `prometheus/host` exporter on `:8890` (host and Postgres)
+or the existing `prometheus/audit` exporter on `:8889` (worker), scraped as
+the `thenetwork-host-metrics` and `thenetwork-audit-activity` Prometheus jobs
+respectively - never the redacted `thenetwork.audit` log pipeline, since none
+of this is derived from application log records.
+
+### Why not `docker_stats`
+
+Docker's container-stats API (`docker stats` / the Engine API's
+`/containers/{id}/stats`) was considered and rejected as the source for this
+work in favor of the two socket-free receivers actually used:
+
+- It requires bind-mounting the Docker socket into the Collector container,
+  handing it a credential that can create, exec into, or delete *any*
+  container on the host, including the database - a large privilege
+  escalation surface for a metrics sidecar that has no other reason to reach
+  the Engine API.
+- It only reports cgroup-level counters for the containers it is told about,
+  never true host-wide state - free disk space, host load average, and
+  network-interface counters are not container-scoped and are absent from its
+  output entirely.
+- It reports nothing about Postgres internals (backends, commits, cache hit
+  ratio, bloat) - that requires talking to Postgres itself, not the container
+  runtime.
+
+The `hostmetrics` receiver instead reads `/proc` and `/sys` directly through a
+read-only bind mount (`- /:/hostfs:ro` in `docker-compose.yml`, `root_path:
+/hostfs` in `otel-collector-config.yaml`) - filesystem visibility only, no
+Docker socket, no container/Engine API access of any kind. The `postgresql`
+receiver connects to Postgres directly over SQL using the dedicated
+least-privilege `pg_monitor` role (see `docs/development.md`'s migration
+notes), which exposes exactly the built-in statistics views Postgres itself
+maintains. The worker's process and cgroup metrics read `/proc/self` and
+`/sys/fs/cgroup` directly from inside its own container - no socket, no
+sidecar, no separate collection path.
+
+### Host metrics (`hostmetrics` receiver, Prometheus job `thenetwork-host-metrics`)
+
+| Prometheus metric | Labels | Meaning |
+| --- | --- | --- |
+| `system_cpu_time_seconds_total` | `cpu`, `state` | Cumulative seconds each logical CPU spent in each scheduler state (`idle`, `user`, `system`, `nice`, `iowait`, `irq`, `softirq`, `interrupt`, `steal`). Use `rate()`; sum `state!="idle"` for busy time. |
+| `system_cpu_load_average_1m` / `_5m` / `_15m` | None | Standard Unix load averages. |
+| `system_memory_usage_bytes` | `state` | Bytes in each memory state (`used`, `free`, `cached`, `buffered`, `slab_reclaimable`, `slab_unreclaimable`). |
+| `system_filesystem_usage_bytes` | `device`, `mountpoint`, `type`, `mode`, `state` | Bytes used/free/reserved per mounted filesystem. Virtual/pseudo filesystems (`proc`, `sysfs`, `overlay`, etc.) and `/dev/*` mounts are excluded by the receiver's `exclude_fs_types`/`exclude_mount_points` config. |
+| `system_filesystem_inodes_usage` | `device`, `mountpoint`, `type`, `mode`, `state` | Inode counts per mounted filesystem, same exclusions. |
+| `system_disk_io_bytes_total` | `device`, `direction` | Cumulative bytes read/written per block device. |
+| `system_disk_operations_total` | `device`, `direction` | Cumulative disk operation counts. |
+| `system_disk_io_time_seconds_total`, `system_disk_operation_time_seconds_total`, `system_disk_weighted_io_time_seconds_total` | `device` (+`direction` on operation time) | Time the disk spent active/servicing operations. |
+| `system_disk_merged_total` | `device`, `direction` | Reads/writes merged into a single physical operation. |
+| `system_disk_pending_operations` | `device` | Current queue depth of pending I/O. |
+| `system_network_io_bytes_total`, `system_network_packets_total` | `device`, `direction` | Cumulative bytes/packets transmitted and received per interface. |
+| `system_network_errors_total`, `system_network_dropped_total` | `device`, `direction` | Cumulative interface errors and drops. |
+| `system_network_connections` | `protocol`, `state` | Current connection count by TCP state. |
+
+### PostgreSQL metrics (`postgresql` receiver, same Prometheus job)
+
+Collected with the dedicated `pg_monitor`-granted role over `databases:
+[${env:POSTGRES_DB}]`; see `docs/development.md` for the role provisioning
+migration.
+
+| Prometheus metric | Labels | Meaning |
+| --- | --- | --- |
+| `postgresql_backends` | None | Active connection count, sampled live from `pg_stat_activity` at scrape time. Reports no series at all when zero connections are active at that instant - this is expected gauge-snapshot behavior, not a scrape failure; a running worker's connection pool normally keeps this nonzero. |
+| `postgresql_connection_max` | None | Configured `max_connections`. |
+| `postgresql_database_count` | None | Number of user databases visible to the role. |
+| `postgresql_db_size_bytes` | None | On-disk size of the configured database. |
+| `postgresql_table_count` | None | Number of user tables. |
+| `postgresql_table_size_bytes`, `postgresql_index_size_bytes` | None | Disk space used by tables and indexes. |
+| `postgresql_commits_total`, `postgresql_rollbacks_total` | None | Cumulative transaction commit/rollback counts. |
+| `postgresql_operations_total` | `operation` (`ins`, `upd`, `hot_upd`, `del`) | Cumulative row-level DML operation counts. |
+| `postgresql_rows` | `state` (`live`, `dead`) | Current estimated row counts. |
+| `postgresql_blocks_read_total` | `source` (`heap_hit`, `heap_read`, `idx_hit`, `idx_read`, `tidx_hit`, `tidx_read`, `toast_hit`, `toast_read`) | Cumulative block reads; `*_hit` is served from Postgres's shared buffer cache, `*_read` came from disk/OS cache. `sum(rate({source=~".*_hit"})) / sum(rate(...))` is the cache hit ratio. |
+| `postgresql_index_scans_total` | None | Cumulative index scan count. |
+| `postgresql_bgwriter_buffers_allocated_total` | None | Cumulative buffers allocated. |
+| `postgresql_bgwriter_buffers_writes_total` | `source` (`bgwriter`, `checkpoints`) | Cumulative buffers written by the background writer vs. checkpoints. |
+| `postgresql_bgwriter_checkpoint_count_total` | `type` (`requested`, `scheduled`) | Cumulative checkpoint counts. |
+| `postgresql_bgwriter_duration_milliseconds_total` | `type` (`sync`, `write`) | Cumulative checkpoint I/O time. |
+| `postgresql_bgwriter_maxwritten_total` | None | Times the background writer stopped early because it had written too many buffers. |
+| `postgresql_table_vacuum_count_total` | None | Cumulative manual vacuum count. |
+
+### Worker process and cgroup metrics (existing worker OTLP path, Prometheus job `thenetwork-audit-activity`)
+
+Read from `/proc/self` and `/sys/fs/cgroup` inside the worker container on
+every export interval. Every reader is best effort: a missing file, an older
+kernel lacking `memory.peak`, or malformed content yields no observation for
+that instrument on that scrape rather than raising. `state="user"` and
+`state="system"` are the only labels used; nothing here carries a `trace_id`,
+sender, or job identifier.
+
+The OTel Collector's Prometheus exporter appends a `_ratio` suffix to any
+gauge instrument registered with the dimensionless unit `"1"`, regardless of
+whether the value is actually a fraction. `thenetwork_worker_process_open_fds`
+and `thenetwork_worker_process_threads` are registered that way, so their
+scraped names carry the suffix below even though both are raw counts, not
+ratios in `[0, 1]`.
+
+| Prometheus metric | Labels | Meaning |
+| --- | --- | --- |
+| `thenetwork_worker_process_resident_memory_bytes` | None | Worker process RSS, from `/proc/self/status` `VmRSS`. |
+| `thenetwork_worker_process_cpu_seconds` | `state` (`user`, `system`) | Cumulative process CPU time since start, from `/proc/self/stat` `utime`/`stime`. Resets only on process restart; use `rate()` for a utilization view. |
+| `thenetwork_worker_process_open_fds_ratio` | None | Open file descriptor count, from the size of `/proc/self/fd`. Not a ratio; see the exporter-suffix note above. |
+| `thenetwork_worker_process_threads_ratio` | None | Thread count, from `/proc/self/status` `Threads`. Not a ratio; see the exporter-suffix note above. |
+| `thenetwork_worker_cgroup_memory_current_bytes` | None | Current cgroup v2 memory usage, from `/sys/fs/cgroup/memory.current`. |
+| `thenetwork_worker_cgroup_memory_max_bytes` | None | Configured cgroup v2 memory limit, from `memory.max`. Absent when unlimited (the file literally reads `"max"`). |
+| `thenetwork_worker_cgroup_memory_peak_bytes` | None | Peak cgroup v2 memory usage, from `memory.peak`. Absent on kernels that don't expose this file. |
+| `thenetwork_worker_cgroup_cpu_periods_total` | None | Elapsed CPU scheduling periods, from `cpu.stat` `nr_periods`. |
+| `thenetwork_worker_cgroup_cpu_throttled_periods_total` | None | Scheduling periods in which the container was throttled, from `cpu.stat` `nr_throttled`. |
+| `thenetwork_worker_cgroup_cpu_throttled_seconds_total` | None | Cumulative throttled CPU time, from `cpu.stat` `throttled_usec`. |
 
 ## Label policy
 
@@ -472,8 +605,9 @@ docker compose run --rm --no-deps --entrypoint amtool alertmanager \
   check-config /etc/alertmanager/alertmanager.yml
 ```
 
-After rollout, verify all three Prometheus targets (`otel-collector-internal`,
-`thenetwork-audit-activity`, and `loki`) are up and the Alertmanager status page
+After rollout, verify all four Prometheus targets (`otel-collector-internal`,
+`thenetwork-audit-activity`, `thenetwork-host-metrics`, and `loki`) are up and
+the Alertmanager status page
 reports the expected receiver. Verify the dedicated operator mailbox with
 a separately planned notification test during deployment. Silence only a
 specific alert for a bounded maintenance window; do not silence
@@ -502,9 +636,9 @@ script also starts Grafana in the same isolated project and, over its HTTP API,
 confirms the provisioned Prometheus and Loki datasources both report a healthy
 `/api/datasources/uid/<uid>/health` status and that
 `grafana/dashboards/worker-reliability.json`, `grafana/dashboards/llm-cost-usage.json`,
-and `grafana/dashboards/growth-kpi.json` were all loaded by the file-based dashboard
-provider, with no provisioning error in the Grafana container logs. It still does
-not send email or start the worker.
+`grafana/dashboards/growth-kpi.json`, and `grafana/dashboards/system-resources.json`
+were all loaded by the file-based dashboard provider, with no provisioning error
+in the Grafana container logs. It still does not send email or start the worker.
 Its containers, network, and validation-only named volumes are removed before
 it returns.
 

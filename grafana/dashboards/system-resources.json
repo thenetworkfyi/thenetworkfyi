@@ -1,0 +1,367 @@
+{
+  "uid": "thenetwork-system-resources",
+  "title": "The Network - System Resources",
+  "description": "Host CPU/memory/disk/network from the hostmetrics receiver, Postgres internals from the postgresql receiver, and worker process/cgroup usage and throttling from the worker OTLP gauges.",
+  "tags": ["thenetwork"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Host",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Host CPU busy",
+      "description": "1 - idle time fraction, derived from system_cpu_time_seconds_total{state}.",
+      "gridPos": { "x": 0, "y": 1, "w": 6, "h": 4 },
+      "fieldConfig": {
+        "defaults": { "unit": "percent", "thresholds": { "mode": "absolute", "steps": [
+          { "color": "green", "value": null },
+          { "color": "yellow", "value": 70 },
+          { "color": "red", "value": 90 }
+        ] } },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [
+        { "expr": "100 * (1 - (sum(rate(system_cpu_time_seconds_total{state=\"idle\"}[5m])) / sum(rate(system_cpu_time_seconds_total[5m]))))", "legendFormat": "busy", "refId": "A" }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Host load average (1m)",
+      "description": "system_cpu_load_average_1m.",
+      "gridPos": { "x": 6, "y": 1, "w": 6, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [
+        { "expr": "system_cpu_load_average_1m", "legendFormat": "load1", "refId": "A" }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Host memory used",
+      "description": "system_memory_usage_bytes{state=\"used\"}.",
+      "gridPos": { "x": 12, "y": 1, "w": 6, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [
+        { "expr": "system_memory_usage_bytes{state=\"used\"}", "legendFormat": "used", "refId": "A" }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Host memory free",
+      "description": "system_memory_usage_bytes{state=\"free\"}.",
+      "gridPos": { "x": 18, "y": 1, "w": 6, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [
+        { "expr": "system_memory_usage_bytes{state=\"free\"}", "legendFormat": "free", "refId": "A" }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Host CPU time by state",
+      "description": "sum by (state) (rate(system_cpu_time_seconds_total[5m])), summed across logical CPUs.",
+      "gridPos": { "x": 0, "y": 5, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] },
+      "targets": [
+        { "expr": "sum by (state) (rate(system_cpu_time_seconds_total[5m]))", "legendFormat": "{{state}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Host load average",
+      "description": "system_cpu_load_average_1m / _5m / _15m.",
+      "gridPos": { "x": 12, "y": 5, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "expr": "system_cpu_load_average_1m", "legendFormat": "1m", "refId": "A" },
+        { "expr": "system_cpu_load_average_5m", "legendFormat": "5m", "refId": "B" },
+        { "expr": "system_cpu_load_average_15m", "legendFormat": "15m", "refId": "C" }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Host memory usage by state",
+      "description": "system_memory_usage_bytes by state (used/free/cached/buffered/slab_*).",
+      "gridPos": { "x": 0, "y": 13, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "targets": [
+        { "expr": "system_memory_usage_bytes", "legendFormat": "{{state}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Host filesystem free bytes by mount",
+      "description": "system_filesystem_usage_bytes{state=\"free\"} by mountpoint.",
+      "gridPos": { "x": 12, "y": 13, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "targets": [
+        { "expr": "system_filesystem_usage_bytes{state=\"free\"}", "legendFormat": "{{mountpoint}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Host filesystem used bytes by mount",
+      "description": "system_filesystem_usage_bytes{state=\"used\"} by mountpoint.",
+      "gridPos": { "x": 0, "y": 21, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "targets": [
+        { "expr": "system_filesystem_usage_bytes{state=\"used\"}", "legendFormat": "{{mountpoint}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Host network I/O",
+      "description": "sum by (device, direction) (rate(system_network_io_bytes_total[5m])).",
+      "gridPos": { "x": 12, "y": 21, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "Bps" }, "overrides": [] },
+      "targets": [
+        { "expr": "sum by (device, direction) (rate(system_network_io_bytes_total[5m]))", "legendFormat": "{{device}}/{{direction}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Host network errors and drops",
+      "description": "rate(system_network_errors_total[5m]) and rate(system_network_dropped_total[5m]) by device.",
+      "gridPos": { "x": 0, "y": 29, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        { "expr": "sum by (device) (rate(system_network_errors_total[5m]))", "legendFormat": "errors {{device}}", "refId": "A" },
+        { "expr": "sum by (device) (rate(system_network_dropped_total[5m]))", "legendFormat": "dropped {{device}}", "refId": "B" }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "timeseries",
+      "title": "Host disk I/O",
+      "description": "sum by (device, direction) (rate(system_disk_io_bytes_total[5m])).",
+      "gridPos": { "x": 12, "y": 29, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "Bps" }, "overrides": [] },
+      "targets": [
+        { "expr": "sum by (device, direction) (rate(system_disk_io_bytes_total[5m]))", "legendFormat": "{{device}}/{{direction}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "row",
+      "title": "PostgreSQL",
+      "gridPos": { "x": 0, "y": 37, "w": 24, "h": 1 }
+    },
+    {
+      "id": 15,
+      "type": "stat",
+      "title": "Active backends",
+      "description": "postgresql_backends: a live pg_stat_activity snapshot at scrape time, so it reports no series while zero connections are active.",
+      "gridPos": { "x": 0, "y": 38, "w": 6, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [
+        { "expr": "postgresql_backends", "legendFormat": "backends", "refId": "A" }
+      ]
+    },
+    {
+      "id": 16,
+      "type": "stat",
+      "title": "Database size",
+      "description": "postgresql_db_size_bytes.",
+      "gridPos": { "x": 6, "y": 38, "w": 6, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [
+        { "expr": "postgresql_db_size_bytes", "legendFormat": "size", "refId": "A" }
+      ]
+    },
+    {
+      "id": 17,
+      "type": "stat",
+      "title": "Table count",
+      "description": "postgresql_table_count.",
+      "gridPos": { "x": 12, "y": 38, "w": 6, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [
+        { "expr": "postgresql_table_count", "legendFormat": "tables", "refId": "A" }
+      ]
+    },
+    {
+      "id": 18,
+      "type": "stat",
+      "title": "Connection limit",
+      "description": "postgresql_connection_max.",
+      "gridPos": { "x": 18, "y": 38, "w": 6, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [
+        { "expr": "postgresql_connection_max", "legendFormat": "max_connections", "refId": "A" }
+      ]
+    },
+    {
+      "id": 19,
+      "type": "timeseries",
+      "title": "Commits vs rollbacks",
+      "description": "rate(postgresql_commits_total[5m]) and rate(postgresql_rollbacks_total[5m]).",
+      "gridPos": { "x": 0, "y": 42, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        { "expr": "rate(postgresql_commits_total[5m])", "legendFormat": "commits", "refId": "A" },
+        { "expr": "rate(postgresql_rollbacks_total[5m])", "legendFormat": "rollbacks", "refId": "B" }
+      ]
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "Row operations",
+      "description": "sum by (operation) (rate(postgresql_operations_total[5m])).",
+      "gridPos": { "x": 12, "y": 42, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        { "expr": "sum by (operation) (rate(postgresql_operations_total[5m]))", "legendFormat": "{{operation}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "Block cache hit ratio",
+      "description": "postgresql_blocks_read_total, hit sources over all sources (heap/idx/tidx/toast).",
+      "gridPos": { "x": 0, "y": 50, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "percent" }, "overrides": [] },
+      "targets": [
+        { "expr": "100 * sum(rate(postgresql_blocks_read_total{source=~\".*_hit\"}[5m])) / sum(rate(postgresql_blocks_read_total[5m]))", "legendFormat": "cache hit %", "refId": "A" }
+      ]
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "Background writer activity",
+      "description": "rate(postgresql_bgwriter_buffers_allocated_total[5m]) and rate(postgresql_bgwriter_buffers_writes_total[5m]) by source.",
+      "gridPos": { "x": 12, "y": 50, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        { "expr": "rate(postgresql_bgwriter_buffers_allocated_total[5m])", "legendFormat": "buffers allocated", "refId": "A" },
+        { "expr": "sum by (source) (rate(postgresql_bgwriter_buffers_writes_total[5m]))", "legendFormat": "{{source}} writes", "refId": "B" }
+      ]
+    },
+    {
+      "id": 23,
+      "type": "row",
+      "title": "Worker process and cgroup",
+      "gridPos": { "x": 0, "y": 58, "w": 24, "h": 1 }
+    },
+    {
+      "id": 24,
+      "type": "stat",
+      "title": "Worker process resident memory",
+      "description": "thenetwork_worker_process_resident_memory_bytes, from /proc/self/status.",
+      "gridPos": { "x": 0, "y": 59, "w": 6, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [
+        { "expr": "thenetwork_worker_process_resident_memory_bytes", "legendFormat": "RSS", "refId": "A" }
+      ]
+    },
+    {
+      "id": 25,
+      "type": "stat",
+      "title": "Worker open file descriptors",
+      "description": "thenetwork_worker_process_open_fds_ratio, from /proc/self/fd. The OTel Collector's Prometheus exporter appends _ratio to gauges with a dimensionless unit; this is a raw fd count, not a fraction.",
+      "gridPos": { "x": 6, "y": 59, "w": 6, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [
+        { "expr": "thenetwork_worker_process_open_fds_ratio", "legendFormat": "open fds", "refId": "A" }
+      ]
+    },
+    {
+      "id": 26,
+      "type": "stat",
+      "title": "Worker thread count",
+      "description": "thenetwork_worker_process_threads_ratio, from /proc/self/status. The OTel Collector's Prometheus exporter appends _ratio to gauges with a dimensionless unit; this is a raw thread count, not a fraction.",
+      "gridPos": { "x": 12, "y": 59, "w": 6, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [
+        { "expr": "thenetwork_worker_process_threads_ratio", "legendFormat": "threads", "refId": "A" }
+      ]
+    },
+    {
+      "id": 27,
+      "type": "stat",
+      "title": "Cgroup memory current",
+      "description": "thenetwork_worker_cgroup_memory_current_bytes, from /sys/fs/cgroup/memory.current.",
+      "gridPos": { "x": 18, "y": 59, "w": 6, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [
+        { "expr": "thenetwork_worker_cgroup_memory_current_bytes", "legendFormat": "current", "refId": "A" }
+      ]
+    },
+    {
+      "id": 28,
+      "type": "timeseries",
+      "title": "Worker process CPU time by state",
+      "description": "sum by (state) (rate(thenetwork_worker_process_cpu_seconds[5m])), from /proc/self/stat utime/stime.",
+      "gridPos": { "x": 0, "y": 63, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] },
+      "targets": [
+        { "expr": "sum by (state) (rate(thenetwork_worker_process_cpu_seconds[5m]))", "legendFormat": "{{state}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 29,
+      "type": "timeseries",
+      "title": "Cgroup memory usage vs limit",
+      "description": "thenetwork_worker_cgroup_memory_current_bytes, _max_bytes (absent when unlimited), and _peak_bytes (absent on older kernels).",
+      "gridPos": { "x": 12, "y": 63, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "targets": [
+        { "expr": "thenetwork_worker_cgroup_memory_current_bytes", "legendFormat": "current", "refId": "A" },
+        { "expr": "thenetwork_worker_cgroup_memory_max_bytes", "legendFormat": "max", "refId": "B" },
+        { "expr": "thenetwork_worker_cgroup_memory_peak_bytes", "legendFormat": "peak", "refId": "C" }
+      ]
+    },
+    {
+      "id": 30,
+      "type": "timeseries",
+      "title": "Cgroup CPU scheduling periods",
+      "description": "rate(thenetwork_worker_cgroup_cpu_periods_total[5m]) and rate(thenetwork_worker_cgroup_cpu_throttled_periods_total[5m]), from /sys/fs/cgroup/cpu.stat.",
+      "gridPos": { "x": 0, "y": 71, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [
+        { "expr": "rate(thenetwork_worker_cgroup_cpu_periods_total[5m])", "legendFormat": "periods", "refId": "A" },
+        { "expr": "rate(thenetwork_worker_cgroup_cpu_throttled_periods_total[5m])", "legendFormat": "throttled periods", "refId": "B" }
+      ]
+    },
+    {
+      "id": 31,
+      "type": "timeseries",
+      "title": "Cgroup CPU throttled time",
+      "description": "rate(thenetwork_worker_cgroup_cpu_throttled_seconds_total[5m]), from /sys/fs/cgroup/cpu.stat throttled_usec.",
+      "gridPos": { "x": 12, "y": 71, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "percentunit" }, "overrides": [] },
+      "targets": [
+        { "expr": "rate(thenetwork_worker_cgroup_cpu_throttled_seconds_total[5m])", "legendFormat": "throttled", "refId": "A" }
+      ]
+    }
+  ]
+}
