@@ -24,7 +24,7 @@ from thenetwork.email.intake_control import (
     PrimaryIntakeTransition,
     set_primary_intake_paused_in_session,
 )
-from thenetwork.llm_observability import LLMWorkload
+from thenetwork.llm_observability import LLMWorkload, observe_standalone_llm_totals
 from thenetwork.model_config import model_with_api_key
 from thenetwork.settings import get_settings
 from thenetwork.worker.metrics import (
@@ -279,7 +279,8 @@ async def judge_primary_email_abuse(timestamp: int) -> None:
     if snapshot is None:
         return
     try:
-        judgment = await _run_abuse_judge(snapshot)
+        with observe_standalone_llm_totals():
+            judgment = await _run_abuse_judge(snapshot)
     except Exception as exc:
         audit_event(
             "intake.abuse_judge.failed",

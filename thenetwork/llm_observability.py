@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import StrEnum
 from time import monotonic, time
@@ -17,6 +17,8 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 
 from thenetwork.audit import audit_event
+from thenetwork.security.token_budget import consume_daily_token_budget
+from thenetwork.settings import get_settings
 from thenetwork.worker.metrics import (
     record_email_lifecycle_metrics,
     record_llm_request_metrics,
@@ -29,6 +31,38 @@ class LLMWorkload(StrEnum):
     MEMORY_SANITIZER = "memory_sanitizer"
     ABUSE_JUDGE = "abuse_judge"
     EMBEDDING = "embedding"
+
+
+# The daily token budget bills the AGENT_MODEL/SMALL_AGENT_MODEL endpoint:
+# email_agent, memory_sanitizer (SANITIZE_LLM_TIER_ENABLED runs on every
+# person-referencing memory write), and abuse_judge all run there, so summing
+# their tokens is the correct charge even when SMALL_AGENT_MODEL is a distinct
+# (or, today, identically-priced) tier - if it is ever cheaper than
+# AGENT_MODEL, summing still over-charges rather than under-charging, which
+# is the intended conservative direction.
+#
+# embedding is deliberately EXEMPT: it bills a different provider at a very
+# different price point (see docs/development.md), so folding it into the
+# same token bucket would badly distort the dollar signal this cap protects.
+# It stays counted and exported separately (see `_LifecycleTotals` and the
+# embedding-specific metrics/audit fields already recorded above).
+_CHARGEABLE_WORKLOADS = frozenset(
+    {
+        LLMWorkload.EMAIL_AGENT,
+        LLMWorkload.MEMORY_SANITIZER,
+        LLMWorkload.ABUSE_JUDGE,
+    }
+)
+_BUDGET_EXEMPT_WORKLOADS = frozenset({LLMWorkload.EMBEDDING})
+
+
+def _every_workload_is_charged_or_exempt() -> bool:
+    """True iff every LLMWorkload member is covered by exactly one of the
+    charged/exempt sets above, so a future workload can't silently escape
+    the daily token cap by omission."""
+    covered = _CHARGEABLE_WORKLOADS | _BUDGET_EXEMPT_WORKLOADS
+    overlap = _CHARGEABLE_WORKLOADS & _BUDGET_EXEMPT_WORKLOADS
+    return not overlap and covered == frozenset(LLMWorkload)
 
 
 class CostStatus(StrEnum):
@@ -59,6 +93,22 @@ _SAFE_MODEL_LABEL = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
 
 
 @dataclass(slots=True)
+class _WorkloadTotals:
+    """Per-workload token breakdown used only to compute the budget charge."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    # Pessimistic per-request charge substituted whenever a provider omits
+    # usage on that request (see `_pessimistic_unavailable_charge`), so a
+    # provider that never reports usage cannot make the cap fail open.
+    unavailable_charge_tokens: int = 0
+
+    @property
+    def chargeable_tokens(self) -> int:
+        return self.input_tokens + self.output_tokens + self.unavailable_charge_tokens
+
+
+@dataclass(slots=True)
 class _LifecycleTotals:
     model_request_count: int = 0
     usage_unavailable_request_count: int = 0
@@ -71,6 +121,13 @@ class _LifecycleTotals:
     model_duration_ms: float = 0.0
     agent_duration_ms: float = 0.0
     agent_observed: bool = False
+    # Keyed by LLMWorkload.value. The charged unit is input_tokens +
+    # output_tokens; cache_read_tokens are deliberately excluded (priced near
+    # 0.1x), so a prompt-caching win does not register as budget consumption.
+    workload_totals: dict[str, _WorkloadTotals] = field(default_factory=dict)
+
+    def workload(self, workload_value: str) -> _WorkloadTotals:
+        return self.workload_totals.setdefault(workload_value, _WorkloadTotals())
 
 
 _lifecycle_totals: ContextVar[_LifecycleTotals | None] = ContextVar(
@@ -103,6 +160,39 @@ def _estimated_cost(response: ModelResponse | None) -> tuple[float | None, CostS
         return float(response.cost().total_price), CostStatus.ESTIMATED
     except Exception:
         return None, CostStatus.UNAVAILABLE
+
+
+def _pessimistic_unavailable_charge() -> int:
+    """Charge floor(agent_total_tokens_limit / agent_request_limit) tokens.
+
+    Applied whenever a provider response omits usage. A missing-usage request
+    still consumed real tokens; charging it zero would let a provider that
+    never reports usage make the daily cap fail open. `agent_total_tokens_limit`
+    and `agent_request_limit` already bound one agent run's total spend (see
+    `agent/core.py`), so their quotient is a reasonable per-request estimate.
+    """
+    settings = get_settings()
+    request_limit = settings.agent_request_limit
+    if request_limit <= 0:
+        return 0
+    return settings.agent_total_tokens_limit // request_limit
+
+
+def _chargeable_budget_tokens(totals: _LifecycleTotals) -> int:
+    return sum(
+        totals.workload_totals.get(workload.value, _WorkloadTotals()).chargeable_tokens
+        for workload in _CHARGEABLE_WORKLOADS
+    )
+
+
+def _consume_chargeable_budget(totals: _LifecycleTotals) -> None:
+    try:
+        cap = get_settings().daily_agent_token_cap
+        consume_daily_token_budget(_chargeable_budget_tokens(totals), cap)
+    except Exception:
+        # Telemetry-adjacent bookkeeping must not alter email processing or
+        # periodic-task behavior.
+        pass
 
 
 def record_llm_request(
@@ -138,13 +228,19 @@ def record_llm_request(
     if totals is not None:
         totals.model_request_count += 1
         totals.model_duration_ms += max(0.0, duration_ms)
+        workload_totals = totals.workload(workload.value)
         if resolved_usage is None:
             totals.usage_unavailable_request_count += 1
+            workload_totals.unavailable_charge_tokens += (
+                _pessimistic_unavailable_charge()
+            )
         else:
             totals.input_tokens += token_fields["input_tokens"] or 0
             totals.output_tokens += token_fields["output_tokens"] or 0
             totals.cache_read_tokens += token_fields["cache_read_tokens"] or 0
             totals.cache_write_tokens += token_fields["cache_write_tokens"] or 0
+            workload_totals.input_tokens += token_fields["input_tokens"] or 0
+            workload_totals.output_tokens += token_fields["output_tokens"] or 0
         if estimated_cost_usd is None:
             totals.unpriced_request_count += 1
         else:
@@ -309,4 +405,29 @@ def observe_email_lifecycle(
                 totals.agent_duration_ms / 1000 if totals.agent_observed else None
             ),
         )
+        # Charge the run's chargeable tokens exactly once per task attempt,
+        # from this finally block, so the error path is charged too -
+        # Procrastinate's max_attempts=3 therefore charges each attempt,
+        # which is intended.
+        _consume_chargeable_budget(totals)
+        _lifecycle_totals.reset(token)
+
+
+@contextmanager
+def observe_standalone_llm_totals() -> Iterator[None]:
+    """Meter model calls made outside `observe_email_lifecycle`.
+
+    The hourly abuse judge (`worker/abuse_judge.py`) runs as a standalone
+    periodic task, never inside `observe_email_lifecycle`, so its tokens
+    would otherwise never reach the daily budget: `record_llm_request` only
+    accumulates into `_lifecycle_totals` when that ContextVar is set. This
+    installs the same ContextVar for the duration of the call and charges the
+    budget from its own finally block, exactly like the email lifecycle path.
+    """
+    totals = _LifecycleTotals()
+    token = _lifecycle_totals.set(totals)
+    try:
+        yield
+    finally:
+        _consume_chargeable_budget(totals)
         _lifecycle_totals.reset(token)

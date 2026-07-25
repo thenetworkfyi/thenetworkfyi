@@ -15,8 +15,12 @@ from thenetwork.embed.embeddings import _ObservedOpenAIEmbedding
 from thenetwork.llm_observability import (
     LLMWorkload,
     ObservedModel,
+    _chargeable_budget_tokens,
+    _every_workload_is_charged_or_exempt,
+    _lifecycle_totals,
     observe_agent_duration,
     observe_email_lifecycle,
+    observe_standalone_llm_totals,
     record_llm_request,
 )
 from thenetwork.worker import metrics as worker_metrics
@@ -365,3 +369,166 @@ async def test_process_email_rollup_matches_request_metric_totals(caplog):
     assert rollup["estimated_cost_usd"] == pytest.approx(
         sum(item["estimated_cost_usd"] or 0 for item in metric_calls)
     )
+
+
+def _budget_settings(
+    *,
+    daily_agent_token_cap=15_000_000,
+    agent_request_limit=12,
+    agent_total_tokens_limit=100_000,
+):
+    return SimpleNamespace(
+        daily_agent_token_cap=daily_agent_token_cap,
+        agent_request_limit=agent_request_limit,
+        agent_total_tokens_limit=agent_total_tokens_limit,
+    )
+
+
+def test_every_llm_workload_is_charged_or_exempt():
+    assert _every_workload_is_charged_or_exempt() is True
+
+
+def test_record_llm_request_attributes_tokens_per_workload():
+    with observe_email_lifecycle(None):
+        record_llm_request(
+            workload=LLMWorkload.EMAIL_AGENT,
+            configured_model_name="m",
+            provider="openai",
+            duration_ms=1,
+            response=_response(input_tokens=100, output_tokens=20),
+        )
+        record_llm_request(
+            workload=LLMWorkload.MEMORY_SANITIZER,
+            configured_model_name="m",
+            provider="openai",
+            duration_ms=1,
+            response=_response(input_tokens=30, output_tokens=5),
+        )
+        record_llm_request(
+            workload=LLMWorkload.EMBEDDING,
+            configured_model_name="m",
+            provider="openai",
+            duration_ms=1,
+            response=_response(input_tokens=40, output_tokens=0),
+        )
+        totals = _lifecycle_totals.get()
+        assert totals.workload(LLMWorkload.EMAIL_AGENT.value).input_tokens == 100
+        assert totals.workload(LLMWorkload.EMAIL_AGENT.value).output_tokens == 20
+        assert totals.workload(LLMWorkload.MEMORY_SANITIZER.value).input_tokens == 30
+        assert totals.workload(LLMWorkload.EMBEDDING.value).input_tokens == 40
+        # embedding is excluded from the chargeable total
+        assert _chargeable_budget_tokens(totals) == 100 + 20 + 30 + 5
+
+
+def test_usage_unavailable_request_charged_pessimistically_not_zero():
+    with (
+        patch(
+            "thenetwork.llm_observability.get_settings",
+            return_value=_budget_settings(
+                agent_request_limit=10, agent_total_tokens_limit=100_000
+            ),
+        ),
+        observe_email_lifecycle(None),
+    ):
+        record_llm_request(
+            workload=LLMWorkload.ABUSE_JUDGE,
+            configured_model_name="m",
+            provider="openai",
+            duration_ms=1,
+            usage=None,
+        )
+        totals = _lifecycle_totals.get()
+        workload_totals = totals.workload(LLMWorkload.ABUSE_JUDGE.value)
+        assert workload_totals.input_tokens == 0
+        assert workload_totals.output_tokens == 0
+        # 100_000 // 10, never zero merely because usage was unavailable
+        assert workload_totals.unavailable_charge_tokens == 10_000
+        assert workload_totals.chargeable_tokens == 10_000
+
+
+def test_email_lifecycle_consumes_daily_token_budget_once_per_attempt():
+    with (
+        patch(
+            "thenetwork.llm_observability.get_settings",
+            return_value=_budget_settings(daily_agent_token_cap=999),
+        ),
+        patch("thenetwork.llm_observability.consume_daily_token_budget") as consume,
+    ):
+        with observe_email_lifecycle(None):
+            record_llm_request(
+                workload=LLMWorkload.EMAIL_AGENT,
+                configured_model_name="m",
+                provider="openai",
+                duration_ms=1,
+                response=_response(input_tokens=100, output_tokens=20),
+            )
+            record_llm_request(
+                workload=LLMWorkload.EMBEDDING,
+                configured_model_name="m",
+                provider="openai",
+                duration_ms=1,
+                response=_response(input_tokens=999, output_tokens=999),
+            )
+
+    consume.assert_called_once_with(120, 999)
+
+
+def test_email_lifecycle_consumes_budget_on_the_error_path_too():
+    with (
+        patch(
+            "thenetwork.llm_observability.get_settings",
+            return_value=_budget_settings(daily_agent_token_cap=999),
+        ),
+        patch("thenetwork.llm_observability.consume_daily_token_budget") as consume,
+    ):
+        with pytest.raises(RuntimeError):
+            with observe_email_lifecycle(None):
+                record_llm_request(
+                    workload=LLMWorkload.EMAIL_AGENT,
+                    configured_model_name="m",
+                    provider="openai",
+                    duration_ms=1,
+                    response=_response(input_tokens=7, output_tokens=3),
+                )
+                raise RuntimeError("agent run blew up")
+
+    consume.assert_called_once_with(10, 999)
+
+
+def test_standalone_llm_totals_charges_abuse_judge_workload_outside_lifecycle():
+    """The hourly abuse judge runs outside observe_email_lifecycle; without
+    this context manager its tokens would never reach the daily budget
+    because record_llm_request only accumulates when the ContextVar is set."""
+    with (
+        patch(
+            "thenetwork.llm_observability.get_settings",
+            return_value=_budget_settings(daily_agent_token_cap=500),
+        ),
+        patch("thenetwork.llm_observability.consume_daily_token_budget") as consume,
+    ):
+        assert _lifecycle_totals.get() is None
+        with observe_standalone_llm_totals():
+            record_llm_request(
+                workload=LLMWorkload.ABUSE_JUDGE,
+                configured_model_name="m",
+                provider="openai",
+                duration_ms=1,
+                response=_response(input_tokens=40, output_tokens=10),
+            )
+        assert _lifecycle_totals.get() is None
+
+    consume.assert_called_once_with(50, 500)
+
+
+def test_record_llm_request_without_lifecycle_context_does_not_charge_budget():
+    """Outside any observe_* context (e.g. a stray call), there is no totals
+    object to charge - nothing should be consumed."""
+    with patch("thenetwork.llm_observability.consume_daily_token_budget") as consume:
+        record_llm_request(
+            workload=LLMWorkload.EMAIL_AGENT,
+            configured_model_name="m",
+            provider="openai",
+            duration_ms=1,
+            response=_response(input_tokens=7, output_tokens=3),
+        )
+    consume.assert_not_called()
