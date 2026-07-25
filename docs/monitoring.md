@@ -150,6 +150,18 @@ current Prometheus history has observed; it does not say how many person rows
 currently exist. Similarly, the introduction counter is not the number of
 currently active proposals.
 
+### `model` label discontinuity for OpenRouter ids
+
+Before this fix, the `model` label's charset rejected the `/` in OpenRouter
+`vendor/model` ids (e.g. `google/gemma-4-31b-it`), so every OpenRouter request
+was recorded under `model="unknown"` in both `thenetwork_llm_requests_total`
+et al. and the audit `model_name` field. After the fix, new OpenRouter series
+appear under their real `vendor/model` label instead. Any dashboard panel or
+alert that filters or breaks down by `model="unknown"` for an OpenRouter
+deployment will see that series stop accumulating and a new one appear under
+the actual id - this is expected, not a data loss, but a saved dashboard query
+pinned to `model="unknown"` will silently go quiet rather than error.
+
 ## Label policy
 
 The Collector projects only the closed categories listed in the table. Its

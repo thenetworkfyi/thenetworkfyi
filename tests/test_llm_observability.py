@@ -388,6 +388,89 @@ def test_every_llm_workload_is_charged_or_exempt():
     assert _every_workload_is_charged_or_exempt() is True
 
 
+def test_record_llm_request_preserves_openrouter_vendor_slash_model_ids(caplog):
+    """A `vendor/model` OpenRouter id (e.g. google/gemma-4-31b-it) must not be
+    collapsed to "unknown" in either the audit event or the Prometheus label -
+    the `/` is a legitimate character in these ids, not an injection risk."""
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+    model_id = "google/gemma-4-31b-it"
+    response = ModelResponse(
+        parts=[TextPart(content="content that must not enter accounting")],
+        usage=RequestUsage(input_tokens=10, output_tokens=2),
+        model_name=model_id,
+        provider_name="openrouter",
+    )
+
+    with patch("thenetwork.llm_observability.record_llm_request_metrics") as metrics:
+        record_llm_request(
+            workload=LLMWorkload.EMAIL_AGENT,
+            configured_model_name=model_id,
+            provider="openrouter",
+            duration_ms=1,
+            response=response,
+        )
+
+    event = next(
+        item for item in _events(caplog) if item["event"] == "llm.request.completed"
+    )
+    assert event["model_name"] == model_id
+    assert metrics.call_args.kwargs["model"] == model_id
+
+
+def test_record_llm_request_still_rejects_unsafe_model_name_characters(caplog):
+    """Widening the charset for `/` must not open the door to whitespace,
+    newlines, quotes, or control characters in the audit stream."""
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+    unsafe_model_id = 'vendor/model"\ninjected'
+    response = ModelResponse(
+        parts=[TextPart(content="content that must not enter accounting")],
+        usage=RequestUsage(input_tokens=10, output_tokens=2),
+        model_name=unsafe_model_id,
+        provider_name="openrouter",
+    )
+
+    with patch("thenetwork.llm_observability.record_llm_request_metrics") as metrics:
+        record_llm_request(
+            workload=LLMWorkload.EMAIL_AGENT,
+            configured_model_name=unsafe_model_id,
+            provider="openrouter",
+            duration_ms=1,
+            response=response,
+        )
+
+    event = next(
+        item for item in _events(caplog) if item["event"] == "llm.request.completed"
+    )
+    assert event["model_name"] == "unknown"
+    assert metrics.call_args.kwargs["model"] == "unknown"
+
+
+def test_record_llm_request_still_rejects_model_name_over_eighty_characters(caplog):
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+    overlong_model_id = "vendor/" + "m" * 80
+    response = ModelResponse(
+        parts=[TextPart(content="content that must not enter accounting")],
+        usage=RequestUsage(input_tokens=10, output_tokens=2),
+        model_name=overlong_model_id,
+        provider_name="openrouter",
+    )
+
+    with patch("thenetwork.llm_observability.record_llm_request_metrics") as metrics:
+        record_llm_request(
+            workload=LLMWorkload.EMAIL_AGENT,
+            configured_model_name=overlong_model_id,
+            provider="openrouter",
+            duration_ms=1,
+            response=response,
+        )
+
+    event = next(
+        item for item in _events(caplog) if item["event"] == "llm.request.completed"
+    )
+    assert event["model_name"] == "unknown"
+    assert metrics.call_args.kwargs["model"] == "unknown"
+
+
 def test_record_llm_request_attributes_tokens_per_workload():
     with observe_email_lifecycle(None):
         record_llm_request(
