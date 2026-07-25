@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
-# Deploy the latest published image on the VPS.
+# Deploy the latest commit on the VPS.
 #
-# Usage (run from the directory holding .env and docker-compose.yml on the
-# server - no git checkout required):
+# Usage (run from the git checkout that also holds .env and docker-compose.yml
+# on the server):
 #   ./scripts/deploy.sh
 #
 # What it does:
-#   1. Pull the latest image tag (IMAGE in .env, published by
-#      .github/workflows/publish.yml on every push to main).
-#   2. Restart only changed containers. The DB container is untouched;
+#   1. Pull the latest commit on main.
+#   2. Rebuild the worker image locally and force-recreate containers so the
+#      new code and dependencies take effect. The DB container is untouched;
 #      Alembic migrations run inside the worker entrypoint automatically on
 #      every start.
+#
+# This is also what .github/workflows/ci.yml's deploy job runs over SSH after
+# tests pass on a push to main.
 #
 # For a zero-downtime swap the worker drains in-flight jobs before stopping
 # (stop_grace_period: 300s in docker-compose.yml). Durable Procrastinate job
@@ -19,11 +22,11 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-echo "==> Pulling latest images..."
-docker compose pull --quiet
+echo "==> Pulling latest code..."
+git pull origin main
 
-echo "==> Restarting changed services..."
-docker compose up -d
+echo "==> Rebuilding and recreating containers..."
+docker compose up -d --build --force-recreate
 
 echo "==> Deploy complete. Worker status:"
 docker compose ps worker

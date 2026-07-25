@@ -27,10 +27,7 @@ services:
     restart: unless-stopped
 
   worker:
-    # `docker compose build` builds this locally; `docker compose pull` fetches
-    # the published image in production. Set IMAGE to your GHCR path, e.g.
-    # IMAGE=ghcr.io/<owner>/thenetwork-agent:latest
-    image: ${IMAGE:-thenetwork-agent:latest}
+    image: thenetwork-agent:latest
     build: .
     env_file:
       - path: .env

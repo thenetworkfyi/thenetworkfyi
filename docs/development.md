@@ -465,7 +465,7 @@ SIGTERM graceful drain (`stop_grace_period: 300s`), `max_attempts=3`, and idempo
 ```bash
 cp .env.example .env
 docker compose up -d --build      # build + start db, worker, collector, Prometheus
-docker compose pull && docker compose up -d   # redeploy only changed services
+git pull origin main && docker compose up -d --build --force-recreate   # redeploy
 ```
 
 ### OpenTelemetry Logs, Loki, and Local Prometheus Metrics
@@ -506,15 +506,15 @@ restarts preload from local weights without credentials or a download.
 Scanner-disabled deployments load no model and require no Hugging Face account or
 token.
 
-`.github/workflows/publish.yml` builds + pushes images to GHCR on pushes to `main` and
-`v*` tags; set `IMAGE` in `.env` on the server to that path. The VPS is a **GHCR
-consumer, not a git checkout** - it needs only `.env`, `docker-compose.yml`, and
-`scripts/deploy.sh`/`scripts/backup.sh` present in one directory (place them with `scp`
-or a small separate ops repo; there is no `git pull` step on the server and the worker
-image is never built there). `scripts/deploy.sh` wraps the redeploy line above
-(`docker compose pull` then `docker compose up -d`, no `--build`) and prints the
-resulting `worker` status. `scripts/backup.sh` dumps the DB (the only source of truth)
-via the `db` container - wire it as a host cron job.
+The VPS is a **git checkout**, not an image consumer: no image is published anywhere.
+`.github/workflows/ci.yml` has a `deploy` job (`environment: production`) that runs only
+on a push to `main`, only after the `test` job passes. It SSHes into the server (host,
+user, and key come from the `production` environment's `DEPLOY_HOST`/`DEPLOY_USER`/
+`DEPLOY_SSH_KEY` secrets) and runs `scripts/deploy.sh` from the checkout, which pulls
+`main` and rebuilds the worker image locally (`docker compose up -d --build
+--force-recreate`) before printing the resulting `worker` status. Run the same script by
+hand on the server for a manual redeploy. `scripts/backup.sh` dumps the DB (the only
+source of truth) via the `db` container - wire it as a host cron job.
 
 ## Proactive outreach
 
