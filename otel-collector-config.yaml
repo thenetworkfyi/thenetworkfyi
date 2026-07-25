@@ -44,6 +44,16 @@ receivers:
             - tracefs
       disk:
       network:
+  postgresql:
+    endpoint: db:5432
+    transport: tcp
+    username: ${env:POSTGRES_MONITOR_USER}
+    password: ${env:POSTGRES_MONITOR_PASSWORD}
+    databases:
+      - ${env:POSTGRES_DB}
+    collection_interval: 30s
+    tls:
+      insecure: true
 
 processors:
   batch:
@@ -146,6 +156,6 @@ service:
       receivers: [count/audit, otlp/worker_metrics]
       exporters: [prometheus/audit]
     metrics/host:
-      receivers: [hostmetrics]
+      receivers: [hostmetrics, postgresql]
       processors: [batch]
       exporters: [prometheus/host]

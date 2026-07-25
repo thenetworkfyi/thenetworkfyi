@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     postgres_db: str = "network_db"
     postgres_user: str = "network"
     postgres_password: str = "network"
+    # A dedicated read-only role (granted pg_monitor, never the application
+    # POSTGRES_USER) used only by the OTel collector's postgresql receiver to
+    # scrape server-internal stats. Provisioned by alembic/versions/018_*.
+    postgres_monitor_user: str = "network_monitor"
+    postgres_monitor_password: str = "network_monitor"
 
     @computed_field  # type: ignore[prop-decorator]
     @property
