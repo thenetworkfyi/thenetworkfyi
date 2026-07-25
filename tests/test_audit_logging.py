@@ -353,6 +353,33 @@ def test_audit_categories_replace_arbitrary_values(caplog):
     assert "private_secret" not in caplog.records[0].message
 
 
+def test_audit_model_name_preserves_openrouter_vendor_slash_ids(caplog):
+    """model_name is provider-returned data, not a closed category, so it must
+    not be collapsed to "unknown" by the generic _safe_token charset - that
+    charset lacks "/", which every OpenRouter `vendor/model` id contains."""
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    audit_event("llm.request.completed", model_name="google/gemma-4-31b-it")
+
+    assert _events(caplog)[0]["model_name"] == "google/gemma-4-31b-it"
+
+
+def test_audit_model_name_still_rejects_unsafe_characters(caplog):
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    audit_event("llm.request.completed", model_name='vendor/model"\ninjected')
+
+    assert _events(caplog)[0]["model_name"] == "unknown"
+
+
+def test_audit_model_name_still_rejects_names_over_eighty_characters(caplog):
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
+
+    audit_event("llm.request.completed", model_name="vendor/" + "m" * 80)
+
+    assert _events(caplog)[0]["model_name"] == "unknown"
+
+
 @pytest.mark.asyncio
 async def test_no_action_output_has_exact_audit_name_and_outcome(caplog):
     from thenetwork.agent.tools import no_action
