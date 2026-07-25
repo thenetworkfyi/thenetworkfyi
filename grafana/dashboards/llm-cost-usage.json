@@ -1,0 +1,99 @@
+{
+  "uid": "thenetwork-llm-cost-usage",
+  "title": "The Network - LLM Cost & Token Usage",
+  "description": "Logical LLM/embedding request volume, token accounting, and estimated USD cost by workload/provider/model, derived from content-free llm.request.completed records. Recorded costs are point-in-time estimates, not the provider invoice.",
+  "tags": ["thenetwork"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "30s",
+  "time": { "from": "now-24h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "LLM requests",
+      "description": "thenetwork_llm_requests_total by workload/provider/model/outcome/cost_status.",
+      "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "expr": "sum by (workload, provider, model, outcome, cost_status) (rate(thenetwork_llm_requests_total[5m]))", "legendFormat": "{{workload}}/{{provider}}/{{model}}/{{outcome}}/{{cost_status}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "LLM tokens",
+      "description": "thenetwork_llm_tokens_total by workload/provider/model/token_type.",
+      "gridPos": { "x": 12, "y": 0, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "expr": "sum by (workload, provider, model, token_type) (rate(thenetwork_llm_tokens_total[5m]))", "legendFormat": "{{workload}}/{{provider}}/{{model}}/{{token_type}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Estimated cost, rolling 24h (by workload/provider/model)",
+      "description": "sum(increase(thenetwork_llm_estimated_cost_usd_total[24h])) by (workload, provider, model). The fixed $50/day reference line matches the DailyLlmCostDrift alert in prometheus-alert-rules.yml (sum across all series, not per-series) - update both together if the threshold changes.",
+      "gridPos": { "x": 0, "y": 8, "w": 24, "h": 9 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "custom": {
+            "thresholdsStyle": { "mode": "line" }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 50 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "sum by (workload, provider, model) (increase(thenetwork_llm_estimated_cost_usd_total[24h]))", "legendFormat": "{{workload}}/{{provider}}/{{model}}", "refId": "A" },
+        { "expr": "sum(increase(thenetwork_llm_estimated_cost_usd_total[24h]))", "legendFormat": "total (DailyLlmCostDrift compares this to $50)", "refId": "B" }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Total estimated cost, rolling 24h",
+      "description": "sum(increase(thenetwork_llm_estimated_cost_usd_total[24h])) across all workloads/providers/models - the exact expression the DailyLlmCostDrift alert evaluates against its $50 threshold in prometheus-alert-rules.yml.",
+      "gridPos": { "x": 0, "y": 17, "w": 8, "h": 5 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 40 },
+              { "color": "red", "value": 50 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "area" },
+      "targets": [
+        { "expr": "sum(increase(thenetwork_llm_estimated_cost_usd_total[24h]))", "legendFormat": "24h estimated cost", "refId": "A" }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "LLM request latency (p95)",
+      "description": "histogram_quantile(0.95, thenetwork_llm_request_duration_seconds) by workload/provider/model.",
+      "gridPos": { "x": 8, "y": 17, "w": 16, "h": 5 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "expr": "histogram_quantile(0.95, sum by (le, workload, provider, model) (rate(thenetwork_llm_request_duration_seconds_bucket[5m])))", "legendFormat": "{{workload}}/{{provider}}/{{model}}", "refId": "A" }
+      ]
+    }
+  ]
+}
