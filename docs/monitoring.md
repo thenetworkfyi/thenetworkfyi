@@ -72,6 +72,18 @@ transitions. This dashboard uses only the pre-existing `thenetwork_introduction_
 counter and its `action`/`consent_state` labels; see the
 [counter catalog](#counter-catalog) for the full label set.
 
+Below the funnel, a network-health row adds four unlabeled gauge panels:
+registered people (`thenetwork_people_total`, a live count, not the cumulative
+`thenetwork_accounts_created_total` counter), activated people
+(`thenetwork_activated_people_total`, people referenced by at least one
+memory - the Cold Start Problem's "hard side" liquidity signal), a derived
+activation-rate panel (activated / registered, no new metric), weekly active
+senders (`thenetwork_active_senders_weekly`, a 7-day proxy for distinct active
+senders), and network density (`thenetwork_network_density`, average graph
+degree sampled from the existing hourly `scan_for_opportunities` graph
+projection - the network-effects flywheel signal). See the gauge table above
+for exact semantics and the proxy caveats on the two people-activity metrics.
+
 Query the last hour directly through the Loki API:
 
 ```bash
