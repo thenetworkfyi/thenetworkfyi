@@ -492,11 +492,18 @@ Rollout & verification:
 - Open the local UI: `http://127.0.0.1:9090`
 - Open the local Alertmanager UI: `http://127.0.0.1:9093`
 - Query Loki directly: `curl --get http://127.0.0.1:3100/loki/api/v1/query_range --data-urlencode 'query={service_name="thenetwork-worker"}' --data-urlencode 'since=1h'`
-- Verify all three targets are up: `curl http://127.0.0.1:9090/api/v1/targets`
+- Verify all four targets are up: `curl http://127.0.0.1:9090/api/v1/targets`
 - Query application activity after an audit event: `curl 'http://127.0.0.1:9090/api/v1/query?query=thenetwork_worker_audit_events_total'`
 - Exercise the worker-state OTLP path through Prometheus: `./validate-monitoring.sh`
 
-Grafana, host/Postgres exporters, traces, historical log migration, and migration of old metrics are out of scope for this increment. See [monitoring.md](monitoring.md) for Loki queries and retention, alert thresholds, routing, secret provisioning, silencing, validation, and runbooks.
+Grafana already ships (`grafana/`, bound to `127.0.0.1:3000`), and host and
+Postgres metrics ship via the `hostmetrics` and `postgresql` Collector
+receivers plus the worker's own process/cgroup OTLP gauges (see
+[monitoring.md](monitoring.md)'s host/Postgres/worker metrics catalog and the
+`system-resources.json` dashboard). Traces, historical log migration, and
+migration of old metrics remain out of scope. See [monitoring.md](monitoring.md)
+for Loki queries and retention, alert thresholds, routing, secret provisioning,
+silencing, validation, and runbooks.
 
 All compose builds install the scanner dependencies. To enable model loading and
 scanning, set `CONTENT_SCAN_ENABLED=true` and `HF_TOKEN` for the first start, then run
