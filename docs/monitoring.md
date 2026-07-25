@@ -192,6 +192,17 @@ exporter normalizes dots to underscores and adds the `_total` suffix.
 The worker also sends state, operational, and model-accounting metrics outbound
 to the Collector over OTLP/HTTP. The worker still opens no listener:
 
+Every gauge below is registered in `thenetwork/worker/metrics.py` with a UCUM
+curly-brace annotation unit (for example `"{jobs}"`, `"{people}"`,
+`"{paused}"`), never the dimensionless unit `"1"`. The OTel Collector's
+Prometheus exporter silently appends a `_ratio` suffix to any gauge
+instrument registered with unit `"1"`, regardless of whether the value is
+actually a fraction; the metric names below matched exactly what every
+consuming dashboard and `prometheus-alert-rules.yml` expression already
+expected, so an earlier `unit="1"` registration here would make the affected
+panels and alerts silently see no data. Keep new dimensionless worker gauges
+on an annotation unit rather than `"1"` to avoid reintroducing this.
+
 | Prometheus gauge | Labels | Meaning |
 | --- | --- | --- |
 | `thenetwork_producer_last_success_timestamp_seconds` | None | Unix timestamp recorded only after a complete successful IMAP poll, including an empty poll. It remains zero after process start until the first success and does not advance after a failed or incomplete cycle. |
@@ -342,17 +353,19 @@ sender, or job identifier.
 
 The OTel Collector's Prometheus exporter appends a `_ratio` suffix to any
 gauge instrument registered with the dimensionless unit `"1"`, regardless of
-whether the value is actually a fraction. `thenetwork_worker_process_open_fds`
-and `thenetwork_worker_process_threads` are registered that way, so their
-scraped names carry the suffix below even though both are raw counts, not
-ratios in `[0, 1]`.
+whether the value is actually a fraction. Every dimensionless gauge in this
+codebase (worker process open FDs and thread count here; queue depth,
+primary-intake-paused, and the growth gauges documented above) instead uses a
+UCUM curly-brace annotation unit (for example `"{fds}"`, `"{threads}"`) so the
+exporter emits the plain metric name below with no suffix - see
+`thenetwork/worker/metrics.py` for the full instrument registrations.
 
 | Prometheus metric | Labels | Meaning |
 | --- | --- | --- |
 | `thenetwork_worker_process_resident_memory_bytes` | None | Worker process RSS, from `/proc/self/status` `VmRSS`. |
 | `thenetwork_worker_process_cpu_seconds` | `state` (`user`, `system`) | Cumulative process CPU time since start, from `/proc/self/stat` `utime`/`stime`. Resets only on process restart; use `rate()` for a utilization view. |
-| `thenetwork_worker_process_open_fds_ratio` | None | Open file descriptor count, from the size of `/proc/self/fd`. Not a ratio; see the exporter-suffix note above. |
-| `thenetwork_worker_process_threads_ratio` | None | Thread count, from `/proc/self/status` `Threads`. Not a ratio; see the exporter-suffix note above. |
+| `thenetwork_worker_process_open_fds` | None | Open file descriptor count, from the size of `/proc/self/fd`. |
+| `thenetwork_worker_process_threads` | None | Thread count, from `/proc/self/status` `Threads`. |
 | `thenetwork_worker_cgroup_memory_current_bytes` | None | Current cgroup v2 memory usage, from `/sys/fs/cgroup/memory.current`. |
 | `thenetwork_worker_cgroup_memory_max_bytes` | None | Configured cgroup v2 memory limit, from `memory.max`. Absent when unlimited (the file literally reads `"max"`). |
 | `thenetwork_worker_cgroup_memory_peak_bytes` | None | Peak cgroup v2 memory usage, from `memory.peak`. Absent on kernels that don't expose this file. |

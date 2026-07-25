@@ -284,24 +284,24 @@
       "id": 25,
       "type": "stat",
       "title": "Worker open file descriptors",
-      "description": "thenetwork_worker_process_open_fds_ratio, from /proc/self/fd. The OTel Collector's Prometheus exporter appends _ratio to gauges with a dimensionless unit; this is a raw fd count, not a fraction.",
+      "description": "thenetwork_worker_process_open_fds, from /proc/self/fd.",
       "gridPos": { "x": 6, "y": 59, "w": 6, "h": 4 },
       "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
       "targets": [
-        { "expr": "thenetwork_worker_process_open_fds_ratio", "legendFormat": "open fds", "refId": "A" }
+        { "expr": "thenetwork_worker_process_open_fds", "legendFormat": "open fds", "refId": "A" }
       ]
     },
     {
       "id": 26,
       "type": "stat",
       "title": "Worker thread count",
-      "description": "thenetwork_worker_process_threads_ratio, from /proc/self/status. The OTel Collector's Prometheus exporter appends _ratio to gauges with a dimensionless unit; this is a raw thread count, not a fraction.",
+      "description": "thenetwork_worker_process_threads, from /proc/self/status.",
       "gridPos": { "x": 12, "y": 59, "w": 6, "h": 4 },
       "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
       "targets": [
-        { "expr": "thenetwork_worker_process_threads_ratio", "legendFormat": "threads", "refId": "A" }
+        { "expr": "thenetwork_worker_process_threads", "legendFormat": "threads", "refId": "A" }
       ]
     },
     {
