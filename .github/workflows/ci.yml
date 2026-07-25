@@ -36,9 +36,37 @@ jobs:
       - name: Run non-integration tests
         run: uv run pytest -m "not integration" --tb=short -q
 
+  build:
+    name: Build and push image
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push worker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
+
   deploy:
     name: Deploy to production
-    needs: test
+    needs: [test, build]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: production
@@ -60,7 +88,11 @@ jobs:
             cd /opt/thenetwork
             echo "==> Pulling latest code..."
             git pull origin main
-            echo "==> Rebuilding and recreating containers..."
-            docker compose up -d --build --force-recreate
+            echo "==> Logging in to GHCR..."
+            echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u ${{ secrets.GHCR_USERNAME }} --password-stdin
+            echo "==> Pulling latest worker image..."
+            docker compose pull worker
+            echo "==> Recreating containers..."
+            docker compose up -d --force-recreate
             echo "==> Deploy complete. Worker status:"
             docker compose ps worker

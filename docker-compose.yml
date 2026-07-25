@@ -27,9 +27,15 @@ services:
     restart: unless-stopped
 
   worker:
-    image: thenetwork-agent:latest
+    # CI builds this image and pushes it to GHCR after tests pass
+    # (.github/workflows/ci.yml's `build` job); the deploy job then runs
+    # `docker compose pull worker` on the VPS instead of building there - the
+    # server doesn't have the spare resources to build while also serving.
+    # `docker compose up --build` still works for local development: it
+    # builds from the Dockerfile and tags the result with this same name, so
+    # no pull is attempted.
+    image: ${IMAGE:-ghcr.io/thenetworkfyi/agent:latest}
     build: .
-    pull_policy: build
     env_file:
       - path: .env
         required: false
