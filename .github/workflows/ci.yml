@@ -56,5 +56,4 @@ jobs:
           script: |
             set -euo pipefail
             cd /opt/thenetwork
-            git pull origin main
-            docker compose up -d --build --force-recreate
+            ./scripts/deploy.sh

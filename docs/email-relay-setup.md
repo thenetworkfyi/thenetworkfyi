@@ -228,11 +228,11 @@ as relay attempts so they fail closed instead of reaching the agent.
 
 No relay-specific table or service is required. Pair aliases reuse
 `IntroductionConsent.reply_token`; the worker polls each configured IMAP inbox and sends
-through SMTP. On a production host consuming the published GHCR image:
+through SMTP. On a production host (a git checkout, redeployed with `scripts/deploy.sh`):
 
 ```bash
-docker compose pull
-docker compose up -d
+git pull origin main
+docker compose up -d --build --force-recreate
 docker compose logs -f worker
 ```
 

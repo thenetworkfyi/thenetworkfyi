@@ -437,15 +437,13 @@ time to drain.
 A deploy is therefore just:
 
 ```bash
-docker compose pull && docker compose up -d   # recreates only changed services
+git pull origin main && docker compose up -d --build --force-recreate
 ```
 
-### Pushing new images
-
-`.github/workflows/publish.yml` builds and pushes to GHCR
-(`ghcr.io/<owner>/<repo>`) on every push to `main` and on `v*` tags. On the
-server, set `IMAGE` in `.env` to that path and run the deploy command above.
-(`ghcr.io` images may need `docker login ghcr.io` once if the package is private.)
+`scripts/deploy.sh` wraps that and prints the resulting `worker` status.
+`.github/workflows/ci.yml` runs it automatically over SSH (`deploy` job,
+`environment: production`) on every push to `main`, once the `test` job passes -
+no manual step or published image needed.
 
 ### Backups
 
