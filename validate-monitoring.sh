@@ -12,6 +12,8 @@ readonly METRIC_FIXTURE_NAME="${COMPOSE_PROJECT_NAME}-metric-fixture-$$"
 readonly METRIC_SOURCE_NAME="${COMPOSE_PROJECT_NAME}-metric-source-$$"
 readonly LOG_FIXTURE_NAME="${COMPOSE_PROJECT_NAME}-log-fixture-$$"
 readonly LOG_MARKER="loki-validation-$$"
+readonly GRAFANA_AUTH_HEADER="Authorization: Basic $(printf 'admin:admin' | base64)"
+readonly GRAFANA_DASHBOARD_UIDS=("thenetwork-worker-reliability" "thenetwork-llm-cost-usage")
 
 export COMPOSE_PROJECT_NAME
 export POSTGRES_DB="${POSTGRES_DB:-network_db}"
@@ -29,6 +31,7 @@ export OTEL_FLUENT_FORWARD_HOST_PORT=0
 export LOKI_HOST_PORT=0
 export PROMETHEUS_HOST_PORT=0
 export ALERTMANAGER_HOST_PORT=0
+export GRAFANA_HOST_PORT=0
 
 cd "$VALIDATION_ROOT"
 
@@ -42,9 +45,9 @@ done
 cleanup() {
     local exit_code=$?
     if ((exit_code > 0)); then
-        docker compose ps loki otel-collector prometheus alertmanager >&2 || true
+        docker compose ps loki otel-collector prometheus alertmanager grafana >&2 || true
         docker compose logs --no-color --tail=100 \
-            loki otel-collector prometheus alertmanager >&2 || true
+            loki otel-collector prometheus alertmanager grafana >&2 || true
         docker logs --tail=100 "$METRIC_SOURCE_NAME" >&2 2>/dev/null || true
     fi
     docker rm --force \
@@ -91,7 +94,7 @@ docker run --rm \
 docker compose run --rm --no-deps --entrypoint amtool alertmanager \
     check-config /etc/alertmanager/alertmanager.yml
 
-docker compose up -d --force-recreate loki otel-collector alertmanager prometheus
+docker compose up -d --force-recreate loki otel-collector alertmanager prometheus grafana
 
 docker run --detach --rm \
     --name "$METRIC_FIXTURE_NAME" \
@@ -174,6 +177,68 @@ if ((loki_ready == 0)); then
     exit 1
 fi
 
+grafana_ready=0
+for _attempt in $(seq 1 30); do
+    if docker exec "$METRIC_FIXTURE_NAME" \
+        wget -qO- http://grafana:3000/api/health >/dev/null 2>&1; then
+        grafana_ready=1
+        break
+    fi
+    sleep 2
+done
+if ((grafana_ready == 0)); then
+    echo "Grafana did not become ready" >&2
+    exit 1
+fi
+
+if ! grafana_datasources_json="$(docker exec "$METRIC_FIXTURE_NAME" \
+    wget -qO- --header="$GRAFANA_AUTH_HEADER" \
+    http://grafana:3000/api/datasources 2>/dev/null)"; then
+    echo "could not list Grafana datasources" >&2
+    exit 1
+fi
+
+for datasource_type in prometheus loki; do
+    datasource_uid="$(jq -r --arg type "$datasource_type" \
+        '[.[] | select(.type == $type)][0].uid // empty' \
+        <<<"$grafana_datasources_json")"
+    if [[ -z "$datasource_uid" ]]; then
+        echo "Grafana has no provisioned $datasource_type datasource" >&2
+        exit 1
+    fi
+    if ! datasource_health_json="$(docker exec "$METRIC_FIXTURE_NAME" \
+        wget -qO- --header="$GRAFANA_AUTH_HEADER" \
+        "http://grafana:3000/api/datasources/uid/${datasource_uid}/health" 2>/dev/null)" \
+        || ! jq --exit-status '.status == "OK"' <<<"$datasource_health_json" >/dev/null; then
+        echo "Grafana $datasource_type datasource is not healthy: ${datasource_health_json:-<no response>}" >&2
+        exit 1
+    fi
+done
+
+if ! grafana_dashboards_json="$(docker exec "$METRIC_FIXTURE_NAME" \
+    wget -qO- --header="$GRAFANA_AUTH_HEADER" \
+    'http://grafana:3000/api/search?type=dash-db' 2>/dev/null)"; then
+    echo "could not list Grafana provisioned dashboards" >&2
+    exit 1
+fi
+
+for expected_uid in "${GRAFANA_DASHBOARD_UIDS[@]}"; do
+    if ! jq --exit-status --arg uid "$expected_uid" \
+        'any(.[]; .uid == $uid)' <<<"$grafana_dashboards_json" >/dev/null; then
+        echo "Grafana did not provision the expected dashboard: $expected_uid" >&2
+        exit 1
+    fi
+done
+
+if docker compose logs --no-color grafana 2>&1 \
+    | grep -i 'provisioning' | grep -iq 'error'; then
+    echo "Grafana logged a provisioning error" >&2
+    exit 1
+fi
+
+jq '[.[] | {name, type, uid}]' <<<"$grafana_datasources_json"
+jq '[.[] | {title, uid}]' <<<"$grafana_dashboards_json"
+
 fluent_forward_address="$(docker compose port otel-collector 24224)"
 if [[ -z "$fluent_forward_address" ]]; then
     echo "Collector Fluent Forward port was not published" >&2
@@ -246,6 +311,6 @@ jq --arg marker "$LOG_MARKER" \
 jq '[.data.result[] | {metric: .metric.__name__, labels: .metric, value: .value[1]}]' \
     <<<"$counter_json"
 
-docker compose ps loki otel-collector prometheus alertmanager
+docker compose ps loki otel-collector prometheus alertmanager grafana
 
-echo "worker logs, metrics, and monitoring configuration validation passed"
+echo "worker logs, metrics, Grafana provisioning, and monitoring configuration validation passed"

@@ -460,9 +460,15 @@ on ephemeral loopback ports, sends seven fixed worker metrics over OTLP/HTTP,
 and checks them with Prometheus. It also injects one fixed worker JSON record
 through Docker's Fluent Forward logging driver, checks that Loki returns the
 original line exactly once, and checks that the derived Prometheus counter is
-exactly one. Promtool covers pending, firing, and resolved alert behavior; the
-script does not send email or start the worker or Grafana. Its containers,
-network, and validation-only named volumes are removed before it returns.
+exactly one. Promtool covers pending, firing, and resolved alert behavior. The
+script also starts Grafana in the same isolated project and, over its HTTP API,
+confirms the provisioned Prometheus and Loki datasources both report a healthy
+`/api/datasources/uid/<uid>/health` status and that both
+`grafana/dashboards/worker-reliability.json` and `grafana/dashboards/llm-cost-usage.json`
+were loaded by the file-based dashboard provider, with no provisioning error in
+the Grafana container logs. It still does not send email or start the worker.
+Its containers, network, and validation-only named volumes are removed before
+it returns.
 
 For rollout recovery, keep `loki-data` when recreating services. A normal
 `docker compose up -d` reuses it. Do not use `docker compose down --volumes` in
