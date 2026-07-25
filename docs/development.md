@@ -510,11 +510,13 @@ The VPS is a **git checkout**, not an image consumer: no image is published anyw
 `.github/workflows/ci.yml` has a `deploy` job (`environment: production`) that runs only
 on a push to `main`, only after the `test` job passes. It SSHes into the server (host,
 user, and key come from the `production` environment's `DEPLOY_HOST`/`DEPLOY_USER`/
-`DEPLOY_SSH_KEY` secrets) and runs `scripts/deploy.sh` from the checkout, which pulls
-`main` and rebuilds the worker image locally (`docker compose up -d --build
---force-recreate`) before printing the resulting `worker` status. Run the same script by
-hand on the server for a manual redeploy. `scripts/backup.sh` dumps the DB (the only
-source of truth) via the `db` container - wire it as a host cron job.
+`DEPLOY_SSH_KEY` secrets) and runs `git pull origin main` followed by `docker compose up
+-d --build --force-recreate`, then prints the resulting `worker` status. These commands
+are inline in the workflow's `script:` block rather than a script checked out on the
+server, so the deploy step always runs the version from the commit that just passed CI,
+never a stale on-disk copy. Run the same two commands by hand on the server for a manual
+redeploy. `scripts/backup.sh` dumps the DB (the only source of truth) via the `db`
+container - wire it as a host cron job.
 
 ## Proactive outreach
 
