@@ -77,6 +77,17 @@ services:
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.118.0
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Read-only monitoring-role credentials for the postgresql receiver
+      # only; never the application POSTGRES_USER. otel-collector-config.yaml
+      # references these by name (${env:...}), so no credential is
+      # hardcoded in either file.
+      POSTGRES_DB: ${POSTGRES_DB:-network_db}
+      POSTGRES_MONITOR_USER: ${POSTGRES_MONITOR_USER:-network_monitor}
+      POSTGRES_MONITOR_PASSWORD: ${POSTGRES_MONITOR_PASSWORD}
     volumes:
       - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
       # Host filesystem view for the hostmetrics receiver's root_path. This is
@@ -93,6 +104,8 @@ services:
     depends_on:
       loki:
         condition: service_started
+      db:
+        condition: service_healthy
     restart: unless-stopped
 
   loki:
