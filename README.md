@@ -440,10 +440,12 @@ A deploy is therefore just:
 git pull origin main && docker compose up -d --build --force-recreate
 ```
 
-`scripts/deploy.sh` wraps that and prints the resulting `worker` status.
-`.github/workflows/ci.yml` runs it automatically over SSH (`deploy` job,
+`.github/workflows/ci.yml` runs exactly that over SSH (`deploy` job,
 `environment: production`) on every push to `main`, once the `test` job passes -
-no manual step or published image needed.
+no manual step or published image needed. The deploy commands live inline in the
+workflow file itself (not a script checked out on the server), so every run
+executes the version from the commit that just passed CI rather than whatever
+happens to be on disk.
 
 ### Backups
 

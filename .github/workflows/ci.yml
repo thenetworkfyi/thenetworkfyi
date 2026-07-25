@@ -54,7 +54,13 @@ jobs:
           port: ${{ secrets.DEPLOY_PORT }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 20m
           script: |
             set -euo pipefail
             cd /opt/thenetwork
-            ./scripts/deploy.sh
+            echo "==> Pulling latest code..."
+            git pull origin main
+            echo "==> Rebuilding and recreating containers..."
+            docker compose up -d --build --force-recreate
+            echo "==> Deploy complete. Worker status:"
+            docker compose ps worker
