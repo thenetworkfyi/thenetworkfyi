@@ -94,6 +94,7 @@ def test_disposable_sender_cannot_reach_agent_job(caplog):
         patch(
             "thenetwork.worker.producer.is_primary_intake_paused", return_value=False
         ),
+        patch("thenetwork.worker.producer.check_daily_token_budget", return_value=True),
     ):
         assert _poll_and_enqueue() == 0
 

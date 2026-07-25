@@ -63,6 +63,7 @@ from thenetwork.security.rate_limit import (
     check_rate_limit,
     normalize_rate_limit_identity,
 )
+from thenetwork.security.token_budget import check_daily_token_budget
 from thenetwork.security.sender_identifier import optional_sender_identifier
 from thenetwork.settings import get_settings
 from thenetwork.worker.metrics import record_job_exhausted
@@ -317,6 +318,18 @@ async def process_email(
 
         if source_mailbox == "primary" and is_primary_intake_paused():
             audit_event("worker.message_rejected", reason="primary_intake_paused")
+            return
+
+        if source_mailbox == "primary" and not check_daily_token_budget(
+            get_settings().daily_agent_token_cap
+        ):
+            # Belt-and-braces race guard: the producer already skips
+            # enqueueing over-budget primary mail (see worker/producer.py),
+            # but a message enqueued just before the day's budget was
+            # exhausted could still reach here.
+            audit_event(
+                "worker.message_rejected", reason="daily_token_budget_exhausted"
+            )
             return
 
         rate_limit_kwargs = {"sender_authenticated": sender_authenticated}

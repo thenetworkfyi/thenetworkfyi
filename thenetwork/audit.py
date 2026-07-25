@@ -314,6 +314,7 @@ _SAFE_CATEGORIES = {
             "body_empty",
             "body_oversize",
             "content_scan",
+            "daily_token_budget_exhausted",
             "disposable_domain",
             "primary_intake_paused",
             "prompt_injection_detected",

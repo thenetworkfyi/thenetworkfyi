@@ -1334,6 +1334,7 @@ def test_intake_logs_header_metadata_without_values(caplog):
         patch("thenetwork.worker.producer.poll_unseen", return_value=[message]),
         patch("thenetwork.worker.producer.process_email") as process_email,
         patch("thenetwork.worker.producer.mark_messages_seen") as mark_seen,
+        patch("thenetwork.worker.producer.check_daily_token_budget", return_value=True),
     ):
         assert _poll_and_enqueue() == 1
 
@@ -1385,6 +1386,7 @@ def test_intake_enqueues_inbound_message_id_when_present(caplog):
         patch("thenetwork.worker.producer.mark_messages_seen"),
         patch("thenetwork.worker.producer.is_message_processed", return_value=False),
         patch("thenetwork.worker.producer.mark_message_processed") as mark_processed,
+        patch("thenetwork.worker.producer.check_daily_token_budget", return_value=True),
     ):
         assert _poll_and_enqueue() == 1
 
@@ -1426,6 +1428,7 @@ def test_intake_enqueues_recipient_without_audit_logging_it(caplog):
         patch("thenetwork.worker.producer.poll_unseen", return_value=[message]),
         patch("thenetwork.worker.producer.process_email") as process_email,
         patch("thenetwork.worker.producer.mark_messages_seen"),
+        patch("thenetwork.worker.producer.check_daily_token_budget", return_value=True),
     ):
         assert _poll_and_enqueue() == 1
 
@@ -1460,6 +1463,7 @@ def test_intake_reserves_message_id_before_defer_and_releases_on_defer_failure()
             side_effect=lambda _: calls.append("release"),
         ),
         patch("thenetwork.worker.producer.process_email") as process_email,
+        patch("thenetwork.worker.producer.check_daily_token_budget", return_value=True),
     ):
         process_email.defer.side_effect = RuntimeError("queue unavailable")
         with pytest.raises(RuntimeError, match="queue unavailable"):
@@ -1494,6 +1498,7 @@ def test_intake_enqueue_audits_and_defers_same_trace_id(caplog):
             "thenetwork.security.sender_identifier.get_settings",
             return_value=SimpleNamespace(sender_identifier_secret="audit-secret"),
         ),
+        patch("thenetwork.worker.producer.check_daily_token_budget", return_value=True),
     ):
         assert _poll_and_enqueue() == 1
 
@@ -1533,6 +1538,7 @@ def test_intake_skips_duplicate_message_id_without_reenqueueing(caplog):
         patch("thenetwork.worker.producer.mark_messages_seen") as mark_seen,
         patch("thenetwork.worker.producer.is_message_processed", return_value=True),
         patch("thenetwork.worker.producer.mark_message_processed") as mark_processed,
+        patch("thenetwork.worker.producer.check_daily_token_budget", return_value=True),
     ):
         assert _poll_and_enqueue() == 0
 
@@ -1570,6 +1576,7 @@ def test_intake_rejects_bad_shape_without_enqueueing_or_replying(caplog):
         patch("thenetwork.worker.producer.poll_unseen", return_value=[message]),
         patch("thenetwork.worker.producer.process_email") as process_email,
         patch("thenetwork.worker.producer.mark_messages_seen") as mark_seen,
+        patch("thenetwork.worker.producer.check_daily_token_budget", return_value=True),
     ):
         assert _poll_and_enqueue() == 0
 
@@ -1608,6 +1615,7 @@ def test_intake_disposable_rejection_audit_is_pii_safe(caplog):
         patch("thenetwork.worker.producer.poll_unseen", return_value=[message]),
         patch("thenetwork.worker.producer.process_email") as process_email,
         patch("thenetwork.worker.producer.mark_messages_seen") as mark_seen,
+        patch("thenetwork.worker.producer.check_daily_token_budget", return_value=True),
     ):
         assert _poll_and_enqueue() == 0
 

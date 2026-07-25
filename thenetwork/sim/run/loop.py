@@ -321,6 +321,15 @@ def _record_stage_timing(
         )
 
 
+# A sim run must never be constrained by the production daily token budget,
+# whose default (see settings.py) is sized for real inbound traffic, not a
+# dense multi-tick simulation. This floor is a token count, not derived from
+# `rate_limit_per_hour` (an email-per-hour figure) - the two aren't
+# comparable units - so it is simply large enough that no simulated run
+# realistically reaches it.
+_SIM_DAILY_TOKEN_CAP_FLOOR = 1_000_000_000
+
+
 @contextmanager
 def override_rate_limits(rate_limit_per_hour: int):
     """Temporarily relax inbound rate limits for dense simulation ticks."""
@@ -328,15 +337,18 @@ def override_rate_limits(rate_limit_per_hour: int):
     old_rate = settings.rate_limit_per_hour
     old_unauthenticated = settings.unauthenticated_rate_limit_per_hour
     old_global = settings.global_email_rate_limit_per_hour
+    old_token_cap = settings.daily_agent_token_cap
     settings.rate_limit_per_hour = rate_limit_per_hour
     settings.unauthenticated_rate_limit_per_hour = rate_limit_per_hour
     settings.global_email_rate_limit_per_hour = max(old_global, rate_limit_per_hour)
+    settings.daily_agent_token_cap = max(old_token_cap, _SIM_DAILY_TOKEN_CAP_FLOOR)
     try:
         yield
     finally:
         settings.rate_limit_per_hour = old_rate
         settings.unauthenticated_rate_limit_per_hour = old_unauthenticated
         settings.global_email_rate_limit_per_hour = old_global
+        settings.daily_agent_token_cap = old_token_cap
 
 
 async def _call_scan(scan: Any, timestamp: int) -> None:

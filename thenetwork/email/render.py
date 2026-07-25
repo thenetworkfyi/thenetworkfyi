@@ -47,6 +47,7 @@ class InfrastructureRejectionReason(str, Enum):
     BODY_OVERSIZE = "body_oversize"
     RATE_LIMIT = "rate_limit"
     CONTENT_SCAN = "content_scan"
+    DAILY_TOKEN_BUDGET_EXHAUSTED = "daily_token_budget_exhausted"
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,6 +184,12 @@ _INFRASTRUCTURE_REJECTION_COPY = {
     InfrastructureRejectionReason.CONTENT_SCAN: (
         "We could not process your email because it was blocked by an automated "
         "safety scan. Please revise the message and try again."
+    ),
+    InfrastructureRejectionReason.DAILY_TOKEN_BUDGET_EXHAUSTED: (
+        "We could not process your email right away because our system has "
+        "reached its daily processing capacity. Your message has not been "
+        "lost - it is queued and will be processed automatically once "
+        "capacity resets. No action is needed on your part."
     ),
 }
 

@@ -76,6 +76,7 @@ async def test_campaign_pause_review_resume_and_relay_continuity(monkeypatch):
         primary_intake_burst_monitoring_enabled=True,
         sender_identifier_secret="monitor-secret",
         relay_domain="relay.example.com",
+        daily_agent_token_cap=0,
     )
     monkeypatch.setattr("thenetwork.worker.producer.get_settings", lambda: settings)
     monkeypatch.setattr("thenetwork.worker.abuse_judge.get_settings", lambda: settings)

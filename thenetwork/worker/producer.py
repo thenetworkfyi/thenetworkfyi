@@ -38,12 +38,23 @@ from thenetwork.email.inbound import (
 from thenetwork.email.intake_control import is_primary_intake_paused
 from thenetwork.email.intake_observations import observe_primary_intake_batch
 from thenetwork.email.relay import is_relay_address_candidate
+from thenetwork.security.rate_limit import normalize_rate_limit_identity
 from thenetwork.security.sender_identifier import optional_sender_identifier
+from thenetwork.security.token_budget import (
+    check_daily_token_budget,
+    should_send_deferral_notice,
+)
 from thenetwork.settings import get_settings
 from thenetwork.worker.metrics import record_producer_poll_success
-from thenetwork.worker.tasks import app, process_email
+from thenetwork.worker.tasks import (
+    _is_known_authenticated_sender,
+    _send_infrastructure_rejection_reply,
+    app,
+    process_email,
+)
 
 REJECT_DISPOSABLE_DOMAIN = "disposable_domain"
+DEFER_DAILY_TOKEN_BUDGET_EXHAUSTED = "daily_token_budget_exhausted"
 
 
 def _is_admin_candidate(subject: str, raw_message: bytes | None) -> bool:
@@ -109,6 +120,45 @@ def _poll_mailbox_and_enqueue(
                     body_chars=body_chars,
                     reason="primary_intake_paused",
                 )
+                continue
+            if (
+                mailbox == "primary"
+                and not _is_admin_candidate(msg.subject, msg.raw_message)
+                and not _is_relay_candidate(msg.recipient_address)
+                and not check_daily_token_budget(settings.daily_agent_token_cap)
+            ):
+                audit_event(
+                    "intake.message_deferred",
+                    sender_present=bool(msg.sender),
+                    subject_chars=len(msg.subject),
+                    body_chars=body_chars,
+                    reason=DEFER_DAILY_TOKEN_BUDGET_EXHAUSTED,
+                )
+                try:
+                    if _is_known_authenticated_sender(
+                        msg.sender, msg.sender_authenticated
+                    ) and should_send_deferral_notice(
+                        normalize_rate_limit_identity(msg.sender)
+                    ):
+                        _send_infrastructure_rejection_reply(
+                            sender_email=msg.sender,
+                            subject=msg.subject,
+                            sender_authenticated=msg.sender_authenticated,
+                            reason=DEFER_DAILY_TOKEN_BUDGET_EXHAUSTED,
+                            inbound_message_id=msg.message_id,
+                            inbound_references=msg.message_references,
+                            inbound_body_for_quote=msg.body,
+                            inbound_date=msg.message_date,
+                            trace_id=msg.trace_id,
+                        )
+                except Exception:
+                    # The deferral decision above already stands; a failure
+                    # sending the one-time notice (DB lookup, SMTP) must not
+                    # crash the whole poll cycle for every other message.
+                    audit_event(
+                        "intake.deferral_notice_failed",
+                        reason=DEFER_DAILY_TOKEN_BUDGET_EXHAUSTED,
+                    )
                 continue
             if msg.rejection_reason:
                 audit_event(
