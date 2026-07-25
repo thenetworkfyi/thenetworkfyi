@@ -89,7 +89,10 @@ _KNOWN_PROVIDERS = frozenset(
         "xai",
     }
 )
-_SAFE_MODEL_LABEL = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
+# OpenRouter vendor/model ids are `vendor/model` (e.g. `google/gemma-4-31b-it`),
+# so `/` must be admitted alongside the existing charset or every OpenRouter
+# request collapses to "unknown".
+_SAFE_MODEL_LABEL = re.compile(r"^[A-Za-z0-9_./:-]{1,80}$")
 
 
 @dataclass(slots=True)

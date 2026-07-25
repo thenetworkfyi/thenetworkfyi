@@ -202,6 +202,13 @@ _SAFE_FIELDS = frozenset(
     }
 )
 _SAFE_TOKEN = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
+# model_name carries provider-returned data (e.g. OpenRouter's `vendor/model`
+# ids), not trusted local config, so it keeps its own narrow validator rather
+# than widening _SAFE_TOKEN - which guards every other non-category string
+# field - for every caller. Same length bound and character set as
+# _SAFE_TOKEN, plus `/`; still rejects whitespace, newlines, quotes, and
+# control characters so nothing can corrupt or inject into the JSONL stream.
+_SAFE_MODEL_NAME = re.compile(r"^[A-Za-z0-9_./:-]{1,80}$")
 _SAFE_CATEGORIES = {
     "action": frozenset(
         {
@@ -513,12 +520,19 @@ def _safe_token(value: object) -> str:
     return token if _SAFE_TOKEN.fullmatch(token) else "unknown"
 
 
+def _safe_model_name(value: object) -> str:
+    token = str(value)
+    return token if _SAFE_MODEL_NAME.fullmatch(token) else "unknown"
+
+
 def _validate_value(name: str, value: object) -> object:
     if isinstance(value, (bool, int, float)) or value is None:
         return value
     if isinstance(value, str):
         if name in _SAFE_CATEGORIES:
             return value if value in _SAFE_CATEGORIES[name] else "unknown"
+        if name == "model_name":
+            return _safe_model_name(value)
         return _safe_token(value)
     if isinstance(value, (list, tuple)):
         if name == "header_names":
