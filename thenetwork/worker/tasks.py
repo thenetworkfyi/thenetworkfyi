@@ -320,13 +320,17 @@ async def process_email(
             audit_event("worker.message_rejected", reason="primary_intake_paused")
             return
 
-        if source_mailbox == "primary" and not check_daily_token_budget(
-            get_settings().daily_agent_token_cap
-        ):
+        if (
+            source_mailbox == "primary" or is_proactive
+        ) and not check_daily_token_budget(get_settings().daily_agent_token_cap):
             # Belt-and-braces race guard: the producer already skips
-            # enqueueing over-budget primary mail (see worker/producer.py),
-            # but a message enqueued just before the day's budget was
-            # exhausted could still reach here.
+            # enqueueing over-budget primary mail (see worker/producer.py) and
+            # the three hourly scans check the budget before deferring (see
+            # worker/proactive.py and worker/event_scan.py), but a job already
+            # sitting in the Procrastinate queue when the cap tripped
+            # mid-flight - primary or proactive - could still reach here.
+            # Proactive/synthetic jobs have no inbound sender to notify and
+            # regenerate on the next scan, so this is a silent drop either way.
             audit_event(
                 "worker.message_rejected", reason="daily_token_budget_exhausted"
             )

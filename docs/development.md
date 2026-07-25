@@ -48,7 +48,49 @@ EVENT_MATCH_TOP_K=20
 EVENT_SCAN_ACTIVE_EVENT_LIMIT=100
 EVENT_SCAN_MAX_CANDIDATES=50      # whole-scan bounded fan-out
 EVENT_SCAN_MAX_PER_PERSON=1
+DAILY_AGENT_TOKEN_CAP=15000000    # rolling-24h ceiling on AGENT_MODEL/SMALL_AGENT_MODEL tokens; <= 0 disables it
 ```
+
+### Daily token budget
+
+`DAILY_AGENT_TOKEN_CAP` bounds a rolling 24-hour window of tokens billed to
+`AGENT_MODEL`/`SMALL_AGENT_MODEL` (email agent runs, the sanitizer LLM tier, and the
+primary-intake abuse judge; embedding usage bills a separate provider and is not
+counted). `thenetwork/security/token_budget.py` implements it as a `limits`
+fixed-window bucket over the same `rate_limits` table used elsewhere, read fresh from
+settings on every check - the cap is never captured in a module-level constant or
+cache, since tests and the simulation runner override it at runtime. `.env.example`
+documents the exact re-derivation from `AGENT_MODEL`'s per-million-token pricing and
+a daily USD budget.
+
+Enforcement is layered so the cap actually bounds spend rather than just being read
+once at intake:
+
+- The **producer** (`worker/producer.py`) checks the budget before enqueueing ordinary
+  primary mail. An exhausted budget defers the message (it stays unread, so a later
+  poll re-offers it) rather than dropping it, and - at most once per sender per
+  day, via the durable `should_send_deferral_notice` claim - sends a fixed
+  infrastructure-deferral reply so a known sender isn't left silently unanswered.
+  Admin and relay candidates bypass this check.
+- The three **hourly discovery scans** (`scan_for_opportunities`, `scan_for_matches` in
+  `worker/proactive.py`, and `scan_for_event_recommendations` in `worker/event_scan.py`)
+  call `process_email.defer` directly, bypassing the producer entirely, so each checks
+  the budget itself immediately before deferring. The event scan checks it *before*
+  claiming any `event_recommendations` ledger row, not merely before its transaction
+  commits: a committed pending row for the current event version would suppress
+  re-selection of that event for those people, so deferring-then-dropping would
+  permanently lose the recommendation instead of merely delaying it to a later scan.
+- The **worker** (`worker/tasks.py:process_email`) re-checks the budget for primary and
+  proactive jobs as a belt-and-braces race guard, covering a job already sitting in the
+  Procrastinate queue when the cap trips mid-flight, independent of whichever pre-check
+  deferred it in the first place.
+
+Proactive and synthetic jobs rejected this way are dropped silently - they have no
+inbound sender to notify, and the candidate pair or event/person match simply
+regenerates on a later scan. Every rejection audits `worker.message_rejected` with
+`reason="daily_token_budget_exhausted"`, alongside a `message_count` where the caller
+has one (batch scans) - the same audit event and allow-listed reason already used by
+`otel-collector-config.yaml`'s rejection counter.
 
 The producer never deletes or moves inbound mail - it only flips the IMAP `\Seen` flag,
 so INBOX keeps every message the account has ever received. Durability comes from the

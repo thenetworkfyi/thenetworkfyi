@@ -9,6 +9,17 @@ import networkx as nx
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
+@pytest.fixture(autouse=True)
+def _unlimited_daily_token_budget():
+    """Both scans call the real get_settings()/check_daily_token_budget, which
+    would otherwise hit an unreachable DB in this unit-test environment. The
+    budget-exhaustion path itself is covered by dedicated tests below."""
+    with patch(
+        "thenetwork.worker.proactive.check_daily_token_budget", return_value=True
+    ) as mock_check:
+        yield mock_check
+
+
 def _mock_session(people):
     s = MagicMock()
     s.__enter__ = MagicMock(return_value=s)
@@ -141,6 +152,68 @@ async def test_scan_deduplicates_pairs():
     assert mock_pe.defer.call_count == 1, (
         f"expected 1 defer call, got {mock_pe.defer.call_count}"
     )
+
+
+@pytest.mark.asyncio
+async def test_opportunities_scan_drops_candidates_silently_when_budget_exhausted():
+    """Over budget: no defer call, and the pair is still marked surfaced (so
+    it rotates to the next scan) rather than the agent burning more spend."""
+    from thenetwork.worker.proactive import scan_for_opportunities
+
+    G = nx.Graph()
+    G.add_edge("alice", "dave")
+    G.add_edge("bob", "dave")
+
+    people = [
+        _person("alice", "alice@test.com"),
+        _person("bob", "bob@test.com"),
+        _person("dave", "dave@test.com"),
+    ]
+
+    with (
+        patch("thenetwork.worker.proactive.build_graph", return_value=G),
+        patch(
+            "thenetwork.worker.proactive.get_session",
+            return_value=_mock_session(people),
+        ),
+        patch(
+            "thenetwork.worker.proactive.check_daily_token_budget",
+            return_value=False,
+        ),
+        patch("thenetwork.worker.proactive.process_email") as mock_pe,
+    ):
+        await scan_for_opportunities.func(0)
+
+    assert not mock_pe.defer.called, "over-budget candidates must not be deferred"
+
+
+@pytest.mark.asyncio
+async def test_rematch_scan_drops_candidates_silently_when_budget_exhausted():
+    from thenetwork.search.match import MemoryMatch
+    from thenetwork.worker.proactive import scan_for_matches
+
+    recent = [_memory("n1", ["Q"], "just started looking for a rust cofounder")]
+    matches = [
+        MemoryMatch("m1", "P", "building a rust startup, wants a cofounder", 0.72)
+    ]
+    persons = {"P": _person("P", "p@test.com"), "Q": _person("Q", "q@test.com")}
+
+    with (
+        patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()),
+        patch(
+            "thenetwork.worker.proactive.get_session",
+            return_value=_rematch_session(recent, persons),
+        ),
+        patch("thenetwork.worker.proactive.match_memories", return_value=matches),
+        patch(
+            "thenetwork.worker.proactive.check_daily_token_budget",
+            return_value=False,
+        ),
+        patch("thenetwork.worker.proactive.process_email") as mock_pe,
+    ):
+        await scan_for_matches.func(0)
+
+    assert not mock_pe.defer.called, "over-budget candidates must not be deferred"
 
 
 @pytest.mark.asyncio
@@ -340,6 +413,7 @@ async def test_rematch_job_reaches_agent_through_real_worker_handoff():
         patch(
             "thenetwork.worker.tasks.check_rate_limit", return_value=True
         ) as check_rate_limit,
+        patch("thenetwork.worker.tasks.check_daily_token_budget", return_value=True),
         patch(
             "thenetwork.worker.tasks.scan_content",
             new=AsyncMock(return_value=(True, "ok")),

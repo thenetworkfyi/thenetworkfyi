@@ -67,6 +67,18 @@ a manual one-shot poll for cron/debugging.
   `SKIP LOCKED`, no Redis/broker). Enforces per-sender rate limit and optional content
   scan, resolves whether the sender is a known `Person`, then calls
   `agent/core.py:run_agent_for_email`. Worker concurrency is the global LLM-spend ceiling.
+- **Daily token budget** (`security/token_budget.py`, see @docs/development.md): a
+  rolling-24h `DAILY_AGENT_TOKEN_CAP` bounds `AGENT_MODEL`/`SMALL_AGENT_MODEL` spend.
+  The producer defers over-budget primary mail (it stays unread and is retried on a
+  later poll) rather than dropping it, and notifies an eligible known sender at most
+  once per day. All three hourly discovery scans call `process_email.defer` directly,
+  bypassing the producer, so each checks the budget itself immediately before
+  deferring - the event scan checks it before claiming any `event_recommendations`
+  ledger row, since a committed pending row would otherwise suppress re-selection.
+  `process_email` itself re-checks the budget for primary and proactive jobs as a
+  race guard for work already queued when the cap trips. Proactive/synthetic
+  rejections are silent (no sender to notify); every rejection audits
+  `worker.message_rejected` with `reason="daily_token_budget_exhausted"`.
 - **Introduction relay** (`email/relay.py`, `worker/tasks.py`): a recipient matching
   `hidden-<reply-token>@RELAY_DOMAIN` is handled before the agent path. Server code
   requires sender authentication, an `introduced` consent row, and exact membership in

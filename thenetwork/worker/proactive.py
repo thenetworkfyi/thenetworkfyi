@@ -28,6 +28,7 @@ from uuid import uuid4
 
 from sqlmodel import col, select
 
+from thenetwork.audit import audit_event
 from thenetwork.db.models import IntroductionConsent, Memory, Person
 from thenetwork.db.session import get_session
 from thenetwork.search.graph import build_graph, score_proximity
@@ -37,6 +38,7 @@ from thenetwork.search.match import (
     build_candidate_contexts,
     match_memories,
 )
+from thenetwork.security.token_budget import check_daily_token_budget
 from thenetwork.settings import get_settings
 from thenetwork.introductions import (
     mark_pairs_surfaced,
@@ -49,7 +51,23 @@ PROXIMITY_THRESHOLD = 0.3
 
 
 def _defer_proactive_jobs(payloads: list[dict]) -> None:
-    """Enqueue each synthetic job with its own opaque audit correlation id."""
+    """Enqueue each synthetic job with its own opaque audit correlation id.
+
+    Checked against the daily token budget before deferring: these two scans
+    call ``process_email.defer`` directly, bypassing the producer's own
+    pre-check entirely (see worker/producer.py). Unlike inbound mail there is
+    no sender to notify or re-poll later - a skipped candidate pair simply
+    regenerates on a later scan, so this is a silent drop.
+    """
+    if not payloads:
+        return
+    if not check_daily_token_budget(get_settings().daily_agent_token_cap):
+        audit_event(
+            "worker.message_rejected",
+            reason="daily_token_budget_exhausted",
+            message_count=len(payloads),
+        )
+        return
     for payload in payloads:
         process_email.defer(**payload, trace_id=str(uuid4()))
 

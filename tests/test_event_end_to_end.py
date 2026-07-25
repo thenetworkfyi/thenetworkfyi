@@ -48,14 +48,17 @@ def _ctx(
     )
 
 
-def _event_scan_settings() -> SimpleNamespace:
-    return SimpleNamespace(
-        event_match_threshold=0.95,
-        event_match_top_k=20,
-        event_scan_active_event_limit=100,
-        event_scan_max_candidates=50,
-        event_scan_max_per_person=1,
-    )
+def _event_scan_settings(**overrides) -> SimpleNamespace:
+    values = {
+        "event_match_threshold": 0.95,
+        "event_match_top_k": 20,
+        "event_scan_active_event_limit": 100,
+        "event_scan_max_candidates": 50,
+        "event_scan_max_per_person": 1,
+        "daily_agent_token_cap": 0,
+        **overrides,
+    }
+    return SimpleNamespace(**values)
 
 
 def _people_scan_settings() -> SimpleNamespace:
@@ -403,3 +406,70 @@ async def test_updated_event_requires_a_fresh_version_bound_evaluation(seeded_db
         ).one()
         assert refreshed.event_version == 2
         assert refreshed.notified_at is None
+
+
+@pytest.mark.integration
+async def test_event_scan_over_budget_leaves_no_orphaned_recommendation_row(
+    seeded_db, pg_engine
+):
+    """A scan run while the daily token budget is exhausted must not commit
+    any event_recommendations row for the otherwise-eligible candidate: a
+    committed pending row would permanently suppress re-selection of this
+    event/person pair once the budget recovers, silently losing the
+    recommendation rather than merely delaying it."""
+    import thenetwork.security.token_budget as token_budget
+    from sqlalchemy import text
+
+    owner_id = seeded_db["alice_id"]
+    recipient_id = seeded_db["bob_id"]
+    event_embedding = seeded_db["query_ml"].copy()
+    event_embedding[0] = 0.0
+    event_embedding[1] = 1.0
+    expiry = datetime.now(timezone.utc) + timedelta(days=30)
+
+    with (
+        patch(
+            "thenetwork.agent.tools.sanitize_text_high_fidelity",
+            new=AsyncMock(return_value="small compiler engineering circle"),
+        ),
+        patch(
+            "thenetwork.agent.tools.embed_text",
+            new=AsyncMock(return_value=event_embedding),
+        ),
+    ):
+        created = await create_event(
+            _ctx(email="alice@test.com", person_id=owner_id),
+            text="owner-private compiler circle details",
+            expires_at=expiry.isoformat(),
+        )
+    event_id = created["event_id"]
+
+    token_budget._limiter = None
+    token_budget._storage = None
+    with pg_engine.begin() as conn:
+        conn.execute(text("DELETE FROM rate_limits"))
+    assert token_budget.consume_daily_token_budget(1, 1) is True
+
+    with (
+        patch(
+            "thenetwork.worker.event_scan.get_settings",
+            return_value=_event_scan_settings(daily_agent_token_cap=1),
+        ),
+        patch("thenetwork.worker.event_scan.process_email") as deferred,
+    ):
+        await scan_for_event_recommendations.func(0)
+
+    deferred.defer.assert_not_called()
+    with get_session() as session:
+        assert (
+            session.exec(
+                select(EventRecommendation).where(
+                    EventRecommendation.event_id == event_id,
+                    EventRecommendation.person_id == recipient_id,
+                )
+            ).first()
+            is None
+        )
+
+    token_budget._limiter = None
+    token_budget._storage = None

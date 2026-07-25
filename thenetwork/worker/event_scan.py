@@ -23,6 +23,7 @@ from sqlalchemy import update
 from sqlalchemy.dialects.postgresql import insert
 from sqlmodel import col, select
 
+from thenetwork.audit import audit_event
 from thenetwork.db.models import (
     Event,
     EventRecommendation,
@@ -31,6 +32,7 @@ from thenetwork.db.models import (
 )
 from thenetwork.db.session import get_session
 from thenetwork.search.match import match_memories
+from thenetwork.security.token_budget import check_daily_token_budget
 from thenetwork.settings import get_settings
 from thenetwork.worker.tasks import app, process_email
 
@@ -189,6 +191,19 @@ async def scan_for_event_recommendations(timestamp: int) -> None:
                 break
 
         if not selected:
+            return
+
+        if not check_daily_token_budget(get_settings().daily_agent_token_cap):
+            # Checked before any event_recommendations row is claimed, not
+            # after: a committed pending row for the current event version
+            # would suppress re-selection of this event for these people, so
+            # deferring-then-dropping would permanently lose the
+            # recommendation instead of merely delaying it to a later scan.
+            audit_event(
+                "worker.message_rejected",
+                reason="daily_token_budget_exhausted",
+                message_count=len(selected),
+            )
             return
 
         claimed: list[_SemanticCandidate] = []
