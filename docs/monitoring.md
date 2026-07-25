@@ -51,6 +51,27 @@ budget changes. Every panel here also stays within the documented label set
 (`workload`, `provider`, `model`, `outcome`, `cost_status`, `token_type`); no
 `trace_id` or other unbounded/identifying label is used.
 
+`grafana/dashboards/growth-kpi.json` is "The Network - Growth & Network Health":
+the North Star dashboard. The core value-creation event for a network-effects
+product like this one is not a processed email, it is a *completed
+introduction* - two people who reached mutual consent and can now talk - so
+this dashboard leads with introductions reaching the `introduced` consent
+state (`thenetwork_introduction_transitions{action="consent",consent_state="introduced"}`)
+as its hero panel, trended both as a rolling-7-day total and per day. Below
+that, the full funnel (`proposed` -> `one_consented` -> `introduced`) and the
+off-ramps (`declined`, `revoked`) chart the same counter by `action` and
+`consent_state`, and a conversion-rate panel divides introduced by proposed
+over a rolling 30 days to track match quality independent of proposal volume.
+Every panel filters by `action` (`propose`/`consent`/`decline`/`revoke`), not
+`consent_state` alone: a `clarify` reply (someone asking why a match was
+proposed, rather than accepting/declining) also emits a
+`introduction.consent_transition` audit event, carrying the proposal's
+current, unchanged `consent_state` - filtering on `consent_state` alone would
+double-count those clarifications against genuine `propose`/`consent`
+transitions. This dashboard uses only the pre-existing `thenetwork_introduction_transitions`
+counter and its `action`/`consent_state` labels; see the
+[counter catalog](#counter-catalog) for the full label set.
+
 Query the last hour directly through the Loki API:
 
 ```bash

@@ -1,0 +1,97 @@
+{
+  "uid": "thenetwork-growth-kpi",
+  "title": "The Network - Growth & Network Health",
+  "description": "The North Star view: does the network actually create value (mutual introductions), not just process mail. Built from thenetwork_introduction_transitions{action,consent_state}, the audit-derived counter over introduction.consent_transition events in thenetwork/introductions.py. Panels filter by action (propose/consent/decline/revoke), not consent_state alone - a clarify reply also emits a transition record carrying the proposal's current, unchanged consent_state, so filtering on consent_state alone would double-count against genuine propose/consent/decline/revoke transitions.",
+  "tags": ["thenetwork"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "30s",
+  "time": { "from": "now-30d", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Introductions completed (North Star)",
+      "description": "sum(increase(thenetwork_introduction_transitions{action=\"consent\",consent_state=\"introduced\"}[7d])). The core value-creation event: two people reached mutual consent and can now talk. This is the one number the team should watch to know whether the network is compounding.",
+      "gridPos": { "x": 0, "y": 0, "w": 8, "h": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "blue", "value": null }] }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area", "textMode": "value_and_name" },
+      "targets": [
+        { "expr": "sum(increase(thenetwork_introduction_transitions{action=\"consent\",consent_state=\"introduced\"}[7d]))", "legendFormat": "introduced, rolling 7d", "refId": "A" }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Introductions completed per day",
+      "description": "sum(increase(thenetwork_introduction_transitions{action=\"consent\",consent_state=\"introduced\"}[1d])) - the North Star trended daily, to see whether the network is accelerating.",
+      "gridPos": { "x": 8, "y": 0, "w": 16, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "expr": "sum(increase(thenetwork_introduction_transitions{action=\"consent\",consent_state=\"introduced\"}[1d]))", "legendFormat": "introductions/day", "refId": "A" }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Introduction funnel (proposed / one-consented / introduced)",
+      "description": "Weekly counts by transition: sum(increase(thenetwork_introduction_transitions{action=\"propose\"}[7d])) (proposed), action=\"consent\",consent_state=\"one_consented\" (one side accepted), action=\"consent\",consent_state=\"introduced\" (mutual - the North Star). Each stage should be read against the one before it.",
+      "gridPos": { "x": 0, "y": 8, "w": 12, "h": 9 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "expr": "sum(increase(thenetwork_introduction_transitions{action=\"propose\"}[7d]))", "legendFormat": "proposed", "refId": "A" },
+        { "expr": "sum(increase(thenetwork_introduction_transitions{action=\"consent\",consent_state=\"one_consented\"}[7d]))", "legendFormat": "one_consented", "refId": "B" },
+        { "expr": "sum(increase(thenetwork_introduction_transitions{action=\"consent\",consent_state=\"introduced\"}[7d]))", "legendFormat": "introduced", "refId": "C" }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Introduction off-ramps (declined / revoked)",
+      "description": "sum(increase(thenetwork_introduction_transitions{action=\"decline\"}[7d])) and action=\"revoke\". Revoked (permanent, post-introduction) is a materially worse signal than declined (temporary cooldown, pre-introduction) - a rising revoke rate means introductions are landing but the matches are bad.",
+      "gridPos": { "x": 12, "y": 8, "w": 12, "h": 9 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "expr": "sum(increase(thenetwork_introduction_transitions{action=\"decline\"}[7d]))", "legendFormat": "declined", "refId": "A" },
+        { "expr": "sum(increase(thenetwork_introduction_transitions{action=\"revoke\"}[7d]))", "legendFormat": "revoked", "refId": "B" }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Proposed -> introduced conversion rate (rolling 30d)",
+      "description": "sum(increase(...introduced...[30d])) / sum(increase(...propose...[30d])) - the mutual-match rate. Tracks whether match quality (not just proposal volume) is sustaining the loop; a falling rate while the North Star still grows means proposal volume is masking declining match quality.",
+      "gridPos": { "x": 0, "y": 17, "w": 8, "h": 6 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.2 },
+              { "color": "green", "value": 0.4 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "targets": [
+        {
+          "expr": "sum(increase(thenetwork_introduction_transitions{action=\"consent\",consent_state=\"introduced\"}[30d])) / clamp_min(sum(increase(thenetwork_introduction_transitions{action=\"propose\"}[30d])), 1)",
+          "legendFormat": "conversion rate",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}
