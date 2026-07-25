@@ -496,10 +496,11 @@ original line exactly once, and checks that the derived Prometheus counter is
 exactly one. Promtool covers pending, firing, and resolved alert behavior. The
 script also starts Grafana in the same isolated project and, over its HTTP API,
 confirms the provisioned Prometheus and Loki datasources both report a healthy
-`/api/datasources/uid/<uid>/health` status and that both
-`grafana/dashboards/worker-reliability.json` and `grafana/dashboards/llm-cost-usage.json`
-were loaded by the file-based dashboard provider, with no provisioning error in
-the Grafana container logs. It still does not send email or start the worker.
+`/api/datasources/uid/<uid>/health` status and that
+`grafana/dashboards/worker-reliability.json`, `grafana/dashboards/llm-cost-usage.json`,
+and `grafana/dashboards/growth-kpi.json` were all loaded by the file-based dashboard
+provider, with no provisioning error in the Grafana container logs. It still does
+not send email or start the worker.
 Its containers, network, and validation-only named volumes are removed before
 it returns.
 
