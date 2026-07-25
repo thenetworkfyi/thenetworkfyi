@@ -146,6 +146,10 @@ to the Collector over OTLP/HTTP. The worker still opens no listener:
 | `thenetwork_job_queue_depth` | None | Number of Procrastinate `todo` jobs that are immediately runnable or whose `scheduled_at` is due. Future-scheduled periodic or retry work and jobs already running are excluded. Due work waiting behind a queue or task lock remains backlog. |
 | `thenetwork_oldest_pending_job_age_seconds` | None | Oldest runnable age in seconds. Age starts at `scheduled_at` for due scheduled work and at the initial `deferred` event for immediately runnable work. An empty queue reports zero. |
 | `thenetwork_primary_intake_paused` | `reason` | `1` when the durable `PrimaryIntakeState` singleton is paused; `0` when active or absent. `reason` is one of `none`, `admin`, `new_sender_burst`, `coordinated_abuse`, or fail-closed `unknown`, allowing rules to distinguish automated stops from administrator-requested pauses. |
+| `thenetwork_people_total` | None | Live count of registered `people` rows, sampled fresh each collection interval - not a cumulative "accounts created" counter. |
+| `thenetwork_activated_people_total` | None | Count of distinct people referenced by at least one memory (`unnest(memories.refs)`), a network-effects "hard side liquidity" signal. |
+| `thenetwork_active_senders_weekly` | None | Distinct people referenced by a memory created in the trailing 7-day window. This is a proxy for active senders, not a literal authenticated-sender count: no table tracks per-person send timestamps, and this observability addition does not add one. |
+| `thenetwork_network_density` | None | Average graph degree (`2 * edges / nodes`) sampled from the existing hourly `scan_for_opportunities` graph projection - it does not trigger a second graph build. Zero when the graph has no nodes. |
 
 | Prometheus counter | Labels | Meaning |
 | --- | --- | --- |

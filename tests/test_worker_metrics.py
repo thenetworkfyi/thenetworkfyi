@@ -99,6 +99,61 @@ def test_collect_worker_state_reports_backlog_and_durable_intake(
     assert session.parameters == {"now": now}
 
 
+def test_collect_growth_state_reads_aggregate_counts_and_weekly_cutoff():
+    now = datetime(2026, 7, 25, 12, 0, tzinfo=timezone.utc)
+    session = _Session(
+        rows=[
+            {
+                "people_total": 42,
+                "activated_people_total": 30,
+                "active_senders_weekly": 12,
+            }
+        ]
+    )
+
+    snapshot = metrics.collect_growth_state(
+        session_factory=_session_factory(session), now=now
+    )
+
+    assert snapshot == metrics.GrowthStateSnapshot(
+        people_total=42, activated_people_total=30, active_senders_weekly=12
+    )
+    assert session.parameters == {
+        "cutoff": now - timedelta(days=metrics.ACTIVE_SENDERS_WINDOW_DAYS)
+    }
+
+
+def test_collect_growth_state_treats_missing_counts_as_zero():
+    session = _Session(
+        rows=[
+            {
+                "people_total": None,
+                "activated_people_total": None,
+                "active_senders_weekly": None,
+            }
+        ]
+    )
+
+    snapshot = metrics.collect_growth_state(session_factory=_session_factory(session))
+
+    assert snapshot == metrics.GrowthStateSnapshot(
+        people_total=0, activated_people_total=0, active_senders_weekly=0
+    )
+
+
+def test_record_network_density_reports_last_sample_and_contains_bad_input():
+    assert metrics.network_density_avg_degree() == 0.0
+
+    metrics.record_network_density(avg_degree=3.5)
+    assert metrics.network_density_avg_degree() == 3.5
+
+    metrics.record_network_density(avg_degree=-1.0)
+    assert metrics.network_density_avg_degree() == 0.0
+
+    metrics.record_network_density(avg_degree="not-a-number")  # type: ignore[arg-type]
+    assert metrics.network_density_avg_degree() == 0.0
+
+
 def test_state_observer_contains_database_failure_without_values():
     observer = metrics._StateObserver(  # noqa: SLF001
         lambda: (_ for _ in ()).throw(RuntimeError("database unavailable")),
@@ -180,6 +235,7 @@ def _reset_metric_globals(monkeypatch):
     monkeypatch.setattr(metrics, "_agent_run_duration_histogram", None)
     monkeypatch.setattr(metrics, "_registered_llm_model_labels", {"unknown"})
     monkeypatch.setattr(metrics, "_producer_last_success_timestamp_seconds", 0.0)
+    monkeypatch.setattr(metrics, "_network_density_avg_degree", 0.0)
 
 
 def test_metric_names_units_values_and_bounded_labels(monkeypatch):
@@ -204,13 +260,19 @@ def test_metric_names_units_values_and_bounded_labels(monkeypatch):
         lambda: metrics.WorkerStateSnapshot(7, 120.5, 1, "coordinated_abuse"),
         cache_seconds=60,
     )
+    growth_observer = metrics._StateObserver(  # noqa: SLF001
+        lambda: metrics.GrowthStateSnapshot(42, 30, 12),
+        cache_seconds=60,
+    )
     metrics.record_producer_poll_success(timestamp=1_784_732_400)
+    metrics.record_network_density(avg_degree=2.5)
 
     provider = metrics.configure_worker_metrics(
         exporter_factory=exporter_factory,
         reader_factory=reader_factory,
         provider_factory=_FakeProvider,
         state_observer=observer,
+        growth_state_observer=growth_observer,
     )
 
     assert exporter_calls == [
@@ -227,6 +289,10 @@ def test_metric_names_units_values_and_bounded_labels(monkeypatch):
         (metrics.JOB_QUEUE_DEPTH_METRIC, "1"),
         (metrics.OLDEST_PENDING_JOB_AGE_METRIC, "s"),
         (metrics.PRIMARY_INTAKE_PAUSED_METRIC, "1"),
+        (metrics.PEOPLE_TOTAL_METRIC, "1"),
+        (metrics.ACTIVATED_PEOPLE_TOTAL_METRIC, "1"),
+        (metrics.ACTIVE_SENDERS_WEEKLY_METRIC, "1"),
+        (metrics.NETWORK_DENSITY_METRIC, "1"),
     ]
     counters = [item for item in instruments if isinstance(item, _FakeCounter)]
     assert [item.name for item in counters] == [
@@ -254,9 +320,19 @@ def test_metric_names_units_values_and_bounded_labels(monkeypatch):
     ]
     assert all(item.kwargs["unit"] == "s" for item in histograms)
     observations = [item["callbacks"][0](None)[0] for item in gauges]
-    assert [item.value for item in observations] == [1_784_732_400, 7, 120.5, 1]
+    assert [item.value for item in observations] == [
+        1_784_732_400,
+        7,
+        120.5,
+        1,
+        42,
+        30,
+        12,
+        2.5,
+    ]
     assert all(not item.attributes for item in observations[:3])
     assert observations[3].attributes == {"reason": "coordinated_abuse"}
+    assert all(not item.attributes for item in observations[4:])
 
 
 def test_operational_counters_use_only_closed_dimensions_and_reset_cleanly(monkeypatch):
