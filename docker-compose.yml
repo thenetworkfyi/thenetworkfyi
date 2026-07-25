@@ -29,6 +29,7 @@ services:
   worker:
     image: thenetwork-agent:latest
     build: .
+    pull_policy: build
     env_file:
       - path: .env
         required: false
