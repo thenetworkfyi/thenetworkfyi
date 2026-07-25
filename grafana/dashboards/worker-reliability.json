@@ -1,0 +1,157 @@
+{
+  "uid": "thenetwork-worker-reliability",
+  "title": "The Network - Worker & Reliability",
+  "description": "Intake staleness, queue backlog, agent outcomes, and outbound/control activity derived from redacted worker audit records.",
+  "tags": ["thenetwork"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Producer poll staleness",
+      "description": "Seconds since the last fully successful IMAP poll cycle (thenetwork_producer_last_success_timestamp_seconds).",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "fieldConfig": {
+        "defaults": { "unit": "s", "thresholds": { "mode": "absolute", "steps": [
+          { "color": "green", "value": null },
+          { "color": "yellow", "value": 180 },
+          { "color": "red", "value": 600 }
+        ] } },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [
+        { "expr": "time() - thenetwork_producer_last_success_timestamp_seconds", "legendFormat": "staleness", "refId": "A" }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Job queue depth",
+      "description": "thenetwork_job_queue_depth: immediately runnable or due Procrastinate jobs.",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [
+        { "expr": "thenetwork_job_queue_depth", "legendFormat": "queue depth", "refId": "A" }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Oldest pending job age",
+      "description": "thenetwork_oldest_pending_job_age_seconds.",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [
+        { "expr": "thenetwork_oldest_pending_job_age_seconds", "legendFormat": "oldest pending age", "refId": "A" }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Primary intake paused",
+      "description": "thenetwork_primary_intake_paused by reason; 1 means paused for that reason.",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "targets": [
+        { "expr": "thenetwork_primary_intake_paused", "legendFormat": "{{reason}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Messages processed",
+      "description": "thenetwork_messages_processed_total by outcome.",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "expr": "sum by (outcome) (rate(thenetwork_messages_processed_total[5m]))", "legendFormat": "{{outcome}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Messages rejected",
+      "description": "thenetwork_messages_rejected_total by reason.",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "expr": "sum by (reason) (rate(thenetwork_messages_rejected_total[5m]))", "legendFormat": "{{reason}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Agent runs",
+      "description": "thenetwork_agent_runs_total by outcome.",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "expr": "sum by (outcome) (rate(thenetwork_agent_runs_total[5m]))", "legendFormat": "{{outcome}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Agent tool calls",
+      "description": "thenetwork_agent_tool_calls_total by tool_outcome.",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "expr": "sum by (tool_outcome) (rate(thenetwork_agent_tool_calls_total[5m]))", "legendFormat": "{{tool_outcome}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Control actions",
+      "description": "thenetwork_control_actions_total by action/actor/reason.",
+      "gridPos": { "x": 0, "y": 20, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "expr": "sum by (action, actor, reason) (rate(thenetwork_control_actions_total[5m]))", "legendFormat": "{{action}}/{{actor}}/{{reason}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Outbound emails",
+      "description": "thenetwork_outbound_emails_total by outcome/template_id.",
+      "gridPos": { "x": 12, "y": 20, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "expr": "sum by (outcome, template_id) (rate(thenetwork_outbound_emails_total[5m]))", "legendFormat": "{{outcome}}/{{template_id}}", "refId": "A" }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Relay messages forwarded",
+      "description": "thenetwork_relay_messages_forwarded_total.",
+      "gridPos": { "x": 0, "y": 28, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "expr": "sum(rate(thenetwork_relay_messages_forwarded_total[5m]))", "legendFormat": "relay forwarded", "refId": "A" }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "timeseries",
+      "title": "Primary intake paused (history)",
+      "description": "thenetwork_primary_intake_paused by reason, over time.",
+      "gridPos": { "x": 12, "y": 28, "w": 12, "h": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "expr": "thenetwork_primary_intake_paused", "legendFormat": "{{reason}}", "refId": "A" }
+      ]
+    }
+  ]
+}

@@ -28,6 +28,15 @@ registers a file-based provider that loads every `*.json` dashboard dropped into
 `updateIntervalSeconds` so a new or edited dashboard file is picked up without
 restarting the `grafana` container.
 
+`grafana/dashboards/worker-reliability.json` is the Worker & Reliability overview:
+producer poll staleness, Procrastinate job queue depth and oldest pending job
+age, messages processed/rejected, agent run and tool-call outcomes, control
+actions (pause/resume/ban/unban), primary-intake pause state, outbound email
+outcomes, and relay-forwarded message volume. Every panel queries only the
+Prometheus counter/gauge names and label dimensions documented in the
+[counter catalog](#counter-catalog) below; none use `trace_id`, `run_id`, a
+sender pseudonym, or any other opaque entity id as a label.
+
 Query the last hour directly through the Loki API:
 
 ```bash
