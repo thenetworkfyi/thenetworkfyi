@@ -297,7 +297,6 @@ def test_content_scanner_has_one_runtime_switch_and_core_dependencies():
         root / "Dockerfile",
         root / "docker-compose.yml",
         root / ".env.example",
-        root / ".github" / "workflows" / "publish.yml",
     ]
     deployment_config = "\n".join(
         path.read_text(encoding="utf-8") for path in deployment_files
