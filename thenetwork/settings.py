@@ -151,6 +151,16 @@ class Settings(BaseSettings):
     registration_limit_per_day: int = 100
     consent_decline_cooldown_days: int = 90
 
+    # Rolling-24h ceiling on tokens billed to the AGENT_MODEL/SMALL_AGENT_MODEL
+    # endpoint (email_agent + memory_sanitizer + abuse_judge; embedding bills
+    # a different provider and is tracked separately - see
+    # thenetwork/llm_observability.py). A value <= 0 disables the cap. The
+    # default is a deliberately conservative starting point, not a derived
+    # constant: see .env.example for the formula to re-derive it per
+    # AGENT_MODEL and the worst-case/blended cost it implies for the model
+    # configured there today.
+    daily_agent_token_cap: int = 15_000_000
+
     # Tool abuse bounds. Set a value to 0 or lower to disable that specific
     # guard in controlled development environments.
     remember_text_max_chars: int = 8_000
