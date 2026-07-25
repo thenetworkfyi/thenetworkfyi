@@ -13,7 +13,7 @@ readonly METRIC_SOURCE_NAME="${COMPOSE_PROJECT_NAME}-metric-source-$$"
 readonly LOG_FIXTURE_NAME="${COMPOSE_PROJECT_NAME}-log-fixture-$$"
 readonly LOG_MARKER="loki-validation-$$"
 readonly GRAFANA_AUTH_HEADER="Authorization: Basic $(printf 'admin:admin' | base64)"
-readonly GRAFANA_DASHBOARD_UIDS=("thenetwork-worker-reliability" "thenetwork-llm-cost-usage")
+readonly GRAFANA_DASHBOARD_UIDS=("thenetwork-worker-reliability" "thenetwork-llm-cost-usage" "thenetwork-growth-kpi")
 
 export COMPOSE_PROJECT_NAME
 export POSTGRES_DB="${POSTGRES_DB:-network_db}"
