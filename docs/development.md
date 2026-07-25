@@ -465,7 +465,7 @@ SIGTERM graceful drain (`stop_grace_period: 300s`), `max_attempts=3`, and idempo
 ```bash
 cp .env.example .env
 docker compose up -d --build      # build + start db, worker, collector, Prometheus
-git pull origin main && docker compose up -d --build --force-recreate   # redeploy
+git pull origin main && docker compose pull worker && docker compose up -d --force-recreate   # redeploy (pulls the CI-built image)
 ```
 
 ### OpenTelemetry Logs, Loki, and Local Prometheus Metrics
@@ -506,17 +506,27 @@ restarts preload from local weights without credentials or a download.
 Scanner-disabled deployments load no model and require no Hugging Face account or
 token.
 
-The VPS is a **git checkout**, not an image consumer: no image is published anywhere.
-`.github/workflows/ci.yml` has a `deploy` job (`environment: production`) that runs only
-on a push to `main`, only after the `test` job passes. It SSHes into the server (host,
+The VPS is a **git checkout**, but it does not build the worker image itself - the
+server needs its spare CPU/memory for serving, not for a `docker build`. Instead,
+`.github/workflows/ci.yml`'s `build` job (`permissions: packages: write`) runs only on a
+push to `main`, only after `test` passes: it logs in to `ghcr.io` with the ephemeral
+`GITHUB_TOKEN` and pushes the worker image as both `ghcr.io/<owner>/agent:latest` and
+`ghcr.io/<owner>/agent:<commit-sha>`. The `deploy` job then SSHes into the server (host,
 user, and key come from the `production` environment's `DEPLOY_HOST`/`DEPLOY_USER`/
-`DEPLOY_SSH_KEY` secrets) and runs `git pull origin main` followed by `docker compose up
--d --build --force-recreate`, then prints the resulting `worker` status. These commands
-are inline in the workflow's `script:` block rather than a script checked out on the
-server, so the deploy step always runs the version from the commit that just passed CI,
-never a stale on-disk copy. Run the same two commands by hand on the server for a manual
-redeploy. `scripts/backup.sh` dumps the DB (the only source of truth) via the `db`
-container - wire it as a host cron job.
+`DEPLOY_SSH_KEY` secrets), runs `git pull origin main`, logs in to `ghcr.io` with a
+durable `GHCR_USERNAME`/`GHCR_PAT` (a fine-grained PAT scoped to `packages: read`, since
+the package is private like the repo and the ephemeral `GITHUB_TOKEN` from the `build`
+job cannot be used outside that job), then runs `docker compose pull worker` followed by
+`docker compose up -d --force-recreate`, and prints the resulting `worker` status. These
+commands are inline in the workflow's `script:` block rather than a script checked out on
+the server, so the deploy step always runs the version from the commit that just passed
+CI, never a stale on-disk copy. `docker-compose.yml`'s `worker.image` defaults to
+`ghcr.io/thenetworkfyi/agent:latest` (override with `IMAGE=` in `.env`); local
+development still uses `docker compose up -d --build`, which builds from the Dockerfile
+and tags the result locally under that same name, so no pull is attempted. Run the same
+`git pull` + `docker compose pull worker` + `docker compose up -d --force-recreate`
+commands by hand on the server for a manual redeploy. `scripts/backup.sh` dumps the DB
+(the only source of truth) via the `db` container - wire it as a host cron job.
 
 ## Proactive outreach
 
