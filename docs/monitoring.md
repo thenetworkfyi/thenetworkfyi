@@ -37,6 +37,20 @@ Prometheus counter/gauge names and label dimensions documented in the
 [counter catalog](#counter-catalog) below; none use `trace_id`, `run_id`, a
 sender pseudonym, or any other opaque entity id as a label.
 
+`grafana/dashboards/llm-cost-usage.json` is the LLM Cost & Token Usage
+dashboard: logical request volume (`thenetwork_llm_requests_total` by
+workload/provider/model/outcome/cost_status), token counts
+(`thenetwork_llm_tokens_total` by workload/provider/model/token_type), rolling
+24h estimated cost (`thenetwork_llm_estimated_cost_usd_total`, both broken down
+and summed across all series), and p95 request latency
+(`thenetwork_llm_request_duration_seconds`). The estimated-cost panels draw a
+fixed $50/day reference line matching the `DailyLlmCostDrift` alert condition
+in `prometheus-alert-rules.yml` (`sum(increase(thenetwork_llm_estimated_cost_usd_total[24h])) > 50`) -
+update both the dashboard threshold and the alert expression together if that
+budget changes. Every panel here also stays within the documented label set
+(`workload`, `provider`, `model`, `outcome`, `cost_status`, `token_type`); no
+`trace_id` or other unbounded/identifying label is used.
+
 Query the last hour directly through the Loki API:
 
 ```bash
