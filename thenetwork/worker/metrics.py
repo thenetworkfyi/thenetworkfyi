@@ -769,7 +769,7 @@ def configure_worker_metrics(
                 meter.create_observable_gauge(
                     JOB_QUEUE_DEPTH_METRIC,
                     callbacks=[_state_callback(observer, "queue_depth")],
-                    unit="1",
+                    unit="{jobs}",
                     description="Runnable or overdue Procrastinate jobs.",
                 ),
                 meter.create_observable_gauge(
@@ -796,13 +796,13 @@ def configure_worker_metrics(
                             else []
                         )
                     ],
-                    unit="1",
+                    unit="{paused}",
                     description="Whether durable primary intake state is paused.",
                 ),
                 meter.create_observable_gauge(
                     PEOPLE_TOTAL_METRIC,
                     callbacks=[_state_callback(growth_observer, "people_total")],
-                    unit="1",
+                    unit="{people}",
                     description="Live count of registered people.",
                 ),
                 meter.create_observable_gauge(
@@ -810,7 +810,7 @@ def configure_worker_metrics(
                     callbacks=[
                         _state_callback(growth_observer, "activated_people_total")
                     ],
-                    unit="1",
+                    unit="{people}",
                     description="Count of people referenced by at least one memory.",
                 ),
                 meter.create_observable_gauge(
@@ -818,7 +818,7 @@ def configure_worker_metrics(
                     callbacks=[
                         _state_callback(growth_observer, "active_senders_weekly")
                     ],
-                    unit="1",
+                    unit="{people}",
                     description=(
                         "People referenced by a memory created in the trailing "
                         f"{ACTIVE_SENDERS_WINDOW_DAYS}-day window, an "
@@ -830,7 +830,7 @@ def configure_worker_metrics(
                     callbacks=[
                         lambda _options: [Observation(network_density_avg_degree())]
                     ],
-                    unit="1",
+                    unit="{degree}",
                     description=(
                         "Average graph degree (2 * edges / nodes) sampled from "
                         "the hourly scan_for_opportunities graph build."
@@ -856,7 +856,7 @@ def configure_worker_metrics(
                 meter.create_observable_gauge(
                     WORKER_PROCESS_OPEN_FDS_METRIC,
                     callbacks=[_process_open_fds_callback],
-                    unit="1",
+                    unit="{fds}",
                     description=(
                         "Worker process open file descriptors, from /proc/self/fd."
                     ),
@@ -864,7 +864,7 @@ def configure_worker_metrics(
                 meter.create_observable_gauge(
                     WORKER_PROCESS_THREADS_METRIC,
                     callbacks=[_process_threads_callback],
-                    unit="1",
+                    unit="{threads}",
                     description="Worker process thread count, from /proc/self/status.",
                 ),
                 meter.create_observable_gauge(
