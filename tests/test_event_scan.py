@@ -20,6 +20,9 @@ def _settings(**overrides):
         "event_scan_active_event_limit": 100,
         "event_scan_max_candidates": 50,
         "event_scan_max_per_person": 1,
+        # 0 disables the daily token budget cap so most tests here are
+        # unaffected by it; the budget-exhaustion path is covered separately.
+        "daily_agent_token_cap": 0,
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -167,6 +170,48 @@ async def test_event_scan_query_excludes_expired_cancelled_and_unembedded_events
     assert "events.expires_at >" in event_query
     match.assert_not_called()
     deferred.defer.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_event_scan_leaves_no_ledger_row_when_budget_exhausted():
+    """Over budget: no ledger claim is attempted (so no orphaned pending
+    event_recommendations row survives), no commit, and no defer."""
+    from thenetwork.search.match import MemoryMatch
+    from thenetwork.worker.event_scan import scan_for_event_recommendations
+
+    expiry = datetime.now(timezone.utc) + timedelta(days=3)
+    timeline: list[str] = []
+    session = _scan_session(
+        events=[_event_row("event-1", expires_at=expiry)],
+        people=[("relevant", "relevant-raw@example.com")],
+        timeline=timeline,
+    )
+    matches = [MemoryMatch("m-good", "relevant", "sealed compiler interest", 0.82)]
+
+    with (
+        patch(
+            "thenetwork.worker.event_scan.get_settings",
+            return_value=_settings(),
+        ),
+        patch("thenetwork.worker.event_scan.get_session", return_value=session),
+        patch("thenetwork.worker.event_scan.match_memories", return_value=matches),
+        patch(
+            "thenetwork.worker.event_scan.check_daily_token_budget",
+            return_value=False,
+        ),
+        patch("thenetwork.worker.event_scan.process_email") as deferred,
+    ):
+        await scan_for_event_recommendations.func(0)
+
+    deferred.defer.assert_not_called()
+    assert timeline == [], "no claim/commit may run once the budget is exhausted"
+    insert_or_update_calls = [
+        call
+        for call in session.exec.call_args_list
+        if "event_recommendations" in str(call.args[0]).lower()
+        and str(call.args[0]).lower().strip().startswith(("insert", "update"))
+    ]
+    assert not insert_or_update_calls, "no ledger row may be claimed over budget"
 
 
 @pytest.mark.asyncio
@@ -392,6 +437,7 @@ async def test_event_scan_job_reaches_agent_through_real_worker_handoff():
         patch(
             "thenetwork.worker.tasks.check_rate_limit", return_value=True
         ) as rate_limit,
+        patch("thenetwork.worker.tasks.check_daily_token_budget", return_value=True),
         patch(
             "thenetwork.worker.tasks.scan_content",
             new=AsyncMock(return_value=(True, "ok")),

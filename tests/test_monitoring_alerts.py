@@ -57,6 +57,7 @@ def test_alert_catalog_covers_worker_collector_and_event_failures():
         "SystemControlActionObserved",
         "AgentUsageLimitExceeded",
         "ProcessEmailJobExhausted",
+        "DailyLlmCostDrift",
     }
 
     immediate = {
@@ -254,4 +255,6 @@ def test_promtool_fixture_covers_pending_firing_and_resolution():
         "event alerts catch first samples later increments and resolutions",
         "loki availability moves from pending to firing and resolves",
         "loki exporter queue moves from pending to firing and resolves",
+        "quiet system stays under the daily cost threshold",
+        "expensive-model drift crosses the dollar threshold and fires",
     }

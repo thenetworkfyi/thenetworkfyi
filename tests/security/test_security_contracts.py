@@ -572,6 +572,10 @@ async def test_proactive_graph_trigger_never_sets_quote_inputs():
             "thenetwork.worker.proactive.recently_surfaced_pairs", return_value=set()
         ),
         patch("thenetwork.worker.proactive.mark_pairs_surfaced"),
+        patch(
+            "thenetwork.worker.proactive.check_daily_token_budget",
+            return_value=True,
+        ),
         patch("thenetwork.worker.proactive.process_email") as process_email,
     ):
         await scan_for_opportunities.func(0)
@@ -611,6 +615,10 @@ async def test_proactive_semantic_trigger_never_sets_quote_inputs():
         ),
         patch("thenetwork.worker.proactive.mark_pairs_surfaced"),
         patch("thenetwork.worker.proactive.match_memories", return_value=matches),
+        patch(
+            "thenetwork.worker.proactive.check_daily_token_budget",
+            return_value=True,
+        ),
         patch("thenetwork.worker.proactive.process_email") as process_email,
     ):
         await scan_for_matches.func(0)

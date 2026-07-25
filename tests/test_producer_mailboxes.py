@@ -409,6 +409,98 @@ def test_over_budget_message_is_enqueued_after_the_daily_window_rolls(
     token_budget._storage = None
 
 
+@pytest.mark.integration
+def test_over_budget_end_to_end_notifies_once_defers_then_processes_after_reset(
+    pg_engine, monkeypatch
+):
+    """Full lifecycle against a live pgvector database with a deliberately
+    tiny cap: an inbound email from a known sender is deferred and stays
+    unread, a second poll in the same window claims no second notice (the
+    real durable `should_send_deferral_notice` quota, not a mock), and the
+    message is genuinely processed once the day's fixed window resets."""
+    from sqlalchemy import text
+
+    import thenetwork.db.session as sess_mod
+    import thenetwork.security.token_budget as token_budget
+
+    monkeypatch.setattr(sess_mod, "_engine", pg_engine)
+    token_budget._limiter = None
+    token_budget._storage = None
+    with pg_engine.begin() as conn:
+        conn.execute(text("DELETE FROM rate_limits"))
+
+    monkeypatch.setattr(
+        "thenetwork.worker.producer.get_settings",
+        lambda: SimpleNamespace(
+            primary_intake_burst_monitoring_enabled=False,
+            sender_identifier_secret="",
+            relay_domain="relay.example.com",
+            daily_agent_token_cap=10,
+        ),
+    )
+    assert token_budget.consume_daily_token_budget(10, 10) is True
+
+    message = _message("50", "known@gmail.com")
+
+    # First poll: deferred, stays unread, and the sender gets exactly one
+    # notice (should_send_deferral_notice runs for real against pg_engine).
+    with (
+        patch("thenetwork.worker.producer.poll_unseen", return_value=[message]),
+        patch(
+            "thenetwork.worker.producer._is_known_authenticated_sender",
+            return_value=True,
+        ),
+        patch(
+            "thenetwork.worker.producer._send_infrastructure_rejection_reply"
+        ) as send_notice_1,
+        patch("thenetwork.worker.producer.process_email") as process_email,
+        patch("thenetwork.worker.producer.mark_messages_seen") as mark_seen,
+    ):
+        assert _poll_mailbox_and_enqueue("primary") == 0
+    process_email.defer.assert_not_called()
+    mark_seen.assert_called_once_with([], mailbox="primary")
+    send_notice_1.assert_called_once()
+
+    # Second poll, same window: the message is still there (never marked
+    # seen) and the durable one-per-day notice quota is already claimed, so
+    # no second notice goes out.
+    with (
+        patch("thenetwork.worker.producer.poll_unseen", return_value=[message]),
+        patch(
+            "thenetwork.worker.producer._is_known_authenticated_sender",
+            return_value=True,
+        ),
+        patch(
+            "thenetwork.worker.producer._send_infrastructure_rejection_reply"
+        ) as send_notice_2,
+        patch("thenetwork.worker.producer.process_email") as process_email_2,
+        patch("thenetwork.worker.producer.mark_messages_seen") as mark_seen_2,
+    ):
+        assert _poll_mailbox_and_enqueue("primary") == 0
+    process_email_2.defer.assert_not_called()
+    mark_seen_2.assert_called_once_with([], mailbox="primary")
+    send_notice_2.assert_not_called()
+
+    # Roll the day's fixed window over; the same still-unseen message is now
+    # genuinely processed.
+    with pg_engine.begin() as conn:
+        conn.execute(
+            text("UPDATE rate_limits SET expires_at = now() - INTERVAL '1 second'")
+        )
+
+    with (
+        patch("thenetwork.worker.producer.poll_unseen", return_value=[message]),
+        patch("thenetwork.worker.producer.process_email") as process_email_3,
+        patch("thenetwork.worker.producer.mark_messages_seen") as mark_seen_3,
+    ):
+        assert _poll_mailbox_and_enqueue("primary") == 1
+    process_email_3.defer.assert_called_once()
+    mark_seen_3.assert_called_once_with(["50"], mailbox="primary")
+
+    token_budget._limiter = None
+    token_budget._storage = None
+
+
 def test_new_sender_burst_pauses_before_enqueue_and_leaves_batch_unread(monkeypatch):
     messages = [
         _message(str(index), f"sender-{index}@example.com") for index in range(25)

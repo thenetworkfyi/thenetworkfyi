@@ -271,6 +271,7 @@ opaque entity IDs, or job arguments to rules or notification templates.
 | `SystemControlActionObserved` | critical | A new system pause or future automatic ban counter increment. Administrator controls are excluded. | immediate |
 | `AgentUsageLimitExceeded` | warning | A new agent usage-limit interruption. | immediate |
 | `ProcessEmailJobExhausted` | critical | A final `process_email` attempt exhausted retries. Intermediate failures never increment this counter. | immediate |
+| `DailyLlmCostDrift` | warning | Rolling 24h estimated cost exceeds a fixed $50 default. | 15m |
 
 ### ProducerPollingStale
 
@@ -340,6 +341,25 @@ identifier. The application does not send a second admin email.
 Inspect restricted worker logs for the terminal job failure and resolve the
 underlying dependency. Only the final exhausted attempt alerts, and the
 application does not send a second admin email.
+
+### DailyLlmCostDrift
+
+`DAILY_AGENT_TOKEN_CAP` (see @docs/development.md) bounds spend in tokens, not
+dollars, and per-million-token pricing varies by 25-40x across models - the
+default 15M-token cap costs roughly $5.40/day worst case on a cheap model such
+as `openrouter:google/gemma-4-31b-it`, but 25-40x that (~$135-216/day) on
+`anthropic:claude-sonnet-5`, `.env.example`'s documented `AGENT_MODEL`. This
+alert is a dollar-denominated safety net independent of the token cap: it
+fires on `thenetwork_llm_estimated_cost_usd_total` (see the counter catalog
+above) directly, so a model swap or provider price change that keeps the same
+token cap but sharply raises the dollar burn is still caught. The $50/day
+default sits comfortably above ordinary cheap-model spend but below the
+expensive-model worst case, so tune it in `prometheus-alert-rules.yml` to a
+level appropriate for the currently configured `AGENT_MODEL` and expected
+traffic. On firing, check the per-`workload`/`provider`/`model` cost
+breakdown, confirm `AGENT_MODEL`/`SMALL_AGENT_MODEL` and `DAILY_AGENT_TOKEN_CAP`
+are still consistent with the assumptions in `.env.example`, and re-derive the
+cap if the model changed.
 
 ## Operator workflow
 
