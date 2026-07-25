@@ -19,6 +19,10 @@ scrape_configs:
     static_configs:
       - targets: ["otel-collector:8889"]
 
+  - job_name: thenetwork-host-metrics
+    static_configs:
+      - targets: ["otel-collector:8890"]
+
   - job_name: loki
     static_configs:
       - targets: ["loki:3100"]
