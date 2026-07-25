@@ -169,12 +169,23 @@ def test_state_observer_contains_database_failure_without_values():
     )
 
 
+class _FakeObservableCounter:
+    def __init__(self, name, **kwargs):
+        self.name = name
+        self.kwargs = kwargs
+
+
 class _FakeMeter:
     def __init__(self):
         self.instruments = []
 
     def create_observable_gauge(self, name, **kwargs):
         instrument = {"name": name, **kwargs}
+        self.instruments.append(instrument)
+        return instrument
+
+    def create_observable_counter(self, name, **kwargs):
+        instrument = _FakeObservableCounter(name, **kwargs)
         self.instruments.append(instrument)
         return instrument
 
@@ -236,15 +247,50 @@ def _reset_metric_globals(monkeypatch):
     monkeypatch.setattr(metrics, "_registered_llm_model_labels", {"unknown"})
     monkeypatch.setattr(metrics, "_producer_last_success_timestamp_seconds", 0.0)
     monkeypatch.setattr(metrics, "_network_density_avg_degree", 0.0)
+    monkeypatch.setattr(metrics, "_clk_tck", None)
 
 
-def test_metric_names_units_values_and_bounded_labels(monkeypatch):
+def _write_process_and_cgroup_fixtures(monkeypatch, tmp_path):
+    """Point every /proc and /sys/fs/cgroup path constant at controlled files."""
+    status_path = tmp_path / "status"
+    status_path.write_text("VmRSS:      2048 kB\nThreads:         4\n")
+    stat_path = tmp_path / "stat"
+    # Fields after the ")" that closes comm; utime/stime are indices 11/12.
+    stat_path.write_text(
+        "1234 (worker) S 1 1 1 0 -1 0 0 0 0 0 500 250 0 0 20 0 1 0 100\n"
+    )
+    fd_dir = tmp_path / "fd"
+    fd_dir.mkdir()
+    for fd in range(3):
+        (fd_dir / str(fd)).write_text("")
+    memory_current = tmp_path / "memory.current"
+    memory_current.write_text("209715200\n")
+    memory_max = tmp_path / "memory.max"
+    memory_max.write_text("536870912\n")
+    memory_peak = tmp_path / "memory.peak"
+    memory_peak.write_text("314572800\n")
+    cpu_stat = tmp_path / "cpu.stat"
+    cpu_stat.write_text(
+        "usage_usec 123456\nnr_periods 40\nnr_throttled 3\nthrottled_usec 250000\n"
+    )
+    monkeypatch.setattr(metrics, "_PROC_SELF_STATUS", status_path)
+    monkeypatch.setattr(metrics, "_PROC_SELF_STAT", stat_path)
+    monkeypatch.setattr(metrics, "_PROC_SELF_FD", fd_dir)
+    monkeypatch.setattr(metrics, "_CGROUP_MEMORY_CURRENT", memory_current)
+    monkeypatch.setattr(metrics, "_CGROUP_MEMORY_MAX", memory_max)
+    monkeypatch.setattr(metrics, "_CGROUP_MEMORY_PEAK", memory_peak)
+    monkeypatch.setattr(metrics, "_CGROUP_CPU_STAT", cpu_stat)
+    monkeypatch.setattr(metrics, "_clock_ticks_per_second", lambda: 100.0)
+
+
+def test_metric_names_units_values_and_bounded_labels(monkeypatch, tmp_path):
     settings = SimpleNamespace(
         worker_metrics_otlp_endpoint="http://collector:4318/v1/metrics",
         worker_metrics_export_interval_seconds=30,
         worker_metrics_export_timeout_seconds=5,
     )
     monkeypatch.setattr(metrics, "get_settings", lambda: settings)
+    _write_process_and_cgroup_fixtures(monkeypatch, tmp_path)
     exporter_calls = []
     reader_calls = []
 
@@ -293,7 +339,25 @@ def test_metric_names_units_values_and_bounded_labels(monkeypatch):
         (metrics.ACTIVATED_PEOPLE_TOTAL_METRIC, "1"),
         (metrics.ACTIVE_SENDERS_WEEKLY_METRIC, "1"),
         (metrics.NETWORK_DENSITY_METRIC, "1"),
+        (metrics.WORKER_PROCESS_RESIDENT_MEMORY_METRIC, "By"),
+        (metrics.WORKER_PROCESS_CPU_SECONDS_METRIC, "s"),
+        (metrics.WORKER_PROCESS_OPEN_FDS_METRIC, "1"),
+        (metrics.WORKER_PROCESS_THREADS_METRIC, "1"),
+        (metrics.WORKER_CGROUP_MEMORY_CURRENT_METRIC, "By"),
+        (metrics.WORKER_CGROUP_MEMORY_MAX_METRIC, "By"),
+        (metrics.WORKER_CGROUP_MEMORY_PEAK_METRIC, "By"),
     ]
+    observable_counters = [
+        item for item in instruments if isinstance(item, _FakeObservableCounter)
+    ]
+    assert [(item.name, item.kwargs["unit"]) for item in observable_counters] == [
+        (metrics.WORKER_CGROUP_CPU_PERIODS_METRIC, "1"),
+        (metrics.WORKER_CGROUP_CPU_THROTTLED_PERIODS_METRIC, "1"),
+        (metrics.WORKER_CGROUP_CPU_THROTTLED_SECONDS_METRIC, "s"),
+    ]
+    assert [
+        item.kwargs["callbacks"][0](None)[0].value for item in observable_counters
+    ] == [40, 3, 0.25]
     counters = [item for item in instruments if isinstance(item, _FakeCounter)]
     assert [item.name for item in counters] == [
         metrics.CONTROL_ACTIONS_METRIC,
@@ -329,10 +393,79 @@ def test_metric_names_units_values_and_bounded_labels(monkeypatch):
         30,
         12,
         2.5,
+        2_097_152,
+        5.0,
+        3,
+        4,
+        209_715_200,
+        536_870_912,
+        314_572_800,
     ]
     assert all(not item.attributes for item in observations[:3])
     assert observations[3].attributes == {"reason": "coordinated_abuse"}
-    assert all(not item.attributes for item in observations[4:])
+    cpu_seconds_index = 9
+    assert all(
+        not item.attributes
+        for i, item in enumerate(observations[4:])
+        if 4 + i != cpu_seconds_index
+    )
+    assert observations[cpu_seconds_index].attributes == {"state": "user"}
+    cpu_seconds_observations = [
+        item
+        for item in gauges
+        if item["name"] == metrics.WORKER_PROCESS_CPU_SECONDS_METRIC
+    ][0]["callbacks"][0](None)
+    assert [obs.value for obs in cpu_seconds_observations] == [5.0, 2.5]
+    assert [obs.attributes for obs in cpu_seconds_observations] == [
+        {"state": "user"},
+        {"state": "system"},
+    ]
+
+
+def test_process_and_cgroup_readers_are_best_effort_on_missing_or_malformed_files(
+    monkeypatch, tmp_path
+):
+    missing_dir = tmp_path / "missing"
+    monkeypatch.setattr(metrics, "_PROC_SELF_STATUS", missing_dir / "status")
+    monkeypatch.setattr(metrics, "_PROC_SELF_STAT", missing_dir / "stat")
+    monkeypatch.setattr(metrics, "_PROC_SELF_FD", missing_dir / "fd")
+    monkeypatch.setattr(metrics, "_CGROUP_MEMORY_CURRENT", missing_dir / "current")
+    monkeypatch.setattr(metrics, "_CGROUP_MEMORY_MAX", missing_dir / "max")
+    monkeypatch.setattr(metrics, "_CGROUP_MEMORY_PEAK", missing_dir / "peak")
+    monkeypatch.setattr(metrics, "_CGROUP_CPU_STAT", missing_dir / "cpu.stat")
+
+    assert metrics._process_resident_memory_callback(None) == []  # noqa: SLF001
+    assert metrics._process_threads_callback(None) == []  # noqa: SLF001
+    assert metrics._process_open_fds_callback(None) == []  # noqa: SLF001
+    assert metrics._process_cpu_seconds_callback(None) == []  # noqa: SLF001
+    assert metrics._cgroup_memory_current_callback(None) == []  # noqa: SLF001
+    assert metrics._cgroup_memory_max_callback(None) == []  # noqa: SLF001
+    assert metrics._cgroup_memory_peak_callback(None) == []  # noqa: SLF001
+    assert metrics._cgroup_cpu_periods_callback(None) == []  # noqa: SLF001
+    assert metrics._cgroup_cpu_throttled_periods_callback(None) == []  # noqa: SLF001
+    assert metrics._cgroup_cpu_throttled_seconds_callback(None) == []  # noqa: SLF001
+
+    # An unlimited cgroup memory.max reads "max", not a number - never raise,
+    # never fabricate a byte value.
+    memory_max = tmp_path / "memory.max"
+    memory_max.write_text("max\n")
+    monkeypatch.setattr(metrics, "_CGROUP_MEMORY_MAX", memory_max)
+    assert metrics._cgroup_memory_max_callback(None) == []  # noqa: SLF001
+
+    # A malformed /proc/self/stat (too few fields after comm) is also absorbed.
+    stat_path = tmp_path / "stat"
+    stat_path.write_text("1234 (worker) S 1\n")
+    monkeypatch.setattr(metrics, "_PROC_SELF_STAT", stat_path)
+    assert metrics._process_cpu_seconds_callback(None) == []  # noqa: SLF001
+
+    # A cpu.stat missing the throttling keys yields no observation for them,
+    # without raising or fabricating a value.
+    cpu_stat = tmp_path / "cpu.stat"
+    cpu_stat.write_text("usage_usec 100\n")
+    monkeypatch.setattr(metrics, "_CGROUP_CPU_STAT", cpu_stat)
+    assert metrics._cgroup_cpu_periods_callback(None) == []  # noqa: SLF001
+    assert metrics._cgroup_cpu_throttled_periods_callback(None) == []  # noqa: SLF001
+    assert metrics._cgroup_cpu_throttled_seconds_callback(None) == []  # noqa: SLF001
 
 
 def test_operational_counters_use_only_closed_dimensions_and_reset_cleanly(monkeypatch):

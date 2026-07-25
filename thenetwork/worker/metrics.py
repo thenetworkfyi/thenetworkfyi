@@ -8,11 +8,13 @@ exporter failures so observability cannot alter email, queue, or intake behavior
 
 from __future__ import annotations
 
+import os
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import StrEnum
 from math import ceil
+from pathlib import Path
 from threading import Lock
 from time import monotonic, time
 from typing import Callable, Generic, Iterable, TypeVar
@@ -47,6 +49,22 @@ PEOPLE_TOTAL_METRIC = "thenetwork_people_total"
 ACTIVATED_PEOPLE_TOTAL_METRIC = "thenetwork_activated_people_total"
 ACTIVE_SENDERS_WEEKLY_METRIC = "thenetwork_active_senders_weekly"
 NETWORK_DENSITY_METRIC = "thenetwork_network_density"
+WORKER_PROCESS_RESIDENT_MEMORY_METRIC = (
+    "thenetwork_worker_process_resident_memory_bytes"
+)
+WORKER_PROCESS_CPU_SECONDS_METRIC = "thenetwork_worker_process_cpu_seconds"
+WORKER_PROCESS_OPEN_FDS_METRIC = "thenetwork_worker_process_open_fds"
+WORKER_PROCESS_THREADS_METRIC = "thenetwork_worker_process_threads"
+WORKER_CGROUP_MEMORY_CURRENT_METRIC = "thenetwork_worker_cgroup_memory_current_bytes"
+WORKER_CGROUP_MEMORY_MAX_METRIC = "thenetwork_worker_cgroup_memory_max_bytes"
+WORKER_CGROUP_MEMORY_PEAK_METRIC = "thenetwork_worker_cgroup_memory_peak_bytes"
+WORKER_CGROUP_CPU_PERIODS_METRIC = "thenetwork_worker_cgroup_cpu_periods_total"
+WORKER_CGROUP_CPU_THROTTLED_PERIODS_METRIC = (
+    "thenetwork_worker_cgroup_cpu_throttled_periods_total"
+)
+WORKER_CGROUP_CPU_THROTTLED_SECONDS_METRIC = (
+    "thenetwork_worker_cgroup_cpu_throttled_seconds_total"
+)
 
 ACTIVE_SENDERS_WINDOW_DAYS = 7
 
@@ -300,6 +318,166 @@ def record_network_density(*, avg_degree: float) -> None:
 def network_density_avg_degree() -> float:
     with _network_density_lock:
         return _network_density_avg_degree
+
+
+# Worker process and cgroup v2 self-metrics. These read local /proc and
+# /sys/fs/cgroup files only - no Docker socket, no Engine API access, and
+# nothing observed here ever leaves the current container. Every reader below
+# is best effort: a missing file, an unreadable file, an unexpected format, or
+# an unlimited ("max") cgroup limit is reported as "no observation" rather
+# than raised, so a missing /proc entry or a non-cgroup-v2 host never gates
+# the producer or worker.
+_PROC_SELF_STATUS = Path("/proc/self/status")
+_PROC_SELF_STAT = Path("/proc/self/stat")
+_PROC_SELF_FD = Path("/proc/self/fd")
+_CGROUP_MEMORY_CURRENT = Path("/sys/fs/cgroup/memory.current")
+_CGROUP_MEMORY_MAX = Path("/sys/fs/cgroup/memory.max")
+_CGROUP_MEMORY_PEAK = Path("/sys/fs/cgroup/memory.peak")
+_CGROUP_CPU_STAT = Path("/sys/fs/cgroup/cpu.stat")
+
+_clk_tck_lock = Lock()
+_clk_tck: float | None = None
+
+
+def _clock_ticks_per_second() -> float:
+    global _clk_tck
+    with _clk_tck_lock:
+        if _clk_tck is None:
+            try:
+                _clk_tck = float(os.sysconf("SC_CLK_TCK"))
+            except (ValueError, OSError, AttributeError):
+                _clk_tck = 100.0
+        return _clk_tck
+
+
+def _read_status_field(field: str) -> int | None:
+    try:
+        for line in _PROC_SELF_STATUS.read_text().splitlines():
+            if line.startswith(field):
+                parts = line.split()
+                if len(parts) >= 2:
+                    return int(parts[1])
+        return None
+    except Exception:
+        return None
+
+
+def _read_process_resident_memory_bytes() -> int | None:
+    kib = _read_status_field("VmRSS:")
+    return kib * 1024 if kib is not None else None
+
+
+def _read_process_threads() -> int | None:
+    return _read_status_field("Threads:")
+
+
+def _read_process_open_fds() -> int | None:
+    try:
+        return len(os.listdir(_PROC_SELF_FD))
+    except Exception:
+        return None
+
+
+def _read_process_cpu_seconds() -> tuple[float, float] | None:
+    """Return (user_seconds, system_seconds) from /proc/self/stat.
+
+    Fields are positional and space-separated after the ``)`` that closes the
+    (possibly space-containing) ``comm`` field; utime/stime are fields 14/15
+    (1-indexed), i.e. indices 11/12 of the fields following ``comm``.
+    """
+    try:
+        content = _PROC_SELF_STAT.read_text()
+        closing = content.rindex(")")
+        fields = content[closing + 2 :].split()
+        if len(fields) < 13:
+            return None
+        ticks = _clock_ticks_per_second()
+        return (int(fields[11]) / ticks, int(fields[12]) / ticks)
+    except Exception:
+        return None
+
+
+def _read_cgroup_bytes(path: Path) -> int | None:
+    try:
+        raw = path.read_text().strip()
+        if raw == "max":
+            return None
+        return int(raw)
+    except Exception:
+        return None
+
+
+def _read_cgroup_cpu_stat() -> dict[str, int]:
+    try:
+        values: dict[str, int] = {}
+        for line in _CGROUP_CPU_STAT.read_text().splitlines():
+            parts = line.split()
+            if len(parts) == 2:
+                try:
+                    values[parts[0]] = int(parts[1])
+                except ValueError:
+                    continue
+        return values
+    except Exception:
+        return {}
+
+
+def _process_resident_memory_callback(_options: object) -> list[Observation]:
+    value = _read_process_resident_memory_bytes()
+    return [Observation(value)] if value is not None else []
+
+
+def _process_threads_callback(_options: object) -> list[Observation]:
+    value = _read_process_threads()
+    return [Observation(value)] if value is not None else []
+
+
+def _process_open_fds_callback(_options: object) -> list[Observation]:
+    value = _read_process_open_fds()
+    return [Observation(value)] if value is not None else []
+
+
+def _process_cpu_seconds_callback(_options: object) -> list[Observation]:
+    result = _read_process_cpu_seconds()
+    if result is None:
+        return []
+    user_seconds, system_seconds = result
+    return [
+        Observation(user_seconds, attributes={"state": "user"}),
+        Observation(system_seconds, attributes={"state": "system"}),
+    ]
+
+
+def _cgroup_memory_current_callback(_options: object) -> list[Observation]:
+    value = _read_cgroup_bytes(_CGROUP_MEMORY_CURRENT)
+    return [Observation(value)] if value is not None else []
+
+
+def _cgroup_memory_max_callback(_options: object) -> list[Observation]:
+    value = _read_cgroup_bytes(_CGROUP_MEMORY_MAX)
+    return [Observation(value)] if value is not None else []
+
+
+def _cgroup_memory_peak_callback(_options: object) -> list[Observation]:
+    value = _read_cgroup_bytes(_CGROUP_MEMORY_PEAK)
+    return [Observation(value)] if value is not None else []
+
+
+def _cgroup_cpu_periods_callback(_options: object) -> list[Observation]:
+    stats = _read_cgroup_cpu_stat()
+    return [Observation(stats["nr_periods"])] if "nr_periods" in stats else []
+
+
+def _cgroup_cpu_throttled_periods_callback(_options: object) -> list[Observation]:
+    stats = _read_cgroup_cpu_stat()
+    return [Observation(stats["nr_throttled"])] if "nr_throttled" in stats else []
+
+
+def _cgroup_cpu_throttled_seconds_callback(_options: object) -> list[Observation]:
+    stats = _read_cgroup_cpu_stat()
+    if "throttled_usec" not in stats:
+        return []
+    return [Observation(stats["throttled_usec"] / 1_000_000)]
 
 
 _SnapshotT = TypeVar("_SnapshotT")
@@ -656,6 +834,91 @@ def configure_worker_metrics(
                     description=(
                         "Average graph degree (2 * edges / nodes) sampled from "
                         "the hourly scan_for_opportunities graph build."
+                    ),
+                ),
+                meter.create_observable_gauge(
+                    WORKER_PROCESS_RESIDENT_MEMORY_METRIC,
+                    callbacks=[_process_resident_memory_callback],
+                    unit="By",
+                    description=(
+                        "Worker process resident memory, from /proc/self/status."
+                    ),
+                ),
+                meter.create_observable_gauge(
+                    WORKER_PROCESS_CPU_SECONDS_METRIC,
+                    callbacks=[_process_cpu_seconds_callback],
+                    unit="s",
+                    description=(
+                        "Worker process cumulative CPU time by state (user/system), "
+                        "from /proc/self/stat."
+                    ),
+                ),
+                meter.create_observable_gauge(
+                    WORKER_PROCESS_OPEN_FDS_METRIC,
+                    callbacks=[_process_open_fds_callback],
+                    unit="1",
+                    description=(
+                        "Worker process open file descriptors, from /proc/self/fd."
+                    ),
+                ),
+                meter.create_observable_gauge(
+                    WORKER_PROCESS_THREADS_METRIC,
+                    callbacks=[_process_threads_callback],
+                    unit="1",
+                    description="Worker process thread count, from /proc/self/status.",
+                ),
+                meter.create_observable_gauge(
+                    WORKER_CGROUP_MEMORY_CURRENT_METRIC,
+                    callbacks=[_cgroup_memory_current_callback],
+                    unit="By",
+                    description=(
+                        "Current cgroup v2 memory usage, from "
+                        "/sys/fs/cgroup/memory.current."
+                    ),
+                ),
+                meter.create_observable_gauge(
+                    WORKER_CGROUP_MEMORY_MAX_METRIC,
+                    callbacks=[_cgroup_memory_max_callback],
+                    unit="By",
+                    description=(
+                        "Configured cgroup v2 memory limit, from "
+                        '/sys/fs/cgroup/memory.max. Absent when unlimited ("max").'
+                    ),
+                ),
+                meter.create_observable_gauge(
+                    WORKER_CGROUP_MEMORY_PEAK_METRIC,
+                    callbacks=[_cgroup_memory_peak_callback],
+                    unit="By",
+                    description=(
+                        "Peak cgroup v2 memory usage, from "
+                        "/sys/fs/cgroup/memory.peak. Absent on older kernels."
+                    ),
+                ),
+                meter.create_observable_counter(
+                    WORKER_CGROUP_CPU_PERIODS_METRIC,
+                    callbacks=[_cgroup_cpu_periods_callback],
+                    unit="1",
+                    description=(
+                        "Elapsed cgroup v2 CPU scheduling periods, from "
+                        "/sys/fs/cgroup/cpu.stat nr_periods."
+                    ),
+                ),
+                meter.create_observable_counter(
+                    WORKER_CGROUP_CPU_THROTTLED_PERIODS_METRIC,
+                    callbacks=[_cgroup_cpu_throttled_periods_callback],
+                    unit="1",
+                    description=(
+                        "Cgroup v2 CPU scheduling periods in which this container "
+                        "was throttled, from /sys/fs/cgroup/cpu.stat nr_throttled."
+                    ),
+                ),
+                meter.create_observable_counter(
+                    WORKER_CGROUP_CPU_THROTTLED_SECONDS_METRIC,
+                    callbacks=[_cgroup_cpu_throttled_seconds_callback],
+                    unit="s",
+                    description=(
+                        "Cumulative cgroup v2 CPU throttled time, from "
+                        "/sys/fs/cgroup/cpu.stat throttled_usec."
                     ),
                 ),
             ]
