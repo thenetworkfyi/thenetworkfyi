@@ -141,10 +141,15 @@ def test_collector_config_has_health_check_extension():
 def test_collector_exports_logs_to_local_loki_without_external_settings():
     """The local monitoring stack starts without an external OTLP backend."""
     collector = _COMPOSE_CONFIG["services"]["otel-collector"]
-    assert "environment" not in collector
+    assert set(collector.get("environment", {})) == {
+        "POSTGRES_DB",
+        "POSTGRES_MONITOR_USER",
+        "POSTGRES_MONITOR_PASSWORD",
+    }, "collector must carry only the least-privilege postgresql receiver credentials"
     assert set(_COLLECTOR_CONFIG["exporters"]) == {
         "otlphttp/loki",
         "prometheus/audit",
+        "prometheus/host",
     }
     assert _COLLECTOR_CONFIG["exporters"]["otlphttp/loki"]["endpoint"] == (
         "http://loki:3100/otlp"
@@ -369,6 +374,7 @@ def test_prometheus_scrapes_collector_health_audit_activity_and_loki():
     assert jobs == {
         "otel-collector-internal": ["otel-collector:8888"],
         "thenetwork-audit-activity": ["otel-collector:8889"],
+        "thenetwork-host-metrics": ["otel-collector:8890"],
         "loki": ["loki:3100"],
     }
 
