@@ -79,6 +79,10 @@ services:
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
     volumes:
       - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+      # Host filesystem view for the hostmetrics receiver's root_path. This is
+      # read-only and gives the collector no more than filesystem visibility -
+      # it is not the Docker socket and grants no container/Engine API access.
+      - /:/hostfs:ro
     logging:
       driver: json-file
       options:

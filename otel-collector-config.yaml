@@ -5,6 +5,45 @@ receivers:
     protocols:
       http:
         endpoint: 0.0.0.0:4318
+  hostmetrics:
+    root_path: /hostfs
+    collection_interval: 30s
+    scrapers:
+      cpu:
+      memory:
+      load:
+      filesystem:
+        exclude_mount_points:
+          match_type: regexp
+          mount_points:
+            - /dev/.*
+            - /proc/.*
+            - /sys/.*
+            - /var/lib/docker/.*
+        exclude_fs_types:
+          match_type: strict
+          fs_types:
+            - autofs
+            - binfmt_misc
+            - bpf
+            - cgroup2
+            - configfs
+            - debugfs
+            - devpts
+            - devtmpfs
+            - fusectl
+            - hugetlbfs
+            - mqueue
+            - nsfs
+            - overlay
+            - proc
+            - pstore
+            - securityfs
+            - squashfs
+            - sysfs
+            - tracefs
+      disk:
+      network:
 
 processors:
   batch:
@@ -86,6 +125,8 @@ exporters:
       queue_size: 1000
   prometheus/audit:
     endpoint: 0.0.0.0:8889
+  prometheus/host:
+    endpoint: 0.0.0.0:8890
 
 extensions:
   health_check:
@@ -104,3 +145,7 @@ service:
     metrics/audit:
       receivers: [count/audit, otlp/worker_metrics]
       exporters: [prometheus/audit]
+    metrics/host:
+      receivers: [hostmetrics]
+      processors: [batch]
+      exporters: [prometheus/host]
