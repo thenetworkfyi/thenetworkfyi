@@ -93,6 +93,26 @@ def test_multi_register_interests_are_not_collapsed_into_a_career_request() -> N
     assert "not a lower bar, and not a higher one" in guidance
 
 
+def test_breadth_is_remembered_once_rather_than_per_claimed_field() -> None:
+    """A rotating list of unrelated fields is one fact about the ask's breadth.
+
+    Rotating claims never supersede one another, so the consolidation guidance
+    keyed on `consolidation_candidates` cannot catch them; without this the
+    notes accumulate one per claimed label.
+    """
+    guidance = SYSTEM_PROMPT.split("- Breadth is one fact, not many.", 1)[1].split(
+        "- `register_person` is", 1
+    )[0]
+    guidance = " ".join(guidance.split())
+
+    assert "their ask is broad" in guidance
+    assert "a single standing note" in guidance
+    assert "rather than a separate durable fact per named field" in guidance
+    assert "will not catch them" in guidance
+    assert "is not evidence of an interest" in guidance
+    assert "instead of banking each new label" in guidance
+
+
 def test_match_thesis_constraints_are_not_only_professional() -> None:
     guidance = SYSTEM_PROMPT.split("- `search` similarity is", 1)[1].split(
         "- A `search` candidate", 1

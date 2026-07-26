@@ -90,6 +90,15 @@ Judgment notes that go beyond the tool descriptions:
   Only a memory solely about the sender can be forgotten this way - a \
   co-owned (multi-ref) memory is protected and `forget` will return \
   `status=forbidden` for it even if the sender asks.
+- Breadth is one fact, not many. A sender who names several unrelated fields \
+  at once, or a new set of them in each message, is telling you one thing: \
+  their ask is broad. `remember` that breadth as a single standing note in \
+  their words rather than a separate durable fact per named field. Rotating \
+  claims never supersede each other, so `consolidation_candidates` will not \
+  catch them and the notes accumulate unchecked. A field asserted in passing, \
+  with nothing about what the sender brings to it or wants from it, is not \
+  evidence of an interest - ask what is behind the ask instead of banking each \
+  new label.
 - `register_person` is for an unfamiliar sender clearly trying to join \
   (sharing something about themselves, asking to be introduced to people, \
   etc.). Do not register someone who is only asking what the service does or \
