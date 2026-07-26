@@ -36,6 +36,13 @@ HUGO_EMAIL = "hugo.sim@example.test"
 TARIQ_EMAIL = "tariq.sim@example.test"
 CHLOE_EMAIL = "chloe.sim@example.test"
 LEILA_EMAIL = "leila.sim@example.test"
+ROSA_EMAIL = "rosa.sim@example.test"
+DEZ_EMAIL = "dez.sim@example.test"
+# The data/ML-infrastructure personas Rosa's day job overlaps with on keywords
+# alone. She is not asking to meet any of them.
+_DATA_INFRA_EMAILS = frozenset(
+    {"priya.sim@example.test", "samir.sim@example.test", "arun.sim@example.test"}
+)
 
 _INTRODUCTION_SUBJECT = "Your introduction"
 _EVENT_RECOMMENDATION_SUBJECT = "An event you might care about"
@@ -86,6 +93,26 @@ _PREMATURE_PROPOSAL_MARKERS = (
     "i found someone",
     "i have a match",
 )
+# Unambiguous job-hunting phrasing. Deliberately excludes "what kind of role"
+# and similar, which the agent may legitimately ask about Rosa's role in her
+# band rather than about employment.
+_JOB_SEEKING_QUESTION_MARKERS = (
+    "looking for work",
+    "looking for a job",
+    "job search",
+    "job opportunit",
+    "new job",
+    "new position",
+    "hiring",
+    "full-time",
+    "your resume",
+    "career change",
+    "next career",
+    "kind of company",
+    "type of company",
+)
+_ROSA_DANCE_EVIDENCE_GROUP = ("lindy hop", "partner dancing")
+_ROSA_MUSIC_EVIDENCE_GROUP = ("upright bass", "swing band")
 _MATCH_DEPTH_MIN_FORGETS = 4
 _MATCH_DEPTH_MIN_REMEMBERS = 5
 _LEILA_PROFILE_EVIDENCE_GROUPS = (
@@ -614,6 +641,100 @@ def _supported_match_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
     }
 
 
+def _rosa_agent_replies(outcome: ScenarioOutcome) -> tuple[str, ...]:
+    """Ordinary agent replies to Rosa, excluding fixed server-composed mail."""
+    return tuple(
+        message.body.casefold()
+        for message in outcome.mail_facts
+        if ROSA_EMAIL in message.recipients
+        and message.subject
+        not in {
+            _INTRODUCTION_SUBJECT,
+            "Possible introduction",
+            _EVENT_RECOMMENDATION_SUBJECT,
+        }
+    )
+
+
+def _rosa_stated_both_pursuits(outcome: ScenarioOutcome) -> bool:
+    """Rosa's opening carries both threads; without them nothing is exercised."""
+    bodies = tuple(
+        message.body.casefold()
+        for message in outcome.mail_facts
+        if parseaddr(message.sender)[1].casefold() == ROSA_EMAIL
+    )
+    return all(
+        any(marker in body for body in bodies for marker in group)
+        for group in (_ROSA_DANCE_EVIDENCE_GROUP, _ROSA_MUSIC_EVIDENCE_GROUP)
+    )
+
+
+def _rosa_not_qualified_as_a_job_seeker(outcome: ScenarioOutcome) -> bool:
+    """Rosa never says she wants work, so no reply may qualify her for it.
+
+    This is the multi-register failure: her day job is the most professionally
+    legible line in her mail, so a keyword-led run asks what job she wants
+    instead of engaging the dance and music threads she actually asked about.
+    """
+    if not _rosa_stated_both_pursuits(outcome):
+        return True
+    return not any(
+        marker in body
+        for body in _rosa_agent_replies(outcome)
+        for marker in _JOB_SEEKING_QUESTION_MARKERS
+    )
+
+
+def _rosa_job_seeker_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
+    replies = _rosa_agent_replies(outcome)
+    return {
+        "pursuits_stated": _rosa_stated_both_pursuits(outcome),
+        "reply_count": len(replies),
+        "job_seeking_markers_present": sorted(
+            {
+                marker
+                for body in replies
+                for marker in _JOB_SEEKING_QUESTION_MARKERS
+                if marker in body
+            }
+        ),
+    }
+
+
+def _rosa_pairs(outcome: ScenarioOutcome):
+    return tuple(row for row in outcome.consent_rows if _pair_involves(row, ROSA_EMAIL))
+
+
+def _rosa_has_no_day_job_keyword_match(outcome: ScenarioOutcome) -> bool:
+    """Any pair proposed for Rosa must come from her stated ask, not her job.
+
+    Deliberately not a requirement that a Rosa-Dez pair exists: whether the
+    accumulated evidence supports that introduction is emergent. This fails
+    only on an introduction driven by data-engineering keyword overlap, which
+    is a match she never asked for.
+    """
+    if not _rosa_stated_both_pursuits(outcome):
+        return True
+    return not any(
+        row.participant_emails & _DATA_INFRA_EMAILS for row in _rosa_pairs(outcome)
+    )
+
+
+def _rosa_pair_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
+    pairs = _rosa_pairs(outcome)
+    return {
+        "pursuits_stated": _rosa_stated_both_pursuits(outcome),
+        "pair_count": len(pairs),
+        "pair_statuses": sorted(row.status for row in pairs),
+        "matched_dance_and_music_counterpart": any(
+            DEZ_EMAIL in row.participant_emails for row in pairs
+        ),
+        "day_job_keyword_pair_count": sum(
+            bool(row.participant_emails & _DATA_INFRA_EMAILS) for row in pairs
+        ),
+    }
+
+
 def _omar_consent_events(outcome: ScenarioOutcome) -> list[dict[str, Any]]:
     sender_id_hash = outcome.sender_id_hashes.get(OMAR_EMAIL)
     if sender_id_hash is None:
@@ -1001,6 +1122,24 @@ DEFAULT_OUTCOME_CHECKS = (
         requires_llm_personas=True,
         evidence=_supported_match_summary,
     ),
+    OutcomeCheck(
+        description=(
+            "Rosa is never qualified as a job seeker despite naming a day job"
+        ),
+        predicate=_rosa_not_qualified_as_a_job_seeker,
+        requires_real_process=True,
+        requires_llm_personas=True,
+        evidence=_rosa_job_seeker_summary,
+    ),
+    OutcomeCheck(
+        description=(
+            "Rosa is not introduced on day-job keyword overlap she did not ask for"
+        ),
+        predicate=_rosa_has_no_day_job_keyword_match,
+        requires_real_process=True,
+        requires_llm_personas=True,
+        evidence=_rosa_pair_summary,
+    ),
 )
 
 
@@ -1053,6 +1192,23 @@ DEFAULT_EXPECTATIONS = (
             ("peer product designer", "workflow-adoption"),
             ("remote", "every other week", "three months"),
         ),
+    ),
+    MemoryExpectation(
+        description="Rosa's partner-dance thread is remembered, not just her day job",
+        # Stem rather than "dance", so a gist saying dancing/dancer/dances also
+        # satisfies it - the expectation is about the thread surviving, not the
+        # agent's choice of word form.
+        gist_contains="danc",
+        persona_email=ROSA_EMAIL,
+        inbound_contains_any=_ROSA_DANCE_EVIDENCE_GROUP,
+        inbound_required_groups=(_ROSA_DANCE_EVIDENCE_GROUP,),
+    ),
+    MemoryExpectation(
+        description="Rosa's swing-band bass playing is remembered",
+        gist_contains="bass",
+        persona_email=ROSA_EMAIL,
+        inbound_contains_any=_ROSA_MUSIC_EVIDENCE_GROUP,
+        inbound_required_groups=(_ROSA_MUSIC_EVIDENCE_GROUP,),
     ),
 )
 
@@ -1517,7 +1673,83 @@ def default_population(
             ),
         ),
     )
-    return (*original_population, *additions, *top_of_funnel, *progressive_match)
+    multi_register = (
+        PopulationPersona(
+            config=PersonaConfig(
+                name="Rosa Vance",
+                email=ROSA_EMAIL,
+                goal=(
+                    "Your first email must state all of this in your own words: you "
+                    "have been a data engineer for eight years but that is just what "
+                    "pays the rent, you have danced Lindy Hop for six years and help "
+                    "run a monthly partner dancing exchange in Oakland, and you play "
+                    "upright bass in a small swing band that is looking for more "
+                    "people to play with. Say that what you want is to meet people "
+                    "who live at the intersection of partner dancing and live swing "
+                    "music. You are not job hunting and have no interest in meeting "
+                    "data engineers as such. If The Network asks about work, a role, "
+                    "or a job search, say plainly that you are not looking for work "
+                    "and restate the dance and music ask. If it asks a focused "
+                    "question about the dance scene, your level, or what the band "
+                    "needs, answer honestly: the swing band is short a horn player "
+                    "for dance gigs. If a relevant introduction is proposed, reply "
+                    "Yes with its [intro:...] token."
+                ),
+                stop_condition=(
+                    "Stop after consenting to a relevant introduction, or once the "
+                    "dance and music interests are registered."
+                ),
+                message_budget=3,
+                agent_address=agent_address,
+                presentation=_presentation_for(ROSA_EMAIL),
+            ),
+            opening_body=(
+                "I have been a data engineer for about eight years, mostly pipeline "
+                "work, though that is just what pays the rent. What I actually spend "
+                "my evenings on is partner dancing - I have done Lindy Hop for six "
+                "years and I help run a monthly exchange in Oakland. I also play "
+                "upright bass in a small swing band and we are trying to find more "
+                "people to play with. Mostly I would like to know other people who "
+                "live at that intersection."
+            ),
+        ),
+        PopulationPersona(
+            config=PersonaConfig(
+                name="Dez Okonkwo",
+                email=DEZ_EMAIL,
+                goal=(
+                    "Your first email must state all of this in your own words: you "
+                    "play tenor sax in a swing combo in Oakland, you book the music "
+                    "for a couple of social dance nights, and you are short on "
+                    "players who understand dancers because most horn players have "
+                    "never danced. Say that you want to meet musicians who social "
+                    "dance themselves. Answer focused questions honestly and do not "
+                    "invent constraints. If an introduction to someone in that world "
+                    "is proposed, reply Yes with its [intro:...] token."
+                ),
+                stop_condition=(
+                    "Stop after consenting to a relevant introduction, or once the "
+                    "music and dance interests are registered."
+                ),
+                message_budget=3,
+                agent_address=agent_address,
+                presentation=_presentation_for(DEZ_EMAIL),
+            ),
+            opening_body=(
+                "I play tenor sax in a swing combo in Oakland and I book the music "
+                "for a couple of social dance nights. I am always short on players "
+                "who actually understand dancers - most horn players have never "
+                "danced. I would like to meet musicians who social dance themselves."
+            ),
+        ),
+    )
+    return (
+        *original_population,
+        *additions,
+        *top_of_funnel,
+        *progressive_match,
+        *multi_register,
+    )
 
 
 def _with_event(persona: PopulationPersona, event: ScheduledEvent) -> PopulationPersona:
