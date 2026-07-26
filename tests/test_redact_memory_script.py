@@ -293,7 +293,10 @@ def test_cli_main_dry_run_message(capsys):
         main(["mem-dry"])
 
     captured = capsys.readouterr()
-    assert "Dry run complete; no changes were committed to database. Embedding is recomputed only on --commit." in captured.out
+    assert (
+        "Dry run complete; no changes were committed to database. Embedding is recomputed only on --commit."
+        in captured.out
+    )
     mock_embed.assert_not_called()
 
 
@@ -549,7 +552,9 @@ def test_redact_memory_commit_persists_gist_regenerated_from_redacted_text(
 
 @pytest.mark.integration
 @pytest.mark.real_presidio
-def test_redact_memory_dry_run_then_commit_end_to_end(seeded_db, pg_engine, monkeypatch):
+def test_redact_memory_dry_run_then_commit_end_to_end(
+    seeded_db, pg_engine, monkeypatch
+):
     """dry run then --commit on a ref-carrying memory exercises the assembled chain."""
     pytest.importorskip("presidio_analyzer")
     memory_id = str(uuid.uuid4())
