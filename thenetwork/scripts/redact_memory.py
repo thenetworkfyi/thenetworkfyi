@@ -48,16 +48,21 @@ async def redact_memory_record(
 
     new_gist: Optional[str] = None
     if memory.refs:
-        new_gist = await sanitize_memory_high_fidelity(memory, session)
-        if memory.gist is None and isinstance(new_gist, str):
-            memory.gist = new_gist
-        else:
-            new_gist = memory.gist
+        try:
+            sanitized_gist = await sanitize_memory_high_fidelity(memory, session)
+        except Exception as exc:
+            raise RuntimeError(f"Sanitization failed for memory {memory_id}") from exc
+        if memory.gist is None and isinstance(sanitized_gist, str):
+            memory.gist = sanitized_gist
+        if not memory.gist:
+            raise RuntimeError(f"Sanitization failed to produce gist for memory {memory_id}")
+        new_gist = memory.gist
+        embedding_source = memory.gist
     else:
         memory.gist = None
         new_gist = None
+        embedding_source = memory.text
 
-    embedding_source = memory.gist if (memory.refs and memory.gist) else memory.text
     new_embedding = await embed_text(embedding_source)
     memory.embedding = new_embedding
 
