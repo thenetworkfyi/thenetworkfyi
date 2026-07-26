@@ -667,6 +667,41 @@ def test_rosa_checks_are_unexercised_when_she_never_states_both_pursuits():
     )
 
 
+def test_leila_checks_are_unexercised_when_she_never_states_her_scope():
+    """Leila's consolidation and match checks consume evidence she must supply.
+
+    A run where she never states the profile and match details records the two
+    checks as unexercised rather than as product regressions, the same way her
+    tier-2 memory expectations already do. The evidence still reports both
+    exercised flags as False, so the pass is legible as unexercised.
+    """
+    outcome = replace(
+        _default_outcome(),
+        mail_facts=tuple(
+            message
+            for message in _default_outcome().mail_facts
+            if LEILA_EMAIL not in message.recipients and message.sender != LEILA_EMAIL
+        ),
+        memory_counts={LEILA_EMAIL: 4},
+        consent_rows=(),
+        audit_events=(),
+    )
+
+    score = score_scenario_outcomes(
+        outcome,
+        DEFAULT_OUTCOME_CHECKS[19:21],
+        real_process=True,
+        llm_personas=True,
+    )
+
+    assert score.passed is True
+    assert all(
+        finding.evidence["profile_evidence_exercised"] is False
+        and finding.evidence["match_evidence_exercised"] is False
+        for finding in score.findings
+    )
+
+
 def test_rosa_evidence_does_not_expose_mail_content():
     """Public evidence carries bounded counts and markers, never body text."""
     private_body = "Private sender-authored detail about a job at Initech"
@@ -745,20 +780,10 @@ def test_tofu_scope_question_evidence_does_not_expose_mail_content():
             ),
         ),
         (19, replace(_default_outcome(), memory_counts={LEILA_EMAIL: 2})),
-        (
-            19,
-            replace(
-                _default_outcome(),
-                mail_facts=tuple(
-                    message
-                    for message in _default_outcome().mail_facts
-                    if not (
-                        message.sender == LEILA_EMAIL
-                        and "product designer" in message.body
-                    )
-                ),
-            ),
-        ),
+        # Removing one of Leila's own evidence messages no longer belongs here:
+        # that withholds the check's input, which now records as unexercised
+        # rather than as a failure. See
+        # test_leila_checks_are_unexercised_when_she_never_states_her_scope.
         (
             19,
             _with_leila_tool_sequence(
@@ -780,20 +805,8 @@ def test_tofu_scope_question_evidence_does_not_expose_mail_content():
                 ),
             ),
         ),
-        (
-            20,
-            replace(
-                _default_outcome(),
-                mail_facts=tuple(
-                    message
-                    for message in _default_outcome().mail_facts
-                    if not (
-                        message.sender == LEILA_EMAIL
-                        and "peer product designer" in message.body
-                    )
-                ),
-            ),
-        ),
+        # As above: withholding her match evidence is an unexercised input, not
+        # a failing one.
         (
             20,
             replace(

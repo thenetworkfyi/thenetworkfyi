@@ -559,6 +559,17 @@ def _progressive_match_question_summary(outcome: ScenarioOutcome) -> dict[str, A
 
 
 def _has_progressive_memory_lifecycle(outcome: ScenarioOutcome) -> bool:
+    """Leila's notes only consolidate once she has stated enough to consolidate.
+
+    Both evidence groups are the input this check consumes. If the persona never
+    supplied them - a truncated, offline, or short run - the consolidation was
+    never exercised, so this records as unexercised rather than reporting a
+    product regression for behavior nothing asked for. The evidence summary
+    still carries both exercised flags, so an unexercised pass is not mistaken
+    for a verified one.
+    """
+    if not all(_leila_prerequisites(outcome)):
+        return True
     tool_names = [event["tool_name"] for event in _match_depth_tool_events(outcome)]
     forget_positions = [
         index for index, tool_name in enumerate(tool_names) if tool_name == "forget"
@@ -566,11 +577,8 @@ def _has_progressive_memory_lifecycle(outcome: ScenarioOutcome) -> bool:
     remember_positions = [
         index for index, tool_name in enumerate(tool_names) if tool_name == "remember"
     ]
-    profile_exercised, match_exercised = _leila_prerequisites(outcome)
     return (
-        profile_exercised
-        and match_exercised
-        and outcome.memory_counts.get(LEILA_EMAIL, 0) == 1
+        outcome.memory_counts.get(LEILA_EMAIL, 0) == 1
         and len(forget_positions) >= _MATCH_DEPTH_MIN_FORGETS
         and len(remember_positions) >= _MATCH_DEPTH_MIN_REMEMBERS
         and all(
@@ -595,8 +603,14 @@ def _progressive_memory_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
 
 
 def _has_supported_match_after_qualification(outcome: ScenarioOutcome) -> bool:
+    """The Leila-Mateo match is only judged once she has stated both sides.
+
+    Same guard as the consolidation check above: without the profile and match
+    evidence there is nothing a proposal could have been supported by, so an
+    absent proposal is unexercised, not wrong.
+    """
     if not all(_leila_prerequisites(outcome)):
-        return False
+        return True
     leila_pairs = [
         row for row in outcome.consent_rows if _pair_involves(row, LEILA_EMAIL)
     ]

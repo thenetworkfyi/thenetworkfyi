@@ -403,7 +403,11 @@ outcomes rather than force a particular conversation.
   details. She answers one focused gap category per turn. Outcome scoring requires two useful
   qualification replies without a passive matching promise, forget-plus-remember consolidation
   into one sender-owned standing memory, and a Leila-Mateo proposal only after the accumulated
-  two-sided evidence supports it.
+  two-sided evidence supports it. The consolidation and proposal predicates are guarded on her
+  having actually stated the profile and match evidence, so a truncated or offline run records
+  them as unexercised rather than as product regressions; their evidence keeps both
+  `profile_evidence_exercised` and `match_evidence_exercised` so an unexercised pass stays
+  distinguishable from a verified one.
 - **Rosa Vance** describes herself in two registers at once: eight years as a data engineer,
   which she explicitly frames as only paying the rent, alongside six years of Lindy Hop, a
   monthly dance exchange she helps run, and upright bass in a swing band looking for players.
