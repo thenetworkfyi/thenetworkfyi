@@ -58,8 +58,12 @@ a manual one-shot poll for cron/debugging.
   ordinary primary messages remain unread; verified admin and relay candidates still run.
 - **Inbound body extraction** (`email/inbound.py`): prefers imap-tools'
   `MailMessage.text`, falling back to `MailMessage.html` run through BeautifulSoup to
-  recover visible text when a message has no plain-text part. No hand-rolled MIME
-  walking or attachment traversal - imap-tools has already done that. Attachments are
+  recover visible text when a message has no plain-text part. Descriptive HTML anchors
+  retain a bounded HTTP(S) href suffix: each rendered URL is at most 120 characters,
+  query and fragment data is dropped when truncation is needed, duplicate destinations
+  are omitted, and at most 20 distinct links are added. Other schemes are not rendered,
+  and this is extraction fidelity only - the agent does not fetch link destinations. No
+  hand-rolled MIME walking or attachment traversal - imap-tools has already done that. Attachments are
   never read on the ordinary agent path. Intake derives a bounded count of non-inline
   attachments from imap-tools' parsed metadata and carries only that integer through the
   durable job into agent context, so the agent can accurately ask the sender to paste
