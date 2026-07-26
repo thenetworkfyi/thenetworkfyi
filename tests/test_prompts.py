@@ -1,3 +1,5 @@
+import re
+
 from thenetwork.agent.prompts import SYSTEM_PROMPT
 
 
@@ -341,3 +343,59 @@ def test_event_permission_is_scoped_without_service_promises() -> None:
         "calendar management",
     ):
         assert unsupported in guidance
+
+
+# The production model is a 31B instruct model, so the binding constraint on
+# this prompt is instruction adherence across a long system message, not
+# context capacity - the window is far larger than anything here. There is no
+# published size cliff to point at, so these bounds are drift alarms rather
+# than targets, and the only correct response to a breach is consolidating
+# overlapping guidance. Never buy headroom by deleting a behavioral
+# commitment: every one of them is pinned by a test above precisely so that
+# shortcut fails loudly.
+#
+# Measured the same way at every point of comparison (rendered SYSTEM_PROMPT,
+# not the source file - `wc -c` on prompts.py counts the backslash
+# line-continuation syntax, which inflates the figure by roughly 580
+# characters and never reaches the model):
+#
+#   08f8114 (before the prompt-adjustments project): 22493 chars, 20 bullets,
+#     median bullet 725, mean 816, longest 1958
+#   eff77d6 (round 1 assembled):                     22871 chars, 16 bullets,
+#     median 797, mean 1054, longest 2669
+#
+# Round 1 grew the prompt by 378 characters, which is correct: it added two
+# genuinely new commitments (breadth-is-one-fact, and the passive-promise
+# check on an unsupported connection request). Its bullet-count reduction,
+# however, came from concatenation - four event bullets became one - which
+# raised the mean bullet length by 29% and is the worse shape for adherence
+# even at equal total length. Splitting those back apart is what this bound
+# protects.
+_MAX_PROMPT_CHARS = 24000
+_MAX_BULLET_CHARS = 2500
+
+
+def _judgment_bullets() -> list[str]:
+    """The judgment-notes bullets, as the model receives them."""
+    block = SYSTEM_PROMPT.split(
+        "Judgment notes that go beyond the tool descriptions:", 1
+    )[1]
+    block = block.split("\n\nUntrusted content:", 1)[0]
+    return [("- " + part).strip() for part in re.split(r"^- ", block, flags=re.M)[1:]]
+
+
+def test_system_prompt_stays_within_its_recorded_size_bounds() -> None:
+    assert len(SYSTEM_PROMPT) <= _MAX_PROMPT_CHARS
+
+
+def test_no_single_judgment_bullet_becomes_a_wall_of_text() -> None:
+    """Bullet count is a poor proxy; per-bullet length is the checkable one.
+
+    Merging bullets can lower the count while making the guidance harder to
+    follow, so this bounds the outlier rather than the total.
+    """
+    bullets = _judgment_bullets()
+
+    assert bullets, "judgment-notes block did not parse into bullets"
+    longest = max(bullets, key=len)
+    assert len(longest) <= _MAX_BULLET_CHARS, longest[:120]

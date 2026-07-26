@@ -648,3 +648,13 @@ enabled; its cursor makes repeated runs without new observations no-ops.
   recomputation on `--commit`.
 - Keep the `postgresql+psycopg://` (SQLModel) vs plain `postgresql://` (Procrastinate) DSN
   distinction straight - `worker/tasks.run_worker` strips `+psycopg` for Procrastinate.
+- `thenetwork/agent/prompts.py` is size-bounded by two tests in `tests/test_prompts.py`,
+  which carry the measurement method and the recorded history. Measure the rendered
+  `SYSTEM_PROMPT`, never `wc -c` on the source file - the backslash line-continuations
+  inflate that by roughly 580 characters and never reach the model. The bounds are drift
+  alarms, not targets: the production model is a 31B instruct model, so the constraint is
+  instruction adherence across a long system message rather than context capacity. Answer a
+  breach by consolidating overlapping guidance, never by deleting a behavioral commitment -
+  each one is pinned by its own assertion so that shortcut fails loudly. Lowering the bullet
+  count by merging bullets is not consolidation; a single long bullet is the worse shape
+  even at equal total length, which is why the per-bullet bound exists alongside the total.
