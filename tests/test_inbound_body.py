@@ -8,7 +8,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from thenetwork.email import inbound
-from thenetwork.email.inbound import MAX_BODY_CHARS, _html_to_text
+from thenetwork.email.inbound import (
+    MAX_BODY_CHARS,
+    MAX_RENDERED_URL_CHARS,
+    _html_to_text,
+    _render_url,
+)
 from thenetwork.settings import Settings
 
 
@@ -108,6 +113,53 @@ def test_body_is_bounded_to_max_body_chars(fake_mailbox: _FakeMailBox):
     body = _poll_body(fake_mailbox, text="a" * (MAX_BODY_CHARS + 100))
 
     assert body == "a" * MAX_BODY_CHARS
+
+
+def test_render_url_preserves_short_http_url_verbatim():
+    url = "https://example.com/projects/one?view=full#details"
+
+    assert _render_url(url) == url
+
+
+def test_render_url_truncates_path_tail_and_appends_ellipsis():
+    url = f"https://example.com/{'useful-path/' * 20}?tracking=discarded#fragment"
+
+    rendered = _render_url(url)
+
+    assert len(rendered) == MAX_RENDERED_URL_CHARS
+    assert rendered.startswith("https://example.com/useful-path/")
+    assert rendered.endswith("…")
+    assert "tracking" not in rendered
+    assert "fragment" not in rendered
+
+
+def test_render_url_drops_large_query_without_padding_to_budget():
+    url = f"http://example.com/event?{'tracking=x&' * 30}"
+
+    assert _render_url(url) == "http://example.com/event…"
+
+
+def test_render_url_bounds_pathological_host():
+    url = f"https://{'h' * 200}.example/path"
+
+    rendered = _render_url(url)
+
+    assert len(rendered) == MAX_RENDERED_URL_CHARS
+    assert rendered.startswith("https://hhhh")
+    assert rendered.endswith("…")
+    assert "/path" not in rendered
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "data:text/plain;base64,SGVsbG8=",
+        "javascript:alert(1)",
+        "mailto:alice@example.com",
+    ],
+)
+def test_render_url_rejects_non_http_schemes(url):
+    assert _render_url(url) == ""
 
 
 @pytest.mark.parametrize(
