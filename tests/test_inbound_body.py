@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -30,6 +31,7 @@ def _fake_message(
     subject: str = "hello",
     text: str = "",
     html: str = "",
+    attachments: list | None = None,
 ):
     msg = MagicMock()
     msg.uid = uid
@@ -38,6 +40,7 @@ def _fake_message(
     msg.headers = {}
     msg.text = text
     msg.html = html
+    msg.attachments = attachments or []
     return msg
 
 
@@ -72,6 +75,16 @@ def _poll_body(fake_mailbox: _FakeMailBox, **message_kwargs) -> str:
     return messages[0].body
 
 
+def _attachment(
+    *, filename: str = "", content_id: str = "", disposition: str = ""
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        filename=filename,
+        content_id=content_id,
+        content_disposition=disposition,
+    )
+
+
 def test_plain_text_is_preferred_over_html(fake_mailbox: _FakeMailBox):
     body = _poll_body(fake_mailbox, text="plain body", html="<p>HTML body</p>")
 
@@ -95,6 +108,43 @@ def test_body_is_bounded_to_max_body_chars(fake_mailbox: _FakeMailBox):
     body = _poll_body(fake_mailbox, text="a" * (MAX_BODY_CHARS + 100))
 
     assert body == "a" * MAX_BODY_CHARS
+
+
+@pytest.mark.parametrize(
+    ("attachments", "expected"),
+    [
+        ([_attachment(filename="logo.png", content_id="logo", disposition="inline")], 0),
+        ([_attachment(filename="brief.pdf", disposition="attachment")], 1),
+        (
+            [
+                _attachment(filename="logo.png", content_id="logo"),
+                _attachment(filename="brief.pdf", disposition="attachment"),
+            ],
+            1,
+        ),
+        ([], 0),
+    ],
+)
+def test_count_stripped_attachments_excludes_inline_parts(attachments, expected):
+    msg = _fake_message(attachments=attachments)
+
+    assert inbound.count_stripped_attachments(msg) == expected
+
+
+def test_poll_unseen_carries_attachment_count_on_oversize_rejection(
+    fake_mailbox: _FakeMailBox,
+):
+    fake_mailbox.fetch.return_value = [
+        _fake_message(
+            text="a" * (inbound.MAX_RAW_BODY_CHARS + 1),
+            attachments=[_attachment(filename="brief.pdf", disposition="attachment")],
+        )
+    ]
+
+    [message] = inbound.poll_unseen()
+
+    assert message.rejection_reason == inbound.REJECT_BODY_OVERSIZE
+    assert message.attachment_count == 1
 
 
 def test_html_to_text_strips_head_script_style_template_title():
