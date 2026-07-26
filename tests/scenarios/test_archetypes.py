@@ -21,6 +21,115 @@ def _use_in_memory_dispatch_limiter():
     tools._dispatch_limiter = strategies.FixedWindowRateLimiter(tools._dispatch_storage)
 
 
+async def _run_attachment_reply_scenario(attachment_count: int) -> dict[str, str]:
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock, patch
+
+    from pydantic_ai.messages import (
+        ModelMessage,
+        ModelResponse,
+        TextPart,
+        ToolCallPart,
+        UserPromptPart,
+    )
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    from thenetwork.agent.core import run_agent_for_email
+
+    model_calls = 0
+
+    async def reply_model(
+        messages: list[ModelMessage], _info: AgentInfo
+    ) -> ModelResponse:
+        nonlocal model_calls
+        model_calls += 1
+        if model_calls > 1:
+            return ModelResponse(parts=[TextPart(content="Reply sent.")])
+
+        user_text = "\n".join(
+            part.content
+            for message in messages
+            for part in message.parts
+            if isinstance(part, UserPromptPart) and isinstance(part.content, str)
+        )
+        attachment_present = "Attachments present but not read:" in user_text
+        body_text = (
+            "The attachment was not read. Please paste the relevant content into "
+            "the email so I can help with it."
+            if attachment_present
+            else "Thanks for the note. I have the details you included in the email."
+        )
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name="reply_to_sender",
+                    args={
+                        "subject": "Re: Project details",
+                        "body_text": body_text,
+                        "sent_email_summary": (
+                            "explained that an attachment was not read"
+                            if attachment_present
+                            else "acknowledged the project details"
+                        ),
+                    },
+                )
+            ]
+        )
+
+    agent = build_agent(model=FunctionModel(reply_model))
+    settings = SimpleNamespace(
+        agent_model="test:model",
+        agent_request_limit=4,
+        agent_total_tokens_limit=20_000,
+        response_log_redaction_secret="",
+    )
+    sent: list[dict[str, str]] = []
+
+    def capture_reply(*, to_address: str, subject: str, body_text: str, **_kwargs):
+        sent.append({"to": to_address, "subject": subject, "body": body_text})
+
+    with (
+        patch("thenetwork.agent.core.get_settings", return_value=settings),
+        patch("thenetwork.agent.core.build_agent", return_value=agent),
+        patch("thenetwork.agent.tools._check_daily_dispatch_cap", return_value=True),
+        patch("thenetwork.agent.tools._consume_daily_dispatch_cap"),
+        patch("thenetwork.agent.tools.send_reply", side_effect=capture_reply),
+        patch(
+            "thenetwork.agent.tools.record_sent_email_memory",
+            new_callable=AsyncMock,
+        ),
+    ):
+        await run_agent_for_email(
+            sender_email="sender@example.com",
+            sender_user_id=None,
+            sender_authenticated=True,
+            email_subject="Project details",
+            email_body="Please review the material I sent.",
+            attachment_count=attachment_count,
+        )
+
+    assert len(sent) == 1
+    return sent[0]
+
+
+@pytest.mark.asyncio
+async def test_attachment_present_is_acknowledged_in_the_reply():
+    reply = await _run_attachment_reply_scenario(attachment_count=1)
+
+    assert reply["to"] == "sender@example.com"
+    assert "attachment was not read" in reply["body"].lower()
+    assert "paste" in reply["body"].lower()
+
+
+@pytest.mark.asyncio
+async def test_no_attachment_does_not_create_a_phantom_attachment_mention():
+    reply = await _run_attachment_reply_scenario(attachment_count=0)
+
+    assert reply["to"] == "sender@example.com"
+    assert "attachment" not in reply["body"].lower()
+    assert "file" not in reply["body"].lower()
+
+
 # ---------------------------------------------------------------------------
 # Onboarding archetype: new sender who hasn't been seen before
 # ---------------------------------------------------------------------------
