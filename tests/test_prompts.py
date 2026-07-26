@@ -1,6 +1,21 @@
 from thenetwork.agent.prompts import SYSTEM_PROMPT
 
 
+def test_attachment_guidance_requires_an_accurate_sender_notice() -> None:
+    guidance = SYSTEM_PROMPT.split("- Attachments:", 1)[1].split(
+        "- `search` similarity", 1
+    )[0]
+    guidance = " ".join(guidance.split())
+
+    assert "`Attachments present but not read: N`" in guidance
+    assert "attachment was not read" in guidance
+    assert "via `reply_to_sender`" in guidance
+    assert "paste any relevant content into the email" in guidance
+    assert "When the line is absent, do not mention attachments" in guidance
+    for inaccurate in ("removed", "stripped", "deleted"):
+        assert inaccurate not in guidance.lower()
+
+
 def test_agent_email_tools_require_content_free_sent_summary() -> None:
     assert "Every `reply_to_sender` or `send_outreach` call" in SYSTEM_PROMPT
     assert "`sent_email_summary`" in SYSTEM_PROMPT
