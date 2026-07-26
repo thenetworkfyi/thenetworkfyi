@@ -15,6 +15,7 @@ from thenetwork.sim.personas.persona import EmailFormat, TinyPersonEmailAdapter
 from thenetwork.sim.personas.population import (
     CHLOE_EMAIL,
     DEFAULT_EXPECTATIONS,
+    DEZ_EMAIL,
     EVENT_ATTENDEE_EMAIL,
     EVENT_ORGANIZER_EMAIL,
     FELIX_EMAIL,
@@ -22,6 +23,7 @@ from thenetwork.sim.personas.population import (
     HUGO_EMAIL,
     LEILA_EMAIL,
     PETRA_EMAIL,
+    ROSA_EMAIL,
     TARIQ_EMAIL,
     SimSchedule,
     default_population,
@@ -102,10 +104,40 @@ class ProgressiveLeila:
         return {"content": ""}
 
 
+def test_expectation_markers_appear_in_the_goal_not_only_the_opening_body():
+    """Every tier-2 marker must be reachable by an LLM persona.
+
+    Under `--llm-personas` the persona never sends `opening_body`: each turn is
+    written by the model from `config.goal` alone. A fact stated only in
+    `opening_body` therefore cannot appear in a real run's inbound mail, and its
+    expectation silently records as unexercised instead of failing - the run
+    looks green while proving nothing.
+    """
+    population = {
+        persona.config.email: persona
+        for persona in default_population(agent_address="join@example.test")
+    }
+
+    unreachable: list[tuple[str, str]] = []
+    for expectation in DEFAULT_EXPECTATIONS:
+        persona = population.get(expectation.persona_email or "")
+        if persona is None:
+            continue
+        goal = persona.config.goal.casefold()
+        for group in expectation.inbound_required_groups:
+            if not any(marker.casefold() in goal for marker in group):
+                unreachable.append((expectation.description, " | ".join(group)))
+
+    assert not unreachable, (
+        "tier-2 markers absent from the persona goal, so an LLM persona can "
+        f"never state them: {unreachable}"
+    )
+
+
 def test_default_population_has_authored_personas_and_schedule():
     population = default_population(agent_address="join@example.test")
 
-    assert len(population) == 25
+    assert len(population) == 27
     assert len({persona.config.email for persona in population}) == len(population)
     assert all(persona.opening_body for persona in population)
 
@@ -193,6 +225,8 @@ def test_default_population_has_authored_personas_and_schedule():
         "Tariq",
         "Chloe",
         "Leila Hart",
+        "Rosa Vance",
+        "Dez Okonkwo",
     }
     assert additions["Ruth Calder"].config.goal.endswith(
         "include the [intro:...] token line from the proposal."
@@ -312,6 +346,11 @@ def test_default_population_has_authored_personas_and_schedule():
         "I am building inventory software for community science labs and would "
         "like to meet someone else working on lab tools."
     )
+    rosa = additions["Rosa Vance"]
+    assert rosa.config.email == ROSA_EMAIL
+    assert "not looking for work" in rosa.config.goal
+    dez = additions["Dez Okonkwo"]
+    assert dez.config.email == DEZ_EMAIL
     assert all(
         persona.config.agent_address == "join@example.test"
         for persona in additions.values()

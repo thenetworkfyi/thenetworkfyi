@@ -604,7 +604,7 @@ async def test_sim_run_cli_function_creates_run_directory(tmp_path):
     assert artifacts.audit_path.name == "audit.jsonl"
     assert not artifacts.audit_path.exists()
     config = json.loads(artifacts.config_path.read_text())
-    assert len(config["personas"]) == 25
+    assert len(config["personas"]) == 27
     assert len(config["outcome_checks"]) == len(DEFAULT_OUTCOME_CHECKS)
     assert config["llm_personas"] is False
     events = [
@@ -1513,6 +1513,39 @@ def test_runtime_provenance_hashes_only_static_prompt_templates(tmp_path):
     provenance["models"]["agent"]["identifier"] = "sk-secret-model-setting"
     write_redacted_json(path, {"runtime_provenance": provenance})
     assert "sk-secret-model-setting" not in path.read_text()
+
+
+def test_static_prompt_hashes_survive_recognizer_false_positives(tmp_path) -> None:
+    """A digest must round-trip whatever hex the current prompt text produces.
+
+    Presidio's pattern recognizers can match an identifier-shaped run inside a
+    random hex digest, which would silently corrupt the provenance anchor tying
+    a run to the prompt that produced it. This digest is a known false-positive
+    trigger, so it pins the exemption rather than relying on the live prompt
+    hashing to something Presidio happens to ignore.
+    """
+    path = tmp_path / "config.json"
+    tripping_digest = "1f77f6528ed8d4472abdd2396d89c421edeff6dddee2659374eaad6d69edf213"
+    provenance = {"static_prompt_sha256": {"agent": tripping_digest}}
+
+    write_redacted_json(path, {"runtime_provenance": provenance})
+    written = json.loads(path.read_text())["runtime_provenance"]
+
+    assert written["static_prompt_sha256"]["agent"] == tripping_digest
+
+
+def test_static_prompt_hash_slot_redacts_a_non_digest_value(tmp_path) -> None:
+    """The exemption is shape-bound: only a real digest may pass through it."""
+    path = tmp_path / "config.json"
+    provenance = {
+        "static_prompt_sha256": {"agent": "sk-secret-smuggled-through-the-hash-slot"}
+    }
+
+    write_redacted_json(path, {"runtime_provenance": provenance})
+    written = json.loads(path.read_text())["runtime_provenance"]
+
+    assert written["static_prompt_sha256"]["agent"] == "[redacted]"
+    assert "sk-secret-smuggled-through-the-hash-slot" not in path.read_text()
 
 
 @pytest.mark.asyncio

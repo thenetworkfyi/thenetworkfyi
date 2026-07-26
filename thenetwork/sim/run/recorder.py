@@ -140,6 +140,7 @@ def _redact_public_values(value: Any) -> Any:
     redacted = _omit_markup(redact_structured_values(value))
     if isinstance(value, dict) and isinstance(redacted, dict):
         _restore_public_model_identifiers(value, redacted)
+        _restore_static_prompt_hashes(value, redacted)
     return redacted
 
 
@@ -167,6 +168,41 @@ def _restore_public_model_identifiers(
             redacted_model["identifier"] = identifier
         else:
             redacted_model["identifier"] = "[redacted]"
+
+
+def _restore_static_prompt_hashes(
+    source: dict[str, Any], redacted: dict[str, Any]
+) -> None:
+    """Keep prompt provenance digests intact despite PII recognizer false positives.
+
+    A SHA-256 hex digest is fixed-shape, content-free, and one-way, but its
+    random hex can incidentally match a Presidio pattern recognizer (an
+    identifier-shaped run of letters and digits), which silently corrupts the
+    provenance anchor tying a run to the prompt text that produced it. Only a
+    value that is exactly 64 lowercase hex characters is restored, so nothing
+    but a digest can survive this path.
+    """
+    source_provenance = source.get("runtime_provenance")
+    redacted_provenance = redacted.get("runtime_provenance")
+    if not isinstance(source_provenance, dict) or not isinstance(
+        redacted_provenance, dict
+    ):
+        return
+    source_hashes = source_provenance.get("static_prompt_sha256")
+    redacted_hashes = redacted_provenance.get("static_prompt_sha256")
+    if not isinstance(source_hashes, dict) or not isinstance(redacted_hashes, dict):
+        return
+    for role in redacted_hashes:
+        digest = source_hashes.get(role)
+        redacted_hashes[role] = digest if _is_sha256_digest(digest) else "[redacted]"
+
+
+def _is_sha256_digest(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
 
 
 def _is_public_model_identifier(value: Any) -> bool:

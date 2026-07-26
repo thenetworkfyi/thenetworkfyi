@@ -354,8 +354,8 @@ The compose stack uses `pgvector/pgvector:pg17`; use the corresponding local Pos
 
 ### Population situations
 
-`sim run` uses the authored population of 25 personas by default. The original first ten
-remain available for backward-compatible smoke runs with `--personas 10`; the 15 later
+`sim run` uses the authored population of 27 personas by default. The original first ten
+remain available for backward-compatible smoke runs with `--personas 10`; the 17 later
 personas are deliberately varied situations, not a scenario script. Their replies remain
 prompt-emergent when `--llm-personas` is enabled, so the checks describe observable
 outcomes rather than force a particular conversation.
@@ -404,6 +404,31 @@ outcomes rather than force a particular conversation.
   qualification replies without a passive matching promise, forget-plus-remember consolidation
   into one sender-owned standing memory, and a Leila-Mateo proposal only after the accumulated
   two-sided evidence supports it.
+- **Rosa Vance** describes herself in two registers at once: eight years as a data engineer,
+  which she explicitly frames as only paying the rent, alongside six years of Lindy Hop, a
+  monthly dance exchange she helps run, and upright bass in a swing band looking for players.
+  Her only stated ask is the intersection of the two, and she never says she is looking for
+  work. Her day job overlaps on keywords with several data/ML-infrastructure personas, so this
+  situation is the pressure test for the population's professional monoculture: a keyword-led
+  run asks what job she wants instead of engaging what she wrote about. Tier 2 expects both
+  the dance and the bass threads in memory, not just the employable one. Outcome scoring
+  requires that no reply qualifies her as a job seeker and that no introduction is proposed on
+  day-job keyword overlap. **Dez Okonkwo** is the authored counterpart who makes a legitimate
+  non-professional match possible - a swing-combo horn player who books social dance nights
+  and wants musicians who dance. A Rosa-Dez proposal is deliberately *not* required: whether
+  the accumulated evidence supports it is emergent, so the pair check fails only on a wrong
+  match, and the evidence records whether the right one fired.
+  Both predicates are guarded on Rosa having actually stated both pursuits, so a truncated or
+  offline run records the situation as unexercised rather than as a passing no-op.
+
+Authoring note that applies to every persona: under `--llm-personas` the persona **never sends
+`opening_body`**. Each turn is written by the model from `config.goal` alone
+(`thenetwork/sim/run/loop.py`), and `opening_body` is used only by the scripted offline persona.
+A fact stated only in `opening_body` therefore cannot appear in a real run's inbound mail, so its
+tier-2 expectation records as unexercised - a green run that proved nothing. Put every fact a
+check depends on in the goal, and keep `opening_body` in sync for offline runs.
+`test_expectation_markers_appear_in_the_goal_not_only_the_opening_body` enforces this for the
+declared tier-2 marker groups.
 
 The recorder emits score events for tier 1 delivered-mail SEAL checks, captured-MIME
 presentation checks, tier 2 memory expectations, and scenario outcome predicates.

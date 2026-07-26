@@ -75,6 +75,34 @@ def test_thin_standing_intent_guidance_requests_one_material_follow_up() -> None
     assert "`remember` that you asked" in guidance
 
 
+def test_multi_register_interests_are_not_collapsed_into_a_career_request() -> None:
+    guidance = SYSTEM_PROMPT.split("- Not every message is a career request.", 1)[
+        1
+    ].split("- Progressive qualification memory:", 1)[0]
+    guidance = " ".join(guidance.split())
+
+    assert "more than one register" in guidance
+    assert "a real thread, not background around the professional one" in guidance
+    assert "same specificity you would give a job title" in guidance
+    assert "must not leave only the employable one in memory" in guidance
+    assert "ask about the thread the sender put weight on" in guidance
+    assert "defaulting to the career one" in guidance
+    assert "is not by itself an ask" in guidance
+    assert "never said they were looking for work" in guidance
+    assert "legitimate basis for an introduction on its own terms" in guidance
+    assert "not a lower bar, and not a higher one" in guidance
+
+
+def test_match_thesis_constraints_are_not_only_professional() -> None:
+    guidance = SYSTEM_PROMPT.split("- `search` similarity is", 1)[1].split(
+        "- A `search` candidate", 1
+    )[0]
+    guidance = " ".join(guidance.split())
+
+    assert "Consequential constraints are not only professional" in guidance
+    assert "level, scene, locality, format" in guidance
+
+
 def test_progressive_qualification_replaces_one_enriched_intent_note() -> None:
     guidance = SYSTEM_PROMPT.split("- Progressive qualification memory:", 1)[1].split(
         "- Preferences about who", 1

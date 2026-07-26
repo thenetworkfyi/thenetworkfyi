@@ -19,6 +19,7 @@ from thenetwork.sim.personas.population import (
     MATEO_EMAIL,
     NADIA_EMAIL,
     PETRA_EMAIL,
+    ROSA_EMAIL,
     TARIQ_EMAIL,
 )
 from thenetwork.sim.scoring.scoring import (
@@ -290,6 +291,22 @@ def _default_outcome() -> ScenarioOutcome:
                 ),
             ),
             MailFacts(
+                sender=ROSA_EMAIL,
+                recipients=frozenset({"join@example.test"}),
+                subject="Hello from Oakland",
+                body=(
+                    "I have been a data engineer for eight years, though that is just "
+                    "what pays the rent. I have done Lindy Hop for six years and I "
+                    "play upright bass in a small swing band."
+                ),
+            ),
+            MailFacts(
+                sender="join@example.test",
+                recipients=frozenset({ROSA_EMAIL}),
+                subject="Re: Hello from Oakland",
+                body="What is the band short of for dance gigs?",
+            ),
+            MailFacts(
                 sender=LEILA_EMAIL,
                 recipients=frozenset({"join@example.test"}),
                 subject="Re: Lab tools",
@@ -366,7 +383,7 @@ def test_default_outcome_checks_cover_all_persona_situations():
     )
 
     assert score.passed is True
-    assert len(score.findings) == 21
+    assert len(score.findings) == 23
     assert all(check.requires_real_process for check in DEFAULT_OUTCOME_CHECKS)
     assert all(check.requires_llm_personas for check in DEFAULT_OUTCOME_CHECKS)
 
@@ -613,6 +630,67 @@ def test_tofu_outcome_checks_have_failure_fixtures(
     assert score.findings[0].passed is False
 
 
+def test_rosa_checks_are_unexercised_when_she_never_states_both_pursuits():
+    """A run where Rosa never sends her opening must not report a product failure.
+
+    Both predicates are guarded on her having actually stated the dance and
+    music threads, so an offline or budget-truncated run records the situation
+    as unexercised rather than passing off a silent no-op as correct behavior.
+    """
+    outcome = replace(
+        _default_outcome(),
+        mail_facts=tuple(
+            message
+            for message in _default_outcome().mail_facts
+            if ROSA_EMAIL not in message.recipients and message.sender != ROSA_EMAIL
+        ),
+        consent_rows=(
+            *_default_outcome().consent_rows,
+            IntroductionConsentState(
+                person_a_email=ROSA_EMAIL,
+                person_b_email="priya.sim@example.test",
+                status="proposed",
+            ),
+        ),
+    )
+
+    score = score_scenario_outcomes(
+        outcome,
+        DEFAULT_OUTCOME_CHECKS[21:23],
+        real_process=True,
+        llm_personas=True,
+    )
+
+    assert score.passed is True
+    assert all(
+        finding.evidence["pursuits_stated"] is False for finding in score.findings
+    )
+
+
+def test_rosa_evidence_does_not_expose_mail_content():
+    """Public evidence carries bounded counts and markers, never body text."""
+    private_body = "Private sender-authored detail about a job at Initech"
+    outcome = replace(
+        _default_outcome(),
+        mail_facts=tuple(
+            replace(message, body=private_body)
+            if ROSA_EMAIL in message.recipients
+            else message
+            for message in _default_outcome().mail_facts
+        ),
+    )
+
+    score = score_scenario_outcomes(
+        outcome,
+        DEFAULT_OUTCOME_CHECKS[21:23],
+        real_process=True,
+        llm_personas=True,
+    )
+
+    assert private_body not in repr(score.findings)
+    assert "Initech" not in repr(score.findings)
+
+
 def test_tofu_scope_question_evidence_does_not_expose_mail_content():
     private_subject = "Private sender-authored project details"
     outcome = replace(
@@ -746,6 +824,39 @@ def test_tofu_scope_question_evidence_does_not_expose_mail_content():
                         "sender_id_hash": "snd_v1_leila",
                     },
                     *_default_outcome().audit_events,
+                ),
+            ),
+        ),
+        # Rosa named a day job but never asked for work; qualifying her as a
+        # job seeker is the multi-register failure this situation exists for.
+        (
+            21,
+            replace(
+                _default_outcome(),
+                mail_facts=tuple(
+                    replace(
+                        message,
+                        body="What kind of role are you looking for a job in?",
+                    )
+                    if ROSA_EMAIL in message.recipients
+                    else message
+                    for message in _default_outcome().mail_facts
+                ),
+            ),
+        ),
+        # An introduction driven by her data-engineering keywords rather than
+        # the dance-and-music ask she actually made.
+        (
+            22,
+            replace(
+                _default_outcome(),
+                consent_rows=(
+                    *_default_outcome().consent_rows,
+                    IntroductionConsentState(
+                        person_a_email=ROSA_EMAIL,
+                        person_b_email="priya.sim@example.test",
+                        status="proposed",
+                    ),
                 ),
             ),
         ),

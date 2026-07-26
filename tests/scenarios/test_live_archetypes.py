@@ -602,6 +602,69 @@ job_keyword_qualification_case = Case(
     ),
 )
 
+multi_register_interests_case = Case(
+    name="multi_register_interests",
+    inputs=EmailScenario(
+        subject="Hello from Oakland",
+        body=(
+            "I've been a data engineer for about eight years, mostly pipeline "
+            "work, though that's just what pays the rent. What I actually spend "
+            "my evenings on is partner dancing - I've been doing Lindy Hop for "
+            "six years and I help run a monthly exchange in Oakland. I also "
+            "play upright bass in a small swing band and we're trying to find "
+            "more people to play with. Mostly I'd like to know other people who "
+            "live at that intersection."
+        ),
+        sender_email="rosa@example.com",
+        sender_user_id="user-rosa",
+        sender_authenticated=True,
+        search_results=[
+            MemoryMatch(
+                memory_id="mem-pipeline-1",
+                person_id="person-pipeline-1",
+                gist=(
+                    "senior data engineer building batch and streaming pipelines "
+                    "who enjoys meeting other data people"
+                ),
+                similarity=0.88,
+            )
+        ],
+    ),
+    evaluators=(
+        ToolWasCalled("reply_to_sender"),
+        ToolWasCalled("remember"),
+        ToolWasNotCalled("propose_introduction"),
+        # The non-work threads are the substance of this message; a run that
+        # stores only the employable one has flattened the sender into a resume.
+        RememberedSubstringsTogether(substrings=("lindy hop", "bass")),
+        NoPersonalSignoff(),
+        LLMJudge(
+            rubric=(
+                "The sender describes three things about herself: a data "
+                "engineering job she explicitly frames as just paying the "
+                "rent, six years of Lindy Hop plus helping run a monthly "
+                "exchange, and playing upright bass in a swing band that "
+                "wants more players. The only stated ask is about the "
+                "intersection of dance and music - she never says she is "
+                "looking for work, and the high-similarity search result is a "
+                "data engineer with no connection to either pursuit. A "
+                "reasonable response engages with the dance and music threads "
+                "she actually wrote about and asks at most one question "
+                "grounded in them (for example, what kind of players the band "
+                "is missing, or what scene or level of dancer she wants to "
+                "meet). It is a clear failure if the agent asks what kind of "
+                "job, role, or company she is looking for, treats the data "
+                "engineering line as her primary identity or intent, or "
+                "proposes an introduction to the data engineer on keyword "
+                "overlap alone. Treating the hobbies as flavor text around a "
+                "professional profile is the specific flaw being tested."
+            ),
+            model=_judge_model,
+            include_input=True,
+        ),
+    ),
+)
+
 strong_match_case = Case(
     name="strong_match",
     inputs=EmailScenario(
@@ -1436,6 +1499,7 @@ archetype_dataset = Dataset[EmailScenario, RunOutcome](
     cases=[
         onboarding_case,
         job_keyword_qualification_case,
+        multi_register_interests_case,
         strong_match_case,
         injection_case,
         ambiguous_case,
