@@ -17,6 +17,18 @@ from thenetwork.embed.embeddings import embed_text
 from thenetwork.memory.sanitize import sanitize_memory_high_fidelity, sanitize_text
 
 
+def _audit_blocked_write(memory: Memory, session: Session) -> None:
+    """Roll back and audit a fail-closed refusal to write an unsanitized memory."""
+    session.rollback()
+    audit_event(
+        "database.action",
+        action="update",
+        record_type="memory",
+        outcome="blocked",
+        refs_count=len(memory.refs) if memory.refs else 0,
+    )
+
+
 async def redact_memory_record(
     memory_id: str,
     session: Session,
@@ -51,10 +63,12 @@ async def redact_memory_record(
         try:
             sanitized_gist = await sanitize_memory_high_fidelity(memory, session)
         except Exception as exc:
+            _audit_blocked_write(memory, session)
             raise RuntimeError(f"Sanitization failed for memory {memory_id}") from exc
         if memory.gist is None and isinstance(sanitized_gist, str):
             memory.gist = sanitized_gist
         if not memory.gist:
+            _audit_blocked_write(memory, session)
             raise RuntimeError(f"Sanitization failed to produce gist for memory {memory_id}")
         new_gist = memory.gist
         embedding_source = memory.gist
@@ -95,12 +109,18 @@ async def redact_memory_record(
             "database.action",
             action="update",
             record_type="memory",
-            outcome="blocked",
+            outcome="dry_run",
             result_count=1,
             refs_count=len(memory.refs) if memory.refs else 0,
         )
 
     return summary
+
+
+def _non_empty_str(value: str) -> str:
+    if value == "":
+        raise argparse.ArgumentTypeError("value must not be empty")
+    return value
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -117,11 +137,13 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument(
         "--string",
         dest="string_to_redact",
+        type=_non_empty_str,
         help="Specific exact text string to redact from memory text",
     )
     group.add_argument(
         "--pattern",
         dest="pattern_to_redact",
+        type=_non_empty_str,
         help="Regex pattern to redact from memory text",
     )
     parser.add_argument(
