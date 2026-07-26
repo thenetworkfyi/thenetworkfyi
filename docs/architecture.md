@@ -59,10 +59,14 @@ a manual one-shot poll for cron/debugging.
 - **Inbound body extraction** (`email/inbound.py`): prefers imap-tools'
   `MailMessage.text`, falling back to `MailMessage.html` run through BeautifulSoup to
   recover visible text when a message has no plain-text part. No hand-rolled MIME
-  walking or attachment traversal - imap-tools has already done that. The result is
-  bounded by `MAX_BODY_CHARS`, which is the size guard for downstream scanners and model
-  context; a message whose decoded body exceeds the hard reject limit is flagged rather
-  than truncated silently.
+  walking or attachment traversal - imap-tools has already done that. Attachments are
+  never read on the ordinary agent path. Intake derives a bounded count of non-inline
+  attachments from imap-tools' parsed metadata and carries only that integer through the
+  durable job into agent context, so the agent can accurately ask the sender to paste
+  relevant content. Filenames, MIME types, and other attachment-authored strings do not
+  cross that boundary. The extracted body is bounded by `MAX_BODY_CHARS`, which is the
+  size guard for downstream scanners and model context; a message whose decoded body
+  exceeds the hard reject limit is flagged rather than truncated silently.
 - **Worker** (`worker/tasks.py`): Postgres-native Procrastinate (LISTEN/NOTIFY +
   `SKIP LOCKED`, no Redis/broker). Enforces per-sender rate limit and optional content
   scan, resolves whether the sender is a known `Person`, then calls

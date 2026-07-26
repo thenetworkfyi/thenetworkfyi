@@ -37,7 +37,13 @@ thin wrapper over a well-adopted library, swappable by config.
   truncation is the real size guard regardless of how the body was assembled, and the
   inbound body is untrusted content either way - the SEAL governs what can leave the
   system, not what can enter it. Chasing exact attachment-subtree exclusion added
-  bespoke parsing code for a property the size cap and the SEAL already cover.
+  bespoke parsing code for a property the size cap and the SEAL already cover. Ordinary
+  agent processing still never reads attachments. It uses imap-tools' parsed attachment
+  metadata only to derive a bounded non-inline count that crosses the queue and enters
+  agent context. The signal is count-only because filenames, MIME types, and other
+  attachment metadata are attacker-authored strings; only the server-derived integer is
+  trusted enough to tell the agent that unread content exists. This does not reinstate
+  attachment-subtree parsing, and the original message remains in INBOX.
 - **Presidio is mandatory for deterministic gist sanitization.** Names, email addresses,
   and phone numbers are redacted by a mainstream PII library, with the spaCy model baked
   into the Docker image at build time and checked at worker startup. Organizations and
