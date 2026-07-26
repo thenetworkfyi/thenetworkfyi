@@ -23,6 +23,7 @@ MAX_SENDER_NAME_CHARS = 300
 MAX_RECIPIENT_CHARS = 320
 MAX_BODY_CHARS = 10_000
 MAX_RAW_BODY_CHARS = 100_000
+MAX_ATTACHMENT_COUNT = 100
 REJECT_BODY_OVERSIZE = "body_oversize"
 
 _AUTH_RESULT_RE = re.compile(r"\b(dkim|spf|auth)=(\w+)", re.IGNORECASE)
@@ -62,6 +63,7 @@ class InboundMessage:
     message_date: str | None = None
     rejection_reason: str | None = None
     body_chars: int | None = None
+    attachment_count: int = 0
     trace_id: str = field(default_factory=lambda: str(uuid4()))
     # Original raw MIME bytes, exactly as received. Only captured for
     # messages whose subject looks like an admin request - PGP/MIME
@@ -134,6 +136,24 @@ def cap_body(body: str) -> str:
     if len(body) > MAX_RAW_BODY_CHARS:
         raise BodyTooLargeError(len(body))
     return body[:MAX_BODY_CHARS]
+
+
+def count_stripped_attachments(msg) -> int:
+    """Return a bounded count of non-inline parts omitted from body extraction."""
+    count = 0
+    for attachment in msg.attachments:
+        disposition = (attachment.content_disposition or "").lower()
+        content_id = bool((attachment.content_id or "").strip())
+        has_filename = bool((attachment.filename or "").strip())
+        is_inline = disposition == "inline" or (
+            content_id and disposition != "attachment"
+        )
+        is_attachment = disposition == "attachment" or has_filename or not content_id
+        if not is_inline and is_attachment:
+            count += 1
+            if count == MAX_ATTACHMENT_COUNT:
+                break
+    return count
 
 
 def _html_to_text(html: str) -> str:
@@ -287,6 +307,7 @@ def poll_unseen(*, mailbox: MailboxKind = "primary") -> list[InboundMessage]:
                 if subject.strip().lower().startswith("admin:") or relay_candidate
                 else None
             )
+            attachment_count = count_stripped_attachments(msg)
             try:
                 body = cap_body(msg.text or _html_to_text(msg.html))
             except BodyTooLargeError as exc:
@@ -305,6 +326,7 @@ def poll_unseen(*, mailbox: MailboxKind = "primary") -> list[InboundMessage]:
                         recipient_address=recipient_address,
                         rejection_reason=REJECT_BODY_OVERSIZE,
                         body_chars=exc.body_chars,
+                        attachment_count=attachment_count,
                         raw_message=raw_message,
                     )
                 )
@@ -328,6 +350,7 @@ def poll_unseen(*, mailbox: MailboxKind = "primary") -> list[InboundMessage]:
                     sender_authenticated=_is_sender_authenticated(msg),
                     recipient_address=recipient_address,
                     body_chars=len(body),
+                    attachment_count=attachment_count,
                     raw_message=raw_message,
                 )
             )
