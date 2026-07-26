@@ -238,9 +238,7 @@ async def run_agent_for_email(
                 RECENT_MEMORY_CONTEXT_MAX_CHARS,
             ),
         )
-        inbound_message = (
-            f"{sender_name_line}{attachment_line}Subject: {email_subject}\n\n{email_body}"
-        )
+        inbound_message = f"{sender_name_line}{attachment_line}Subject: {email_subject}\n\n{email_body}"
         user_message = (
             f"{memory_context.text}\n\n{inbound_message}"
             if memory_context.text

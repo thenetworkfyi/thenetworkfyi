@@ -113,7 +113,10 @@ def test_body_is_bounded_to_max_body_chars(fake_mailbox: _FakeMailBox):
 @pytest.mark.parametrize(
     ("attachments", "expected"),
     [
-        ([_attachment(filename="logo.png", content_id="logo", disposition="inline")], 0),
+        (
+            [_attachment(filename="logo.png", content_id="logo", disposition="inline")],
+            0,
+        ),
         ([_attachment(filename="brief.pdf", disposition="attachment")], 1),
         (
             [
