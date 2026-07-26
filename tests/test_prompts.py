@@ -16,6 +16,20 @@ def test_attachment_guidance_requires_an_accurate_sender_notice() -> None:
         assert inaccurate not in guidance.lower()
 
 
+def test_link_guidance_does_not_imply_fetch_capability() -> None:
+    guidance = SYSTEM_PROMPT.split("- Links:", 1)[1].split("- `search` similarity", 1)[
+        0
+    ]
+    guidance = " ".join(guidance.split())
+
+    assert "cannot open links or read what is behind them" in guidance
+    assert "visible reference, not as page content" in guidance
+    assert "do not infer the destination's contents" in guidance
+    assert "ask the sender what is behind the link" in guidance
+    assert "trailing `…`" in guidance
+    assert "incomplete reference" in guidance
+
+
 def test_agent_email_tools_require_content_free_sent_summary() -> None:
     assert "Every `reply_to_sender` or `send_outreach` call" in SYSTEM_PROMPT
     assert "`sent_email_summary`" in SYSTEM_PROMPT

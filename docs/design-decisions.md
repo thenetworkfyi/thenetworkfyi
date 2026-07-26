@@ -43,7 +43,13 @@ thin wrapper over a well-adopted library, swappable by config.
   agent context. The signal is count-only because filenames, MIME types, and other
   attachment metadata are attacker-authored strings; only the server-derived integer is
   trusted enough to tell the agent that unread content exists. This does not reinstate
-  attachment-subtree parsing, and the original message remains in INBOX.
+  attachment-subtree parsing, and the original message remains in INBOX. The HTML
+  fallback does preserve descriptive anchor targets as bounded HTTP(S) text, with
+  per-URL and per-message limits, because losing the referent changes what the sender
+  said. This does not add link fetching or make a URL's text evidence for what is behind
+  it. URLs are deliberately not redacted from raw memory text; the sanitizer still
+  replaces identifying profile handles in cross-user gists while generic project URLs
+  may remain useful recall text.
 - **Presidio is mandatory for deterministic gist sanitization.** Names, email addresses,
   and phone numbers are redacted by a mainstream PII library, with the spaCy model baked
   into the Docker image at build time and checked at worker startup. Organizations and

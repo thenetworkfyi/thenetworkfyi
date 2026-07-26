@@ -3,10 +3,18 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelResponse,
+    ToolCallPart,
+    UserPromptPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 
+from thenetwork.agent.core import build_agent, run_agent_for_email
 from thenetwork.email import inbound
 from thenetwork.email.inbound import (
     MAX_BODY_CHARS,
@@ -226,9 +234,7 @@ def test_html_to_text_normalizes_whitespace():
 def test_html_to_text_preserves_hyperlink_referent():
     html = '<p>See my <a href="https://example.com/portfolio">portfolio</a>.</p>'
 
-    assert _html_to_text(html) == (
-        "See my portfolio (https://example.com/portfolio) ."
-    )
+    assert _html_to_text(html) == ("See my portfolio (https://example.com/portfolio) .")
 
 
 def test_html_to_text_does_not_duplicate_auto_linked_url():
@@ -259,7 +265,7 @@ def test_html_to_text_caps_distinct_inlined_links():
 
 def test_many_anchor_url_contribution_stays_below_body_cap():
     html = " ".join(
-        f'<a href="https://example.com/{index}/{'p' * 200}">link {index}</a>'
+        f'<a href="https://example.com/{index}/{"p" * 200}">link {index}</a>'
         for index in range(100)
     )
 
@@ -267,6 +273,64 @@ def test_many_anchor_url_contribution_stays_below_body_cap():
 
     assert rendered.count("…") == MAX_INLINE_LINKS
     assert len(rendered) < MAX_BODY_CHARS
+
+
+@pytest.mark.asyncio
+async def test_html_link_fidelity_reaches_agent_user_context(
+    fake_mailbox: _FakeMailBox,
+):
+    word_url = "https://example.com/project"
+    bare_url = "https://example.com/docs"
+    long_url = (
+        f"https://events.example.com/useful/{'segment/' * 20}"
+        "?utm_source=newsletter#details"
+    )
+    html = (
+        f'<a href="{word_url}">project</a> '
+        f'<a href="{bare_url}">{bare_url}</a> '
+        f'<a href="{long_url}">event</a> '
+        '<a href="data:text/plain;base64,SGVsbG8=">payload</a>'
+    )
+    body = _poll_body(fake_mailbox, html=html)
+    captured: dict[str, list[ModelMessage]] = {}
+
+    async def capture_and_stop(
+        messages: list[ModelMessage], _info: AgentInfo
+    ) -> ModelResponse:
+        captured["messages"] = messages
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name="no_action",
+                    args={"reason": "no action needed"},
+                )
+            ]
+        )
+
+    agent = build_agent(model=FunctionModel(capture_and_stop))
+    with (
+        patch("thenetwork.agent.core.get_settings", return_value=_settings()),
+        patch("thenetwork.agent.core.build_agent", return_value=agent),
+    ):
+        await run_agent_for_email(
+            sender_email="alice@example.com",
+            sender_user_id=None,
+            sender_authenticated=True,
+            email_subject="Links",
+            email_body=body,
+        )
+
+    user_text = "\n".join(
+        part.content
+        for message in captured["messages"]
+        for part in message.parts
+        if isinstance(part, UserPromptPart) and isinstance(part.content, str)
+    )
+    assert f"project ({word_url})" in user_text
+    assert user_text.count(bare_url) == 1
+    assert f"event ({_render_url(long_url)})" in user_text
+    assert "data:text/plain" not in user_text
+    assert "payload" in user_text
 
 
 def test_html_to_text_empty_input_returns_empty_string():
