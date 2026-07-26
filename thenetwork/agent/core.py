@@ -153,6 +153,7 @@ async def run_agent_for_email(
     email_body: str,
     sender_authenticated: bool = False,
     sender_display_name: str | None = None,
+    attachment_count: int = 0,
     inbound_message_id: str | None = None,
     inbound_references: str | None = None,
     inbound_body_for_quote: str | None = None,

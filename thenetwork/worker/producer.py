@@ -216,6 +216,7 @@ def _poll_mailbox_and_enqueue(
                 "body": msg.body,
                 "sender_authenticated": msg.sender_authenticated,
                 "sender_display_name": msg.sender_display_name,
+                "attachment_count": msg.attachment_count,
                 "raw_message_b64": raw_message_b64,
                 "trace_id": msg.trace_id,
                 "source_mailbox": mailbox,

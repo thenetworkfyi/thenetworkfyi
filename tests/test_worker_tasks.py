@@ -111,3 +111,34 @@ async def test_process_email_does_not_check_budget_for_ordinary_non_primary_call
 
     check_budget.assert_not_called()
     run_agent.assert_awaited_once()
+    assert run_agent.await_args.kwargs["attachment_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_process_email_forwards_attachment_count_to_agent():
+    from thenetwork.introductions import ConsentReplyResult
+    from thenetwork.worker.tasks import process_email
+
+    with (
+        patch("thenetwork.worker.tasks.get_session", return_value=_empty_session()),
+        patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
+        patch(
+            "thenetwork.worker.tasks.scan_content",
+            new=AsyncMock(return_value=(True, "ok")),
+        ),
+        patch("thenetwork.worker.tasks.verify_admin_request", return_value=None),
+        patch(
+            "thenetwork.worker.tasks.process_consent_reply",
+            return_value=ConsentReplyResult(handled=False),
+        ),
+        patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()) as run_agent,
+    ):
+        await process_email.func(
+            sender_email="sender@example.com",
+            subject="subject",
+            body="body",
+            sender_authenticated=True,
+            attachment_count=2,
+        )
+
+    assert run_agent.await_args.kwargs["attachment_count"] == 2

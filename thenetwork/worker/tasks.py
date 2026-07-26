@@ -193,6 +193,7 @@ async def process_email(
     body: str,
     sender_authenticated: bool = False,
     sender_display_name: str | None = None,
+    attachment_count: int = 0,
     recipient_address: str | None = None,
     raw_message_b64: str | None = None,
     inbound_message_id: str | None = None,
@@ -414,6 +415,7 @@ async def process_email(
             "email_subject": subject,
             "email_body": email_body,
             "sender_display_name": sender_display_name,
+            "attachment_count": attachment_count,
             "is_proactive": is_proactive,
         }
         if proactive_candidate_id:
