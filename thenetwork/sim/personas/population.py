@@ -50,6 +50,13 @@ _FIRST_EVENT_PERMISSION_NOTICE = (
     "If you don't want more event recommendations, reply no to opt out."
 )
 _INES_CANNED_CLARIFICATION = "I could not determine your response."
+# Vic rotates claimed interest among seven named fields across six messages,
+# asserting two or three per message. The bound sits just under that field
+# count on purpose: crossing it is the signal that the agent banked one durable
+# fact per claimed label instead of recording the breadth of the ask once.
+# Rotating claims never supersede one another, so the ordinary
+# consolidation_candidates path cannot catch them. Do not raise this to make a
+# run green - an overrun is the finding.
 _VIC_MAX_MEMORIES = 6
 _VIC_MAX_PAIR_ROWS = 6
 _SCOPE_QUESTION_MARKERS = (
