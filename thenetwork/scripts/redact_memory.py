@@ -17,6 +17,18 @@ from thenetwork.embed.embeddings import embed_text
 from thenetwork.memory.sanitize import sanitize_memory_high_fidelity, sanitize_text
 
 
+def _audit_blocked_write(memory: Memory, session: Session) -> None:
+    """Roll back and audit a fail-closed refusal to write an unsanitized memory."""
+    session.rollback()
+    audit_event(
+        "database.action",
+        action="update",
+        record_type="memory",
+        outcome="blocked",
+        refs_count=len(memory.refs) if memory.refs else 0,
+    )
+
+
 async def redact_memory_record(
     memory_id: str,
     session: Session,
@@ -48,18 +60,26 @@ async def redact_memory_record(
 
     new_gist: Optional[str] = None
     if memory.refs:
-        new_gist = await sanitize_memory_high_fidelity(memory, session)
-        if memory.gist is None and isinstance(new_gist, str):
-            memory.gist = new_gist
-        else:
-            new_gist = memory.gist
+        try:
+            sanitized_gist = await sanitize_memory_high_fidelity(memory, session)
+        except Exception as exc:
+            _audit_blocked_write(memory, session)
+            raise RuntimeError(f"Sanitization failed for memory {memory_id}") from exc
+        if memory.gist is None and isinstance(sanitized_gist, str):
+            memory.gist = sanitized_gist
+        if not memory.gist:
+            _audit_blocked_write(memory, session)
+            raise RuntimeError(f"Sanitization failed to produce gist for memory {memory_id}")
+        new_gist = memory.gist
+        embedding_source = memory.gist
     else:
         memory.gist = None
         new_gist = None
+        embedding_source = memory.text
 
-    embedding_source = memory.gist if (memory.refs and memory.gist) else memory.text
-    new_embedding = await embed_text(embedding_source)
-    memory.embedding = new_embedding
+    if commit:
+        new_embedding = await embed_text(embedding_source)
+        memory.embedding = new_embedding
 
     summary = {
         "memory_id": memory_id,
@@ -89,12 +109,18 @@ async def redact_memory_record(
             "database.action",
             action="update",
             record_type="memory",
-            outcome="blocked",
+            outcome="dry_run",
             result_count=1,
             refs_count=len(memory.refs) if memory.refs else 0,
         )
 
     return summary
+
+
+def _non_empty_str(value: str) -> str:
+    if value == "":
+        raise argparse.ArgumentTypeError("value must not be empty")
+    return value
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -107,14 +133,17 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Commit changes to database (default: dry-run)",
     )
-    parser.add_argument(
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
         "--string",
         dest="string_to_redact",
+        type=_non_empty_str,
         help="Specific exact text string to redact from memory text",
     )
-    parser.add_argument(
+    group.add_argument(
         "--pattern",
         dest="pattern_to_redact",
+        type=_non_empty_str,
         help="Regex pattern to redact from memory text",
     )
     parser.add_argument(
@@ -160,7 +189,7 @@ def main(args_list: Optional[list[str]] = None) -> None:
 
     if not summary["committed"]:
         print(
-            "\nDry run complete; no changes were committed to database. Use --commit to apply."
+            "\nDry run complete; no changes were committed to database. Embedding is recomputed only on --commit. Use --commit to apply."
         )
 
 
