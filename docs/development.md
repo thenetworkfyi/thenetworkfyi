@@ -123,6 +123,14 @@ positional and space-separated.
 | `COMMAND: pause-intake` | Pause primary intake. |
 | `COMMAND: resume-intake` | Resume primary intake. |
 
+### Operator memory redaction script
+
+`scripts/redact-memory.sh` is an operator script for redacting PII directly from a specific Memory record. It requires direct DB and shell access on the host rather than going through the PGP/MIME admin channel.
+
+- **Dry-run default**: Running without `--commit` performs a dry run that displays proposed text/gist changes and rolls back without committing to the database or recomputing embeddings.
+- **Redaction options**: Supports `--string STRING` for exact text replacement, `--pattern PATTERN` for regex replacement (mutually exclusive with `--string`), and `--replacement REPLACEMENT` (defaults to `[redacted]`). When no option is supplied, `sanitize_text` is used.
+- **Gist and embedding refresh**: For memories referencing people (`refs`), the script refreshes the sealed gist via `sanitize_memory_high_fidelity` and recomputes the vector embedding upon `--commit`.
+
 ### Primary intake circuit breaker
 
 Set `PRIMARY_INTAKE_BURST_MONITORING_ENABLED=true` with a long, stable
@@ -600,6 +608,9 @@ enabled; its cursor makes repeated runs without new observations no-ops.
 ## Sharp edges
 
 - Editing a memory is always `forget` + `remember`; never mutate `text`/`refs` in place,
-  or the embedding and gist go stale.
+  or the embedding and gist go stale. The operator script `scripts/redact-memory.sh` is the
+  single deliberate exception for operator PII redaction (where memory ID, `refs`, and
+  `created_at` must survive), and it explicitly re-runs gist sanitization and embedding
+  recomputation on `--commit`.
 - Keep the `postgresql+psycopg://` (SQLModel) vs plain `postgresql://` (Procrastinate) DSN
   distinction straight - `worker/tasks.run_worker` strips `+psycopg` for Procrastinate.

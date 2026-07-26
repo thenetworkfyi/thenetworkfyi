@@ -80,7 +80,7 @@ understanding why it was dropped.
   The narrowly scoped event lifecycle tables described above are the sole exception.
 - ❌ A curated `network_connections` edge table → graph projected from multi-ref memories.
 - ❌ One big notepad blob per person → small append-only chunks (clean recall).
-- ❌ In-place memory edits → delete + create (keeps embeddings/gists consistent).
+- ❌ In-place memory edits → delete + create (keeps embeddings/gists consistent). The only exception is the operator script `scripts/redact-memory.sh`, where `forget` + `remember` cannot be used because the memory ID, `refs`, and `created_at` timestamp must survive an operator PII redaction; this rule still strictly binds every agent write path.
 - ❌ Withhold-a-column privacy → two-layer raw/gist with a dedicated sanitizer.
 - ❌ LLM computing graph proximity at query time → NetworkX over projected edges.
 - ❌ Raw `psycopg2` + hand-written SQL strings → SQLModel + pgvector.
