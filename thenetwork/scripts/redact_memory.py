@@ -69,7 +69,9 @@ async def redact_memory_record(
             memory.gist = sanitized_gist
         if not memory.gist:
             _audit_blocked_write(memory, session)
-            raise RuntimeError(f"Sanitization failed to produce gist for memory {memory_id}")
+            raise RuntimeError(
+                f"Sanitization failed to produce gist for memory {memory_id}"
+            )
         new_gist = memory.gist
         embedding_source = memory.gist
     else:
