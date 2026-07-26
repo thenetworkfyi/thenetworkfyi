@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass, field
 from email.utils import getaddresses
 from typing import Literal
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 from bs4 import BeautifulSoup
@@ -24,6 +25,7 @@ MAX_RECIPIENT_CHARS = 320
 MAX_BODY_CHARS = 10_000
 MAX_RAW_BODY_CHARS = 100_000
 MAX_ATTACHMENT_COUNT = 100
+MAX_RENDERED_URL_CHARS = 120
 REJECT_BODY_OVERSIZE = "body_oversize"
 
 _AUTH_RESULT_RE = re.compile(r"\b(dkim|spf|auth)=(\w+)", re.IGNORECASE)
@@ -33,6 +35,7 @@ _SAFE_AUTHSERV_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,80}$")
 _WARNED_UNRECOGNIZED_AUTH_RESULTS: set[tuple[str, tuple[str, ...]]] = set()
 
 _HTML_HIDDEN_ELEMENTS = ("head", "script", "style", "template", "title")
+_URL_ELLIPSIS = "…"
 MailboxKind = Literal["primary", "relay"]
 
 
@@ -154,6 +157,23 @@ def count_stripped_attachments(msg) -> int:
             if count == MAX_ATTACHMENT_COUNT:
                 break
     return count
+
+
+def _render_url(url: str) -> str:
+    """Return a bounded HTTP(S) URL suitable for inbound visible text."""
+    try:
+        parsed = urlsplit(url)
+        hostname = parsed.hostname
+    except ValueError:
+        return ""
+    if parsed.scheme.lower() not in {"http", "https"} or not hostname:
+        return ""
+    if len(url) <= MAX_RENDERED_URL_CHARS:
+        return url
+
+    origin_and_path = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+    content_limit = MAX_RENDERED_URL_CHARS - len(_URL_ELLIPSIS)
+    return f"{origin_and_path[:content_limit]}{_URL_ELLIPSIS}"
 
 
 def _html_to_text(html: str) -> str:
