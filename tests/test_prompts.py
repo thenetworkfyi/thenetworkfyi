@@ -66,13 +66,46 @@ def test_thin_standing_intent_guidance_requests_one_material_follow_up() -> None
     assert "do not call `propose_introduction`" in guidance
     assert "even if `search` found a semantically adjacent person" in guidance
     assert "Do not interrogate every message" in guidance
-    assert "passively promising" in guidance
-    assert "requires the question" in guidance
+    # The passive-promise prohibition moved from a scattered negative aside
+    # ("passively promising", "requires the question") into one checkable
+    # before-you-send constraint below; the commitment is unchanged.
     assert "exactly one question mark" in guidance
     assert "one evidence category" in guidance
     assert "role and hands-on evidence" in guidance
     assert "do not collapse those stages" in guidance
     assert "`remember` that you asked" in guidance
+
+
+def test_a_passive_matching_promise_cannot_stand_in_for_a_question() -> None:
+    """The observed failure is a warm acknowledgment that asks nothing.
+
+    Production runs showed the agent closing an underspecified request with a
+    promise to keep the sender in mind and zero question marks, which leaves
+    the next run starting exactly where the last one did. The prohibition is
+    stated as a check on the outgoing reply rather than as a general principle,
+    because the model has to be able to apply it to the text it just wrote.
+    """
+    guidance = SYSTEM_PROMPT.split("- Asking for clarification:", 1)[1].split(
+        "- Progressive qualification memory:", 1
+    )[0]
+    guidance = " ".join(guidance.split())
+
+    assert (
+        "Before sending a reply to an unsupported request for a connection" in guidance
+    )
+    assert "check the reply itself" in guidance
+    assert "must contain exactly one question mark" in guidance
+    assert "must not say you will keep the sender in mind" in guidance
+    assert "watch for someone suitable" in guidance
+    assert "reach out when a match appears" in guidance
+    assert "defers the work to a later turn you cannot schedule" in guidance
+    assert "That sentence is the substitution to watch for" in guidance
+    assert "asks nothing" in guidance
+    assert "the next run starts exactly where this one did" in guidance
+    assert (
+        "Acknowledging without asking, `no_action`, and a promise to keep looking "
+        "are all the same failure" in guidance
+    )
 
 
 def test_multi_register_interests_are_not_collapsed_into_a_career_request() -> None:
