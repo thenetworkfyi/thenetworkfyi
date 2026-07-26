@@ -108,6 +108,72 @@ async def test_redact_memory_commit():
 
 
 @pytest.mark.asyncio
+async def test_redact_memory_ref_gist_refreshed():
+    mem = Memory(
+        id="mem-ref-1",
+        text="John Doe at john@example.com called 555-1234",
+        refs=["person-1"],
+        gist="Old gist with John Doe",
+    )
+    session = FakeRedactSession(mem)
+
+    async def fake_sanitize_high_fidelity(memory, sess):
+        memory.gist = "[NAME] at [EMAIL] called [PHONE]"
+        return memory.gist
+
+    with (
+        patch(
+            "thenetwork.scripts.redact_memory.sanitize_text",
+            return_value="[NAME] at [EMAIL] called [PHONE]",
+        ),
+        patch(
+            "thenetwork.scripts.redact_memory.sanitize_memory_high_fidelity",
+            side_effect=fake_sanitize_high_fidelity,
+        ),
+        patch(
+            "thenetwork.scripts.redact_memory.embed_text",
+            new=AsyncMock(return_value=[0.5] * 1536),
+        ) as mock_embed,
+    ):
+        summary = await redact_memory_record("mem-ref-1", session, commit=True)
+
+    assert summary["new_gist"] == "[NAME] at [EMAIL] called [PHONE]"
+    assert mem.gist == "[NAME] at [EMAIL] called [PHONE]"
+    mock_embed.assert_called_once_with("[NAME] at [EMAIL] called [PHONE]")
+
+
+@pytest.mark.asyncio
+async def test_redact_memory_ref_fails_without_gist():
+    mem = Memory(
+        id="mem-ref-fail",
+        text="Some text with ref",
+        refs=["person-1"],
+        gist=None,
+    )
+    session = FakeRedactSession(mem)
+
+    async def fake_sanitize_high_fidelity_none(memory, sess):
+        memory.gist = None
+        return None
+
+    with (
+        patch(
+            "thenetwork.scripts.redact_memory.sanitize_memory_high_fidelity",
+            side_effect=fake_sanitize_high_fidelity_none,
+        ),
+        patch(
+            "thenetwork.scripts.redact_memory.embed_text",
+            new=AsyncMock(),
+        ) as mock_embed,
+    ):
+        with pytest.raises(RuntimeError, match="Sanitization failed"):
+            await redact_memory_record("mem-ref-fail", session, commit=True)
+
+    mock_embed.assert_not_called()
+    assert session.committed is False
+
+
+@pytest.mark.asyncio
 async def test_redact_memory_specific_string():
     mem = Memory(
         id="mem-3",
