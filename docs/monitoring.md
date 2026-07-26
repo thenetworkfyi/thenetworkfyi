@@ -203,6 +203,21 @@ expected, so an earlier `unit="1"` registration here would make the affected
 panels and alerts silently see no data. Keep new dimensionless worker gauges
 on an annotation unit rather than `"1"` to avoid reintroducing this.
 
+`configure_worker_metrics` builds its `MeterProvider` with a fixed
+`service.name`/`service.instance.id` of `thenetwork-worker` - the same value
+the logs pipeline already uses - rather than the OTel SDK's default
+per-process random `service.instance.id`. There is exactly one long-lived
+worker process, so a stable identity is correct here. Without it, every
+worker restart mints a new `service.instance.id`, which the Collector's
+Prometheus exporter surfaces as a distinct `exported_instance` label; Prometheus
+then treats the restart as a brand-new series rather than a continuation, so
+live-state gauges like `thenetwork_people_total` fork on every restart with
+the old series' last value frozen. A bare `metric_name` panel query with no
+aggregation across `exported_instance` can then read that frozen (and
+possibly stale/zero) old series instead of the current one, depending on
+query resolution. Any such zombie series minted before this fix ages out on
+its own after the 30-day Prometheus retention window.
+
 | Prometheus gauge | Labels | Meaning |
 | --- | --- | --- |
 | `thenetwork_producer_last_success_timestamp_seconds` | None | Unix timestamp recorded only after a complete successful IMAP poll, including an empty poll. It remains zero after process start until the first success and does not advance after a failed or incomplete cycle. |

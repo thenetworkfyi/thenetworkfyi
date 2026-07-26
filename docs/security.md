@@ -26,7 +26,16 @@ prompt-injection exfiltrate it, so the privacy boundary cannot be "withhold a co
    a cross-user result set, so there is no runtime branch a hijacked model can steer
    toward them.
 4. **The sanitizer is a separate, narrowly-scoped step** (`memory/sanitize.py`): a
-   mandatory Presidio pass redacts person names, email addresses, and phone numbers.
+   mandatory Presidio pass redacts person names, email addresses, and phone numbers,
+   followed by a structural pass over platform handles and profile URLs. A handle is an
+   ordinary word to an NER model - Presidio classifies `mkly` as no entity at all - so it
+   is matched by shape instead: a profile URL path segment or an `@` sigil, both
+   unambiguous, plus a platform label guarded by an identifier test, since
+   "LinkedIn: Senior Engineer" is prose. That test asks for an explicit marker
+   ("username: x"), identifier punctuation, or absence from the same en_core_web_lg
+   lexicon Presidio already loads. Only the identifier is replaced; the label and host
+   survive for search recall. A bare handle in prose that is also an English word remains
+   the LLM tier's job.
    Organizations and locations are deliberately kept in gists because those gists are what
    get embedded for company/place search recall. Quasi-identifying combinations are handled
    by the optional higher-fidelity LLM pass with a *fixed* prompt and no tools, run on

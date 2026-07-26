@@ -205,8 +205,9 @@ scanner service.
 
 Presidio (`presidio-analyzer` + `spacy`) is a core dependency. It powers
 `thenetwork/memory/sanitize.py`'s deterministic `sanitize_memory`, which redacts person
-names, email addresses, and phone numbers. Organizations and locations stay in the gist
-to preserve company/place search recall. Missing Presidio or a missing NLP model is a
+names, email addresses, and phone numbers, alongside a structural pass that replaces
+platform handles and profile URLs with `[handle]`. Organizations and locations stay in the
+gist to preserve company/place search recall. Missing Presidio or a missing NLP model is a
 deployment error, not a silent downgrade. The compatible `en_core_web_lg` model is a
 pinned project dependency, so `uv pip install -e .` installs it for local runs and the
 Docker build without a separate download command.
