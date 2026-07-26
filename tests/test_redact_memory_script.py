@@ -294,6 +294,107 @@ def test_cli_main_dry_run_message(capsys):
     mock_embed.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_redact_memory_dry_run_audits_distinct_outcome():
+    mem = Memory(
+        id="mem-dry-audit",
+        text="John Doe at john@example.com",
+        refs=["person-1"],
+        gist="John Doe at john@example.com",
+    )
+    session = FakeRedactSession(mem)
+
+    with (
+        patch(
+            "thenetwork.scripts.redact_memory.sanitize_text",
+            return_value="[NAME] at [EMAIL]",
+        ),
+        patch(
+            "thenetwork.scripts.redact_memory.sanitize_memory_high_fidelity",
+            new=AsyncMock(return_value="[NAME] at [EMAIL]"),
+        ),
+        patch("thenetwork.scripts.redact_memory.embed_text", new=AsyncMock()),
+        patch("thenetwork.scripts.redact_memory.audit_event") as mock_audit,
+    ):
+        await redact_memory_record("mem-dry-audit", session, commit=False)
+
+    outcomes = [call.kwargs.get("outcome") for call in mock_audit.call_args_list]
+    assert "dry_run" in outcomes
+    assert "blocked" not in outcomes
+
+
+@pytest.mark.asyncio
+async def test_redact_memory_ref_fails_without_gist_audits_blocked_and_rolls_back():
+    mem = Memory(
+        id="mem-ref-fail-audit",
+        text="Some text with ref",
+        refs=["person-1"],
+        gist=None,
+    )
+    session = FakeRedactSession(mem)
+
+    async def fake_sanitize_high_fidelity_none(memory, sess):
+        memory.gist = None
+        return None
+
+    with (
+        patch(
+            "thenetwork.scripts.redact_memory.sanitize_memory_high_fidelity",
+            side_effect=fake_sanitize_high_fidelity_none,
+        ),
+        patch("thenetwork.scripts.redact_memory.embed_text", new=AsyncMock()),
+        patch("thenetwork.scripts.redact_memory.audit_event") as mock_audit,
+    ):
+        with pytest.raises(RuntimeError, match="Sanitization failed"):
+            await redact_memory_record("mem-ref-fail-audit", session, commit=True)
+
+    assert session.rolled_back is True
+    assert session.committed is False
+    outcomes = [call.kwargs.get("outcome") for call in mock_audit.call_args_list]
+    assert outcomes == ["blocked"]
+
+
+@pytest.mark.asyncio
+async def test_redact_memory_sanitize_exception_audits_blocked_and_rolls_back():
+    mem = Memory(
+        id="mem-ref-fail-exc",
+        text="Some text with ref",
+        refs=["person-1"],
+        gist="Old gist",
+    )
+    session = FakeRedactSession(mem)
+
+    with (
+        patch(
+            "thenetwork.scripts.redact_memory.sanitize_memory_high_fidelity",
+            new=AsyncMock(side_effect=RuntimeError("boom")),
+        ),
+        patch("thenetwork.scripts.redact_memory.embed_text", new=AsyncMock()),
+        patch("thenetwork.scripts.redact_memory.audit_event") as mock_audit,
+    ):
+        with pytest.raises(RuntimeError, match="Sanitization failed"):
+            await redact_memory_record("mem-ref-fail-exc", session, commit=True)
+
+    assert session.rolled_back is True
+    assert session.committed is False
+    outcomes = [call.kwargs.get("outcome") for call in mock_audit.call_args_list]
+    assert outcomes == ["blocked"]
+
+
+def test_build_parser_rejects_empty_string():
+    parser = build_parser()
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args(["mem-123", "--string", ""])
+    assert exc_info.value.code == 2
+
+
+def test_build_parser_rejects_empty_pattern():
+    parser = build_parser()
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args(["mem-123", "--pattern", ""])
+    assert exc_info.value.code == 2
+
+
 def test_cli_main_not_found(capsys):
     session = FakeRedactSession(None)
 
