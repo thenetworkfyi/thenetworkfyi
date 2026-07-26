@@ -26,6 +26,7 @@ MAX_BODY_CHARS = 10_000
 MAX_RAW_BODY_CHARS = 100_000
 MAX_ATTACHMENT_COUNT = 100
 MAX_RENDERED_URL_CHARS = 120
+MAX_INLINE_LINKS = 20
 REJECT_BODY_OVERSIZE = "body_oversize"
 
 _AUTH_RESULT_RE = re.compile(r"\b(dkim|spf|auth)=(\w+)", re.IGNORECASE)
@@ -186,6 +187,22 @@ def _html_to_text(html: str) -> str:
         return ""
     for tag in soup(_HTML_HIDDEN_ELEMENTS):
         tag.decompose()
+    seen_hrefs: set[str] = set()
+    inlined_links = 0
+    for anchor in soup.find_all("a", href=True):
+        href_value = anchor.get("href")
+        if not isinstance(href_value, str):
+            continue
+        href = href_value.strip()
+        rendered_url = _render_url(href)
+        if not rendered_url or href in seen_hrefs:
+            continue
+        seen_hrefs.add(href)
+        anchor_text = " ".join(anchor.get_text(separator=" ").split())
+        if anchor_text == href or inlined_links == MAX_INLINE_LINKS:
+            continue
+        anchor.append(f" ({rendered_url})")
+        inlined_links += 1
     return " ".join(soup.get_text(separator=" ").split())
 
 

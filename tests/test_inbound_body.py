@@ -10,6 +10,7 @@ import pytest
 from thenetwork.email import inbound
 from thenetwork.email.inbound import (
     MAX_BODY_CHARS,
+    MAX_INLINE_LINKS,
     MAX_RENDERED_URL_CHARS,
     _html_to_text,
     _render_url,
@@ -220,6 +221,52 @@ def test_html_to_text_normalizes_whitespace():
     html = "<p>Hello   \n\n  there,\t friend</p>"
 
     assert _html_to_text(html) == "Hello there, friend"
+
+
+def test_html_to_text_preserves_hyperlink_referent():
+    html = '<p>See my <a href="https://example.com/portfolio">portfolio</a>.</p>'
+
+    assert _html_to_text(html) == (
+        "See my portfolio (https://example.com/portfolio) ."
+    )
+
+
+def test_html_to_text_does_not_duplicate_auto_linked_url():
+    url = "https://example.com/portfolio"
+
+    assert _html_to_text(f'<a href="{url}">{url}</a>') == url
+
+
+def test_html_to_text_deduplicates_identical_hrefs():
+    url = "https://example.com/event"
+    html = f'<a href="{url}">first</a> then <a href="{url}">second</a>'
+
+    assert _html_to_text(html) == f"first ({url}) then second"
+
+
+def test_html_to_text_caps_distinct_inlined_links():
+    html = " ".join(
+        f'<a href="https://example.com/{index}">link {index}</a>'
+        for index in range(MAX_INLINE_LINKS + 5)
+    )
+
+    rendered = _html_to_text(html)
+
+    assert rendered.count("(https://example.com/") == MAX_INLINE_LINKS
+    assert f"link {MAX_INLINE_LINKS} (" not in rendered
+    assert f"link {MAX_INLINE_LINKS + 4}" in rendered
+
+
+def test_many_anchor_url_contribution_stays_below_body_cap():
+    html = " ".join(
+        f'<a href="https://example.com/{index}/{'p' * 200}">link {index}</a>'
+        for index in range(100)
+    )
+
+    rendered = _html_to_text(html)
+
+    assert rendered.count("…") == MAX_INLINE_LINKS
+    assert len(rendered) < MAX_BODY_CHARS
 
 
 def test_html_to_text_empty_input_returns_empty_string():
