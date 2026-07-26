@@ -43,6 +43,16 @@ thin wrapper over a well-adopted library, swappable by config.
   into the Docker image at build time and checked at worker startup. Organizations and
   locations stay in gists because those gists are embedded for company/place recall; the
   opt-in fixed-prompt LLM tier handles quasi-identifying combinations.
+- **Platform handles are matched structurally, not by NER.** No mainstream PII library
+  recognizes a username as an entity, so the deterministic tier redacts handles by shape
+  (profile URL, `@` sigil, platform label). The LLM tier is asked to catch handles too,
+  but it is opt-in and falls back silently on failure, so it cannot be the only thing
+  standing between a username and a cross-user gist. A platform label alone does not
+  license redaction of whatever follows it: the candidate must also test as an identifier
+  rather than a word, reusing the en_core_web_lg lexicon Presidio already loads rather
+  than a bespoke word list. Missing a handle that is also a dictionary word is the
+  accepted cost - shredding role and description prose out of gists is not, since that is
+  the content gists exist to embed.
 - **Tools report expected refusals as structured status results.** Policy and
   world-state outcomes are not exceptions for the model to retry; pydantic-ai
   gets one retry solely for argument validation. This keeps rate limits,

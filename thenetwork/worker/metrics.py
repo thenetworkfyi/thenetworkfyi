@@ -23,6 +23,7 @@ from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExp
 from opentelemetry.metrics import Observation
 from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.sdk.resources import SERVICE_INSTANCE_ID, SERVICE_NAME, Resource
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import NullPool
 from sqlmodel import Session
@@ -30,6 +31,14 @@ from sqlmodel import Session
 from thenetwork.audit import audit_warning_event
 from thenetwork.db.models import PrimaryIntakeState
 from thenetwork.settings import get_settings
+
+# Fixed rather than a per-process random id: the OTel SDK default resource
+# assigns a fresh service.instance.id every process start, which forks a new
+# Prometheus series with every worker restart. There is exactly one
+# long-lived worker process (see docs/architecture.md), so a stable value is
+# correct and keeps global-state gauges (e.g. thenetwork_people_total) on one
+# continuous series across restarts/redeploys.
+WORKER_SERVICE_NAME = "thenetwork-worker"
 
 PRODUCER_LAST_SUCCESS_METRIC = "thenetwork_producer_last_success_timestamp_seconds"
 JOB_QUEUE_DEPTH_METRIC = "thenetwork_job_queue_depth"
@@ -749,7 +758,13 @@ def configure_worker_metrics(
                     settings.worker_metrics_export_timeout_seconds * 1000
                 ),
             )
-            provider = provider_factory(metric_readers=[reader])
+            resource = Resource.create(
+                {
+                    SERVICE_NAME: WORKER_SERVICE_NAME,
+                    SERVICE_INSTANCE_ID: WORKER_SERVICE_NAME,
+                }
+            )
+            provider = provider_factory(metric_readers=[reader], resource=resource)
             meter = provider.get_meter("thenetwork.worker")
             observer = state_observer or _StateObserver()
             growth_observer = growth_state_observer or _StateObserver(

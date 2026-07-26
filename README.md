@@ -187,7 +187,8 @@ column." Instead:
    submitter identity never enter a cross-user result set.
 4. **The sanitizer is a separate, narrowly-scoped step**
    (`thenetwork/memory/sanitize.py`) - mandatory Presidio redaction of names, email
-   addresses, and phone numbers while keeping organizations and locations for search
+   addresses, and phone numbers, plus structural redaction of platform handles and
+   profile URLs, while keeping organizations and locations for search
    recall, plus an optional higher-fidelity LLM pass that has a fixed prompt and no
    tools. Missing Presidio is a deployment error, not a silent downgrade. The component
    that sees raw cross-user data stays small and auditable; the main agent never

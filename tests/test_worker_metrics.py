@@ -221,8 +221,9 @@ class _FakeHistogram:
 
 
 class _FakeProvider:
-    def __init__(self, *, metric_readers):
+    def __init__(self, *, metric_readers, resource=None):
         self.metric_readers = metric_readers
+        self.resource = resource
         self.meter = _FakeMeter()
 
     def get_meter(self, name):

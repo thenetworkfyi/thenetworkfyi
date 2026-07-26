@@ -140,6 +140,152 @@ def test_sanitize_memory_redacts_with_real_presidio_analyzer():
         sanitize_mod._get_presidio_analyzer.cache_clear()
 
 
+class _FakeVocab:
+    """Stands in for the spaCy vocab _is_handle_like consults.
+
+    Real en_core_web_lg is an integration-only dependency here (see the
+    _FakeAnalyzer docstring), so these tests pin the lexicon to a small known
+    set and exercise the decision logic. `test_real_lexicon_*` covers the
+    genuine model.
+    """
+
+    _KNOWN = {"senior", "engineer", "staff", "recruiter", "public", "mike", "lay"}
+
+    def __getitem__(self, word: str) -> SimpleNamespace:
+        return SimpleNamespace(is_oov=word.lower() not in self._KNOWN)
+
+
+def _no_ner(monkeypatch) -> None:
+    """Neutralize the NER pass so a test isolates the structural handle pass.
+
+    A handle is not a Presidio entity at all, so proving it is stripped means
+    proving the deterministic tier removes it with no NER help whatsoever.
+    """
+    monkeypatch.setattr(
+        sanitize_mod, "_get_presidio_analyzer", lambda: _FakeAnalyzer([])
+    )
+    monkeypatch.setattr(sanitize_mod, "_english_vocab", _FakeVocab)
+
+
+HANDLE_TEXTS: list[tuple[str, str, str]] = [
+    ("label-colon", "Reach him on GitHub: mkly for the port.", "mkly"),
+    ("label-equals-sigil", "twitter handle = @mkly these days.", "mkly"),
+    ("label-is", "my discord is mkly if that helps.", "mkly"),
+    ("bare-url", "Profile at github.com/mkly has the code.", "mkly"),
+    (
+        "scheme-url-path-prefix",
+        "See https://www.linkedin.com/in/mike-lay for background.",
+        "mike-lay",
+    ),
+    ("bare-sigil", "Ping @mkly in the channel.", "mkly"),
+]
+
+
+@pytest.mark.parametrize(
+    "text,handle",
+    [pytest.param(text, handle, id=case) for case, text, handle in HANDLE_TEXTS],
+)
+def test_sanitize_text_redacts_platform_handles_without_ner(monkeypatch, text, handle):
+    """A handle must not survive the deterministic tier into a cross-user gist."""
+    _no_ner(monkeypatch)
+
+    gist = sanitize_mod.sanitize_text(text)
+
+    assert handle not in gist, f"{handle!r} leaked into gist: {gist!r}"
+    assert "[handle]" in gist
+
+
+def test_sanitize_text_keeps_platform_and_host_for_search_recall(monkeypatch):
+    _no_ner(monkeypatch)
+
+    assert sanitize_mod.sanitize_text("GitHub: mkly") == "GitHub: [handle]"
+    assert (
+        sanitize_mod.sanitize_text("see github.com/mkly") == "see github.com/[handle]"
+    )
+
+
+def test_handle_redaction_is_idempotent(monkeypatch):
+    """_validate_llm_gist rejects any candidate that sanitize_text would change.
+
+    A non-idempotent handle pass would therefore reject every LLM-tier gist
+    and silently downgrade the sanitizer to its deterministic output.
+    """
+    _no_ner(monkeypatch)
+
+    for _, text, _handle in HANDLE_TEXTS:
+        once = sanitize_mod.sanitize_text(text)
+        assert sanitize_mod.sanitize_text(once) == once
+
+
+def test_handle_pass_leaves_email_addresses_for_presidio(monkeypatch):
+    """The @-sigil pattern must not chew up an email before the NER pass sees it."""
+    text = "Email alice@example.com or bob.smith@sub.example.co.uk."
+
+    assert sanitize_mod._strip_handles(text) == text
+
+
+def test_sanitize_text_does_not_invent_handles_in_ordinary_prose(monkeypatch):
+    _no_ner(monkeypatch)
+    text = "She runs a bakery co-op and is looking for food-logistics contacts."
+
+    assert sanitize_mod.sanitize_text(text) == text
+
+
+PROSE_AFTER_LABEL_TEXTS = [
+    pytest.param("LinkedIn: Senior Engineer at a co-op.", id="role-after-label"),
+    pytest.param(
+        "Her linkedin is public if you want context.", id="adjective-after-is"
+    ),
+    pytest.param("Slack: staff channel only.", id="common-noun-after-label"),
+]
+
+
+@pytest.mark.parametrize("text", PROSE_AFTER_LABEL_TEXTS)
+def test_platform_label_does_not_redact_following_prose(monkeypatch, text):
+    """A platform label is not proof the next word is a username.
+
+    Redacting role and description words would corrupt the freeform content
+    the gist is embedded for, which is the whole point of keeping
+    organizations and locations in gists at all.
+    """
+    _no_ner(monkeypatch)
+
+    assert sanitize_mod.sanitize_text(text) == text
+
+
+def test_explicit_marker_redacts_even_a_dictionary_word(monkeypatch):
+    """An explicit marker or sigil settles it; the lexicon is not consulted."""
+    _no_ner(monkeypatch)
+
+    assert sanitize_mod.sanitize_text("github username: staff") == (
+        "github username: [handle]"
+    )
+    assert sanitize_mod.sanitize_text("github: @staff") == "github: [handle]"
+
+
+@pytest.mark.integration
+@pytest.mark.real_presidio
+def test_real_lexicon_separates_handles_from_role_prose():
+    """The same discrimination against the genuine en_core_web_lg vocab."""
+    pytest.importorskip("presidio_analyzer")
+    sanitize_mod._get_presidio_analyzer.cache_clear()
+    sanitize_mod._english_vocab.cache_clear()
+    try:
+        assert sanitize_mod._is_handle_like("mkly", explicit=False) is True
+        assert sanitize_mod._is_handle_like("senior", explicit=False) is False
+        assert sanitize_mod._is_handle_like("engineer", explicit=False) is False
+
+        text = "Contributes to open source (GitHub: mkly). LinkedIn: Senior Engineer."
+        gist = sanitize_mod.sanitize_text(text)
+
+        assert "mkly" not in gist
+        assert "[handle]" in gist
+        assert "Senior Engineer" in gist
+    finally:
+        sanitize_mod._get_presidio_analyzer.cache_clear()
+        sanitize_mod._english_vocab.cache_clear()
+
+
 def test_get_presidio_analyzer_raises_when_not_installed(monkeypatch):
     sanitize_mod._get_presidio_analyzer.cache_clear()
 
