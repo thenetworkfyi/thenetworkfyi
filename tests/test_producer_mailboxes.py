@@ -106,6 +106,7 @@ def test_disposable_sender_is_rejected_before_enqueue(mailbox):
 @pytest.mark.parametrize("domain", ["gmail.com", "outlook.com", "proton.me"])
 def test_established_provider_is_accepted(domain):
     message = _message("8", f"sender@{domain}")
+    message.attachment_count = 2
 
     with (
         patch("thenetwork.worker.producer.poll_unseen", return_value=[message]),
@@ -118,6 +119,7 @@ def test_established_provider_is_accepted(domain):
         process_email.defer.call_args.kwargs["intake_observed_at_epoch_seconds"],
         float,
     )
+    assert process_email.defer.call_args.kwargs["attachment_count"] == 2
 
     process_email.defer.assert_called_once()
     mark_seen.assert_called_once_with(["8"], mailbox="primary")
