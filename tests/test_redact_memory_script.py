@@ -60,8 +60,8 @@ async def test_redact_memory_dry_run():
         ),
         patch(
             "thenetwork.scripts.redact_memory.embed_text",
-            new=AsyncMock(return_value=[0.1] * 1536),
-        ),
+            new=AsyncMock(),
+        ) as mock_embed,
     ):
         summary = await redact_memory_record("mem-1", session, commit=False)
 
@@ -71,6 +71,7 @@ async def test_redact_memory_dry_run():
     assert summary["new_text"] == "[NAME] at [EMAIL] called [PHONE]"
     assert session.rolled_back is True
     assert session.committed is False
+    mock_embed.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -243,6 +244,54 @@ def test_build_parser():
     assert args.commit is True
     assert args.string_to_redact == "secret"
     assert args.replacement == "XXX"
+
+
+def test_build_parser_mutually_exclusive():
+    parser = build_parser()
+    with pytest.raises(SystemExit) as exc_info:
+        parser.parse_args(["mem-123", "--string", "secret", "--pattern", "s.*"])
+    assert exc_info.value.code == 2
+
+
+def test_cli_main_dry_run_message(capsys):
+    mem = Memory(
+        id="mem-dry",
+        text="John Doe at john@example.com",
+        refs=["person-1"],
+        gist="John Doe at john@example.com",
+    )
+    session = FakeRedactSession(mem)
+
+    @contextmanager
+    def fake_get_session():
+        yield session
+
+    async def fake_sanitize_high_fidelity(memory, sess):
+        memory.gist = "[NAME] at [EMAIL]"
+        return memory.gist
+
+    with (
+        patch(
+            "thenetwork.scripts.redact_memory.get_session", side_effect=fake_get_session
+        ),
+        patch(
+            "thenetwork.scripts.redact_memory.sanitize_text",
+            return_value="[NAME] at [EMAIL]",
+        ),
+        patch(
+            "thenetwork.scripts.redact_memory.sanitize_memory_high_fidelity",
+            side_effect=fake_sanitize_high_fidelity,
+        ),
+        patch(
+            "thenetwork.scripts.redact_memory.embed_text",
+            new=AsyncMock(),
+        ) as mock_embed,
+    ):
+        main(["mem-dry"])
+
+    captured = capsys.readouterr()
+    assert "Dry run complete; no changes were committed to database. Embedding is recomputed only on --commit." in captured.out
+    mock_embed.assert_not_called()
 
 
 def test_cli_main_not_found(capsys):

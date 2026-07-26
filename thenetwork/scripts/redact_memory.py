@@ -63,8 +63,9 @@ async def redact_memory_record(
         new_gist = None
         embedding_source = memory.text
 
-    new_embedding = await embed_text(embedding_source)
-    memory.embedding = new_embedding
+    if commit:
+        new_embedding = await embed_text(embedding_source)
+        memory.embedding = new_embedding
 
     summary = {
         "memory_id": memory_id,
@@ -112,12 +113,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Commit changes to database (default: dry-run)",
     )
-    parser.add_argument(
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
         "--string",
         dest="string_to_redact",
         help="Specific exact text string to redact from memory text",
     )
-    parser.add_argument(
+    group.add_argument(
         "--pattern",
         dest="pattern_to_redact",
         help="Regex pattern to redact from memory text",
@@ -165,7 +167,7 @@ def main(args_list: Optional[list[str]] = None) -> None:
 
     if not summary["committed"]:
         print(
-            "\nDry run complete; no changes were committed to database. Use --commit to apply."
+            "\nDry run complete; no changes were committed to database. Embedding is recomputed only on --commit. Use --commit to apply."
         )
 
 
