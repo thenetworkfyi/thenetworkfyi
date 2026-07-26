@@ -141,6 +141,7 @@ _SAFE_FIELDS = frozenset(
         "auth_result_mechanisms",
         "authserv_id",
         "auto_submitted_present",
+        "attachment_count",
         "body_chars",
         "cache_read_tokens",
         "cache_write_tokens",

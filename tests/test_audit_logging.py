@@ -694,6 +694,7 @@ async def test_agent_run_applies_configured_usage_limits():
     fake_agent.run.assert_awaited_once()
     assert fake_agent.run.await_args.kwargs["usage_limits"].request_limit == 3
     assert fake_agent.run.await_args.kwargs["usage_limits"].total_tokens_limit == 1234
+    assert "Attachments present but not read:" not in fake_agent.run.await_args.args[0]
 
 
 @pytest.mark.asyncio
@@ -953,6 +954,7 @@ async def test_agent_trace_logs_structure_but_never_content(caplog):
             sender_user_id="opaque-person-id",
             email_subject=secrets["subject"],
             email_body=secrets["body"],
+            attachment_count=10_000,
         )
 
     assert result == secrets["reply"]
@@ -972,6 +974,11 @@ async def test_agent_trace_logs_structure_but_never_content(caplog):
     trace = next(event for event in events if event["event"] == "agent.model_trace")
     assert trace["part_kinds"] == ["thinking", "tool-call"]
     assert trace["tool_names"] == ["search"]
+    prompt = next(
+        event for event in events if event["event"] == "agent.prompt_constructed"
+    )
+    assert prompt["attachment_count"] == 100
+    assert "Attachments present but not read: 100" in fake_agent.run.await_args.args[0]
 
 
 def test_model_response_audit_logs_redacted_complete_parts(caplog, monkeypatch):

@@ -40,6 +40,7 @@ from thenetwork.audit import (
     audit_trace,
 )
 from thenetwork.db.session import get_session
+from thenetwork.email.inbound import MAX_ATTACHMENT_COUNT
 from thenetwork.llm_observability import (
     LLMWorkload,
     observe_agent_duration,
@@ -183,6 +184,7 @@ async def run_agent_for_email(
             body_chars=len(email_body),
         ),
     ):
+        attachment_count = max(0, min(attachment_count, MAX_ATTACHMENT_COUNT))
         deps = AgentDeps(
             sender_email=sender_email,
             sender_user_id=sender_user_id,
@@ -217,6 +219,11 @@ async def run_agent_for_email(
         sender_name_line = (
             f"From display name: {sender_display_name}\n" if sender_display_name else ""
         )
+        attachment_line = (
+            f"Attachments present but not read: {attachment_count}\n"
+            if attachment_count
+            else ""
+        )
         memory_context = load_recent_sender_memory_context(
             sender_user_id,
             session_factory=session_factory or get_session,
@@ -231,7 +238,9 @@ async def run_agent_for_email(
                 RECENT_MEMORY_CONTEXT_MAX_CHARS,
             ),
         )
-        inbound_message = f"{sender_name_line}Subject: {email_subject}\n\n{email_body}"
+        inbound_message = (
+            f"{sender_name_line}{attachment_line}Subject: {email_subject}\n\n{email_body}"
+        )
         user_message = (
             f"{memory_context.text}\n\n{inbound_message}"
             if memory_context.text
@@ -242,6 +251,7 @@ async def run_agent_for_email(
             sender_known=sender_user_id is not None,
             subject_chars=len(email_subject),
             body_chars=len(email_body),
+            attachment_count=attachment_count,
             recent_memory_gist_count=memory_context.gist_count,
             recent_memory_context_chars=len(memory_context.text),
             user_message_chars=len(user_message),
