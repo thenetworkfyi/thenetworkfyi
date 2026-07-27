@@ -8,7 +8,15 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
+import pydantic_ai.models as pydantic_ai_models
 from dotenv import dotenv_values
+
+# Default-deny every provider-backed model request in the test process. The
+# autouse fixture below opens this gate only for a test carrying live_model.
+# Cassette replay still traverses pydantic-ai's provider model classes before
+# its HTTP transport is intercepted, so replay tests must keep the live_model
+# marker even though replay itself performs no network request or paid call.
+pydantic_ai_models.ALLOW_MODEL_REQUESTS = False
 
 # The model settings are deliberately required (no defaults - see
 # thenetwork/settings.py), and thenetwork.worker.tasks reads Settings at import
@@ -34,6 +42,16 @@ TEST_DATABASE_URL = os.environ.get(
     "TEST_DATABASE_URL",
     "postgresql+psycopg://network:network@localhost:5432/test_thenetwork",
 )
+
+
+@pytest.fixture(autouse=True)
+def model_request_gate(request, monkeypatch):
+    """Allow provider models only for tests explicitly marked ``live_model``."""
+    monkeypatch.setattr(
+        pydantic_ai_models,
+        "ALLOW_MODEL_REQUESTS",
+        request.node.get_closest_marker("live_model") is not None,
+    )
 
 
 @pytest.fixture
