@@ -40,7 +40,7 @@ SENDER_IDENTIFIER_SECRET=long-random-server-secret
 PRIMARY_INTAKE_BURST_MONITORING_ENABLED=false # opt in; requires the secret above
 CONTENT_SCAN_ENABLED=false
 HF_TOKEN=                         # first enabled scanner startup only; omit after cache is populated
-SANITIZE_MODEL=openai/privacy-filter  # local span classifier; mandatory, no disable switch
+# SANITIZE_MODEL is deliberately absent: compose pins it to the image's baked weights
 RECENT_MEMORY_CONTEXT_MAX_COUNT=20  # newest sender-owned gists loaded into an agent run
 RECENT_MEMORY_CONTEXT_MAX_CHARS=4000 # total rendered user-role memory-context budget
 EVENT_MATCH_THRESHOLD=0.6         # independent event-to-person semantic relevance floor
@@ -213,22 +213,44 @@ scanner service.
 
 ## Gist sanitizer
 
-`SANITIZE_MODEL` (default `openai/privacy-filter`) is the single local span classifier
-behind `thenetwork/memory/sanitize.py`. It is Apache 2.0 and ungated, so it needs no
-Hugging Face token, and it runs locally, so no memory text leaves the host. Weights are
-roughly 2 GB and load once per process; `thenetwork-worker` calls
-`assert_sanitizer_ready()` at startup so a missing or unloadable model fails before the
-queue opens rather than at the first write. The first start on a fresh host downloads
-those weights into the same `hf-cache` volume the content scanner uses
-(`HF_HOME=/home/appuser/.cache/huggingface`); later restarts load from it. Unlike the
-scanner, this download is unconditional - a scanner-disabled deployment previously
-pulled no model at all and now pulls this one.
+`SANITIZE_MODEL` is the single local span classifier behind
+`thenetwork/memory/sanitize.py`. It is Apache 2.0 and ungated, so it needs no Hugging
+Face token, and it runs locally, so no memory text leaves the host. Weights load once
+per process; `thenetwork-worker` calls `assert_sanitizer_ready()` at startup so a
+missing or unloadable model fails before the queue opens rather than at the first write.
+
+**The weights are baked into the image, not downloaded at runtime.** The Dockerfile
+fetches the four files transformers actually loads (`config.json`,
+`model.safetensors`, `tokenizer.json`, `tokenizer_config.json`, ~2.7 GB) into
+`/opt/sanitizer-model` and sets `SANITIZE_MODEL` to that path, so a container start
+needs no network and cannot fail on a hub outage or rate limit. Sanitization is
+mandatory with no fallback, so a start that must reach the network before opening the
+queue is a start that can fail for reasons unrelated to the deployment.
+
+They deliberately do *not* go in `HF_HOME`. `hf-cache` is a named volume, and Docker
+seeds a named volume from the image only when the volume is empty - any deployment that
+already ran the content scanner has a populated `hf-cache` that would shadow the baked
+weights. `/opt` is outside every volume mount, so this holds on new and existing hosts
+alike.
+
+Consequences to expect: the worker image is ~2.7 GB larger, so the CI build and the
+first `docker compose pull worker` after this change move that much more data. The
+weights sit in their own layer above the dependency install and below `COPY thenetwork`,
+so ordinary code-only redeploys reuse the cached layer and pull nothing extra. Override
+the baked repo at build time with `--build-arg SANITIZE_MODEL_REPO=...`.
+
+The `settings.py` default stays the hub id (`openai/privacy-filter`) so a local
+`uv run` uses the developer's own Hugging Face cache; only the image pins a path.
 
 There is no setting that disables it and no fallback path - see `docs/security.md`
 layer 4 for the allow-list and `docs/design-decisions.md` for why the previous
 Presidio/spaCy + handle-regex + per-write-LLM stack was removed. `transformers` is a
-core dependency; `presidio-analyzer`, `spacy`, and `en_core_web_lg` are not (Presidio
-remains only in `thenetwork/security/log_redaction.py`, a separate concern).
+core dependency; `presidio-analyzer`, `spacy`, and `en_core_web_lg` are not dependencies
+of this project at all.
+
+`thenetwork/security/log_redaction.py` shares this classifier through
+`sanitize.classify_spans`, so the weights load once per process rather than twice.
+The two callers differ only in their allow-list - see "Response-log redaction" below.
 
 Tests that exercise the real weights are marked `integration` and `real_sanitizer`, so
 CI (`pytest -m "not integration"`) never downloads the model; everything else stubs the
@@ -242,25 +264,31 @@ debugging, but it must never contain raw model text, tool arguments, or provider
 The same fail-closed redactor is applied to foreign library/provider log records before they
 reach stderr or a JSONL audit sink.
 
-The redactor uses Presidio's broad English recognizers (including people, email addresses,
-phone numbers, locations, organizations, and credential-like values recognized by the
-installed registry) plus application-specific recognizers for:
+The redactor runs the same local span classifier the gist sanitizer uses, through
+`sanitize.classify_spans`, so both share one loaded copy of the weights. Only the policy
+differs: a gist is a search projection that deliberately keeps dates for perishability,
+while a diagnostic log has no recall requirement, so **every** label in the taxonomy is
+redacted here - `private_person`, `private_email`, `private_phone`, `private_address`,
+`private_url`, `private_date`, `account_number`, and `secret`. There is no pattern tier
+under it; the same reasoning as `docs/design-decisions.md`'s rejection of a regex
+backstop applies, and the classifier caught provider keys (`sk-ant-...`, `sk_live_...`),
+`password:` values, `trace_id=`/`user_...` identifiers, URLs, emails, names, and phone
+numbers in measurement.
 
-- email addresses;
-- introduction tokens;
-- URLs;
-- `api_key`, password, secret, and common provider-key forms; and
-- UUIDs and prefixed application identifiers such as `user_...`, `request_...`, and
-  `trace_...`.
+Coverage is a classifier's, so it is probabilistic rather than exhaustive. Two known
+gaps: an AWS-style `AKIA...` key and a bare `[intro:<uuid>]` token were not labelled in
+that measurement, so those pass through unredacted. Redaction is defense in depth for
+diagnostics, not a boundary anything is allowed to depend on - a log record is never
+safe input to another system, and audit records still require restricted access.
 
-Presidio is not a reason to treat a diagnostic artifact as safe input to another system. The
-response serializer never falls back to `repr()`. If Presidio, serialization, or a recognizer
-call fails, every affected string is replaced with `[redaction-unavailable]`; the record's safe
-structure is retained where possible.
+The response serializer never falls back to `repr()`. If the classifier, serialization,
+or a redaction call fails, every affected string is replaced with
+`[redaction-unavailable]`; the record's safe structure is retained where possible.
 
 Set `RESPONSE_LOG_REDACTION_SECRET` to a long, random, server-side value when operators need
-to correlate repeated URLs, tokens, secrets, or application identifiers across redacted
-records. It produces HMAC-based `log_v1_...` pseudonyms. Keep the key outside the repository,
+to correlate repeated URLs, secrets, or application identifiers across redacted records -
+the three types whose repetition is itself the diagnostic signal. Everything else,
+including names, gets a flat placeholder. It produces HMAC-based `log_v1_...` pseudonyms. Keep the key outside the repository,
 restrict it to the worker identity, and rotate it deliberately: rotation breaks cross-key
 correlation but does not reveal prior values. Leaving it unset still redacts data, but uses
 non-correlatable type placeholders. Do not reuse `SENDER_IDENTIFIER_SECRET`, and do not use a

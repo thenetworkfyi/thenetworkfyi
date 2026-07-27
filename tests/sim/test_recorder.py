@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import mailbox
+import re
 from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 from email import policy
@@ -27,7 +28,6 @@ from thenetwork.db.models import (
     Person,
 )
 from thenetwork.email.outbound import send_proxy_introduction, send_relay_email
-from thenetwork.security import log_redaction
 from thenetwork.security.sender_identifier import optional_sender_identifier
 from thenetwork.sim.cli import main, run_sim
 from thenetwork.sim.scoring.compare import compare_runs, load_run_metrics
@@ -69,14 +69,54 @@ class ScriptedTinyPerson:
         return {"content": self.body}
 
 
-class AliceAnalyzer:
-    def analyze(self, *, text, language):
-        start = text.find("Alice")
-        return (
-            [SimpleNamespace(start=start, end=start + 5, entity_type="PERSON")]
-            if start >= 0
-            else []
-        )
+# Deterministic stand-in for the local span classifier the redactor runs on.
+#
+# The real weights are a multi-gigabyte download and CI runs
+# `pytest -m "not integration"`, so no test in this module may load them. These
+# patterns produce spans shaped exactly like the pipeline's output, with the
+# labels the real model assigned to these same strings; the redactor's own
+# behavior against real weights is pinned by tests/test_log_redaction.py's
+# `real_sanitizer` tier.
+_FAKE_SPAN_PATTERNS = (
+    (re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"), "private_email"),
+    (re.compile(r"https?://\S+"), "private_url"),
+    (re.compile(r"\bsk[-_][A-Za-z0-9_-]{4,}"), "secret"),
+    (
+        re.compile(r"\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b"),
+        "account_number",
+    ),
+    # The real model recognizes given names generically; a stub cannot, so the
+    # persona names these tests assert on are listed explicitly.
+    (
+        re.compile(
+            r"\b(?:Alice(?: Example| Shah)?|Bob(?: Lee)?|Petra|Private Persona Name)\b"
+        ),
+        "private_person",
+    ),
+)
+
+
+def fake_classify(text: str) -> list[dict]:
+    spans = [
+        {
+            "entity_group": label,
+            "start": match.start(),
+            "end": match.end(),
+            "score": 0.99,
+        }
+        for pattern, label in _FAKE_SPAN_PATTERNS
+        for match in pattern.finditer(text)
+    ]
+    spans.sort(key=lambda span: (span["start"], span["end"]))
+    return spans
+
+
+@pytest.fixture(autouse=True)
+def _stub_span_classifier(monkeypatch):
+    """Keep every test in this module off the real sanitizer weights."""
+    from thenetwork.memory import sanitize as sanitize_mod
+
+    monkeypatch.setattr(sanitize_mod, "_get_privacy_filter", lambda: fake_classify)
 
 
 @pytest.mark.asyncio
@@ -124,7 +164,6 @@ async def test_run_recorder_writes_config_mbox_transcript_and_events(tmp_path):
 async def test_public_simulation_artifacts_redact_content_and_keep_raw_mail_private(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setattr(log_redaction, "_get_log_analyzer", lambda: AliceAnalyzer())
     persona = PersonaConfig(
         name="Alice",
         email="alice@example.test",
@@ -559,7 +598,6 @@ def test_public_simulation_mbox_redacts_both_alternatives_and_keeps_safe_order(
 
 @pytest.mark.asyncio
 async def test_simulation_exception_text_is_redacted(tmp_path, monkeypatch):
-    monkeypatch.setattr(log_redaction, "_get_log_analyzer", lambda: AliceAnalyzer())
     persona = PersonaConfig(
         name="Alice",
         email="alice@example.test",
@@ -1513,11 +1551,11 @@ def test_runtime_provenance_hashes_only_static_prompt_templates(tmp_path):
 def test_static_prompt_hashes_survive_recognizer_false_positives(tmp_path) -> None:
     """A digest must round-trip whatever hex the current prompt text produces.
 
-    Presidio's pattern recognizers can match an identifier-shaped run inside a
-    random hex digest, which would silently corrupt the provenance anchor tying
-    a run to the prompt that produced it. This digest is a known false-positive
-    trigger, so it pins the exemption rather than relying on the live prompt
-    hashing to something Presidio happens to ignore.
+    The span classifier can label an identifier-shaped run inside a random hex
+    digest, which would silently corrupt the provenance anchor tying a run to
+    the prompt that produced it. This digest is a known false-positive trigger,
+    so it pins the exemption rather than relying on the live prompt hashing to
+    something the classifier happens to ignore.
     """
     path = tmp_path / "config.json"
     tripping_digest = "1f77f6528ed8d4472abdd2396d89c421edeff6dddee2659374eaad6d69edf213"

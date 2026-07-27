@@ -1,9 +1,13 @@
 """Fail-closed redaction for structured data that may be written to logs.
 
-This is deliberately separate from :mod:`thenetwork.memory.sanitize`.  Memory
-gists are a search projection with narrowly chosen replacements; diagnostic
-model-response logs instead need to remove every potentially identifying or
-credential-bearing string before it leaves process memory.
+The same local span classifier that produces memory gists
+(:mod:`thenetwork.memory.sanitize`) does the labelling here; only the policy
+differs. A gist is a search projection that deliberately keeps dates, places,
+and organizations for recall, whereas a diagnostic model-response log has no
+recall requirement and should shed every identifying or credential-bearing
+string it can before it leaves process memory. So this module keeps its own,
+broader allow-list over the same taxonomy - and, unlike the gist path, it
+pseudonymizes rather than flattens the types operators correlate on.
 """
 
 from __future__ import annotations
@@ -11,10 +15,8 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
-import re
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, is_dataclass
-from functools import lru_cache
 from typing import Any
 
 
@@ -22,102 +24,31 @@ _PSEUDONYM_CONTEXT = b"thenetwork.log_redaction.v1\0"
 _PSEUDONYM_BYTES = 12
 _FAIL_CLOSED = "[redaction-unavailable]"
 
-# These patterns cover values which are often missed by general NER models but
-# are particularly unsafe in a full model trace.  They are also registered as
-# Presidio recognizers below; keeping local spans makes the guarantee explicit
-# when a test double or a future Presidio model does not return them.
-_CUSTOM_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    (
-        "EMAIL_ADDRESS",
-        re.compile(r"(?<![\w.+-])[\w.+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+(?![\w.-])"),
-    ),
-    (
-        "INTRO_TOKEN",
-        re.compile(r"\[intro:[0-9a-f]{8}-[0-9a-f-]{27,}\]", re.I),
-    ),
-    (
-        "URL",
-        re.compile(r"\bhttps?://[^\s<>'\"]+", re.I),
-    ),
-    (
-        "SECRET",
-        re.compile(
-            r"(?i)\b(?:api[_-]?key|access[_-]?token|auth[_-]?token|"
-            r"password|secret)\s*[:=]\s*(?:['\"])?[^\s,'\"}\]]+"
-        ),
-    ),
-    ("SECRET", re.compile(r"\b(?:sk|rk|pk)_[A-Za-z0-9_-]{16,}\b")),
-    ("SECRET", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
-    (
-        "APPLICATION_IDENTIFIER",
-        re.compile(
-            r"\b(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-"
-            r"[0-9a-f]{4}-[0-9a-f]{12})\b",
-            re.I,
-        ),
-    ),
-    (
-        "APPLICATION_IDENTIFIER",
-        re.compile(
-            r"\b(?:user|usr|person|memory|mem|message|msg|thread|request|"
-            r"run|trace|conversation|conv)_[A-Za-z0-9][A-Za-z0-9_-]{5,}\b",
-            re.I,
-        ),
-    ),
-)
+# Classifier label -> the entity type this module reports.
+#
+# Every label in the taxonomy is redacted here, including `private_date`, which
+# the gist path deliberately keeps. A log line has no perishability signal to
+# preserve, and a date beside a name is a quasi-identifier.
+_ENTITY_TYPES = {
+    "private_person": "PERSON",
+    "private_email": "EMAIL_ADDRESS",
+    "private_phone": "PHONE_NUMBER",
+    "private_address": "LOCATION",
+    "private_url": "URL",
+    "private_date": "DATE_TIME",
+    "account_number": "APPLICATION_IDENTIFIER",
+    "secret": "SECRET",
+}
 
-_STABLE_ENTITY_TYPES = frozenset(
-    {"APPLICATION_IDENTIFIER", "INTRO_TOKEN", "SECRET", "URL"}
-)
+# Types that get a keyed pseudonym instead of a bare placeholder, so operators
+# can correlate a repeated token across records without it being reversible.
+# Values here are machine identifiers whose repetition is the diagnostic
+# signal; a person's name is not, and gets a flat placeholder.
+_STABLE_ENTITY_TYPES = frozenset({"APPLICATION_IDENTIFIER", "SECRET", "URL"})
 
 
 class LogRedactionError(RuntimeError):
     """Raised internally when the log redactor cannot safely initialize."""
-
-
-def _pattern_recognizers() -> list[object]:
-    """Build Presidio recognizers for values absent from its stock registry."""
-    try:
-        from presidio_analyzer import Pattern, PatternRecognizer
-    except ImportError as exc:  # pragma: no cover - exercised via initializer
-        raise LogRedactionError(
-            "presidio-analyzer is required for log redaction"
-        ) from exc
-
-    return [
-        PatternRecognizer(
-            supported_entity=entity_type,
-            patterns=[
-                Pattern(
-                    name=f"thenetwork_{entity_type.lower()}",
-                    regex=pattern.pattern,
-                    score=0.9,
-                )
-            ],
-        )
-        for entity_type, pattern in _CUSTOM_PATTERNS
-    ]
-
-
-@lru_cache(maxsize=1)
-def _get_log_analyzer() -> object:
-    """Create the broad Presidio analyzer used only for diagnostic logging."""
-    try:
-        from presidio_analyzer import AnalyzerEngine
-    except ImportError as exc:
-        raise LogRedactionError(
-            "presidio-analyzer is required for log redaction"
-        ) from exc
-
-    try:
-        analyzer = AnalyzerEngine()
-        for recognizer in _pattern_recognizers():
-            analyzer.registry.add_recognizer(recognizer)
-        return analyzer
-    except LogRedactionError:
-        raise
-    except Exception as exc:
-        raise LogRedactionError("Presidio log redactor could not initialize") from exc
 
 
 def _pseudonym(value: str, entity_type: str, secret: str | bytes | None) -> str:
@@ -150,35 +81,32 @@ def _replacement(value: str, entity_type: str, secret: str | bytes | None) -> st
     return f"[{normalized.lower()}]"
 
 
-def _spans(text: str, analyzer: object) -> list[tuple[int, int, str]]:
-    """Return the union of broad Presidio and local custom-recognizer spans."""
-    try:
-        results = analyzer.analyze(text=text, language="en")  # type: ignore[attr-defined]
-    except Exception as exc:
-        raise LogRedactionError("Presidio log redaction failed") from exc
+def _spans(text: str) -> list[tuple[int, int, str]]:
+    """Return classifier spans for this module's allow-list, as entity types."""
+    from thenetwork.memory.sanitize import classify_spans
 
-    found: list[tuple[int, int, str]] = []
-    for result in results:
-        start, end = int(result.start), int(result.end)
-        if 0 <= start < end <= len(text):
-            found.append((start, end, str(result.entity_type).upper()))
-    for entity_type, pattern in _CUSTOM_PATTERNS:
-        found.extend(
-            (match.start(), match.end(), entity_type)
-            for match in pattern.finditer(text)
-        )
-    return found
+    try:
+        merged = classify_spans(text, _ENTITY_TYPES)
+    except Exception as exc:
+        raise LogRedactionError("log redaction classifier failed") from exc
+
+    return [
+        (start, end, _ENTITY_TYPES[label])
+        for start, end, label in merged
+        if 0 <= start < end <= len(text)
+    ]
 
 
 def redact_text(value: str, *, pseudonym_secret: str | bytes | None = None) -> str:
-    """Redact a single untrusted string with broad Presidio coverage.
+    """Redact a single untrusted string.
 
     Overlapping detections are coalesced before replacement so no fragment of a
-    longer sensitive match can survive merely because another recognizer found
-    an inner span first.
+    longer sensitive match can survive merely because another span covered an
+    inner range first.
     """
-    analyzer = _get_log_analyzer()
-    spans = _spans(value, analyzer)
+    if not value.strip():
+        return value
+    spans = _spans(value)
     if not spans:
         return value
 

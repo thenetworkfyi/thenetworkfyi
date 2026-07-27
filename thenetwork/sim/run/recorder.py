@@ -175,7 +175,7 @@ def _restore_static_prompt_hashes(
     """Keep prompt provenance digests intact despite PII recognizer false positives.
 
     A SHA-256 hex digest is fixed-shape, content-free, and one-way, but its
-    random hex can incidentally match a Presidio pattern recognizer (an
+    random hex can incidentally be labelled by the span classifier (an
     identifier-shaped run of letters and digits), which silently corrupts the
     provenance anchor tying a run to the prompt text that produced it. Only a
     value that is exactly 64 lowercase hex characters is restored, so nothing
