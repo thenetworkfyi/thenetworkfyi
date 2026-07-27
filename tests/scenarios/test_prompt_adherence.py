@@ -1,37 +1,53 @@
-"""Per-commitment adherence harness for SYSTEM_PROMPT's judgment-notes bullets.
+"""Per-commitment adherence harness for the judgment-notes bullets.
 
-`tests/test_prompts.py` proves each judgment-notes commitment is PRESENT in
-`SYSTEM_PROMPT`'s text; it says nothing about whether the model actually FOLLOWS
-one under realistic pressure. This module is that instrument: one
-`pydantic_evals.Case` per commitment (reusing `tests/scenarios/test_live_archetypes.py`'s
-dataset where a case already exercises a commitment, adding a case here where none
-does), each scoring an observable action - a tool call, a reply's shape, a
-memory's contents - never prompt-text presence.
+`tests/test_prompts.py` proves each judgment-notes commitment is PRESENT in the
+mode prompt that should carry it; it says nothing about whether the model
+actually FOLLOWS one under realistic pressure. This module is that instrument:
+one `pydantic_evals.Case` per commitment (reusing
+`tests/scenarios/test_live_archetypes.py`'s dataset where a case already
+exercises a commitment, adding a case here where none does), each scoring an
+observable action - a tool call, a reply's shape, a memory's contents - never
+prompt-text presence.
 
-Two offline, fast tests guard the harness's own shape and always run under
+There is no flat prompt to measure any more. `prompts.SYSTEM_PROMPTS` holds one
+assembled prompt per run mode, and each case reaches its mode the same way
+production does: `run_scenario` selects the mode from the scenario's
+authenticated/known/proactive shape, so a proactive case is scored against the
+trigger prompt and its narrower tool set, not against a superset.
+
+Three offline, fast tests guard the harness's own shape and always run under
 `pytest -m "not integration"`:
   - every bullet in `prompts.JUDGMENT_BULLETS` maps to exactly one
     `Commitment` here, matched by the bullet's stable slug, so neither
     reordering nor rewording a bullet breaks the mapping - only adding,
     splitting, or deleting one does, which is exactly the drift this guards
     against;
-  - every `Commitment` names at least one real, collected `Case`.
+  - every `Commitment` names at least one real, collected `Case`;
+  - the scoring and comparison helpers behave against fake report/record
+    shapes.
 
-The actual measurement - `test_prompt_adherence_baseline` - calls the real
+The actual measurement - `test_prompt_adherence_measurement` - calls the real
 configured `AGENT_MODEL`/`TEST_LLM_JUDGE_MODEL` the same way
 `test_live_archetypes.py` does: marked `integration` + `live_model`, skipped
 without credentials, DB/outbound mail mocked. Run it deliberately:
 
-    uv run pytest -m live_model tests/scenarios/test_prompt_adherence.py::test_prompt_adherence_baseline
+    uv run pytest -m live_model tests/scenarios/test_prompt_adherence.py::test_prompt_adherence_measurement
 
-A successful run overwrites the committed baseline at `BASELINE_PATH` with the
-per-commitment pass rate, the model, and the commit it was measured on, so
-later prompt-restructuring tasks in this chain have something to diff against.
+`BASELINE_PATH` (`docs/prompt-adherence-baseline.json`) is the immutable
+flat-prompt reference measured before this chain started - a run never
+overwrites it, because a comparison needs a fixed reference point. Each run
+appends a record to `MEASUREMENTS_PATH`
+(`docs/prompt-adherence-measurements.json`) carrying the per-commitment rate,
+the model, the commit, and the per-commitment comparison against the baseline.
+Commitments that did not exist at the baseline - the bullets this chain split
+into interactive and proactive variants - are recorded as
+`new_since_baseline` rather than being scored as a regression from zero.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -39,8 +55,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.retries import RetryConfig
 from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext, LLMJudge
+from tenacity import retry_if_exception, stop_after_attempt, wait_exponential_jitter
 
 from thenetwork.agent.prompts import JUDGMENT_BULLETS
 from thenetwork.settings import get_settings
@@ -58,9 +77,43 @@ from tests.scenarios.test_live_archetypes import (
     run_scenario,
 )
 
-BASELINE_PATH = (
-    Path(__file__).resolve().parents[2] / "docs" / "prompt-adherence-baseline.json"
+_DOCS = Path(__file__).resolve().parents[2] / "docs"
+
+#: The flat-prompt reference. Read, never written - a comparison needs a fixed
+#: point, and re-measuring the flat prompt is impossible now that it is gone.
+BASELINE_PATH = _DOCS / "prompt-adherence-baseline.json"
+
+#: Append-only log of later measurements, newest last.
+MEASUREMENTS_PATH = _DOCS / "prompt-adherence-measurements.json"
+
+#: `Dataset.evaluate` is unbounded by default, which fires all 32 cases - each a
+#: multi-turn agent run plus a judge call - at the provider simultaneously. A
+#: measurement that dies on rate limiting is not a measurement, and silently
+#: scoring the throttled cases as failures would be worse: it would read as an
+#: adherence regression.
+MEASUREMENT_MAX_CONCURRENCY = int(
+    os.environ.get("PROMPT_ADHERENCE_MAX_CONCURRENCY", "4")
 )
+
+
+def _retry_on_rate_limit() -> RetryConfig:
+    """Retry a whole case when the provider throttles it.
+
+    Concurrency alone does not solve this. A measured run at concurrency 2
+    still drew 89 HTTP 429s, because the limit is on the key, not on how
+    politely this process paces itself - so the answer is to wait out the
+    throttle rather than to keep shrinking the batch and paying for it in wall
+    time. Only 429 is retried: any other model error is a real failure that
+    should surface, not be papered over by five more attempts.
+    """
+    return RetryConfig(
+        retry=retry_if_exception(
+            lambda exc: isinstance(exc, ModelHTTPError) and exc.status_code == 429
+        ),
+        wait=wait_exponential_jitter(initial=2, max=60),
+        stop=stop_after_attempt(6),
+        reraise=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -592,6 +645,17 @@ def compute_commitment_adherence(report: Any) -> dict[str, float]:
 
 
 def _current_commit_sha() -> str:
+    """The commit this measurement describes.
+
+    `PROMPT_ADHERENCE_COMMIT` wins when set. A measurement is often run in an
+    isolated box that holds a synced checkout but no `.git` directory, so
+    `git rev-parse` there fails outright; the caller knows the commit and
+    passes it in. Recording an unknown or wrong commit would make the record
+    undiffable, which is the whole point of keeping one.
+    """
+    supplied = os.environ.get("PROMPT_ADHERENCE_COMMIT", "").strip()
+    if supplied:
+        return supplied
     result = subprocess.run(
         ["git", "rev-parse", "HEAD"],
         capture_output=True,
@@ -602,25 +666,127 @@ def _current_commit_sha() -> str:
     return result.stdout.strip()
 
 
-def write_baseline(
-    path: Path, rates: dict[str, float], *, model: str, commit: str
+def load_baseline(path: Path = BASELINE_PATH) -> dict[str, Any]:
+    return json.loads(path.read_text())
+
+
+def compare_to_baseline(
+    rates: dict[str, float], baseline: dict[str, Any]
+) -> dict[str, dict[str, Any]]:
+    """Per-commitment delta of `rates` against a recorded baseline payload.
+
+    Every commitment gets an entry with an explicit `status`, so a null result
+    is reported as such rather than inferred from a missing key:
+
+      - `measured` - the commitment existed at the baseline; `delta` is
+        `current - baseline`, and `0.0` is a real, reportable null result.
+      - `new_since_baseline` - the commitment has no baseline counterpart, so
+        `delta` is `None`. Scoring it as a rise from zero would be a fiction:
+        the bullet did not exist to be followed.
+      - `dropped_since_baseline` - the baseline scored a commitment this
+        harness no longer maps. Kept so a deletion stays visible in the record
+        instead of silently shrinking the comparison.
+    """
+    baseline_rates = {
+        slug: entry["rate"] for slug, entry in baseline["commitments"].items()
+    }
+    comparison: dict[str, dict[str, Any]] = {}
+    for slug, rate in rates.items():
+        if slug in baseline_rates:
+            comparison[slug] = {
+                "status": "measured",
+                "baseline": baseline_rates[slug],
+                "current": rate,
+                "delta": rate - baseline_rates[slug],
+            }
+        else:
+            comparison[slug] = {
+                "status": "new_since_baseline",
+                "baseline": None,
+                "current": rate,
+                "delta": None,
+            }
+    for slug, baseline_rate in baseline_rates.items():
+        if slug not in rates:
+            comparison[slug] = {
+                "status": "dropped_since_baseline",
+                "baseline": baseline_rate,
+                "current": None,
+                "delta": None,
+            }
+    return comparison
+
+
+def build_measurement(
+    rates: dict[str, float], *, model: str, commit: str, baseline: dict[str, Any]
 ) -> dict[str, Any]:
-    payload = {
+    # Score the full commitment set, so a case missing from a partial report
+    # lands as an explicit 0.0 rather than dropping out of the record.
+    full_rates = {
+        commitment.slug: rates.get(commitment.slug, 0.0) for commitment in COMMITMENTS
+    }
+    comparison = compare_to_baseline(full_rates, baseline)
+    measured = [
+        entry["delta"] for entry in comparison.values() if entry["status"] == "measured"
+    ]
+    return {
         "model": model,
         "commit": commit,
         "measured_at": datetime.now(timezone.utc).isoformat(),
-        "overall_rate": (sum(rates.values()) / len(rates)) if rates else 0.0,
+        "prompt_shape": "per_mode",
+        "overall_rate": (
+            (sum(full_rates.values()) / len(full_rates)) if full_rates else 0.0
+        ),
+        "baseline_commit": baseline["commit"],
+        # Averaged over the commitments the baseline actually scored, so the
+        # split variants added by this chain cannot flatter or drag the delta.
+        "overall_delta_vs_baseline": (
+            sum(measured) / len(measured) if measured else None
+        ),
         "commitments": {
             commitment.slug: {
                 "prefix": commitment.prefix,
                 "cases": list(commitment.case_names),
                 "rate": rates.get(commitment.slug, 0.0),
+                **comparison[commitment.slug],
             }
             for commitment in COMMITMENTS
         },
+        "dropped_since_baseline": sorted(
+            slug
+            for slug, entry in comparison.items()
+            if entry["status"] == "dropped_since_baseline"
+        ),
     }
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-    return payload
+
+
+def record_measurement(path: Path, measurement: dict[str, Any]) -> list[Any]:
+    """Append `measurement` to the newest-last measurement log at `path`."""
+    records = json.loads(path.read_text()) if path.exists() else []
+    records.append(measurement)
+    path.write_text(json.dumps(records, indent=2, sort_keys=True) + "\n")
+    return records
+
+
+def format_comparison(measurement: dict[str, Any]) -> str:
+    """Human-readable per-commitment comparison, printed by the live run."""
+    lines = [
+        f"prompt adherence: {measurement['model']} @ {measurement['commit'][:12]}",
+        f"  overall {measurement['overall_rate']:.3f} "
+        f"(baseline {measurement['baseline_commit'][:12]}, "
+        f"mean delta {measurement['overall_delta_vs_baseline']})",
+    ]
+    for slug, entry in sorted(measurement["commitments"].items()):
+        if entry["status"] == "measured":
+            lines.append(
+                f"  {slug:<42} {entry['baseline']:.3f} -> "
+                f"{entry['current']:.3f} ({entry['delta']:+.3f})"
+            )
+        else:
+            lines.append(f"  {slug:<42} {entry['status']}: {entry['current']:.3f}")
+    for slug in measurement["dropped_since_baseline"]:
+        lines.append(f"  {slug:<42} dropped since baseline")
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -633,8 +799,7 @@ def test_every_judgment_bullet_has_exactly_one_mapped_commitment() -> None:
     commitment_slugs = [commitment.slug for commitment in COMMITMENTS]
 
     assert len(commitment_slugs) == len(set(commitment_slugs)), (
-        "two Commitments share a slug - each judgment-notes bullet gets "
-        "exactly one."
+        "two Commitments share a slug - each judgment-notes bullet gets exactly one."
     )
     assert set(commitment_slugs) == set(bullets_by_slug), (
         "prompts.JUDGMENT_BULLETS and COMMITMENTS have drifted - update "
@@ -692,6 +857,98 @@ def test_compute_commitment_adherence_averages_case_assertions() -> None:
     assert rates["links"] == 0.0
 
 
+_FAKE_BASELINE: dict[str, Any] = {
+    "commit": "0" * 40,
+    "commitments": {
+        "kept_flat": {"rate": 0.5},
+        "kept_risen": {"rate": 0.25},
+        "gone": {"rate": 1.0},
+    },
+}
+
+
+def test_compare_to_baseline_labels_flat_new_and_dropped_commitments() -> None:
+    comparison = compare_to_baseline(
+        {"kept_flat": 0.5, "kept_risen": 0.75, "added_later": 0.9},
+        _FAKE_BASELINE,
+    )
+
+    # A null result is reported as a measured zero delta, not as a missing key.
+    assert comparison["kept_flat"] == {
+        "status": "measured",
+        "baseline": 0.5,
+        "current": 0.5,
+        "delta": 0.0,
+    }
+    assert comparison["kept_risen"]["delta"] == pytest.approx(0.5)
+
+    # A commitment that did not exist at the baseline is never scored as a
+    # rise from zero - the bullet was not there to be followed.
+    assert comparison["added_later"]["status"] == "new_since_baseline"
+    assert comparison["added_later"]["baseline"] is None
+    assert comparison["added_later"]["delta"] is None
+
+    assert comparison["gone"]["status"] == "dropped_since_baseline"
+    assert comparison["gone"]["current"] is None
+
+
+def test_build_measurement_averages_the_delta_over_baseline_commitments_only() -> None:
+    measurement = build_measurement(
+        {slug: 1.0 for slug in (c.slug for c in COMMITMENTS)},
+        model="test:model",
+        commit="1" * 40,
+        baseline=_FAKE_BASELINE,
+    )
+    # Only `kept_flat`/`kept_risen`/`gone` exist in the fake baseline, and none
+    # of them is a real commitment slug, so nothing is comparable and the mean
+    # delta is explicitly null rather than a misleading 0.0.
+    assert measurement["overall_delta_vs_baseline"] is None
+    assert measurement["dropped_since_baseline"] == ["gone", "kept_flat", "kept_risen"]
+    assert measurement["prompt_shape"] == "per_mode"
+    assert measurement["baseline_commit"] == _FAKE_BASELINE["commit"]
+    assert all(
+        entry["status"] == "new_since_baseline"
+        for entry in measurement["commitments"].values()
+    )
+
+
+def test_record_measurement_appends_and_never_targets_the_baseline(
+    tmp_path: Path,
+) -> None:
+    assert MEASUREMENTS_PATH != BASELINE_PATH, (
+        "the flat-prompt baseline is the fixed reference point; a run records "
+        "a second measurement beside it rather than overwriting it."
+    )
+
+    path = tmp_path / "measurements.json"
+    first = build_measurement({}, model="m", commit="a" * 40, baseline=_FAKE_BASELINE)
+    second = build_measurement({}, model="m", commit="b" * 40, baseline=_FAKE_BASELINE)
+    record_measurement(path, first)
+    records = record_measurement(path, second)
+
+    assert [record["commit"] for record in records] == ["a" * 40, "b" * 40]
+    assert json.loads(path.read_text()) == records
+
+
+def test_the_committed_baseline_is_readable_and_predates_the_split_bullets() -> None:
+    baseline = load_baseline()
+    recorded = set(baseline["commitments"])
+    current = {commitment.slug for commitment in COMMITMENTS}
+
+    assert recorded, "the flat-prompt baseline must stay in the repository"
+    assert recorded <= current, (
+        "the baseline scores commitments this harness no longer maps: "
+        f"{sorted(recorded - current)}"
+    )
+    # The two commitments the baseline measured at 0.0 are the ones the live
+    # comparison is required to call out, so they must still be comparable.
+    for slug in (
+        "progressive_qualification_memory",
+        "sender_owned_evidence_memory_ids",
+    ):
+        assert baseline["commitments"][slug]["rate"] == 0.0
+
+
 # ---------------------------------------------------------------------------
 # The live measurement
 # ---------------------------------------------------------------------------
@@ -700,24 +957,48 @@ def test_compute_commitment_adherence_averages_case_assertions() -> None:
 @pytest.mark.integration
 @pytest.mark.live_model
 @pytest.mark.asyncio
-async def test_prompt_adherence_baseline() -> None:
+async def test_prompt_adherence_measurement() -> None:
     """Measure per-commitment adherence against the real AGENT_MODEL.
 
-    Run deliberately - this overwrites the committed baseline at
-    `BASELINE_PATH` so later prompt-restructuring tasks have something to
-    diff against:
+    Run deliberately - this appends a record to `MEASUREMENTS_PATH` and prints
+    the per-commitment comparison against the immutable flat-prompt baseline:
 
-        uv run pytest -m live_model \
-            tests/scenarios/test_prompt_adherence.py::test_prompt_adherence_baseline
+        uv run pytest -s -m live_model \
+            tests/scenarios/test_prompt_adherence.py::test_prompt_adherence_measurement
+
+    Use the model recorded in the baseline, or the comparison is measuring two
+    models rather than two prompt shapes.
     """
     _skip_without_credentials()
     settings = get_settings()
-    report = await adherence_dataset.evaluate(run_scenario)
+    baseline = load_baseline()
+    report = await adherence_dataset.evaluate(
+        run_scenario,
+        max_concurrency=MEASUREMENT_MAX_CONCURRENCY,
+        retry_task=_retry_on_rate_limit(),
+        retry_evaluators=_retry_on_rate_limit(),
+    )
+
+    # A case whose task raised never produced an observable action, so its
+    # commitments would score 0.0 - indistinguishable in the record from a
+    # model that ignored the bullet. Refuse to record a run that lost cases
+    # to provider errors rather than publishing a fake regression.
+    failures = getattr(report, "failures", [])
+    assert not failures, (
+        f"{len(failures)} of {len(adherence_dataset.cases)} cases failed to "
+        "run, so this is not a measurement. Re-run it; if the cause is "
+        "provider rate limiting, lower PROMPT_ADHERENCE_MAX_CONCURRENCY "
+        f"(currently {MEASUREMENT_MAX_CONCURRENCY}). Failed cases: "
+        f"{sorted(getattr(f, 'name', '?') for f in failures)}"
+    )
+
     rates = compute_commitment_adherence(report)
-    payload = write_baseline(
-        BASELINE_PATH,
+    measurement = build_measurement(
         rates,
         model=settings.agent_model,
         commit=_current_commit_sha(),
+        baseline=baseline,
     )
-    assert payload["commitments"].keys() == {c.slug for c in COMMITMENTS}
+    record_measurement(MEASUREMENTS_PATH, measurement)
+    print("\n" + format_comparison(measurement))
+    assert measurement["commitments"].keys() == {c.slug for c in COMMITMENTS}
