@@ -80,7 +80,7 @@ class ScriptedTinyPerson:
 _FAKE_SPAN_PATTERNS = (
     (re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"), "private_email"),
     (re.compile(r"https?://\S+"), "private_url"),
-    (re.compile(r"\bsk[-_][A-Za-z0-9_-]{4,}"), "secret"),
+    (re.compile(r"\b\d{3}-\d{3}-\d{4}\b"), "private_phone"),
     (
         re.compile(r"\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b"),
         "account_number",
@@ -167,7 +167,7 @@ async def test_public_simulation_artifacts_redact_content_and_keep_raw_mail_priv
     persona = PersonaConfig(
         name="Alice",
         email="alice@example.test",
-        goal="Alice uses https://example.test/path with api_key=sk_abcdefghijklmnopq",
+        goal="Alice uses https://example.test/path and 415-555-0199",
         stop_condition="Wait for a match.",
         agent_address="join@example.test",
     )
@@ -194,7 +194,7 @@ async def test_public_simulation_artifacts_redact_content_and_keep_raw_mail_priv
         "Alice",
         "alice@example.test",
         "https://example.test/path",
-        "sk_abcdefghijklmnopq",
+        "415-555-0199",
     ):
         assert sensitive not in public_artifacts
         assert sensitive in artifacts.raw_mbox_path.read_text(encoding="utf-8")
@@ -460,7 +460,7 @@ def test_public_simulation_mbox_redacts_untrusted_headers_and_envelope(tmp_path)
     message["Message-ID"] = source_message_id
     message["In-Reply-To"] = source_reply_id
     message["References"] = f"{source_message_id} {source_reply_id}"
-    message["X-Client-Secret"] = "api_key=sk_abcdefghijklmnopq"
+    message["X-Contact"] = "415-555-0199"
     message["X-Custom"] = "https://example.test/alice@example.test"
     message.set_content("Safe body")
     message.add_attachment(
@@ -494,13 +494,13 @@ def test_public_simulation_mbox_redacts_untrusted_headers_and_envelope(tmp_path)
         "cbx-dl-71004e9f-install-content-scanner-a5839631",
         "trace_123456",
         "attachment_123456",
-        "sk_abcdefghijklmnopq",
+        "415-555-0199",
         "https://example.test/alice@example.test",
         "Safe body",
     ):
         assert sensitive not in public_artifact
     assert "From MAILER-DAEMON" in public_artifact
-    assert "X-Client-Secret:" in public_artifact
+    assert "X-Contact:" in public_artifact
     assert "[redacted-text chars=10]" in public_artifact
 
 
@@ -607,9 +607,7 @@ async def test_simulation_exception_text_is_redacted(tmp_path, monkeypatch):
     )
 
     async def failing_process(**_kwargs):
-        raise RuntimeError(
-            "Alice exposed https://example.test/path with api_key=sk_abcdefghijklmnopq"
-        )
+        raise RuntimeError("Alice exposed https://example.test/path and 415-555-0199")
 
     artifacts = await SimRunRecorder(runs_dir=tmp_path).run(
         (TinyPersonEmailAdapter(ScriptedTinyPerson("Hello"), persona),),
@@ -626,7 +624,7 @@ async def test_simulation_exception_text_is_redacted(tmp_path, monkeypatch):
     assert '"error_type": "RuntimeError"' in events
     assert "Alice" not in events
     assert "https://example.test/path" not in events
-    assert "sk_abcdefghijklmnopq" not in events
+    assert "415-555-0199" not in events
 
 
 @pytest.mark.asyncio

@@ -188,7 +188,7 @@ column." Instead:
 4. **The sanitizer is a separate, narrowly-scoped step**
    (`thenetwork/memory/sanitize.py`) - one mandatory local span classifier
    (`openai/privacy-filter`) redacts names, email addresses, phone numbers, addresses,
-   profile URLs, account numbers, and secrets, while keeping dates, organizations, and
+   profile URLs, and account numbers, while keeping dates, organizations, and
    locations for search recall. There is no pattern tier, no per-write model call, and
    no setting that disables it: a model that cannot load is a deployment error, not a
    silent downgrade. The component that sees raw cross-user data stays small and

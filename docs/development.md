@@ -267,27 +267,24 @@ reach stderr or a JSONL audit sink.
 The redactor runs the same local span classifier the gist sanitizer uses, through
 `sanitize.classify_spans`, so both share one loaded copy of the weights. Only the policy
 differs: a gist is a search projection that deliberately keeps dates for perishability,
-while a diagnostic log has no recall requirement, so **every** label in the taxonomy is
-redacted here - `private_person`, `private_email`, `private_phone`, `private_address`,
-`private_url`, `private_date`, `account_number`, and `secret`. There is no pattern tier
-under it; the same reasoning as `docs/design-decisions.md`'s rejection of a regex
-backstop applies, and the classifier caught provider keys (`sk-ant-...`, `sk_live_...`),
-`password:` values, `trace_id=`/`user_...` identifiers, URLs, emails, names, and phone
-numbers in measurement.
+while a diagnostic log has no recall requirement, so it also redacts `private_date`.
+The redacted labels are `private_person`, `private_email`, `private_phone`,
+`private_address`, `private_url`, `private_date`, and `account_number`. There is no
+pattern tier under it; the same reasoning as `docs/design-decisions.md`'s rejection of
+a regex backstop applies.
 
-Coverage is a classifier's, so it is probabilistic rather than exhaustive. Two known
-gaps: an AWS-style `AKIA...` key and a bare `[intro:<uuid>]` token were not labelled in
-that measurement, so those pass through unredacted. Redaction is defense in depth for
-diagnostics, not a boundary anything is allowed to depend on - a log record is never
-safe input to another system, and audit records still require restricted access.
+Coverage is a classifier's, so it is probabilistic rather than exhaustive. Redaction is
+defense in depth for diagnostics, not a boundary anything is allowed to depend on - a
+log record is never safe input to another system, and audit records still require
+restricted access.
 
 The response serializer never falls back to `repr()`. If the classifier, serialization,
 or a redaction call fails, every affected string is replaced with
 `[redaction-unavailable]`; the record's safe structure is retained where possible.
 
 Set `RESPONSE_LOG_REDACTION_SECRET` to a long, random, server-side value when operators need
-to correlate repeated URLs, secrets, or application identifiers across redacted records -
-the three types whose repetition is itself the diagnostic signal. Everything else,
+to correlate repeated URLs or account numbers across redacted records - the two types
+whose repetition is itself the diagnostic signal. Everything else,
 including names, gets a flat placeholder. It produces HMAC-based `log_v1_...` pseudonyms. Keep the key outside the repository,
 restrict it to the worker identity, and rotate it deliberately: rotation breaks cross-key
 correlation but does not reveal prior values. Leaving it unset still redacts data, but uses

@@ -2,12 +2,12 @@
 
 The same local span classifier that produces memory gists
 (:mod:`thenetwork.memory.sanitize`) does the labelling here; only the policy
-differs. A gist is a search projection that deliberately keeps dates, places,
-and organizations for recall, whereas a diagnostic model-response log has no
-recall requirement and should shed every identifying or credential-bearing
-string it can before it leaves process memory. So this module keeps its own,
-broader allow-list over the same taxonomy - and, unlike the gist path, it
-pseudonymizes rather than flattens the types operators correlate on.
+differs. A gist is a search projection that deliberately keeps dates for
+perishability, whereas a diagnostic model-response log has no recall
+requirement and should shed every identifying string it can before it leaves
+process memory. So this module keeps its own, broader allow-list over the same
+taxonomy - and, unlike the gist path, it pseudonymizes rather than flattens the
+types operators correlate on.
 """
 
 from __future__ import annotations
@@ -26,9 +26,9 @@ _FAIL_CLOSED = "[redaction-unavailable]"
 
 # Classifier label -> the entity type this module reports.
 #
-# Every label in the taxonomy is redacted here, including `private_date`, which
-# the gist path deliberately keeps. A log line has no perishability signal to
-# preserve, and a date beside a name is a quasi-identifier.
+# `private_date` is redacted here even though the gist path keeps it: a log line
+# has no perishability signal to preserve, and a date beside a name is a
+# quasi-identifier.
 _ENTITY_TYPES = {
     "private_person": "PERSON",
     "private_email": "EMAIL_ADDRESS",
@@ -37,14 +37,13 @@ _ENTITY_TYPES = {
     "private_url": "URL",
     "private_date": "DATE_TIME",
     "account_number": "APPLICATION_IDENTIFIER",
-    "secret": "SECRET",
 }
 
 # Types that get a keyed pseudonym instead of a bare placeholder, so operators
 # can correlate a repeated token across records without it being reversible.
 # Values here are machine identifiers whose repetition is the diagnostic
 # signal; a person's name is not, and gets a flat placeholder.
-_STABLE_ENTITY_TYPES = frozenset({"APPLICATION_IDENTIFIER", "SECRET", "URL"})
+_STABLE_ENTITY_TYPES = frozenset({"APPLICATION_IDENTIFIER", "URL"})
 
 
 class LogRedactionError(RuntimeError):
@@ -183,7 +182,7 @@ def redact_structured_log(
 
     If initialization or any redaction operation fails, no raw string is
     returned.  Callers may supply a server-side key to retain stable opaque
-    correlation for tokens, URLs, secrets, and application identifiers.
+    correlation for URLs and application identifiers.
     """
     try:
         return _redact_value(value, pseudonym_secret)
