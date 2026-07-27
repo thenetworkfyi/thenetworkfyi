@@ -330,7 +330,8 @@ def test_content_scanner_has_one_runtime_switch_and_core_dependencies():
     )
     assert "INSTALL_CONTENT_SCAN" not in deployment_config
     assert "CONTENT_SCAN_ENABLED" in deployment_config
-    assert 'pyproject["project"]["dependencies"]' in deployment_config
+    assert "COPY pyproject.toml uv.lock README.md ./" in deployment_config
+    assert "RUN uv sync --locked --no-dev --no-install-project" in deployment_config
     assert "HF_HOME: /home/appuser/.cache/huggingface" in deployment_config
     assert "hf-cache:/home/appuser/.cache/huggingface" in deployment_config
 

@@ -211,13 +211,12 @@ more container/image disk space, model-cache space, memory, and CPU inference ti
 the disabled installation. The 86M model runs locally; no email text is sent to a
 scanner service.
 
-The image installs torch from PyTorch's CPU-only index (`--build-arg
-TORCH_VERSION`, default matching the resolved version). PyPI's Linux torch wheel
-depends on roughly fifteen `nvidia-*` CUDA wheels plus `triton`, which are several
-GB of GPU runtime this deployment cannot use. A pip constraint pins the `+cpu`
-local version, since `--extra-index-url` on its own leaves pip free to resolve
-torch from PyPI and silently reinstate all of them. A GPU deployment would need
-that constraint dropped.
+The image installs the torch version recorded in `uv.lock` from PyTorch's
+CPU-only index. `pyproject.toml` assigns Linux torch to that explicit index, so
+regenerating the lock cannot silently select PyPI's Linux wheel and its roughly
+fifteen `nvidia-*` CUDA wheels plus `triton` (several GB of GPU runtime this
+deployment cannot use). A GPU deployment would need a different uv source and a
+regenerated lockfile.
 
 ## Gist sanitizer
 
