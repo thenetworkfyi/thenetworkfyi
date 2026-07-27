@@ -334,9 +334,10 @@ HF_TOKEN=                 # first enabled startup only, until the model is cache
 uv pip install -e .
 ```
 
-The gist sanitizer uses `openai/privacy-filter`, which is Apache 2.0 and ungated.
-Its weights (~2 GB) download on first start into the local Hugging Face cache and
-need no account or token.
+The gist sanitizer uses `openai/privacy-filter`, which is Apache 2.0 and ungated,
+so it needs no account or token. A local `uv run` pulls its weights (~2.7 GB) into
+your own Hugging Face cache on first use. The Docker image bakes them in at build
+time instead, so a deployed worker downloads nothing at startup.
 
 The project installs pinned LlamaFirewall scanner dependencies and uses
 `meta-llama/Llama-Prompt-Guard-2-86M`, a gated model under the Llama 4 Community
