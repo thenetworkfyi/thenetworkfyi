@@ -17,9 +17,13 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from thenetwork.search.match import MemoryMatch
 from tests.scenarios.test_live_archetypes import EmailScenario, run_scenario
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.mark.asyncio
-async def test_forced_escalation_is_captured_without_outbound_infrastructure():
+async def test_forced_escalation_is_captured_without_outbound_infrastructure(
+    scenario_database,
+):
     model_calls = 0
 
     async def force_escalation(
@@ -61,6 +65,7 @@ async def test_forced_escalation_is_captured_without_outbound_infrastructure():
                 sender_authenticated=True,
                 admin_emails=["admin@example.com"],
             ),
+            scenario_database=scenario_database,
             model=FunctionModel(force_escalation),
         )
 
@@ -69,7 +74,7 @@ async def test_forced_escalation_is_captured_without_outbound_infrastructure():
 
 
 @pytest.mark.asyncio
-async def test_forced_proposal_uses_captured_fixed_deliveries():
+async def test_forced_proposal_uses_captured_fixed_deliveries(scenario_database):
     model_calls = 0
 
     async def force_proposal(
@@ -111,6 +116,7 @@ async def test_forced_proposal_uses_captured_fixed_deliveries():
                 sender_authenticated=True,
                 known_people={"person-other": "other@example.com"},
             ),
+            scenario_database=scenario_database,
             model=FunctionModel(force_proposal),
         )
 
@@ -122,7 +128,9 @@ async def test_forced_proposal_uses_captured_fixed_deliveries():
 
 
 @pytest.mark.asyncio
-async def test_grouped_candidate_evidence_can_drive_a_bound_proposal():
+async def test_grouped_candidate_evidence_can_drive_a_bound_proposal(
+    scenario_database,
+):
     model_calls = 0
 
     async def inspect_then_propose(
@@ -199,6 +207,7 @@ async def test_grouped_candidate_evidence_can_drive_a_bound_proposal():
                 ),
             ],
         ),
+        scenario_database=scenario_database,
         model=FunctionModel(inspect_then_propose),
     )
 

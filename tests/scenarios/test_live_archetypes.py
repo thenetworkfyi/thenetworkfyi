@@ -13,16 +13,18 @@ skipped when no provider credentials are configured, so:
   - a deliberate run needs `pytest -m live_model tests/scenarios/test_live_archetypes.py`
     with `AGENT_API_KEY` set.
 
-DB access and outbound mail are still mocked (same style as `test_archetypes.py`)
-so a live run costs one model call per case, not a live Postgres + SMTP
-round trip - the substrate under test here is model reasoning, not the store.
+Each case uses an isolated schema in a real migrated pgvector database. Outbound
+mail, embeddings, and search results remain deterministic so the only external
+call is the model itself.
 """
 
 from __future__ import annotations
 
 import re
+from contextlib import ExitStack
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from functools import partial
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -41,11 +43,13 @@ from thenetwork.db.models import (
     EventRecommendation,
     EventSuppression,
     Memory,
+    Person,
 )
 from thenetwork.model_config import model_with_api_key
 from thenetwork.search.events import EventMatch
 from thenetwork.search.match import MemoryMatch
 from thenetwork.settings import get_settings
+from sqlmodel import select
 
 pytestmark = [pytest.mark.integration, pytest.mark.live_model]
 
@@ -130,11 +134,77 @@ class RunOutcome:
     created_events: list[Event]
 
 
-async def run_scenario(inputs: EmailScenario, *, model: Any = None) -> RunOutcome:
+def _seed_scenario_database(
+    inputs: EmailScenario, session_factory
+) -> tuple[set[str], set[str]]:
+    people = dict(inputs.known_people)
+    if inputs.sender_user_id is not None:
+        people[inputs.sender_user_id] = inputs.sender_email
+    for refs in inputs.memory_refs.values():
+        for person_id in refs:
+            people.setdefault(person_id, f"{person_id}@scenario.example.test")
+    for match in inputs.search_results:
+        people.setdefault(match.person_id, f"{match.person_id}@scenario.example.test")
+    if inputs.event is not None:
+        people.setdefault(
+            inputs.event.submitter_id,
+            f"{inputs.event.submitter_id}@scenario.example.test",
+        )
+    if inputs.event_recommendation is not None:
+        people.setdefault(
+            inputs.event_recommendation.person_id,
+            f"{inputs.event_recommendation.person_id}@scenario.example.test",
+        )
+
+    with session_factory() as session:
+        for person_id, email in people.items():
+            session.add(Person(id=person_id, email=email, name=f"Scenario {person_id}"))
+        session.flush()
+
+        memories: dict[str, Memory] = {}
+        for memory_id, refs in inputs.memory_refs.items():
+            memories[memory_id] = Memory(
+                id=memory_id,
+                text=f"stored memory {memory_id}",
+                refs=refs,
+                gist=f"gist {memory_id}",
+            )
+        for match in inputs.search_results:
+            memories.setdefault(
+                match.memory_id,
+                Memory(
+                    id=match.memory_id,
+                    text=f"stored memory {match.memory_id}",
+                    refs=[match.person_id],
+                    gist=match.gist,
+                ),
+            )
+        session.add_all(memories.values())
+
+        if inputs.event is not None:
+            session.add(inputs.event.model_copy(deep=True))
+        if inputs.event_recommendation is not None:
+            session.add(inputs.event_recommendation.model_copy(deep=True))
+        if inputs.event_recommendations_stopped and inputs.sender_user_id is not None:
+            session.add(EventSuppression(person_id=inputs.sender_user_id))
+        session.commit()
+
+        initial_memory_ids = set(session.exec(select(Memory.id)).all())
+        initial_event_ids = set(session.exec(select(Event.id)).all())
+    return initial_memory_ids, initial_event_ids
+
+
+async def run_scenario(
+    inputs: EmailScenario,
+    *,
+    scenario_database,
+    model: Any = None,
+) -> RunOutcome:
     """Run the real agent (real AGENT_MODEL) over one archetype email.
 
-    Mirrors the mocking style in `test_archetypes.py`: DB session, embeddings,
-    and outbound send are faked so the only live call is the model itself.
+    Each run gets an isolated schema in a real migrated pgvector database.
+    Embeddings, search projections, and outbound send remain deterministic so
+    the only external call is the model itself.
     """
     tool_calls: list[str] = []
     dispatched: list[dict[str, Any]] = []
@@ -143,64 +213,6 @@ async def run_scenario(inputs: EmailScenario, *, model: Any = None) -> RunOutcom
     forget_attempts: list[str] = []
     forgotten: list[str] = []
     created_events: list[Event] = []
-    event_suppressed = inputs.event_recommendations_stopped
-    event_recommendation = (
-        inputs.event_recommendation.model_copy(deep=True)
-        if inputs.event_recommendation is not None
-        else None
-    )
-
-    mock_session = MagicMock()
-    mock_session.__enter__ = MagicMock(return_value=mock_session)
-    mock_session.__exit__ = MagicMock(return_value=False)
-
-    def fake_session_get(model_cls, obj_id):
-        nonlocal event_suppressed
-        if model_cls is Memory:
-            forget_attempts.append(obj_id)
-            refs = inputs.memory_refs.get(obj_id)
-            if refs is None:
-                return None
-            return Memory(
-                id=obj_id,
-                text=f"stored memory {obj_id}",
-                refs=refs,
-                gist=f"gist {obj_id}",
-            )
-        if model_cls is Event:
-            if inputs.event is not None and inputs.event.id == obj_id:
-                return inputs.event
-            return None
-        if model_cls is EventSuppression:
-            return EventSuppression(person_id=obj_id) if event_suppressed else None
-        email = inputs.known_people.get(obj_id)
-        if email is None and obj_id == inputs.sender_user_id:
-            email = inputs.sender_email
-        if email is None:
-            return None
-        person = MagicMock()
-        person.email = email
-        return person
-
-    def fake_session_add(obj):
-        nonlocal event_suppressed
-        if isinstance(obj, Event):
-            created_events.append(obj)
-        elif isinstance(obj, EventSuppression):
-            event_suppressed = True
-
-    def fake_session_delete(obj):
-        nonlocal event_suppressed
-        if isinstance(obj, EventSuppression):
-            event_suppressed = False
-        elif isinstance(obj, Memory):
-            forgotten.append(obj.id)
-
-    mock_session.get.side_effect = fake_session_get
-    mock_session.add.side_effect = fake_session_add
-    mock_session.delete.side_effect = fake_session_delete
-    mock_session.exec.return_value.first.return_value = event_recommendation
-    mock_session.exec.return_value.one.return_value = inputs.prior_event_deliveries
 
     def fake_send_reply(to_address, subject, body_text=None, body_html=None, **kwargs):
         dispatched.append(
@@ -233,42 +245,51 @@ async def run_scenario(inputs: EmailScenario, *, model: Any = None) -> RunOutcom
     def fake_sanitize_event(text: str) -> str:
         return f"sealed event: {text}"
 
-    with (
-        patch("thenetwork.agent.tools.get_session", return_value=mock_session),
-        patch("thenetwork.agent.tools.send_reply", side_effect=fake_send_reply),
-        patch("thenetwork.agent.tools.send_event_fyi", side_effect=fake_send_event_fyi),
-        patch("thenetwork.agent.tools.notify_admins"),
-        patch("thenetwork.introductions.send_reply", side_effect=fake_send_reply),
-        # The re-sanitization of proposal gists is a second, independent SEAL
-        # boundary inside introductions. It runs the same local classifier,
-        # which is a multi-gigabyte download CI does not have; its accuracy is
-        # covered by tests/test_sanitize.py's integration cases.
-        patch(
-            "thenetwork.introductions.sanitize_text",
-            new=MagicMock(side_effect=lambda text: f"sealed: {text}"),
-        ),
-        patch(
-            "thenetwork.agent.tools.embed_text",
-            new=AsyncMock(side_effect=fake_embed_text),
-        ),
-        patch(
-            "thenetwork.agent.tools.match_memories", return_value=inputs.search_results
-        ),
-        patch(
-            "thenetwork.agent.tools.match_events",
-            return_value=inputs.event_search_results,
-        ),
-        patch(
-            "thenetwork.agent.tools.sanitize_memory",
-            new=MagicMock(side_effect=fake_sanitize),
-        ),
-        patch(
-            "thenetwork.agent.tools.sanitize_text",
-            new=MagicMock(side_effect=fake_sanitize_event),
-        ),
-        patch("thenetwork.agent.tools._check_daily_dispatch_cap", return_value=True),
-        patch("thenetwork.agent.tools._consume_daily_dispatch_cap"),
-    ):
+    with scenario_database() as session_factory, ExitStack() as patch_stack:
+        for patcher in (
+            patch("thenetwork.agent.tools.send_reply", side_effect=fake_send_reply),
+            patch(
+                "thenetwork.agent.tools.send_event_fyi", side_effect=fake_send_event_fyi
+            ),
+            patch("thenetwork.agent.tools.notify_admins"),
+            patch("thenetwork.introductions.send_reply", side_effect=fake_send_reply),
+            # The re-sanitization of proposal gists is a second, independent SEAL
+            # boundary inside introductions. It runs the same local classifier,
+            # which is a multi-gigabyte download CI does not have; its accuracy is
+            # covered by tests/test_sanitize.py's integration cases.
+            patch(
+                "thenetwork.introductions.sanitize_text",
+                new=MagicMock(side_effect=lambda text: f"sealed: {text}"),
+            ),
+            patch(
+                "thenetwork.agent.tools.embed_text",
+                new=AsyncMock(side_effect=fake_embed_text),
+            ),
+            patch(
+                "thenetwork.agent.tools.match_memories",
+                return_value=inputs.search_results,
+            ),
+            patch(
+                "thenetwork.agent.tools.match_events",
+                return_value=inputs.event_search_results,
+            ),
+            patch(
+                "thenetwork.agent.tools.sanitize_memory",
+                new=MagicMock(side_effect=fake_sanitize),
+            ),
+            patch(
+                "thenetwork.agent.tools.sanitize_text",
+                new=MagicMock(side_effect=fake_sanitize_event),
+            ),
+            patch(
+                "thenetwork.agent.tools._check_daily_dispatch_cap", return_value=True
+            ),
+            patch("thenetwork.agent.tools._consume_daily_dispatch_cap"),
+        ):
+            patch_stack.enter_context(patcher)
+        initial_memory_ids, initial_event_ids = _seed_scenario_database(
+            inputs, session_factory
+        )
         settings = get_settings()
         if inputs.admin_emails is not None:
             settings = settings.model_copy(update={"admin_emails": inputs.admin_emails})
@@ -291,6 +312,7 @@ async def run_scenario(inputs: EmailScenario, *, model: Any = None) -> RunOutcom
             proactive_event_id=inputs.proactive_event_id,
             proactive_event_version=inputs.proactive_event_version,
             introduction_proposal_count=inputs.introduction_proposal_count,
+            session_factory=session_factory,
         )
         # Mirrors thenetwork/agent/core.py:run_agent_for_email's attachment_line
         # construction, since this harness calls agent.run directly rather than
@@ -308,10 +330,32 @@ async def run_scenario(inputs: EmailScenario, *, model: Any = None) -> RunOutcom
                 tool_name = getattr(part, "tool_name", None)
                 if tool_name:
                     tool_calls.append(tool_name)
-                    if tool_name == "escalate" and hasattr(part, "args_as_dict"):
-                        reason = part.args_as_dict().get("reason")
-                        if reason:
-                            escalated.append(reason)
+                    if hasattr(part, "args_as_dict"):
+                        arguments = part.args_as_dict()
+                        if tool_name == "escalate":
+                            reason = arguments.get("reason")
+                            if reason:
+                                escalated.append(reason)
+                        elif tool_name == "forget":
+                            memory_id = arguments.get("memory_id")
+                            if memory_id:
+                                forget_attempts.append(memory_id)
+
+        with session_factory() as session:
+            memories_after = {
+                memory.id: memory for memory in session.exec(select(Memory))
+            }
+            forgotten.extend(sorted(initial_memory_ids - memories_after.keys()))
+            remembered.extend(
+                {"text": memory.text, "refs": list(memory.refs or [])}
+                for memory_id, memory in memories_after.items()
+                if memory_id not in initial_memory_ids
+            )
+            created_events.extend(
+                event
+                for event in session.exec(select(Event))
+                if event.id not in initial_event_ids
+            )
 
     return RunOutcome(
         reply=result.output,
@@ -1669,10 +1713,12 @@ archetype_dataset = Dataset[EmailScenario, RunOutcome](
 
 
 @pytest.mark.asyncio
-async def test_live_model_archetype_suite():
+async def test_live_model_archetype_suite(scenario_database):
     """Run archetypes against the real AGENT_MODEL and assert on the report."""
     _skip_without_credentials()
-    report = await archetype_dataset.evaluate(run_scenario)
+    report = await archetype_dataset.evaluate(
+        partial(run_scenario, scenario_database=scenario_database)
+    )
     failures = [
         (case.name, case.assertions)
         for case in report.cases
