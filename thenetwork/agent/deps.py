@@ -3,10 +3,69 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from thenetwork.db.session import get_session
+from thenetwork.embed.embeddings import embed_text
+from thenetwork.email.outbound import notify_admins, send_event_fyi, send_reply
+from thenetwork.introductions import propose_pair
+from thenetwork.memory.sanitize import sanitize_memory, sanitize_text
+from thenetwork.memory.sent_email import (
+    record_sent_email_memories,
+    record_sent_email_memory,
+)
+from thenetwork.search.events import match_events
+from thenetwork.search.match import load_person_evidence, match_memories
 from thenetwork.settings import Settings, get_settings
+
+
+def _legacy_tool_override(name: str, production: Callable) -> Callable:
+    """Route old test patches through the capability port during migration."""
+
+    def call(*args, **kwargs):
+        tools_module = sys.modules.get("thenetwork.agent.tools")
+        override = getattr(tools_module, name, None) if tools_module else None
+        return (override or production)(*args, **kwargs)
+
+    return call
+
+
+@dataclass
+class AgentCapabilities:
+    """Server-owned infrastructure ports available to agent tools.
+
+    These callables never become model arguments. They preserve the SEAL's
+    opaque-id boundaries while making every external effect replaceable as a
+    single dependency bundle in tests and simulations.
+    """
+
+    default_session_factory: Callable = _legacy_tool_override(
+        "get_session", get_session
+    )
+    embed_text: Callable = _legacy_tool_override("embed_text", embed_text)
+    send_reply: Callable = _legacy_tool_override("send_reply", send_reply)
+    send_event_fyi: Callable = _legacy_tool_override("send_event_fyi", send_event_fyi)
+    notify_admins: Callable = _legacy_tool_override("notify_admins", notify_admins)
+    sanitize_memory: Callable = _legacy_tool_override(
+        "sanitize_memory", sanitize_memory
+    )
+    sanitize_text: Callable = _legacy_tool_override("sanitize_text", sanitize_text)
+    record_sent_email_memory: Callable = _legacy_tool_override(
+        "record_sent_email_memory", record_sent_email_memory
+    )
+    record_sent_email_memories: Callable = _legacy_tool_override(
+        "record_sent_email_memories", record_sent_email_memories
+    )
+    propose_pair: Callable = _legacy_tool_override("propose_pair", propose_pair)
+    match_memories: Callable = _legacy_tool_override("match_memories", match_memories)
+    match_events: Callable = _legacy_tool_override("match_events", match_events)
+    load_person_evidence: Callable = _legacy_tool_override(
+        "load_person_evidence", load_person_evidence
+    )
+    check_daily_dispatch_cap: Callable | None = None
+    consume_daily_dispatch_cap: Callable | None = None
 
 
 @dataclass
@@ -14,6 +73,7 @@ class AgentDeps:
     """Passed as deps_type to the pydantic-ai agent."""
 
     settings: Settings = field(default_factory=get_settings)
+    capabilities: AgentCapabilities = field(default_factory=AgentCapabilities)
     # Injected at runtime; defaults let callers omit in tests
     sender_email: str = ""
     sender_user_id: str | None = None

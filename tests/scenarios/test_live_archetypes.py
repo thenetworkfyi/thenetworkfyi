@@ -21,19 +21,17 @@ call is the model itself.
 from __future__ import annotations
 
 import re
-from contextlib import ExitStack
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import partial
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext, LLMJudge
 
 from thenetwork.agent.core import build_agent
-from thenetwork.agent.deps import AgentDeps
+from thenetwork.agent.deps import AgentCapabilities, AgentDeps
 from thenetwork.agent.tools import (
     EVENT_RECOMMENDATION_SUBJECT,
     FIRST_EVENT_RECOMMENDATION_NOTICE,
@@ -268,56 +266,16 @@ async def run_scenario(
     def fake_sanitize_event(text: str) -> str:
         return f"sealed event: {text}"
 
-    with scenario_database() as session_factory, ExitStack() as patch_stack:
-        for patcher in (
-            patch("thenetwork.agent.tools.send_reply", side_effect=fake_send_reply),
-            patch(
-                "thenetwork.agent.tools.send_event_fyi", side_effect=fake_send_event_fyi
-            ),
-            patch("thenetwork.agent.tools.notify_admins"),
-            patch("thenetwork.introductions.send_reply", side_effect=fake_send_reply),
-            # The re-sanitization of proposal gists is a second, independent SEAL
-            # boundary inside introductions. It runs the same local classifier,
-            # which is a multi-gigabyte download CI does not have; its accuracy is
-            # covered by tests/test_sanitize.py's integration cases.
-            patch(
-                "thenetwork.introductions.sanitize_text",
-                new=MagicMock(side_effect=lambda text: f"sealed: {text}"),
-            ),
-            patch(
-                "thenetwork.agent.tools.embed_text",
-                new=AsyncMock(side_effect=fake_embed_text),
-            ),
-            patch(
-                "thenetwork.memory.sent_email.embed_text",
-                new=AsyncMock(side_effect=fake_embed_text),
-            ),
-            patch(
-                "thenetwork.agent.tools.match_memories",
-                return_value=inputs.search_results,
-            ),
-            patch(
-                "thenetwork.agent.tools.match_events",
-                return_value=inputs.event_search_results,
-            ),
-            patch(
-                "thenetwork.agent.tools.sanitize_memory",
-                new=MagicMock(side_effect=fake_sanitize),
-            ),
-            patch(
-                "thenetwork.memory.sent_email.sanitize_memory",
-                new=MagicMock(return_value="sent email record"),
-            ),
-            patch(
-                "thenetwork.agent.tools.sanitize_text",
-                new=MagicMock(side_effect=fake_sanitize_event),
-            ),
-            patch(
-                "thenetwork.agent.tools._check_daily_dispatch_cap", return_value=True
-            ),
-            patch("thenetwork.agent.tools._consume_daily_dispatch_cap"),
-        ):
-            patch_stack.enter_context(patcher)
+    async def ignore_sent_email_memory(*args, **kwargs):
+        return True
+
+    async def ignore_sent_email_memories(*args, **kwargs):
+        return None
+
+    def fake_propose_pair(**kwargs):
+        return {"status": "proposed"}
+
+    with scenario_database() as session_factory:
         initial_memory_ids, initial_event_ids = _seed_scenario_database(
             inputs, session_factory
         )
@@ -340,6 +298,21 @@ async def run_scenario(
         )
         deps = AgentDeps(
             settings=settings,
+            capabilities=AgentCapabilities(
+                embed_text=fake_embed_text,
+                send_reply=fake_send_reply,
+                send_event_fyi=fake_send_event_fyi,
+                notify_admins=lambda *args, **kwargs: None,
+                sanitize_memory=fake_sanitize,
+                sanitize_text=fake_sanitize_event,
+                record_sent_email_memory=ignore_sent_email_memory,
+                record_sent_email_memories=ignore_sent_email_memories,
+                propose_pair=fake_propose_pair,
+                match_memories=lambda *args, **kwargs: inputs.search_results,
+                match_events=lambda *args, **kwargs: inputs.event_search_results,
+                check_daily_dispatch_cap=lambda key, limit: True,
+                consume_daily_dispatch_cap=lambda key, limit: None,
+            ),
             sender_email=inputs.sender_email,
             sender_user_id=inputs.sender_user_id,
             sender_authenticated=inputs.sender_authenticated,
@@ -361,7 +334,8 @@ async def run_scenario(
             else ""
         )
         user_message = f"{attachment_line}Subject: {inputs.subject}\n\n{inputs.body}"
-        result = await agent.run(user_message, deps=deps)
+        with agent.override(deps=deps):
+            result = await agent.run(user_message)
 
         for message in result.all_messages():
             for part in getattr(message, "parts", []):

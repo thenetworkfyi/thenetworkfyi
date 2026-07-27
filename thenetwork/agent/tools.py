@@ -37,47 +37,50 @@ from thenetwork.db.models import (
     Memory,
     Person,
 )
-from thenetwork.db.session import get_session
-from thenetwork.embed.embeddings import embed_text
 from thenetwork.email.outbound import (
     EVENT_RECOMMENDATION_SUBJECT,
     _direct_reply_kwargs,
-    notify_admins,
     reply_subject,
-    send_event_fyi,
-    send_reply,
 )
 from thenetwork.email.render import (
     EventRecommendationNotice,
     FirstContactWelcomeEmailContext,
     FixedEmailTemplate,
 )
-from thenetwork.memory.sanitize import (
-    sanitize_memory,
-    sanitize_text,
-)
 from thenetwork.memory.sent_email import (
     CONSENT_REQUEST_SUMMARY,
     FIRST_CONTACT_WELCOME_SUMMARY,
     SentEmailMemory,
     event_recommendation_summary,
-    record_sent_email_memories,
-    record_sent_email_memory,
 )
 from thenetwork.security.rate_limit import (
     PostgresFixedWindowStorage,
     normalize_rate_limit_identity,
 )
-from thenetwork.introductions import propose_pair
 from thenetwork.search.match import (
     MAX_CANDIDATE_CONTEXTS,
     MAX_EVIDENCE_GISTS_PER_PERSON,
     MemoryMatch,
     build_candidate_contexts,
-    load_person_evidence,
-    match_memories,
 )
-from thenetwork.search.events import EventMatch, match_events
+from thenetwork.search.events import EventMatch
+
+# Compatibility targets for tests that have not yet migrated from patching
+# module globals. AgentCapabilities resolves these dynamically, so production
+# and new tests still invoke every effect through the dependency bundle.
+get_session = None
+embed_text = None
+send_reply = None
+send_event_fyi = None
+notify_admins = None
+sanitize_memory = None
+sanitize_text = None
+record_sent_email_memory = None
+record_sent_email_memories = None
+propose_pair = None
+match_memories = None
+match_events = None
+load_person_evidence = None
 
 MAX_CONSOLIDATION_CANDIDATES = 3
 # match_memories returns one row per ref, so a single multi-ref memory can
@@ -103,7 +106,22 @@ class _SanitizationFailed(Exception):
 
 def _get_session(ctx: RunContext[AgentDeps]):
     sf = ctx.deps.session_factory
-    return sf() if sf is not None else get_session()
+    return sf() if sf is not None else ctx.deps.capabilities.default_session_factory()
+
+
+def _dispatch_cap_allowed(ctx: RunContext[AgentDeps], key: str, limit: int) -> bool:
+    port = ctx.deps.capabilities.check_daily_dispatch_cap
+    return (
+        port(key, limit) if port is not None else _check_daily_dispatch_cap(key, limit)
+    )
+
+
+def _consume_dispatch_cap(ctx: RunContext[AgentDeps], key: str, limit: int) -> None:
+    port = ctx.deps.capabilities.consume_daily_dispatch_cap
+    if port is not None:
+        port(key, limit)
+    else:
+        _consume_daily_dispatch_cap(key, limit)
 
 
 def _get_dispatch_limiter() -> tuple[strategies.FixedWindowRateLimiter, object]:
@@ -380,20 +398,22 @@ def _memory_ceiling_error(
     return None
 
 
-async def _embed_memory_for_write(memory: Memory, session) -> None:
+async def _embed_memory_for_write(
+    ctx: RunContext[AgentDeps], memory: Memory, session
+) -> None:
     if memory.refs:
         try:
-            gist = sanitize_memory(memory, session)
+            gist = ctx.deps.capabilities.sanitize_memory(memory, session)
         except Exception as exc:
             raise _SanitizationFailed from exc
         if memory.gist is None and isinstance(gist, str):
             memory.gist = gist
         if memory.gist is None:
             raise _SanitizationFailed
-        memory.embedding = await embed_text(memory.gist)
+        memory.embedding = await ctx.deps.capabilities.embed_text(memory.gist)
         return
 
-    memory.embedding = await embed_text(memory.text)
+    memory.embedding = await ctx.deps.capabilities.embed_text(memory.text)
 
 
 @_idempotent_mutation
@@ -430,7 +450,7 @@ async def remember(
 
             session.add(memory)
             try:
-                await _embed_memory_for_write(memory, session)
+                await _embed_memory_for_write(ctx, memory, session)
             except _SanitizationFailed:
                 # A referenced memory must never become searchable without a
                 # sanitized gist. Roll back the pending insert rather than
@@ -454,7 +474,7 @@ async def remember(
             session.commit()
             matches: list[MemoryMatch] = []
             if query_embedding:
-                matches = match_memories(
+                matches = ctx.deps.capabilities.match_memories(
                     query_embedding,
                     session,
                     limit=_CONSOLIDATION_QUERY_LIMIT,
@@ -578,9 +598,9 @@ async def search(
                 }
             )
 
-        query_vec = await embed_text(query)
+        query_vec = await ctx.deps.capabilities.embed_text(query)
         with _get_session(ctx) as session:
-            matches: list[MemoryMatch] = match_memories(
+            matches: list[MemoryMatch] = ctx.deps.capabilities.match_memories(
                 query_vec,
                 session,
                 limit=top_k * MAX_EVIDENCE_GISTS_PER_PERSON,
@@ -588,7 +608,9 @@ async def search(
             candidate_ids = list(dict.fromkeys(match.person_id for match in matches))[
                 :top_k
             ]
-            supporting = load_person_evidence(session, candidate_ids)
+            supporting = ctx.deps.capabilities.load_person_evidence(
+                session, candidate_ids
+            )
         contexts = build_candidate_contexts(
             matches,
             supporting,
@@ -654,8 +676,8 @@ async def create_event(
                 {"status": "error", "reason": "event_expiry_not_future"}
             )
         try:
-            gist = sanitize_text(sanitization_source)
-            embedding = await embed_text(gist)
+            gist = ctx.deps.capabilities.sanitize_text(sanitization_source)
+            embedding = await ctx.deps.capabilities.embed_text(gist)
         except Exception:
             return _tool_result({"status": "error", "reason": "sanitization_failed"})
 
@@ -722,8 +744,8 @@ async def update_event(
                     {"status": "forbidden", "reason": "event_cancelled"}
                 )
             try:
-                gist = sanitize_text(sanitization_source)
-                embedding = await embed_text(gist)
+                gist = ctx.deps.capabilities.sanitize_text(sanitization_source)
+                embedding = await ctx.deps.capabilities.embed_text(gist)
             except Exception:
                 session.rollback()
                 return _tool_result(
@@ -795,9 +817,9 @@ async def search_events(
             return _tool_result(
                 {"status": "error", "reason": "query_too_long", "limit": max_chars}
             )
-        query_vec = await embed_text(query)
+        query_vec = await ctx.deps.capabilities.embed_text(query)
         with _get_session(ctx) as session:
-            matches: list[EventMatch] = match_events(
+            matches: list[EventMatch] = ctx.deps.capabilities.match_events(
                 query_vec, session, limit=min(max(top_k, 0), 20)
             )
         audit_span_completion(tool_outcome="success")
@@ -899,7 +921,9 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
                 f"Trace ID: {ctx.deps.trace_id or 'unavailable'}\n\n"
                 f"Please reply to {sender} manually."
             )
-            notify_admins(s, subject, body, trace_id=ctx.deps.trace_id)
+            ctx.deps.capabilities.notify_admins(
+                s, subject, body, trace_id=ctx.deps.trace_id
+            )
             ctx.deps.terminal_action_taken = True
             if welcome_result.get("status") == "sent":
                 return _tool_result({"status": "welcomed_and_escalated"})
@@ -911,7 +935,7 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
         memory = Memory(text=text, refs=refs)
         with _get_session(ctx) as session:
             session.add(memory)
-            await _embed_memory_for_write(memory, session)
+            await _embed_memory_for_write(ctx, memory, session)
             session.commit()
             memory_id = memory.id
         audit_event(
@@ -927,7 +951,9 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
             f"Reason: {reason}\n\n"
             f"Please reply to {sender} manually."
         )
-        notify_admins(s, subject, body, trace_id=ctx.deps.trace_id)
+        ctx.deps.capabilities.notify_admins(
+            s, subject, body, trace_id=ctx.deps.trace_id
+        )
         ctx.deps.terminal_action_taken = True
 
         return _tool_result({"status": "escalated", "memory_id": memory_id})
@@ -1068,7 +1094,7 @@ async def _send_email(
                 inbound_date=ctx.deps.inbound_date,
                 inbound_references=ctx.deps.inbound_references,
             )
-        send_reply(
+        ctx.deps.capabilities.send_reply(
             to_address=to_address,
             subject=subject,
             body_text=body_text,
@@ -1113,7 +1139,7 @@ async def _send_first_contact_welcome(
             )
 
     quota_key = _welcome_quota_key(ctx.deps.sender_email)
-    if not _check_daily_dispatch_cap(quota_key, _WELCOME_LIMIT_PER_DAY):
+    if not _dispatch_cap_allowed(ctx, quota_key, _WELCOME_LIMIT_PER_DAY):
         with audit_span("agent.tool", tool_name="send_first_contact_welcome"):
             return _tool_result(_limited("welcome_daily_cap", _WELCOME_LIMIT_PER_DAY))
 
@@ -1126,7 +1152,7 @@ async def _send_first_contact_welcome(
                 inbound_date=ctx.deps.inbound_date,
                 inbound_references=ctx.deps.inbound_references,
             )
-        send_reply(
+        ctx.deps.capabilities.send_reply(
             to_address=to_address,
             subject=reply_subject(ctx.deps.inbound_subject, fallback="How to join"),
             fixed_template=FixedEmailTemplate.FIRST_CONTACT_WELCOME,
@@ -1148,7 +1174,7 @@ async def _send_first_contact_welcome(
         deliver=deliver,
     )
     if result.get("status") == "sent":
-        _consume_daily_dispatch_cap(quota_key, _WELCOME_LIMIT_PER_DAY)
+        _consume_dispatch_cap(ctx, quota_key, _WELCOME_LIMIT_PER_DAY)
         audit_event("agent.first_contact_welcome_sent")
     return result
 
@@ -1183,7 +1209,7 @@ async def _send_event_fyi(
         subject_chars=len(EVENT_RECOMMENDATION_SUBJECT),
         body_chars=len(event_gist) + len(notice.value),
         sent_email_summary=event_recommendation_summary(event_gist),
-        deliver=lambda to_address: send_event_fyi(
+        deliver=lambda to_address: ctx.deps.capabilities.send_event_fyi(
             to_address=to_address,
             event_gist=event_gist,
             notice=notice,
@@ -1269,7 +1295,7 @@ async def _dispatch_email(
 
         recipient_daily_cap = _cap(s.dispatch_recipient_daily_cap)
         recipient_cap_key = f"dispatch:recipient:{cap_identity}"
-        if not _check_daily_dispatch_cap(recipient_cap_key, recipient_daily_cap):
+        if not _dispatch_cap_allowed(ctx, recipient_cap_key, recipient_daily_cap):
             return _tool_result(_limited("recipient_daily_cap", recipient_daily_cap))
 
         sender_reply_daily_cap = _cap(s.dispatch_sender_reply_daily_cap)
@@ -1286,9 +1312,9 @@ async def _dispatch_email(
         # Only burn cap quota once the send has actually succeeded, so a
         # failed attempt (and its Procrastinate retry) isn't rate-limited
         # out of ever replying.
-        _consume_daily_dispatch_cap(recipient_cap_key, recipient_daily_cap)
+        _consume_dispatch_cap(ctx, recipient_cap_key, recipient_daily_cap)
         if is_sender_reply:
-            _consume_daily_dispatch_cap(sender_reply_cap_key, sender_reply_daily_cap)
+            _consume_dispatch_cap(ctx, sender_reply_cap_key, sender_reply_daily_cap)
 
         ctx.deps.outbound_send_count += 1
         ctx.deps.server_side_send_count += 1
@@ -1296,12 +1322,13 @@ async def _dispatch_email(
             ctx.deps.unknown_sender_response_sent = True
         if recipient_user_id is not None:
             try:
-                await record_sent_email_memory(
+                await ctx.deps.capabilities.record_sent_email_memory(
                     SentEmailMemory(
                         recipient_person_id=recipient_user_id,
                         summary=sent_email_summary,
                     ),
-                    session_factory=ctx.deps.session_factory or get_session,
+                    session_factory=ctx.deps.session_factory
+                    or ctx.deps.capabilities.default_session_factory,
                     settings=s,
                 )
             except Exception as exc:
@@ -1545,12 +1572,13 @@ async def propose_introduction(
                     "limit": proposal_limit,
                 }
             )
-        result = propose_pair(
+        result = ctx.deps.capabilities.propose_pair(
             sender_person_id=ctx.deps.sender_user_id,
             other_person_id=other_person_id,
             sender_gist=sender_gist,
             other_gist=other_gist,
-            session_factory=ctx.deps.session_factory or get_session,
+            session_factory=ctx.deps.session_factory
+            or ctx.deps.capabilities.default_session_factory,
             trace_id=ctx.deps.trace_id,
             max_outstanding_requests_per_person=(
                 ctx.deps.settings.introduction_max_outstanding_requests_per_person
@@ -1564,7 +1592,7 @@ async def propose_introduction(
             decline_cooldown_days=ctx.deps.settings.consent_decline_cooldown_days,
         )
         if result.get("status") == "proposed":
-            await record_sent_email_memories(
+            await ctx.deps.capabilities.record_sent_email_memories(
                 (
                     SentEmailMemory(
                         recipient_person_id=ctx.deps.sender_user_id,
@@ -1575,7 +1603,8 @@ async def propose_introduction(
                         summary=CONSENT_REQUEST_SUMMARY,
                     ),
                 ),
-                session_factory=ctx.deps.session_factory or get_session,
+                session_factory=ctx.deps.session_factory
+                or ctx.deps.capabilities.default_session_factory,
                 settings=ctx.deps.settings,
             )
             ctx.deps.server_side_send_count += 2
