@@ -106,6 +106,7 @@ class EmailScenario:
     prior_event_deliveries: int = 0
     event_recommendations_stopped: bool = False
     admin_emails: list[str] | None = None
+    attachment_count: int = 0
 
 
 @dataclass
@@ -254,7 +255,15 @@ async def run_scenario(inputs: EmailScenario, *, model: Any = None) -> RunOutcom
             proactive_event_id=inputs.proactive_event_id,
             proactive_event_version=inputs.proactive_event_version,
         )
-        user_message = f"Subject: {inputs.subject}\n\n{inputs.body}"
+        # Mirrors thenetwork/agent/core.py:run_agent_for_email's attachment_line
+        # construction, since this harness calls agent.run directly rather than
+        # that helper.
+        attachment_line = (
+            f"Attachments present but not read: {inputs.attachment_count}\n"
+            if inputs.attachment_count
+            else ""
+        )
+        user_message = f"{attachment_line}Subject: {inputs.subject}\n\n{inputs.body}"
         result = await agent.run(user_message, deps=deps)
 
         for message in result.all_messages():
