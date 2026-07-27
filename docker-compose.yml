@@ -52,6 +52,12 @@ services:
       # LlamaFirewall stores its downloaded Prompt Guard model here. The named
       # volume makes startup preload a one-time download when scanning is on.
       HF_HOME: /home/appuser/.cache/huggingface
+      # The gist sanitizer's weights are baked into the image at /opt (see the
+      # Dockerfile). Pinned here rather than left to the image's own ENV so a
+      # stray SANITIZE_MODEL in .env cannot silently send the worker back to
+      # downloading them at startup - `environment:` wins over `env_file:`.
+      # To use different weights, rebuild with --build-arg SANITIZE_MODEL_REPO.
+      SANITIZE_MODEL: /opt/sanitizer-model
       WORKER_METRICS_OTLP_ENDPOINT: ${WORKER_METRICS_OTLP_ENDPOINT:-http://otel-collector:4318/v1/metrics}
       WORKER_METRICS_EXPORT_INTERVAL_SECONDS: ${WORKER_METRICS_EXPORT_INTERVAL_SECONDS:-30}
       WORKER_METRICS_EXPORT_TIMEOUT_SECONDS: ${WORKER_METRICS_EXPORT_TIMEOUT_SECONDS:-5}
