@@ -1,0 +1,184 @@
+{
+  "commit": "c55d4b7b5d2c04efc93402ef5bf02873e19295d2",
+  "commitments": {
+    "asking_for_clarification": {
+      "cases": [
+        "job_keyword_qualification",
+        "underspecified_request",
+        "vague_intent_qualification",
+        "peer_level_qualification"
+      ],
+      "prefix": "- Asking for clarification:",
+      "rate": 0.6607142857142857
+    },
+    "attachments": {
+      "cases": [
+        "attachment_awareness"
+      ],
+      "prefix": "- Attachments:",
+      "rate": 0.5
+    },
+    "breadth_is_one_fact": {
+      "cases": [
+        "breadth_is_one_fact"
+      ],
+      "prefix": "- Breadth is one fact, not many.",
+      "rate": 0.75
+    },
+    "consolidation": {
+      "cases": [
+        "consolidation_update"
+      ],
+      "prefix": "- Consolidation:",
+      "rate": 0.5
+    },
+    "event_recommendation_permission": {
+      "cases": [
+        "stop_event_recommendations_only",
+        "resume_event_recommendations_only"
+      ],
+      "prefix": "- Event recommendation permission is separate",
+      "rate": 1.0
+    },
+    "event_records_vs_interests": {
+      "cases": [
+        "one_off_event_submission",
+        "recurring_event_submission",
+        "nuanced_event_interest"
+      ],
+      "prefix": "- Event records versus event interests:",
+      "rate": 0.65
+    },
+    "events_are_secondary": {
+      "cases": [
+        "strong_event_relevance",
+        "event_preference_mismatch"
+      ],
+      "prefix": "- Events are secondary:",
+      "rate": 0.8571428571428572
+    },
+    "first_contact_judgment_call": {
+      "cases": [
+        "first_contact_explains_service",
+        "empty_body_first_contact"
+      ],
+      "prefix": "- First contact is a judgment call",
+      "rate": 0.875
+    },
+    "forget_ownership": {
+      "cases": [
+        "specific_fact_removal",
+        "consolidation_update"
+      ],
+      "prefix": "- `forget` deletion is only appropriate",
+      "rate": 0.5
+    },
+    "joining_first_contact_reply_style": {
+      "cases": [
+        "onboarding"
+      ],
+      "prefix": "- Joining first contact",
+      "rate": 0.6666666666666666
+    },
+    "links": {
+      "cases": [
+        "link_reference_only"
+      ],
+      "prefix": "- Links:",
+      "rate": 1.0
+    },
+    "not_every_message_is_career_request": {
+      "cases": [
+        "multi_register_interests"
+      ],
+      "prefix": "- Not every message is a career request.",
+      "rate": 0.8
+    },
+    "operational_escalation": {
+      "cases": [
+        "technical_issue_escalation",
+        "full_data_deletion_escalation"
+      ],
+      "prefix": "- Operational and account-wide requests",
+      "rate": 0.875
+    },
+    "outreach_timing_judgment_call": {
+      "cases": [
+        "onboarding"
+      ],
+      "prefix": "- Outreach timing is a judgment call",
+      "rate": 0.6666666666666666
+    },
+    "preferences_about_who": {
+      "cases": [
+        "peer_level_qualification",
+        "preference_mismatch"
+      ],
+      "prefix": "- Preferences about who, not just what:",
+      "rate": 0.7857142857142857
+    },
+    "proactive_event_triggers": {
+      "cases": [
+        "strong_event_relevance",
+        "event_preference_mismatch"
+      ],
+      "prefix": "- Proactive event triggers:",
+      "rate": 0.8571428571428572
+    },
+    "proactive_people_triggers": {
+      "cases": [
+        "under_supported_proactive_people"
+      ],
+      "prefix": "- Proactive people triggers surface candidates",
+      "rate": 1.0
+    },
+    "progressive_qualification_memory": {
+      "cases": [
+        "progressive_job_answer"
+      ],
+      "prefix": "- Progressive qualification memory:",
+      "rate": 0.0
+    },
+    "register_person_for_joining_only": {
+      "cases": [
+        "onboarding",
+        "unfamiliar_sender_declines",
+        "first_contact_explains_service"
+      ],
+      "prefix": "- `register_person` is for an unfamiliar sender",
+      "rate": 0.8333333333333334
+    },
+    "search_person_id_is_not_sender": {
+      "cases": [
+        "strong_match"
+      ],
+      "prefix": "- A `search` result's `person_id`",
+      "rate": 0.4
+    },
+    "search_similarity_discovery_only": {
+      "cases": [
+        "job_keyword_qualification",
+        "strong_match"
+      ],
+      "prefix": "- `search` similarity is",
+      "rate": 0.6166666666666667
+    },
+    "sender_owned_evidence_memory_ids": {
+      "cases": [
+        "specific_fact_removal"
+      ],
+      "prefix": "- A `search` candidate marked",
+      "rate": 0.0
+    },
+    "tool_status_vocabulary": {
+      "cases": [
+        "exhausted_reply_cap"
+      ],
+      "prefix": "- Tool status vocabulary:",
+      "rate": 0.5
+    }
+  },
+  "measured_at": "2026-07-27T15:47:11.283598+00:00",
+  "model": "openrouter:google/gemma-4-31b-it",
+  "overall_rate": 0.6649585921325052
+}
