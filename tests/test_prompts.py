@@ -1,13 +1,33 @@
-import re
+import inspect
 
-from thenetwork.agent.prompts import SYSTEM_PROMPT
+from thenetwork.agent.prompts import (
+    EVENT_TRIGGER,
+    FIRST_CONTACT,
+    KNOWN_SENDER,
+    PEOPLE_TRIGGER,
+    JUDGMENT_BULLETS,
+    SYSTEM_PROMPTS,
+)
+from thenetwork.worker import proactive as proactive_module
+
+
+def _bullet(slug: str):
+    for bullet in JUDGMENT_BULLETS:
+        if bullet.slug == slug:
+            return bullet
+    raise AssertionError(f"no judgment bullet with slug {slug!r}")
+
+
+def _guidance(mode: str, slug: str) -> str:
+    """The exact bullet text for `slug`, asserted present in `mode`'s composed prompt."""
+    bullet = _bullet(slug)
+    assert mode in bullet.modes, (mode, slug)
+    assert bullet.text in SYSTEM_PROMPTS[mode]
+    return " ".join(bullet.text.split())
 
 
 def test_attachment_guidance_requires_an_accurate_sender_notice() -> None:
-    guidance = SYSTEM_PROMPT.split("- Attachments:", 1)[1].split(
-        "- `search` similarity", 1
-    )[0]
-    guidance = " ".join(guidance.split())
+    guidance = _guidance(KNOWN_SENDER, "attachments")
 
     assert "`Attachments present but not read: N`" in guidance
     assert "attachment was not read" in guidance
@@ -19,10 +39,7 @@ def test_attachment_guidance_requires_an_accurate_sender_notice() -> None:
 
 
 def test_link_guidance_does_not_imply_fetch_capability() -> None:
-    guidance = SYSTEM_PROMPT.split("- Links:", 1)[1].split("- `search` similarity", 1)[
-        0
-    ]
-    guidance = " ".join(guidance.split())
+    guidance = _guidance(KNOWN_SENDER, "links")
 
     assert "cannot open links or read what is behind them" in guidance
     assert "visible reference, not as page content" in guidance
@@ -33,14 +50,22 @@ def test_link_guidance_does_not_imply_fetch_capability() -> None:
 
 
 def test_agent_email_tools_require_content_free_sent_summary() -> None:
-    assert "Every `reply_to_sender` or `send_outreach` call" in SYSTEM_PROMPT
-    assert "`sent_email_summary`" in SYSTEM_PROMPT
-    assert "Do not copy the subject or body" in SYSTEM_PROMPT
-    assert "include an address or headers" in SYSTEM_PROMPT
+    for mode in (FIRST_CONTACT, KNOWN_SENDER):
+        prompt = SYSTEM_PROMPTS[mode]
+        assert "Every `reply_to_sender` or `send_outreach` call" in prompt
+        assert "`sent_email_summary`" in prompt
+        assert "Do not copy the subject or body" in prompt
+        assert "include an address or headers" in prompt
+
+
+def test_sent_email_summary_is_absent_from_proactive_modes() -> None:
+    for mode in (PEOPLE_TRIGGER, EVENT_TRIGGER):
+        assert "sent_email_summary" not in SYSTEM_PROMPTS[mode]
 
 
 def test_possible_match_guidance_describes_current_email_capability() -> None:
-    intro_guidance = SYSTEM_PROMPT.split("- A possible match:", 1)[1].split(
+    prompt = SYSTEM_PROMPTS[KNOWN_SENDER]
+    intro_guidance = prompt.split("- A possible match:", 1)[1].split(
         "- A one-way share", 1
     )[0]
     intro_guidance = " ".join(intro_guidance.split())
@@ -55,10 +80,7 @@ def test_possible_match_guidance_describes_current_email_capability() -> None:
 
 
 def test_match_guidance_treats_similarity_as_discovery_only() -> None:
-    guidance = SYSTEM_PROMPT.split("- `search` similarity", 1)[1].split(
-        "- A `search` candidate", 1
-    )[0]
-    guidance = " ".join(guidance.split())
+    guidance = _guidance(KNOWN_SENDER, "search_similarity_discovery_only")
 
     assert "candidate discovery, not a fit score" in guidance
     assert "specific two-sided match thesis" in guidance
@@ -70,10 +92,7 @@ def test_match_guidance_treats_similarity_as_discovery_only() -> None:
 
 
 def test_sender_owned_group_is_the_only_search_evidence_with_memory_ids() -> None:
-    guidance = SYSTEM_PROMPT.split("- A `search` candidate", 1)[1].split(
-        "- Tool status vocabulary", 1
-    )[0]
-    guidance = " ".join(guidance.split())
+    guidance = _guidance(KNOWN_SENDER, "sender_owned_evidence_memory_ids")
 
     assert "groups the sender's own evidence" in guidance
     assert "Only its evidence items carry `memory_id`" in guidance
@@ -82,10 +101,7 @@ def test_sender_owned_group_is_the_only_search_evidence_with_memory_ids() -> Non
 
 
 def test_thin_standing_intent_guidance_requests_one_material_follow_up() -> None:
-    guidance = SYSTEM_PROMPT.split("- Asking for clarification:", 1)[1].split(
-        "- Progressive qualification memory:", 1
-    )[0]
-    guidance = " ".join(guidance.split())
+    guidance = _guidance(KNOWN_SENDER, "asking_for_clarification")
 
     assert "broad or concrete-but-thin" in guidance
     assert "mostly use React" in guidance
@@ -97,9 +113,6 @@ def test_thin_standing_intent_guidance_requests_one_material_follow_up() -> None
     assert "do not call `propose_introduction`" in guidance
     assert "even if `search` found a semantically adjacent person" in guidance
     assert "Do not interrogate every message" in guidance
-    # The passive-promise prohibition moved from a scattered negative aside
-    # ("passively promising", "requires the question") into one checkable
-    # before-you-send constraint below; the commitment is unchanged.
     assert "exactly one question mark" in guidance
     assert "one evidence category" in guidance
     assert "role and hands-on evidence" in guidance
@@ -116,10 +129,7 @@ def test_a_passive_matching_promise_cannot_stand_in_for_a_question() -> None:
     stated as a check on the outgoing reply rather than as a general principle,
     because the model has to be able to apply it to the text it just wrote.
     """
-    guidance = SYSTEM_PROMPT.split("- Asking for clarification:", 1)[1].split(
-        "- Progressive qualification memory:", 1
-    )[0]
-    guidance = " ".join(guidance.split())
+    guidance = _guidance(KNOWN_SENDER, "asking_for_clarification")
 
     assert (
         "Before sending a reply to an unsupported request for a connection" in guidance
@@ -140,10 +150,7 @@ def test_a_passive_matching_promise_cannot_stand_in_for_a_question() -> None:
 
 
 def test_multi_register_interests_are_not_collapsed_into_a_career_request() -> None:
-    guidance = SYSTEM_PROMPT.split("- Not every message is a career request.", 1)[
-        1
-    ].split("- Progressive qualification memory:", 1)[0]
-    guidance = " ".join(guidance.split())
+    guidance = _guidance(KNOWN_SENDER, "not_every_message_is_career_request")
 
     assert "more than one register" in guidance
     assert "a real thread, not background around the professional one" in guidance
@@ -164,10 +171,7 @@ def test_breadth_is_remembered_once_rather_than_per_claimed_field() -> None:
     keyed on `consolidation_candidates` cannot catch them; without this the
     notes accumulate one per claimed label.
     """
-    guidance = SYSTEM_PROMPT.split("- Breadth is one fact, not many.", 1)[1].split(
-        "- `register_person` is", 1
-    )[0]
-    guidance = " ".join(guidance.split())
+    guidance = _guidance(KNOWN_SENDER, "breadth_is_one_fact")
 
     assert "their ask is broad" in guidance
     assert "a single standing note" in guidance
@@ -178,20 +182,14 @@ def test_breadth_is_remembered_once_rather_than_per_claimed_field() -> None:
 
 
 def test_match_thesis_constraints_are_not_only_professional() -> None:
-    guidance = SYSTEM_PROMPT.split("- `search` similarity is", 1)[1].split(
-        "- A `search` candidate", 1
-    )[0]
-    guidance = " ".join(guidance.split())
+    guidance = _guidance(KNOWN_SENDER, "search_similarity_discovery_only")
 
     assert "Consequential constraints are not only professional" in guidance
     assert "level, scene, locality, format" in guidance
 
 
 def test_progressive_qualification_replaces_one_enriched_intent_note() -> None:
-    guidance = SYSTEM_PROMPT.split("- Progressive qualification memory:", 1)[1].split(
-        "- Preferences about who", 1
-    )[0]
-    guidance = " ".join(guidance.split())
+    guidance = _guidance(KNOWN_SENDER, "progressive_qualification_memory")
 
     assert "answer closes only the gap it actually answers" in guidance
     assert "Preserve earlier material context and constraints" in guidance
@@ -208,25 +206,22 @@ def test_progressive_qualification_replaces_one_enriched_intent_note() -> None:
     assert "supports both what the sender brings" in guidance
 
 
-def test_under_supported_proactive_people_candidate_is_no_action() -> None:
-    guidance = SYSTEM_PROMPT.split("- Proactive people triggers", 1)[1].split(
-        "- Events are secondary", 1
-    )[0]
-    guidance = " ".join(guidance.split())
-
-    assert "surface candidates; they do not establish fit" in guidance
-    assert "same two-sided thesis" in guidance
-    assert "call `no_action`" in guidance
-    assert "Do not call `propose_introduction`" in guidance
-    assert "under-supported proactive candidate" in guidance
+def test_progressive_qualification_memory_is_absent_before_registration() -> None:
+    """Reachable only once a standing-intent note can exist, i.e. after registration."""
+    bullet = _bullet("progressive_qualification_memory")
+    assert bullet.modes == frozenset({KNOWN_SENDER})
+    assert bullet.text not in SYSTEM_PROMPTS[FIRST_CONTACT]
 
 
 def test_status_vocabulary_guidance_present() -> None:
-    guidance = SYSTEM_PROMPT.split("- Tool status vocabulary:", 1)[1].split(
-        "- `forget` deletion", 1
-    )[0]
-    guidance = " ".join(guidance.split())
+    bullet = _bullet("tool_status_vocabulary")
+    assert bullet.modes == frozenset(
+        {PEOPLE_TRIGGER, EVENT_TRIGGER, FIRST_CONTACT, KNOWN_SENDER}
+    )
+    for mode in bullet.modes:
+        assert bullet.text in SYSTEM_PROMPTS[mode]
 
+    guidance = " ".join(bullet.text.split())
     assert "tools never crash" in guidance
     assert "`limited` or `deferred`" in guidance
     assert "do not retry the same tool call" in guidance
@@ -237,10 +232,7 @@ def test_status_vocabulary_guidance_present() -> None:
 
 
 def test_operational_and_account_wide_requests_escalate() -> None:
-    guidance = SYSTEM_PROMPT.split("- Operational and account-wide requests", 1)[
-        1
-    ].split("- Consolidation:", 1)[0]
-    guidance = " ".join(guidance.split())
+    guidance = _guidance(KNOWN_SENDER, "operational_escalation")
 
     assert "broken or not working as expected" in guidance
     assert "complaint that needs follow-up" in guidance
@@ -253,10 +245,7 @@ def test_operational_and_account_wide_requests_escalate() -> None:
 
 
 def test_consolidation_guidance_present() -> None:
-    guidance = SYSTEM_PROMPT.split("- Consolidation:", 1)[1].split(
-        "- `register_person`", 1
-    )[0]
-    guidance = " ".join(guidance.split())
+    guidance = _guidance(KNOWN_SENDER, "consolidation")
 
     assert "`consolidation_candidates`" in guidance
     assert "stale version of the fact you just saved" in guidance
@@ -268,10 +257,7 @@ def test_consolidation_guidance_present() -> None:
 
 
 def test_register_person_exists_guidance_present() -> None:
-    guidance = SYSTEM_PROMPT.split("- `register_person`", 1)[1].split(
-        "- A `search` result's `person_id`", 1
-    )[0]
-    guidance = " ".join(guidance.split())
+    guidance = _guidance(FIRST_CONTACT, "register_person_for_joining_only")
 
     assert "`status=exists`" in guidance
     assert "use the returned id and continue normally" in guidance
@@ -280,22 +266,27 @@ def test_register_person_exists_guidance_present() -> None:
 
 
 def test_unknown_sender_can_be_answered_without_registration_guidance() -> None:
-    guidance = SYSTEM_PROMPT.split("- `register_person`", 1)[1].split(
-        "- Asking for clarification:", 1
-    )[0]
-    guidance = " ".join(guidance.split())
+    guidance = _guidance(FIRST_CONTACT, "register_person_for_joining_only")
 
     assert "only asking what the service does" in guidance
     assert "explicitly declines participation or data retention" in guidance
     assert "without saving a memory or escalating" in guidance
-    assert "authenticated inbound address without registering" in guidance
+    # This phrasing lives in the neighboring `search_person_id_is_not_sender`
+    # bullet, which also reaches first_contact mode.
+    assert "authenticated inbound address without registering" in _guidance(
+        FIRST_CONTACT, "search_person_id_is_not_sender"
+    )
+
+
+def test_register_person_guidance_is_absent_from_known_sender_mode() -> None:
+    """A known sender is already registered - register_person cannot fire again."""
+    bullet = _bullet("register_person_for_joining_only")
+    assert bullet.modes == frozenset({FIRST_CONTACT})
+    assert bullet.text not in SYSTEM_PROMPTS[KNOWN_SENDER]
 
 
 def test_first_contact_is_model_directed_and_uses_plain_public_language() -> None:
-    guidance = SYSTEM_PROMPT.split("- First contact is a judgment call", 1)[1].split(
-        "- A `search` result's `person_id`", 1
-    )[0]
-    guidance = " ".join(guidance.split())
+    guidance = _guidance(FIRST_CONTACT, "first_contact_judgment_call")
 
     assert "not a character-count rule" in guidance
     assert "`send_first_contact_welcome`" in guidance
@@ -309,15 +300,39 @@ def test_first_contact_is_model_directed_and_uses_plain_public_language() -> Non
     assert "do not send both" in guidance
 
 
-def _event_guidance() -> str:
-    guidance = SYSTEM_PROMPT.split("- Events are secondary:", 1)[1].split(
-        "- First contact", 1
-    )[0]
-    return " ".join(guidance.split())
+def test_joining_first_contact_reply_style_guidance_present() -> None:
+    guidance = _guidance(FIRST_CONTACT, "joining_first_contact_reply_style")
+
+    assert "register and remember what the sender shared" in guidance
+    assert "not a confirmation form" in guidance
+    assert "noted that you're X, Y, and Z" in guidance
+    assert "anonymized sketch" in guidance
+
+
+def test_outreach_timing_guidance_present() -> None:
+    bullet = _bullet("outreach_timing_judgment_call")
+    assert bullet.modes == frozenset({FIRST_CONTACT, KNOWN_SENDER})
+    guidance = " ".join(bullet.text.split())
+
+    assert "judgment call, not a line to recite" in guidance
+    assert "never more than once per sender" in guidance
+    assert "Never promise a match or a timeline" in guidance
+
+
+def test_search_person_id_guidance_present() -> None:
+    guidance = _guidance(KNOWN_SENDER, "search_person_id_is_not_sender")
+
+    assert "identifies whoever that memory is about" in guidance
+    assert "never the current sender" in guidance
+    assert "accepts no recipient ID" in guidance
+
+
+def _event_guidance(mode: str, slug: str) -> str:
+    return _guidance(mode, slug)
 
 
 def test_event_guidance_keeps_events_secondary_and_relevance_separate() -> None:
-    guidance = _event_guidance()
+    guidance = _event_guidance(KNOWN_SENDER, "events_are_secondary")
 
     assert "core value is making unusually relevant people connections" in guidance
     assert "Judge event relevance separately" in guidance
@@ -326,7 +341,7 @@ def test_event_guidance_keeps_events_secondary_and_relevance_separate() -> None:
 
 
 def test_event_submission_and_interest_guidance_preserves_freeform_meaning() -> None:
-    guidance = _event_guidance()
+    guidance = _event_guidance(KNOWN_SENDER, "event_records_vs_interests")
 
     assert "record the event with `create_event`, not `remember`" in guidance
     assert "one event record for a one-off event" in guidance
@@ -342,7 +357,7 @@ def test_event_submission_and_interest_guidance_preserves_freeform_meaning() -> 
 
 
 def test_event_trigger_uses_only_server_composed_capability() -> None:
-    guidance = _event_guidance()
+    guidance = _event_guidance(EVENT_TRIGGER, "proactive_event_triggers")
 
     assert "Compare those gists carefully" in guidance
     assert "High semantic similarity is not enough" in guidance
@@ -355,8 +370,15 @@ def test_event_trigger_uses_only_server_composed_capability() -> None:
     assert "never call `propose_introduction` during an event trigger" in guidance
 
 
+def test_proactive_event_triggers_guidance_is_event_trigger_exclusive() -> None:
+    bullet = _bullet("proactive_event_triggers")
+    assert bullet.modes == frozenset({EVENT_TRIGGER})
+    for mode in (PEOPLE_TRIGGER, FIRST_CONTACT, KNOWN_SENDER):
+        assert bullet.text not in SYSTEM_PROMPTS[mode]
+
+
 def test_event_permission_is_scoped_without_service_promises() -> None:
-    guidance = _event_guidance()
+    guidance = _event_guidance(KNOWN_SENDER, "event_recommendation_permission")
 
     assert "opt out of event recommendations by saying no" in guidance
     assert "`stop_event_recommendations`" in guidance
@@ -374,47 +396,138 @@ def test_event_permission_is_scoped_without_service_promises() -> None:
         assert unsupported in guidance
 
 
+def test_preferences_about_who_reaches_search_and_proactive_people_matches() -> None:
+    """Explicitly names both a `search` hit and a proactive trigger as contexts."""
+    bullet = _bullet("preferences_about_who")
+    assert bullet.modes == frozenset({KNOWN_SENDER, PEOPLE_TRIGGER})
+    guidance = " ".join(bullet.text.split())
+
+    assert "part of the match, not decoration" in guidance
+    assert "a `search` hit or a proactive trigger" in guidance
+    assert "treat a stated preference as a constraint" in guidance
+    assert "not license to assume it holds" in guidance
+
+
+# ---------------------------------------------------------------------------
+# The "Proactive people triggers" bullet was checked for the duplication this
+# chain's acceptance criteria call out - see the comment above JUDGMENT_BULLETS
+# for the finding: `scan_for_matches`'s trigger body restates this reasoning,
+# but `scan_for_opportunities`'s does not, so the bullet is kept (not deleted)
+# for `people_trigger` mode. The event-trigger bullet gets the same check and
+# comes out the other way: neither event scan body duplicates it.
+# ---------------------------------------------------------------------------
+
+
+def test_under_supported_proactive_people_candidate_is_no_action() -> None:
+    guidance = _guidance(PEOPLE_TRIGGER, "proactive_people_triggers")
+
+    assert "surface candidates; they do not establish fit" in guidance
+    assert "same two-sided thesis" in guidance
+    assert "call `no_action`" in guidance
+    assert "Do not call `propose_introduction`" in guidance
+    assert "under-supported proactive candidate" in guidance
+
+
+def test_scan_for_matches_body_duplicates_the_proactive_people_triggers_bullet() -> (
+    None
+):
+    """Only the semantic-rematch scan restates the bullet's reasoning inline."""
+    source = inspect.getsource(proactive_module.scan_for_matches)
+    assert "two-sided" in source
+    assert "materially supported common ground" in source
+    assert "propose_introduction" in source
+    assert "no_action" in source
+
+
+def test_scan_for_opportunities_body_does_not_duplicate_the_bullet() -> None:
+    """The graph-proximity scan carries no thesis/no_action reasoning at all -
+    this is why the bullet is kept rather than deleted for `people_trigger`."""
+    source = inspect.getsource(proactive_module.scan_for_opportunities)
+    assert "two-sided" not in source
+    assert "no_action" not in source
+
+
+def test_event_scan_trigger_body_does_not_duplicate_the_prompt_bullet() -> None:
+    """Unlike `scan_for_matches`, `event_scan.py`'s trigger body is a short
+    pointer to the sealed gists ("Judge relevance only from these sanitized
+    gists"); it does not restate the "Compare those gists carefully...
+    constraint conflicts" reasoning that `proactive_event_triggers` carries,
+    so that bullet is kept for `event_trigger` mode for the same underlying
+    reason `proactive_people_triggers` is kept.
+    """
+    from thenetwork.worker import event_scan as event_scan_module
+
+    source = inspect.getsource(event_scan_module.scan_for_event_recommendations)
+    assert "Compare those gists carefully" not in source
+    assert "High semantic similarity is not enough" not in source
+
+
+# ---------------------------------------------------------------------------
+# Structural cross-check: a bullet appears in a mode's composed prompt if and
+# only if that mode is in its declared `modes` set.
+# ---------------------------------------------------------------------------
+
+
+def test_every_bullet_appears_only_in_its_declared_modes() -> None:
+    for bullet in JUDGMENT_BULLETS:
+        for mode, prompt in SYSTEM_PROMPTS.items():
+            present = bullet.text in prompt
+            expected = mode in bullet.modes
+            assert present == expected, (bullet.slug, mode, present, expected)
+
+
+def test_send_event_recommendation_is_named_only_where_it_is_registered() -> None:
+    """A prior bug: the tools line named `send_event_recommendation` even in
+    modes where it is not registered (only `event_trigger` registers it)."""
+    for mode in (PEOPLE_TRIGGER, FIRST_CONTACT, KNOWN_SENDER):
+        assert "send_event_recommendation" not in SYSTEM_PROMPTS[mode]
+    assert "send_event_recommendation" in SYSTEM_PROMPTS[EVENT_TRIGGER]
+
+
 # The production model is a 31B instruct model, so the binding constraint on
-# this prompt is instruction adherence across a long system message, not
-# context capacity - the window is far larger than anything here. There is no
-# published size cliff to point at, so these bounds are drift alarms rather
+# each mode's prompt is instruction adherence across a long system message,
+# not context capacity - the window is far larger than anything here. There is
+# no published size cliff to point at, so these bounds are drift alarms rather
 # than targets, and the only correct response to a breach is consolidating
 # overlapping guidance. Never buy headroom by deleting a behavioral
 # commitment: every one of them is pinned by a test above precisely so that
 # shortcut fails loudly.
 #
-# Measured the same way at every point of comparison (rendered SYSTEM_PROMPT,
-# not the source file - `wc -c` on prompts.py counts the backslash
-# line-continuation syntax, which inflates the figure by roughly 580
-# characters and never reaches the model):
+# Measured the same way at every point of comparison (rendered composed
+# prompt text via Python, never `wc -c` on prompts.py - the source file's
+# internal structure, including this module's docstrings and dict literals,
+# never reaches the model):
 #
 #   08f8114 (before the prompt-adjustments project): 22493 chars, 20 bullets,
-#     median bullet 725, mean 816, longest 1958
+#     median bullet 725, mean 816, longest 1958 (single flat prompt)
 #   eff77d6 (round 1 assembled):                     22871 chars, 16 bullets,
-#     median 797, mean 1054, longest 2669
+#     median 797, mean 1054, longest 2669 (single flat prompt)
+#   this task (per-mode assembly, 23 bullets total - none deleted; see
+#     "proactive_people_triggers" below, which was considered for removal as a
+#     duplicate of worker/proactive.py's trigger body but kept because only
+#     `scan_for_matches`'s body actually restates it, not `scan_for_opportunities`'s):
+#     known_sender:    18846 chars, 18 bullets reach this mode
+#     first_contact:   19603 chars, 19 bullets reach this mode
+#     people_trigger:   4434 chars,  3 bullets reach this mode
+#     event_trigger:    3957 chars,  2 bullets reach this mode
 #
-# Round 1 grew the prompt by 378 characters, which is correct: it added two
-# genuinely new commitments (breadth-is-one-fact, and the passive-promise
-# check on an unsupported connection request). Its bullet-count reduction,
-# however, came from concatenation - four event bullets became one - which
-# raised the mean bullet length by 29% and is the worse shape for adherence
-# even at equal total length. Splitting those back apart is what this bound
-# protects.
-_MAX_PROMPT_CHARS = 24000
+# known_sender/first_contact stayed close to the old flat-prompt size because
+# most bullets reason about tools registered in both interactive modes; the
+# real reduction is in the two proactive-trigger modes, which now only carry
+# the guidance their bound capability can act on.
+_MAX_INTERACTIVE_PROMPT_CHARS = 21000
+_MAX_PROACTIVE_PROMPT_CHARS = 5000
 _MAX_BULLET_CHARS = 2500
 
 
-def _judgment_bullets() -> list[str]:
-    """The judgment-notes bullets, as the model receives them."""
-    block = SYSTEM_PROMPT.split(
-        "Judgment notes that go beyond the tool descriptions:", 1
-    )[1]
-    block = block.split("\n\nUntrusted content:", 1)[0]
-    return [("- " + part).strip() for part in re.split(r"^- ", block, flags=re.M)[1:]]
+def test_interactive_prompts_stay_within_their_recorded_size_bounds() -> None:
+    for mode in (FIRST_CONTACT, KNOWN_SENDER):
+        assert len(SYSTEM_PROMPTS[mode]) <= _MAX_INTERACTIVE_PROMPT_CHARS, mode
 
 
-def test_system_prompt_stays_within_its_recorded_size_bounds() -> None:
-    assert len(SYSTEM_PROMPT) <= _MAX_PROMPT_CHARS
+def test_proactive_prompts_stay_within_their_recorded_size_bounds() -> None:
+    for mode in (PEOPLE_TRIGGER, EVENT_TRIGGER):
+        assert len(SYSTEM_PROMPTS[mode]) <= _MAX_PROACTIVE_PROMPT_CHARS, mode
 
 
 def test_no_single_judgment_bullet_becomes_a_wall_of_text() -> None:
@@ -423,8 +536,6 @@ def test_no_single_judgment_bullet_becomes_a_wall_of_text() -> None:
     Merging bullets can lower the count while making the guidance harder to
     follow, so this bounds the outlier rather than the total.
     """
-    bullets = _judgment_bullets()
-
-    assert bullets, "judgment-notes block did not parse into bullets"
-    longest = max(bullets, key=len)
-    assert len(longest) <= _MAX_BULLET_CHARS, longest[:120]
+    assert JUDGMENT_BULLETS, "no judgment bullets defined"
+    longest = max(JUDGMENT_BULLETS, key=lambda bullet: len(bullet.text))
+    assert len(longest.text) <= _MAX_BULLET_CHARS, longest.text[:120]
