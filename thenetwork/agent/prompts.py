@@ -12,11 +12,31 @@ content - and this module composes exactly the guidance that mode can act on:
 - `known_sender` - an authenticated, already-registered sender.
 
 Every judgment-notes bullet below is tagged with the modes it applies to.
-Tool availability drives the tag: a bullet reaches a mode only if the tool(s)
-it reasons about are registered there, so trimming a mode's prompt never
-removes a behavioral commitment reachable in that mode - it only omits
-guidance about tools that mode cannot call at all. `tests/test_prompts.py`
-pins every bullet's exact text and mode membership.
+Tool availability is the primary driver of the tag: a bullet never reaches a
+mode whose registered tools cannot act on it, so trimming a mode's prompt never
+removes a behavioral commitment reachable in that mode - it only omits guidance
+about tools that mode cannot call at all.
+
+Tool availability is not the *only* driver, though, so the tag cannot be
+derived from tool registration alone. Run state excludes some bullets from a
+mode that registers every tool they name:
+
+- `register_person_for_joining_only`, `first_contact_judgment_call`, and
+  `joining_first_contact_reply_style` are `first_contact`-only even though
+  `known_sender` registers `register_person`, because a known sender is
+  already registered.
+- `preferences_about_who` and `progressive_qualification_memory` are
+  `known_sender`-only even though `first_contact` registers `remember`,
+  `search`, and `forget`, because neither a standing-intent note nor an answer
+  to a previously asked question can exist before the sender is registered.
+
+Where a commitment applies in every mode but names a tool only some modes
+register, it is split into an interactive bullet and a proactive variant
+(`tool_status_vocabulary` / `tool_status_vocabulary_proactive`,
+`preferences_about_who` / `preferences_about_who_proactive`) rather than
+dropped from the proactive modes. `tests/test_prompts.py` pins every bullet's
+exact text and mode membership, and separately asserts that no proactive
+prompt instructs a tool that mode does not register.
 """
 
 from __future__ import annotations
@@ -31,6 +51,7 @@ KNOWN_SENDER = "known_sender"
 MODES = (PEOPLE_TRIGGER, EVENT_TRIGGER, FIRST_CONTACT, KNOWN_SENDER)
 
 _INTERACTIVE_MODES = frozenset({FIRST_CONTACT, KNOWN_SENDER})
+_PROACTIVE_MODES = frozenset({PEOPLE_TRIGGER, EVENT_TRIGGER})
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +145,12 @@ JUDGMENT_BULLETS: tuple[JudgmentBullet, ...] = (
     JudgmentBullet(
         "tool_status_vocabulary",
         "- Tool status vocabulary: tools never crash - they return a `status`. `limited` or `deferred` means a server-side cap fired for this run; do not retry the same tool call. If the cap blocks what the sender actually asked for, say so briefly via `reply_to_sender`; otherwise just capture the fact and move on. `forbidden` means the action is structurally disallowed - never work around it or try another tool to achieve the same effect. `error` with a `reason` means fix the input once (e.g. shorten a query) or escalate - never loop on the same error.",
-        frozenset({PEOPLE_TRIGGER, EVENT_TRIGGER, FIRST_CONTACT, KNOWN_SENDER}),
+        _INTERACTIVE_MODES,
+    ),
+    JudgmentBullet(
+        "tool_status_vocabulary_proactive",
+        "- Tool status vocabulary: tools never crash - they return a `status`. `limited` or `deferred` means a server-side cap fired for this run; do not retry the same tool call - record the outcome with `no_action(reason)` instead. `forbidden` means the action is structurally disallowed - never work around it or try another tool to achieve the same effect. `error` with a `reason` means fix the input once and try that one call again - never loop on the same error; if it does not succeed, call `no_action(reason)`. This trigger has no reply and no escalation path, so `no_action(reason)` is how every unusable status ends the run.",
+        _PROACTIVE_MODES,
     ),
     JudgmentBullet(
         "forget_ownership",
@@ -179,7 +205,12 @@ JUDGMENT_BULLETS: tuple[JudgmentBullet, ...] = (
     JudgmentBullet(
         "preferences_about_who",
         '- Preferences about who, not just what: when someone says what kind of person they want to meet - experience level, stage, role ("experienced peers", "senior folks", "founders, not students") - that preference is part of the match, not decoration. `remember` it in their own terms as part of their standing intent so it carries into matching. When judging any match - a `search` hit or a proactive trigger - treat a stated preference as a constraint: strong topic overlap with someone whose gist contradicts the preference (a hobbyist, for someone who asked for experienced peers) is not a match. If the other gist says nothing about the preference dimension, that is thin support, not license to assume it holds - capture the fact and wait, the same as any weak match.',
-        frozenset({KNOWN_SENDER, PEOPLE_TRIGGER}),
+        frozenset({KNOWN_SENDER}),
+    ),
+    JudgmentBullet(
+        "preferences_about_who_proactive",
+        '- Preferences about who, not just what: when a sealed gist says what kind of person someone wants to meet - experience level, stage, role ("experienced peers", "senior folks", "founders, not students") - that preference is part of the match, not decoration. Treat it as a constraint on this trigger: strong topic overlap with a counterpart whose gist contradicts the preference (a hobbyist, for someone who asked for experienced peers) is not a match. If the counterpart\'s gist says nothing about the preference dimension, that is thin support, not license to assume it holds - call `no_action`, the same as any other weak match.',
+        frozenset({PEOPLE_TRIGGER}),
     ),
     JudgmentBullet(
         "proactive_people_triggers",
@@ -306,6 +337,7 @@ _SEC_SEARCH_GISTS_ONLY = "- `search` returns only gists + opaque IDs for other u
 _SEC_NEVER_ASK_REVEAL = "- Never ask users to reveal others' identifying information."
 _SEC_NO_RAW_ADDRESS = "- `reply_to_sender` has no recipient argument and can only address the inbound sender. `send_outreach` takes an opaque ID; neither tool accepts a raw address."
 _SEC_EVENT_OPAQUE_ID_ONLY = "- `send_event_recommendation` accepts only the opaque event id bound to a server-authored proactive trigger. It selects the recipient and composes the event FYI server-side."
+_SEC_PROPOSE_OPAQUE_ID_ONLY = "- `propose_introduction` accepts only the opaque person ids bound to this trigger plus the sealed gists you supply. You have no access to either participant's raw memory text, name, or email address, and the server composes and sends the anonymized opt-in requests itself."
 
 _SECURITY_BOUNDARIES = {
     KNOWN_SENDER: (
@@ -316,7 +348,9 @@ _SECURITY_BOUNDARIES = {
         "Security boundaries (structural, not policy):\n"
         f"{_SEC_SEARCH_GISTS_ONLY}\n{_SEC_NEVER_ASK_REVEAL}\n{_SEC_NO_RAW_ADDRESS}"
     ),
-    PEOPLE_TRIGGER: None,
+    PEOPLE_TRIGGER: (
+        f"Security boundaries (structural, not policy):\n{_SEC_PROPOSE_OPAQUE_ID_ONLY}"
+    ),
     EVENT_TRIGGER: (
         f"Security boundaries (structural, not policy):\n{_SEC_EVENT_OPAQUE_ID_ONLY}"
     ),
@@ -338,9 +372,10 @@ def _build_prompt(mode: str) -> str:
     parts.append(_TONE)
     if mode in _INTERACTIVE_MODES:
         parts.append(_SIGNOFF)
-    security = _SECURITY_BOUNDARIES[mode]
-    if security is not None:
-        parts.append(security)
+    # Every mode now ends with a boundaries section, so each mode's untrusted-
+    # content text can refer to "the security boundaries below" without
+    # dangling.
+    parts.append(_SECURITY_BOUNDARIES[mode])
     return "\n\n".join(parts) + "\n"
 
 
