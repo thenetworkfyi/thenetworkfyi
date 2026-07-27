@@ -225,9 +225,9 @@ async def _record_intro_flow(
                 "sim.relay_delivery",
                 delivered=delivered,
                 direction=(
-                    "alice_to_bob"
+                    "first_to_second"
                     if persona is INTRO_FLOW_PERSONAS[0]
-                    else "bob_to_alice"
+                    else "second_to_first"
                 ),
             )
             if not delivered:
@@ -263,7 +263,7 @@ async def _record_intro_flow(
         events.write(
             "sim.relay_delivery",
             delivered=not revoked_delivery_blocked,
-            direction="alice_to_bob_after_revoke",
+            direction="first_to_second_after_revoke",
         )
         if not revoked_delivery_blocked:
             raise RuntimeError("revoked pair relayed a new message")
