@@ -186,13 +186,13 @@ column." Instead:
    and minimum lifecycle fields. Raw memory/event text, raw event recurrence, and event
    submitter identity never enter a cross-user result set.
 4. **The sanitizer is a separate, narrowly-scoped step**
-   (`thenetwork/memory/sanitize.py`) - mandatory Presidio redaction of names, email
-   addresses, and phone numbers, plus structural redaction of platform handles and
-   profile URLs, while keeping organizations and locations for search
-   recall, plus an optional higher-fidelity LLM pass that has a fixed prompt and no
-   tools. Missing Presidio is a deployment error, not a silent downgrade. The component
-   that sees raw cross-user data stays small and auditable; the main agent never
-   self-censors.
+   (`thenetwork/memory/sanitize.py`) - one mandatory local span classifier
+   (`openai/privacy-filter`) redacts names, email addresses, phone numbers, addresses,
+   profile URLs, account numbers, and secrets, while keeping dates, organizations, and
+   locations for search recall. There is no pattern tier, no per-write model call, and
+   no setting that disables it: a model that cannot load is a deployment error, not a
+   silent downgrade. The component that sees raw cross-user data stays small and
+   auditable; the main agent never self-censors.
 5. **Capability-style email tools (confused-deputy fix).** `reply_to_sender`
    derives its only recipient from the authenticated inbound sender, including an
    unfamiliar sender who does not need to be registered just to receive an answer.
@@ -334,8 +334,9 @@ HF_TOKEN=                 # first enabled startup only, until the model is cache
 uv pip install -e .
 ```
 
-The required `en_core_web_lg` spaCy model is installed with the project; no
-separate model download is needed.
+The gist sanitizer uses `openai/privacy-filter`, which is Apache 2.0 and ungated.
+Its weights (~2 GB) download on first start into the local Hugging Face cache and
+need no account or token.
 
 The project installs pinned LlamaFirewall scanner dependencies and uses
 `meta-llama/Llama-Prompt-Guard-2-86M`, a gated model under the Llama 4 Community

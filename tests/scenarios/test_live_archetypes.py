@@ -200,11 +200,11 @@ async def run_scenario(inputs: EmailScenario, *, model: Any = None) -> RunOutcom
     async def fake_embed_text(text: str) -> list[float]:
         return [0.0] * 1536
 
-    async def fake_sanitize(memory, session):
+    def fake_sanitize(memory, session):
         remembered.append({"text": memory.text, "refs": list(memory.refs or [])})
         return memory.gist or "note"
 
-    async def fake_sanitize_event(text: str) -> str:
+    def fake_sanitize_event(text: str) -> str:
         return f"sealed event: {text}"
 
     with (
@@ -212,6 +212,14 @@ async def run_scenario(inputs: EmailScenario, *, model: Any = None) -> RunOutcom
         patch("thenetwork.agent.tools.send_reply", side_effect=fake_send_reply),
         patch("thenetwork.agent.tools.notify_admins"),
         patch("thenetwork.introductions.send_reply", side_effect=fake_send_reply),
+        # The re-sanitization of proposal gists is a second, independent SEAL
+        # boundary inside introductions. It runs the same local classifier,
+        # which is a multi-gigabyte download CI does not have; its accuracy is
+        # covered by tests/test_sanitize.py's integration cases.
+        patch(
+            "thenetwork.introductions.sanitize_text",
+            new=MagicMock(side_effect=lambda text: f"sealed: {text}"),
+        ),
         patch(
             "thenetwork.agent.tools.embed_text",
             new=AsyncMock(side_effect=fake_embed_text),
@@ -220,12 +228,12 @@ async def run_scenario(inputs: EmailScenario, *, model: Any = None) -> RunOutcom
             "thenetwork.agent.tools.match_memories", return_value=inputs.search_results
         ),
         patch(
-            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
-            new=AsyncMock(side_effect=fake_sanitize),
+            "thenetwork.agent.tools.sanitize_memory",
+            new=MagicMock(side_effect=fake_sanitize),
         ),
         patch(
-            "thenetwork.agent.tools.sanitize_text_high_fidelity",
-            new=AsyncMock(side_effect=fake_sanitize_event),
+            "thenetwork.agent.tools.sanitize_text",
+            new=MagicMock(side_effect=fake_sanitize_event),
         ),
         patch("thenetwork.agent.tools._check_daily_dispatch_cap", return_value=True),
         patch("thenetwork.agent.tools._consume_daily_dispatch_cap"),

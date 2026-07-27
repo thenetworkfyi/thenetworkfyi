@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from contextlib import contextmanager
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
 from sqlalchemy import text as sql_text
@@ -58,8 +58,8 @@ async def test_redact_memory_dry_run():
             return_value="[NAME] at [EMAIL] called [PHONE]",
         ),
         patch(
-            "thenetwork.scripts.redact_memory.sanitize_memory_high_fidelity",
-            new=AsyncMock(return_value="[NAME] at [EMAIL] called [PHONE]"),
+            "thenetwork.scripts.redact_memory.sanitize_memory",
+            new=MagicMock(return_value="[NAME] at [EMAIL] called [PHONE]"),
         ),
         patch(
             "thenetwork.scripts.redact_memory.embed_text",
@@ -93,8 +93,8 @@ async def test_redact_memory_commit():
             return_value="Contact [NAME] at [PHONE]",
         ),
         patch(
-            "thenetwork.scripts.redact_memory.sanitize_memory_high_fidelity",
-            new=AsyncMock(return_value="Contact [NAME] at [PHONE]"),
+            "thenetwork.scripts.redact_memory.sanitize_memory",
+            new=MagicMock(return_value="Contact [NAME] at [PHONE]"),
         ),
         patch(
             "thenetwork.scripts.redact_memory.embed_text",
@@ -121,7 +121,7 @@ async def test_redact_memory_ref_gist_refreshed():
     )
     session = FakeRedactSession(mem)
 
-    async def fake_sanitize_high_fidelity(memory, sess):
+    def fake_sanitize(memory, sess):
         memory.gist = "[NAME] at [EMAIL] called [PHONE]"
         return memory.gist
 
@@ -131,8 +131,8 @@ async def test_redact_memory_ref_gist_refreshed():
             return_value="[NAME] at [EMAIL] called [PHONE]",
         ),
         patch(
-            "thenetwork.scripts.redact_memory.sanitize_memory_high_fidelity",
-            side_effect=fake_sanitize_high_fidelity,
+            "thenetwork.scripts.redact_memory.sanitize_memory",
+            side_effect=fake_sanitize,
         ),
         patch(
             "thenetwork.scripts.redact_memory.embed_text",
@@ -156,14 +156,14 @@ async def test_redact_memory_ref_fails_without_gist():
     )
     session = FakeRedactSession(mem)
 
-    async def fake_sanitize_high_fidelity_none(memory, sess):
+    def fake_sanitize_none(memory, sess):
         memory.gist = None
         return None
 
     with (
         patch(
-            "thenetwork.scripts.redact_memory.sanitize_memory_high_fidelity",
-            side_effect=fake_sanitize_high_fidelity_none,
+            "thenetwork.scripts.redact_memory.sanitize_memory",
+            side_effect=fake_sanitize_none,
         ),
         patch(
             "thenetwork.scripts.redact_memory.embed_text",
@@ -269,7 +269,7 @@ def test_cli_main_dry_run_message(capsys):
     def fake_get_session():
         yield session
 
-    async def fake_sanitize_high_fidelity(memory, sess):
+    def fake_sanitize(memory, sess):
         memory.gist = "[NAME] at [EMAIL]"
         return memory.gist
 
@@ -282,8 +282,8 @@ def test_cli_main_dry_run_message(capsys):
             return_value="[NAME] at [EMAIL]",
         ),
         patch(
-            "thenetwork.scripts.redact_memory.sanitize_memory_high_fidelity",
-            side_effect=fake_sanitize_high_fidelity,
+            "thenetwork.scripts.redact_memory.sanitize_memory",
+            side_effect=fake_sanitize,
         ),
         patch(
             "thenetwork.scripts.redact_memory.embed_text",
@@ -316,8 +316,8 @@ async def test_redact_memory_dry_run_audits_distinct_outcome():
             return_value="[NAME] at [EMAIL]",
         ),
         patch(
-            "thenetwork.scripts.redact_memory.sanitize_memory_high_fidelity",
-            new=AsyncMock(return_value="[NAME] at [EMAIL]"),
+            "thenetwork.scripts.redact_memory.sanitize_memory",
+            new=MagicMock(return_value="[NAME] at [EMAIL]"),
         ),
         patch("thenetwork.scripts.redact_memory.embed_text", new=AsyncMock()),
         patch("thenetwork.scripts.redact_memory.audit_event") as mock_audit,
@@ -339,14 +339,14 @@ async def test_redact_memory_ref_fails_without_gist_audits_blocked_and_rolls_bac
     )
     session = FakeRedactSession(mem)
 
-    async def fake_sanitize_high_fidelity_none(memory, sess):
+    def fake_sanitize_none(memory, sess):
         memory.gist = None
         return None
 
     with (
         patch(
-            "thenetwork.scripts.redact_memory.sanitize_memory_high_fidelity",
-            side_effect=fake_sanitize_high_fidelity_none,
+            "thenetwork.scripts.redact_memory.sanitize_memory",
+            side_effect=fake_sanitize_none,
         ),
         patch("thenetwork.scripts.redact_memory.embed_text", new=AsyncMock()),
         patch("thenetwork.scripts.redact_memory.audit_event") as mock_audit,
@@ -372,8 +372,8 @@ async def test_redact_memory_sanitize_exception_audits_blocked_and_rolls_back():
 
     with (
         patch(
-            "thenetwork.scripts.redact_memory.sanitize_memory_high_fidelity",
-            new=AsyncMock(side_effect=RuntimeError("boom")),
+            "thenetwork.scripts.redact_memory.sanitize_memory",
+            new=MagicMock(side_effect=RuntimeError("boom")),
         ),
         patch("thenetwork.scripts.redact_memory.embed_text", new=AsyncMock()),
         patch("thenetwork.scripts.redact_memory.audit_event") as mock_audit,
@@ -466,7 +466,7 @@ def _force_deterministic_sanitize_tier(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.integration
-@pytest.mark.real_presidio
+@pytest.mark.real_sanitizer
 def test_redact_memory_dry_run_leaves_persisted_row_unchanged(
     seeded_db, pg_engine, monkeypatch
 ):
@@ -508,7 +508,7 @@ def test_redact_memory_dry_run_leaves_persisted_row_unchanged(
 
 
 @pytest.mark.integration
-@pytest.mark.real_presidio
+@pytest.mark.real_sanitizer
 def test_redact_memory_commit_persists_gist_regenerated_from_redacted_text(
     seeded_db, pg_engine, monkeypatch
 ):
@@ -551,7 +551,7 @@ def test_redact_memory_commit_persists_gist_regenerated_from_redacted_text(
 
 
 @pytest.mark.integration
-@pytest.mark.real_presidio
+@pytest.mark.real_sanitizer
 def test_redact_memory_dry_run_then_commit_end_to_end(
     seeded_db, pg_engine, monkeypatch
 ):

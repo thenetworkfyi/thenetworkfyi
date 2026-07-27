@@ -31,7 +31,7 @@ from thenetwork.email.intake_control import (
     pause_primary_intake,
     resume_primary_intake,
 )
-from thenetwork.memory.sanitize import sanitize_memory_high_fidelity
+from thenetwork.memory.sanitize import sanitize_memory
 from thenetwork.security.rate_limit import normalize_rate_limit_identity
 from thenetwork.worker.metrics import (
     ControlAction,
@@ -212,7 +212,7 @@ async def _cmd_remember(args: str, body_text: str) -> str:
         session.add(mem)
         session.flush()
         if refs:
-            gist = await sanitize_memory_high_fidelity(mem, session)
+            gist = sanitize_memory(mem, session)
             if mem.gist is None and isinstance(gist, str):
                 mem.gist = gist
             if mem.gist is None:

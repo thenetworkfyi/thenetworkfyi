@@ -25,25 +25,29 @@ prompt-injection exfiltrate it, so the privacy boundary cannot be "withhold a co
    Raw memory/event text, raw event recurrence, and event submitter identity never enter
    a cross-user result set, so there is no runtime branch a hijacked model can steer
    toward them.
-4. **The sanitizer is a separate, narrowly-scoped step** (`memory/sanitize.py`): a
-   mandatory Presidio pass redacts person names, email addresses, and phone numbers,
-   followed by a structural pass over platform handles and profile URLs. A handle is an
-   ordinary word to an NER model - Presidio classifies `mkly` as no entity at all - so it
-   is matched by shape instead: a profile URL path segment or an `@` sigil, both
-   unambiguous, plus a platform label guarded by an identifier test, since
-   "LinkedIn: Senior Engineer" is prose. That test asks for an explicit marker
-   ("username: x"), identifier punctuation, or absence from the same en_core_web_lg
-   lexicon Presidio already loads. Only the identifier is replaced; the label and host
-   survive for search recall. A bare handle in prose that is also an English word remains
-   the LLM tier's job.
-   Organizations and locations are deliberately kept in gists because those gists are what
-   get embedded for company/place search recall. Quasi-identifying combinations are handled
-   by the optional higher-fidelity LLM pass with a *fixed* prompt and no tools, run on
-   `small_agent_model` (a cheaper/smaller model tier, separate from `AGENT_MODEL` which
-   drives the main ReAct agent - this fixed-prompt subtask doesn't need the main agent's
-   model). Missing Presidio is a deployment error, not a silent downgrade. The component
-   that sees raw cross-user data stays small and auditable; the main agent never
-   self-censors.
+4. **The sanitizer is a separate, narrowly-scoped step** (`memory/sanitize.py`): one
+   mandatory local span classifier (`SANITIZE_MODEL`, `openai/privacy-filter`) labels
+   spans in the raw text, and every span whose label is in the module's allow-list is
+   replaced with a bracket token. There is no pattern tier and no per-write model call
+   behind it - see `docs/design-decisions.md` for why both were removed. Weights are
+   local and ungated, so this costs no credential and no network call; a model that
+   cannot load is a deployment error, not a silent downgrade, and there is no setting
+   that disables sanitization.
+   The allow-list is the policy. `private_person`, `private_email`, `private_phone`,
+   `private_address`, `private_url`, `account_number`, and `secret` are redacted;
+   `private_date` is not, because "a Rust meetup Thursday" is the perishability and
+   recall signal a gist exists to carry. Organizations and place names have no label in
+   this taxonomy at all, which matches the long-standing decision to keep them for
+   company/place search recall. `private_url` *is* redacted, unlike the pattern tier it
+   replaces: a profile URL is a handle, and a handle names a real person outside this
+   system, which costs generic project URLs as recall text and is worth it.
+   The model labels tokens, not words, so one value can arrive in fragments
+   (`' mike_l'` + `'ay'`). `_merge_spans` coalesces adjacent same-label spans before
+   substitution, so no fragment whose own label fell outside the allow-list can leave
+   part of a value in the gist. Coverage is a classifier's, so it is probabilistic
+   rather than exhaustive; the planned periodic large-model sweep over stored gists is
+   what catches the residue. The component that sees raw cross-user data stays small
+   and auditable; the main agent never self-censors.
 5. **Capability-style email tools (confused-deputy fix).** `reply_to_sender` has no
    recipient argument and derives its only recipient from the authenticated inbound
    sender, whether or not that sender has registered. `send_first_contact_welcome`

@@ -31,7 +31,6 @@ from thenetwork.db.models import (
     Person,
 )
 from thenetwork.db.session import get_session
-from thenetwork.memory.sanitize import SANITIZER_SYSTEM_PROMPT
 from thenetwork.security.log_redaction import redact_structured_values
 from thenetwork.security.sender_identifier import optional_sender_identifier
 from thenetwork.settings import get_settings
@@ -477,8 +476,8 @@ def _runtime_provenance(config: SimRunConfig, process_mode: str) -> dict[str, An
                 "active": config.llm_personas,
             },
             "sanitizer": {
-                "identifier": settings.small_agent_model,
-                "active": real_process and settings.sanitize_llm_tier_enabled,
+                "identifier": settings.sanitize_model,
+                "active": real_process,
             },
             "embedding": {
                 "identifier": settings.embed_model,
@@ -494,14 +493,11 @@ def _runtime_provenance(config: SimRunConfig, process_mode: str) -> dict[str, An
             "agent_request_limit": settings.agent_request_limit,
             "agent_total_tokens_limit": settings.agent_total_tokens_limit,
             "model_request_timeout_seconds": settings.model_request_timeout_seconds,
-            "sanitizer_mode": (
-                "presidio+llm" if settings.sanitize_llm_tier_enabled else "presidio"
-            ),
+            "sanitizer_mode": "privacy-filter",
         },
         "static_prompt_sha256": {
             "agent": _sha256_text(SYSTEM_PROMPT),
             "persona_template": _sha256_text(_PERSONA_PROMPT),
-            "sanitizer": _sha256_text(SANITIZER_SYSTEM_PROMPT),
         },
     }
 

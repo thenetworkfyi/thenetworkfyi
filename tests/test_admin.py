@@ -772,7 +772,7 @@ def test_handle_admin_command_remember_no_body():
     assert "No memory text" in result
 
 
-def test_handle_admin_command_remember_refs_awaits_high_fidelity_sanitizer():
+def test_handle_admin_command_remember_refs_runs_the_sanitizer():
     import asyncio
     from thenetwork.admin.commands import handle_admin_command
     from thenetwork.db.models import Person
@@ -793,7 +793,7 @@ def test_handle_admin_command_remember_refs_awaits_high_fidelity_sanitizer():
     write_cm.__enter__ = MagicMock(return_value=write_session)
     write_cm.__exit__ = MagicMock(return_value=False)
 
-    async def fake_sanitize(memory, session):
+    def fake_sanitize(memory, session):
         memory.gist = "[name] knows privacy-preserving ML."
         return memory.gist
 
@@ -806,8 +806,8 @@ def test_handle_admin_command_remember_refs_awaits_high_fidelity_sanitizer():
             "thenetwork.admin.commands.get_session", side_effect=[resolve_cm, write_cm]
         ),
         patch(
-            "thenetwork.admin.commands.sanitize_memory_high_fidelity",
-            new=AsyncMock(side_effect=fake_sanitize),
+            "thenetwork.admin.commands.sanitize_memory",
+            new=MagicMock(side_effect=fake_sanitize),
         ) as mock_sanitize,
     ):
         result = asyncio.run(
@@ -818,7 +818,7 @@ def test_handle_admin_command_remember_refs_awaits_high_fidelity_sanitizer():
         )
 
     assert "Stored memory" in result
-    mock_sanitize.assert_awaited_once()
+    mock_sanitize.assert_called_once()
     mock_embed.assert_awaited_once_with("[name] knows privacy-preserving ML.")
     assert added[0].refs == ["user-alice"]
     assert "Alice" not in added[0].gist
@@ -845,14 +845,14 @@ def test_handle_admin_command_remember_without_refs_does_not_sanitize():
         ) as mock_embed,
         patch("thenetwork.admin.commands.get_session", return_value=write_cm),
         patch(
-            "thenetwork.admin.commands.sanitize_memory_high_fidelity",
-            new_callable=AsyncMock,
+            "thenetwork.admin.commands.sanitize_memory",
+            new_callable=MagicMock,
         ) as mock_sanitize,
     ):
         result = asyncio.run(handle_admin_command("remember", raw))
 
     assert "Stored memory" in result
-    mock_sanitize.assert_not_awaited()
+    mock_sanitize.assert_not_called()
     mock_embed.assert_awaited_once_with(raw)
     assert added[0].refs == []
     assert added[0].gist is None

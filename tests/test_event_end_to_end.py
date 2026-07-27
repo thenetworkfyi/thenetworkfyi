@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
@@ -84,8 +84,8 @@ async def test_submit_scan_send_suppress_and_people_match_remains_eligible(seede
 
     with (
         patch(
-            "thenetwork.agent.tools.sanitize_text_high_fidelity",
-            new=AsyncMock(return_value=sealed_gist),
+            "thenetwork.agent.tools.sanitize_text",
+            new=MagicMock(return_value=sealed_gist),
         ),
         patch(
             "thenetwork.agent.tools.embed_text",
@@ -310,8 +310,8 @@ async def test_updated_event_requires_a_fresh_version_bound_evaluation(seeded_db
 
     with (
         patch(
-            "thenetwork.agent.tools.sanitize_text_high_fidelity",
-            new=AsyncMock(return_value="relevant compiler engineering circle"),
+            "thenetwork.agent.tools.sanitize_text",
+            new=MagicMock(return_value="relevant compiler engineering circle"),
         ),
         patch(
             "thenetwork.agent.tools.embed_text",
@@ -340,8 +340,8 @@ async def test_updated_event_requires_a_fresh_version_bound_evaluation(seeded_db
 
     with (
         patch(
-            "thenetwork.agent.tools.sanitize_text_high_fidelity",
-            new=AsyncMock(return_value="unrelated online cooking webinar"),
+            "thenetwork.agent.tools.sanitize_text",
+            new=MagicMock(return_value="unrelated online cooking webinar"),
         ),
         patch(
             "thenetwork.agent.tools.embed_text",
@@ -429,8 +429,8 @@ async def test_event_scan_over_budget_leaves_no_orphaned_recommendation_row(
 
     with (
         patch(
-            "thenetwork.agent.tools.sanitize_text_high_fidelity",
-            new=AsyncMock(return_value="small compiler engineering circle"),
+            "thenetwork.agent.tools.sanitize_text",
+            new=MagicMock(return_value="small compiler engineering circle"),
         ),
         patch(
             "thenetwork.agent.tools.embed_text",

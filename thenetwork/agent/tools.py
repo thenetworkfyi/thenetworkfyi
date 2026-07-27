@@ -53,8 +53,8 @@ from thenetwork.email.render import (
     FixedEmailTemplate,
 )
 from thenetwork.memory.sanitize import (
-    sanitize_memory_high_fidelity,
-    sanitize_text_high_fidelity,
+    sanitize_memory,
+    sanitize_text,
 )
 from thenetwork.memory.sent_email import (
     CONSENT_REQUEST_SUMMARY,
@@ -383,7 +383,7 @@ def _memory_ceiling_error(
 async def _embed_memory_for_write(memory: Memory, session) -> None:
     if memory.refs:
         try:
-            gist = await sanitize_memory_high_fidelity(memory, session)
+            gist = sanitize_memory(memory, session)
         except Exception as exc:
             raise _SanitizationFailed from exc
         if memory.gist is None and isinstance(gist, str):
@@ -654,7 +654,7 @@ async def create_event(
                 {"status": "error", "reason": "event_expiry_not_future"}
             )
         try:
-            gist = await sanitize_text_high_fidelity(sanitization_source)
+            gist = sanitize_text(sanitization_source)
             embedding = await embed_text(gist)
         except Exception:
             return _tool_result({"status": "error", "reason": "sanitization_failed"})
@@ -722,7 +722,7 @@ async def update_event(
                     {"status": "forbidden", "reason": "event_cancelled"}
                 )
             try:
-                gist = await sanitize_text_high_fidelity(sanitization_source)
+                gist = sanitize_text(sanitization_source)
                 embedding = await embed_text(gist)
             except Exception:
                 session.rollback()

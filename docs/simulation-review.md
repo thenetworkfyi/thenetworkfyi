@@ -66,7 +66,10 @@ the launching terminal to establish provenance.
 Current `config.json` files also include `runtime_provenance.version: 1`. That section
 records public-safe model identifiers by role, whether each role was active,
 behavior-affecting request and sanitizer settings, and SHA-256 fingerprints of the static
-agent, persona template, and sanitizer prompts. The persona fingerprint is for the
+agent and persona-template prompts. Runs made after the sanitizer became a local span
+classifier record `sanitizer_mode: "privacy-filter"` and carry no sanitizer prompt
+fingerprint, because there is no sanitizer prompt; older runs record
+`"presidio"`/`"presidio+llm"` and a third fingerprint. The persona fingerprint is for the
 unrendered template; persona identities, goals, messages, secrets, and credentials are
 never included. Runs made before this section existed have unknown runtime and prompt
 provenance. Do not infer it from the current checkout or retrofit it into an old run.

@@ -30,7 +30,7 @@ must keep the `tests/security/` red-team suite green.
 ## Commands
 
 ```bash
-uv pip install -e ".[dev]"         # install with test deps, including Presidio and the content scanner
+uv pip install -e ".[dev]"         # install with test deps, including the sanitizer and content-scan models
 
 docker compose up -d db            # local pgvector Postgres
 uv run alembic upgrade head         # create vector extension + tables
