@@ -1,10 +1,15 @@
 # syntax=docker/dockerfile:1
 FROM python:3.12-slim AS base
 
+COPY --from=astral/uv:0.10.10 /uv /uvx /bin/
+
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    PATH="/app/.venv/bin:$PATH"
 
 WORKDIR /app
 
@@ -16,32 +21,16 @@ RUN apt-get update \
 
 # Install dependencies before copying app code, so changes under thenetwork/
 # do not invalidate the model-install layer.
-COPY pyproject.toml README.md ./
-RUN python - <<'PY' > /tmp/project-requirements.txt
-import tomllib
-
-with open("pyproject.toml", "rb") as config_file:
-    pyproject = tomllib.load(config_file)
-
-for dependency in pyproject["build-system"]["requires"]:
-    print(dependency)
-for dependency in pyproject["project"]["dependencies"]:
-    print(dependency)
-PY
+COPY pyproject.toml uv.lock README.md ./
 # torch arrives transitively (llamafirewall's Prompt Guard, transformers), and
 # PyPI's Linux torch wheel depends on ~15 nvidia-* CUDA wheels plus triton -
 # several GB of GPU runtime. This worker does CPU inference on a VPS with no
 # GPU, so pull torch from PyTorch's CPU-only index instead.
 #
-# The constraint is what makes this stick. `--extra-index-url` alone leaves pip
-# free to resolve torch from PyPI, which silently reinstates every CUDA wheel;
-# pinning the local version `+cpu` means only the CPU index can satisfy it.
-ARG TORCH_VERSION=2.12.0
-RUN echo "torch==${TORCH_VERSION}+cpu" > /tmp/torch-constraint.txt \
-    && pip install \
-        --extra-index-url https://download.pytorch.org/whl/cpu \
-        -c /tmp/torch-constraint.txt \
-        -r /tmp/project-requirements.txt
+# pyproject.toml pins Linux torch to that index, and uv.lock records the exact
+# CPU wheel and every other resolved dependency. `--locked` fails the build if
+# project metadata and the committed lockfile disagree.
+RUN uv sync --locked --no-dev --no-install-project
 
 # Bake the gist sanitizer's weights into the image. Sanitization is mandatory
 # and has no fallback (docs/security.md THE SEAL layer 4), so a first start
@@ -92,7 +81,7 @@ PY
 ENV SANITIZE_MODEL=/opt/sanitizer-model
 
 COPY thenetwork ./thenetwork
-RUN pip install --no-deps --no-build-isolation .
+RUN uv sync --locked --no-dev --no-editable
 
 # Alembic config + migrations needed at runtime for `alembic upgrade head`.
 COPY alembic.ini ./
