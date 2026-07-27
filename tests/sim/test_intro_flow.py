@@ -76,17 +76,17 @@ async def test_real_process_intro_flow_records_consent_handoff_and_revocation(tm
     assert relay_events == [
         {
             "delivered": True,
-            "direction": "alice_to_bob",
+            "direction": "first_to_second",
             "event": "sim.relay_delivery",
         },
         {
             "delivered": True,
-            "direction": "bob_to_alice",
+            "direction": "second_to_first",
             "event": "sim.relay_delivery",
         },
         {
             "delivered": False,
-            "direction": "alice_to_bob_after_revoke",
+            "direction": "first_to_second_after_revoke",
             "event": "sim.relay_delivery",
         },
     ]
