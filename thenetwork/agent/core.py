@@ -140,7 +140,6 @@ def build_agent(
         agent.tool(update_event, retries=1)
         agent.tool(cancel_event, retries=1)
         agent.tool(search_events, retries=1)
-        agent.tool(send_event_recommendation, retries=1)
         agent.tool(stop_event_recommendations, retries=1)
         agent.tool(resume_event_recommendations, retries=1)
 

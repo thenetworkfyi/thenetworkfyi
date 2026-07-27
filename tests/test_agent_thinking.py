@@ -174,7 +174,6 @@ async def test_inbound_agent_retains_first_contact_and_full_tool_surface():
         "update_event",
         "cancel_event",
         "search_events",
-        "send_event_recommendation",
         "stop_event_recommendations",
         "resume_event_recommendations",
     }
