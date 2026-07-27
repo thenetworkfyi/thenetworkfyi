@@ -391,9 +391,13 @@ write the private dump before dropping the database.
 
 Simulation `config.json` records a versioned `runtime_provenance` section with public-safe
 model identifiers by role, active-role flags, request limits, timeout, sanitizer mode, and
-SHA-256 hashes of static system-prompt text. It never records API keys, credentials,
-rendered persona prompts, identities, or message content. See `docs/simulation-review.md`
-for how to treat older runs that predate this section.
+SHA-256 hashes of static system-prompt text. Since the agent composes its system prompt per
+run mode (`thenetwork/agent/prompts.py`'s `SYSTEM_PROMPTS`), `static_prompt_sha256` records
+one hash per mode - `agent_known_sender`, `agent_first_contact`, `agent_people_trigger`,
+`agent_event_trigger` - alongside `persona_template`, rather than a single flat `agent` hash.
+It never records API keys, credentials, rendered persona prompts, identities, or message
+content. See `docs/simulation-review.md` for how to treat older runs that predate this
+section.
 
 The compose stack uses `pgvector/pgvector:pg17`; use the corresponding local PostgreSQL and
 `pg_dump` major version for a simulation database.

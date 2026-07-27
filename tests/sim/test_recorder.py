@@ -19,7 +19,13 @@ from procrastinate.testing import InMemoryConnector
 from pydantic_ai.exceptions import ModelHTTPError
 
 from thenetwork.audit import audit_event, audit_model_trace
-from thenetwork.agent.prompts import SYSTEM_PROMPT
+from thenetwork.agent.prompts import (
+    EVENT_TRIGGER,
+    FIRST_CONTACT,
+    KNOWN_SENDER,
+    PEOPLE_TRIGGER,
+    SYSTEM_PROMPTS,
+)
 from thenetwork.db.models import (
     Event,
     EventRecommendation,
@@ -1516,7 +1522,18 @@ def test_runtime_provenance_hashes_only_static_prompt_templates(tmp_path):
         provenance = _config_payload(config, "mock")["runtime_provenance"]
 
     assert provenance["static_prompt_sha256"] == {
-        "agent": hashlib.sha256(SYSTEM_PROMPT.encode("utf-8")).hexdigest(),
+        "agent_known_sender": hashlib.sha256(
+            SYSTEM_PROMPTS[KNOWN_SENDER].encode("utf-8")
+        ).hexdigest(),
+        "agent_first_contact": hashlib.sha256(
+            SYSTEM_PROMPTS[FIRST_CONTACT].encode("utf-8")
+        ).hexdigest(),
+        "agent_people_trigger": hashlib.sha256(
+            SYSTEM_PROMPTS[PEOPLE_TRIGGER].encode("utf-8")
+        ).hexdigest(),
+        "agent_event_trigger": hashlib.sha256(
+            SYSTEM_PROMPTS[EVENT_TRIGGER].encode("utf-8")
+        ).hexdigest(),
         "persona_template": hashlib.sha256(_PERSONA_PROMPT.encode("utf-8")).hexdigest(),
     }
     assert provenance["settings"]["sanitizer_mode"] == "privacy-filter"
@@ -1532,7 +1549,7 @@ def test_runtime_provenance_hashes_only_static_prompt_templates(tmp_path):
         "small-secret-value",
         "embed-secret-value",
         "database-secret-value",
-        SYSTEM_PROMPT,
+        *SYSTEM_PROMPTS.values(),
         _PERSONA_PROMPT,
     ):
         assert private_value not in serialized

@@ -67,6 +67,7 @@ def _people_scan_settings() -> SimpleNamespace:
         proactive_rematch_top_k=20,
         proactive_match_threshold=0.6,
         consent_decline_cooldown_days=90,
+        daily_agent_token_cap=0,
     )
 
 
@@ -164,8 +165,20 @@ async def test_submit_scan_send_suppress_and_people_match_remains_eligible(seede
             )
         return ModelResponse(parts=[TextPart(content="Event FYI sent.")])
 
-    deterministic_agent = build_agent(model=FunctionModel(send_bound_event))
+    deterministic_agent = build_agent(
+        model=FunctionModel(send_bound_event),
+        is_proactive=True,
+        proactive_event_id=event_id,
+    )
     delivered: list[dict] = []
+
+    def fake_send_event_fyi(*, to_address, event_gist, notice, **_kwargs):
+        delivered.append(
+            {
+                "to_address": to_address,
+                "body_text": f"{event_gist}\n{notice.value}",
+            }
+        )
 
     with (
         patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
@@ -183,8 +196,8 @@ async def test_submit_scan_send_suppress_and_people_match_remains_eligible(seede
         patch("thenetwork.agent.tools._check_daily_dispatch_cap", return_value=True),
         patch("thenetwork.agent.tools._consume_daily_dispatch_cap"),
         patch(
-            "thenetwork.agent.tools.send_reply",
-            side_effect=lambda **kwargs: delivered.append(kwargs),
+            "thenetwork.agent.tools.send_event_fyi",
+            side_effect=fake_send_event_fyi,
         ),
     ):
         await process_email.func(**job)
