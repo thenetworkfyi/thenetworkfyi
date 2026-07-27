@@ -27,7 +27,6 @@ from thenetwork.db.models import (
     Person,
 )
 from thenetwork.email.outbound import send_proxy_introduction, send_relay_email
-from thenetwork.memory.sanitize import SANITIZER_SYSTEM_PROMPT
 from thenetwork.security import log_redaction
 from thenetwork.security.sender_identifier import optional_sender_identifier
 from thenetwork.sim.cli import main, run_sim
@@ -1383,16 +1382,16 @@ def test_config_payload_git_provenance_fails_closed_to_none_when_git_unavailable
     assert payload["git"] == {"commit": None, "dirty": None}
 
 
-def _runtime_settings(*, sanitizer_enabled: bool = True):
+def _runtime_settings():
     return SimpleNamespace(
         agent_model="anthropic:claude-sonnet-5",
+        sanitize_model="openai/privacy-filter",
         small_agent_model="anthropic:claude-haiku-4-5",
         embed_model="text-embedding-3-small",
         agent_thinking_level="high",
         agent_request_limit=7,
         agent_total_tokens_limit=4321,
         model_request_timeout_seconds=45.5,
-        sanitize_llm_tier_enabled=sanitizer_enabled,
         agent_api_key="agent-secret-value",
         small_agent_api_key="small-secret-value",
         embed_api_key="embed-secret-value",
@@ -1441,7 +1440,7 @@ def test_runtime_provenance_records_models_settings_and_active_modes(
             "active": "persona" in active_roles,
         },
         "sanitizer": {
-            "identifier": "anthropic:claude-haiku-4-5",
+            "identifier": "openai/privacy-filter",
             "active": "sanitizer" in active_roles,
         },
         "embedding": {
@@ -1454,7 +1453,7 @@ def test_runtime_provenance_records_models_settings_and_active_modes(
         "agent_request_limit": 7,
         "agent_total_tokens_limit": 4321,
         "model_request_timeout_seconds": 45.5,
-        "sanitizer_mode": "presidio+llm",
+        "sanitizer_mode": "privacy-filter",
     }
 
 
@@ -1476,18 +1475,15 @@ def test_runtime_provenance_hashes_only_static_prompt_templates(tmp_path):
 
     with patch(
         "thenetwork.sim.run.recorder.get_settings",
-        return_value=_runtime_settings(sanitizer_enabled=False),
+        return_value=_runtime_settings(),
     ):
         provenance = _config_payload(config, "mock")["runtime_provenance"]
 
     assert provenance["static_prompt_sha256"] == {
         "agent": hashlib.sha256(SYSTEM_PROMPT.encode("utf-8")).hexdigest(),
         "persona_template": hashlib.sha256(_PERSONA_PROMPT.encode("utf-8")).hexdigest(),
-        "sanitizer": hashlib.sha256(
-            SANITIZER_SYSTEM_PROMPT.encode("utf-8")
-        ).hexdigest(),
     }
-    assert provenance["settings"]["sanitizer_mode"] == "presidio"
+    assert provenance["settings"]["sanitizer_mode"] == "privacy-filter"
     assert provenance["models"]["sanitizer"]["active"] is False
 
     serialized = json.dumps(provenance, sort_keys=True)
@@ -1502,7 +1498,6 @@ def test_runtime_provenance_hashes_only_static_prompt_templates(tmp_path):
         "database-secret-value",
         SYSTEM_PROMPT,
         _PERSONA_PROMPT,
-        SANITIZER_SYSTEM_PROMPT,
     ):
         assert private_value not in serialized
 

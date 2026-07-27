@@ -98,8 +98,8 @@ async def test_event_create_gist_path_never_returns_raw_cross_user_content():
 
     with (
         patch(
-            "thenetwork.agent.tools.sanitize_text_high_fidelity",
-            new=AsyncMock(return_value=gist),
+            "thenetwork.agent.tools.sanitize_text",
+            new=MagicMock(return_value=gist),
         ) as sanitize,
         patch(
             "thenetwork.agent.tools.embed_text",
@@ -112,7 +112,7 @@ async def test_event_create_gist_path_never_returns_raw_cross_user_content():
             expires_at=datetime.now(timezone.utc) + timedelta(days=2),
         )
 
-    sanitize.assert_awaited_once_with(raw)
+    sanitize.assert_called_once_with(raw)
     assert result["gist"] == gist
     assert raw not in repr(result)
     assert "submitter_id" not in result

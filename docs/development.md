@@ -13,7 +13,7 @@ POSTGRES_DB=network_db
 POSTGRES_USER=network
 POSTGRES_PASSWORD=network   # literal password; Settings.database_url percent-encodes it
 AGENT_MODEL=anthropic:claude-sonnet-5   # provider chosen by the string prefix
-SMALL_AGENT_MODEL=anthropic:claude-haiku-4-5   # cheaper tier for fixed-prompt subtasks (e.g. the sanitizer LLM pass)
+SMALL_AGENT_MODEL=anthropic:claude-haiku-4-5   # cheaper tier for fixed-prompt subtasks (e.g. the abuse judge)
 EMBED_MODEL=text-embedding-3-small  # OpenAI, 1536 dimensions
 AGENT_API_KEY=
 SMALL_AGENT_API_KEY=
@@ -40,7 +40,7 @@ SENDER_IDENTIFIER_SECRET=long-random-server-secret
 PRIMARY_INTAKE_BURST_MONITORING_ENABLED=false # opt in; requires the secret above
 CONTENT_SCAN_ENABLED=false
 HF_TOKEN=                         # first enabled scanner startup only; omit after cache is populated
-SANITIZE_LLM_TIER_ENABLED=true    # higher-fidelity gist pass, see docs/security.md layer 4; on by default
+SANITIZE_MODEL=openai/privacy-filter  # local span classifier; mandatory, no disable switch
 RECENT_MEMORY_CONTEXT_MAX_COUNT=20  # newest sender-owned gists loaded into an agent run
 RECENT_MEMORY_CONTEXT_MAX_CHARS=4000 # total rendered user-role memory-context budget
 EVENT_MATCH_THRESHOLD=0.6         # independent event-to-person semantic relevance floor
@@ -54,8 +54,8 @@ DAILY_AGENT_TOKEN_CAP=15000000    # rolling-24h ceiling on AGENT_MODEL/SMALL_AGE
 ### Daily token budget
 
 `DAILY_AGENT_TOKEN_CAP` bounds a rolling 24-hour window of tokens billed to
-`AGENT_MODEL`/`SMALL_AGENT_MODEL` (email agent runs, the sanitizer LLM tier, and the
-primary-intake abuse judge; embedding usage bills a separate provider and is not
+`AGENT_MODEL`/`SMALL_AGENT_MODEL` (email agent runs and the primary-intake
+abuse judge; embedding usage bills a separate provider and is not
 counted). `thenetwork/security/token_budget.py` implements it as a `limits`
 fixed-window bucket over the same `rate_limits` table used elsewhere, read fresh from
 settings on every check - the cap is never captured in a module-level constant or
@@ -129,7 +129,7 @@ positional and space-separated.
 
 - **Dry-run default**: Running without `--commit` performs a dry run that displays proposed text/gist changes and rolls back without committing to the database or recomputing embeddings.
 - **Redaction options**: Supports `--string STRING` for exact text replacement, `--pattern PATTERN` for regex replacement (mutually exclusive with `--string`), and `--replacement REPLACEMENT` (defaults to `[redacted]`). When no option is supplied, `sanitize_text` is used.
-- **Gist and embedding refresh**: For memories referencing people (`refs`), the script refreshes the sealed gist via `sanitize_memory_high_fidelity` and recomputes the vector embedding upon `--commit`.
+- **Gist and embedding refresh**: For memories referencing people (`refs`), the script refreshes the sealed gist via `sanitize_memory` and recomputes the vector embedding upon `--commit`.
 
 ### Primary intake circuit breaker
 
@@ -211,14 +211,28 @@ more container/image disk space, model-cache space, memory, and CPU inference ti
 the disabled installation. The 86M model runs locally; no email text is sent to a
 scanner service.
 
-Presidio (`presidio-analyzer` + `spacy`) is a core dependency. It powers
-`thenetwork/memory/sanitize.py`'s deterministic `sanitize_memory`, which redacts person
-names, email addresses, and phone numbers, alongside a structural pass that replaces
-platform handles and profile URLs with `[handle]`. Organizations and locations stay in the
-gist to preserve company/place search recall. Missing Presidio or a missing NLP model is a
-deployment error, not a silent downgrade. The compatible `en_core_web_lg` model is a
-pinned project dependency, so `uv pip install -e .` installs it for local runs and the
-Docker build without a separate download command.
+## Gist sanitizer
+
+`SANITIZE_MODEL` (default `openai/privacy-filter`) is the single local span classifier
+behind `thenetwork/memory/sanitize.py`. It is Apache 2.0 and ungated, so it needs no
+Hugging Face token, and it runs locally, so no memory text leaves the host. Weights are
+roughly 2 GB and load once per process; `thenetwork-worker` calls
+`assert_sanitizer_ready()` at startup so a missing or unloadable model fails before the
+queue opens rather than at the first write. The first start on a fresh host downloads
+those weights into the same `hf-cache` volume the content scanner uses
+(`HF_HOME=/home/appuser/.cache/huggingface`); later restarts load from it. Unlike the
+scanner, this download is unconditional - a scanner-disabled deployment previously
+pulled no model at all and now pulls this one.
+
+There is no setting that disables it and no fallback path - see `docs/security.md`
+layer 4 for the allow-list and `docs/design-decisions.md` for why the previous
+Presidio/spaCy + handle-regex + per-write-LLM stack was removed. `transformers` is a
+core dependency; `presidio-analyzer`, `spacy`, and `en_core_web_lg` are not (Presidio
+remains only in `thenetwork/security/log_redaction.py`, a separate concern).
+
+Tests that exercise the real weights are marked `integration` and `real_sanitizer`, so
+CI (`pytest -m "not integration"`) never downloads the model; everything else stubs the
+pipeline out.
 
 ## Response-log redaction
 

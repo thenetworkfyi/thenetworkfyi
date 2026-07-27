@@ -1195,7 +1195,7 @@ async def test_register_person_updates_sender_id_before_same_run_escalation():
         person, "id", "new-person-id"
     )
 
-    async def fake_sanitize(memory, session):
+    def fake_sanitize(memory, session):
         memory.gist = "[name] needs human review."
         return memory.gist
 
@@ -1205,8 +1205,8 @@ async def test_register_person_updates_sender_id_before_same_run_escalation():
             new=AsyncMock(return_value=[0.0] * 1536),
         ),
         patch(
-            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
-            new=AsyncMock(side_effect=fake_sanitize),
+            "thenetwork.agent.tools.sanitize_memory",
+            new=MagicMock(side_effect=fake_sanitize),
         ),
         patch("thenetwork.agent.tools.notify_admins") as mock_notify,
         patch("thenetwork.agent.tools.send_reply") as mock_send,
@@ -1288,8 +1288,8 @@ async def test_remember_stores_with_gist():
             return_value=[0.0] * 1536,
         ) as mock_embed,
         patch(
-            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
-            new_callable=AsyncMock,
+            "thenetwork.agent.tools.sanitize_memory",
+            new_callable=MagicMock,
         ) as mock_sanitize,
     ):
         mock_sanitize.return_value = sanitized
@@ -1299,7 +1299,7 @@ async def test_remember_stores_with_gist():
             refs=["user-alice"],
         )
 
-    mock_sanitize.assert_awaited_once()
+    mock_sanitize.assert_called_once()
     mock_embed.assert_awaited_once_with(sanitized)
 
 
@@ -1320,13 +1320,13 @@ async def test_remember_zero_ref_does_not_sanitize_or_set_gist():
             return_value=[0.0] * 1536,
         ) as mock_embed,
         patch(
-            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
-            new_callable=AsyncMock,
+            "thenetwork.agent.tools.sanitize_memory",
+            new_callable=MagicMock,
         ) as mock_sanitize,
     ):
         await remember(ctx, text=raw, refs=[])
 
-    mock_sanitize.assert_not_awaited()
+    mock_sanitize.assert_not_called()
     mock_embed.assert_awaited_once_with(raw)
     assert added[0].gist is None
 
@@ -1344,8 +1344,8 @@ async def test_remember_rejects_text_over_configured_cap():
             "thenetwork.agent.tools.embed_text", new_callable=AsyncMock
         ) as mock_embed,
         patch(
-            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
-            new_callable=AsyncMock,
+            "thenetwork.agent.tools.sanitize_memory",
+            new_callable=MagicMock,
         ) as mock_sanitize,
     ):
         result = await remember(ctx, text="too long", refs=["user-alice"])
@@ -1355,7 +1355,7 @@ async def test_remember_rejects_text_over_configured_cap():
         "reason": "memory_text_too_long",
         "limit": 5,
     }
-    mock_sanitize.assert_not_awaited()
+    mock_sanitize.assert_not_called()
     mock_embed.assert_not_awaited()
     ctx._mock_sess.add.assert_not_called()
 
@@ -1378,8 +1378,8 @@ async def test_remember_rejects_when_person_memory_ceiling_reached():
             "thenetwork.agent.tools.embed_text", new_callable=AsyncMock
         ) as mock_embed,
         patch(
-            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
-            new_callable=AsyncMock,
+            "thenetwork.agent.tools.sanitize_memory",
+            new_callable=MagicMock,
         ) as mock_sanitize,
     ):
         result = await remember(
@@ -1392,7 +1392,7 @@ async def test_remember_rejects_when_person_memory_ceiling_reached():
         "person_id": "user-alice",
         "limit": 1,
     }
-    mock_sanitize.assert_not_awaited()
+    mock_sanitize.assert_not_called()
     mock_embed.assert_not_awaited()
     ctx._mock_sess.add.assert_not_called()
 
@@ -1414,8 +1414,8 @@ async def test_remember_returns_empty_consolidation_candidates():
             return_value=[0.0] * 1536,
         ),
         patch(
-            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
-            new_callable=AsyncMock,
+            "thenetwork.agent.tools.sanitize_memory",
+            new_callable=MagicMock,
             return_value=sanitized,
         ),
         patch("thenetwork.agent.tools.match_memories", return_value=[]) as mock_match,
@@ -1487,8 +1487,8 @@ async def test_remember_returns_sealed_duplicate_consolidation_candidates():
             return_value=[0.0] * 1536,
         ),
         patch(
-            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
-            new_callable=AsyncMock,
+            "thenetwork.agent.tools.sanitize_memory",
+            new_callable=MagicMock,
             return_value="[name] researches privacy.",
         ),
         patch("thenetwork.agent.tools.match_memories", side_effect=fake_match_memories),
@@ -1565,8 +1565,8 @@ async def test_remember_dedupes_consolidation_candidates_by_memory_id():
             return_value=[0.0] * 1536,
         ),
         patch(
-            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
-            new_callable=AsyncMock,
+            "thenetwork.agent.tools.sanitize_memory",
+            new_callable=MagicMock,
             return_value="[name] is a cofounder.",
         ),
         patch("thenetwork.agent.tools.match_memories", side_effect=fake_match_memories),
@@ -1811,9 +1811,9 @@ async def test_remember_blocks_and_rolls_back_when_sanitization_fails(caplog):
     ctx = FakeCtx()
     caplog.set_level(logging.INFO, logger=LOGGER_NAME)
     with patch(
-        "thenetwork.agent.tools.sanitize_memory_high_fidelity", new_callable=AsyncMock
+        "thenetwork.agent.tools.sanitize_memory", new_callable=MagicMock
     ) as mock_sanitize:
-        mock_sanitize.side_effect = RuntimeError("presidio unavailable")
+        mock_sanitize.side_effect = RuntimeError("sanitizer model unavailable")
         result = await remember(ctx, text="Alice builds compilers", refs=["user-alice"])
 
     assert result == {"status": "error", "reason": "sanitization_failed"}

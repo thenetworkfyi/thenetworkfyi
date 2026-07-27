@@ -50,21 +50,35 @@ thin wrapper over a well-adopted library, swappable by config.
   it. URLs are deliberately not redacted from raw memory text; the sanitizer still
   replaces identifying profile handles in cross-user gists while generic project URLs
   may remain useful recall text.
-- **Presidio is mandatory for deterministic gist sanitization.** Names, email addresses,
-  and phone numbers are redacted by a mainstream PII library, with the spaCy model baked
-  into the Docker image at build time and checked at worker startup. Organizations and
-  locations stay in gists because those gists are embedded for company/place recall; the
-  opt-in fixed-prompt LLM tier handles quasi-identifying combinations.
-- **Platform handles are matched structurally, not by NER.** No mainstream PII library
-  recognizes a username as an entity, so the deterministic tier redacts handles by shape
-  (profile URL, `@` sigil, platform label). The LLM tier is asked to catch handles too,
-  but it is opt-in and falls back silently on failure, so it cannot be the only thing
-  standing between a username and a cross-user gist. A platform label alone does not
-  license redaction of whatever follows it: the candidate must also test as an identifier
-  rather than a word, reusing the en_core_web_lg lexicon Presidio already loads rather
-  than a bespoke word list. Missing a handle that is also a dictionary word is the
-  accepted cost - shredding role and description prose out of gists is not, since that is
-  the content gists exist to embed.
+- **One mandatory local span classifier does all gist sanitization.** `SANITIZE_MODEL`
+  (`openai/privacy-filter`) labels spans; the allow-list in `memory/sanitize.py` decides
+  which become bracket tokens. It replaced a three-part stack - a Presidio/spaCy NER
+  pass, a hand-written structural pass over platform handles, and an opt-in per-write
+  LLM tier - because one purpose-built model beat all three on the cases that motivated
+  them. Measured before adoption: it catches `mkly`, `@atlas`, common-noun given names
+  (Rose/Mark/Bill), non-Western and Cyrillic names, and obfuscated addresses
+  (`mike [at] mkly [dot] io`) that the regex tier never saw, and it stops tagging
+  `LinkedIn` as a person. It costs ~2 GB of local weights and one forward pass, no
+  credential and no network call, and it removes `presidio-analyzer`, `spacy`,
+  `en_core_web_lg`, and a per-write model call from the write path.
+- **Sanitization has no off switch.** There is no `SANITIZE_*_ENABLED` setting and no
+  fallback path. A sanitizer that can be disabled or that degrades silently is a
+  sanitizer you cannot reason about at the SEAL boundary, and the failure mode is a
+  cross-user gist carrying a raw name.
+- **The classifier's coverage is probabilistic, and the answer to that is a later
+  sweep, not a regex backstop.** Adding pattern matching under the model reintroduces
+  exactly the brittle, word-list-dependent code this replaced, in exchange for cases the
+  model already handles better. The planned periodic large-model pass over stored gists
+  is where residue gets cleaned. That sweep rewrites gists in place, so it must follow
+  `scripts/redact-memory.sh`'s pattern (preserve memory id, `refs`, and `created_at`;
+  refresh the gist; recompute the embedding), which is the sole sanctioned exception to
+  forget-plus-remember.
+- **`private_date` is deliberately not redacted.** "A Rust meetup Thursday" is the
+  perishability and recall signal a gist exists to carry, and `created_at` already
+  carries recency. Organizations and place names have no label in the taxonomy at all,
+  which happens to match the long-standing decision to keep them for company/place
+  recall. `private_url` *is* redacted, unlike the pattern tier it replaces: a profile
+  URL is a handle, and a handle names a real person outside this system.
 - **Tools report expected refusals as structured status results.** Policy and
   world-state outcomes are not exceptions for the model to retry; pydantic-ai
   gets one retry solely for argument validation. This keeps rate limits,
@@ -102,8 +116,12 @@ understanding why it was dropped.
 - ❌ Scenario branching (`if user_record IS NULL`) → emergent behavior + evals.
 - ❌ Tools returning other users' names/emails/bios → minimal disclosure (gist only).
 - ❌ LLM handling raw email addresses → capability tool, server-side resolution.
-- ❌ Regex-only sanitizer fallback when Presidio is unavailable → fail fast; a silent
-  downgrade can produce cross-user gists with raw names.
+- ❌ Any sanitizer fallback or downgrade path → fail fast; a silent downgrade can
+  produce cross-user gists with raw names.
+- ❌ Regex/word-list handle matching under the classifier → the model already catches
+  handles, dictionary-word handles, and obfuscated addresses the patterns missed.
+- ❌ A per-write LLM sanitizer tier → one local forward pass, plus a periodic
+  large-model sweep over stored gists for what the classifier missed.
 - ❌ LiteLLM / proxy glue → pydantic-ai native multi-provider.
 - ❌ `np.random.rand(1536)` placeholder embeddings → OpenAI embedding wrapper constrained to 1536 dimensions.
 - ❌ Bespoke rate limiting → `limits`.

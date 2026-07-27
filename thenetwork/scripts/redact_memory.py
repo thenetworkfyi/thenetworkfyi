@@ -14,7 +14,7 @@ from thenetwork.audit import audit_event
 from thenetwork.db.models import Memory
 from thenetwork.db.session import get_session
 from thenetwork.embed.embeddings import embed_text
-from thenetwork.memory.sanitize import sanitize_memory_high_fidelity, sanitize_text
+from thenetwork.memory.sanitize import sanitize_memory, sanitize_text
 
 
 def _audit_blocked_write(memory: Memory, session: Session) -> None:
@@ -61,7 +61,7 @@ async def redact_memory_record(
     new_gist: Optional[str] = None
     if memory.refs:
         try:
-            sanitized_gist = await sanitize_memory_high_fidelity(memory, session)
+            sanitized_gist = sanitize_memory(memory, session)
         except Exception as exc:
             _audit_blocked_write(memory, session)
             raise RuntimeError(f"Sanitization failed for memory {memory_id}") from exc

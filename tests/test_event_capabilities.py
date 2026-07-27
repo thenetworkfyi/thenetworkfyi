@@ -73,7 +73,7 @@ async def test_create_event_requires_authenticated_registered_sender():
     ctx = _ctx(session, person_id=None, authenticated=False)
 
     with patch(
-        "thenetwork.agent.tools.sanitize_text_high_fidelity", new_callable=AsyncMock
+        "thenetwork.agent.tools.sanitize_text", new_callable=AsyncMock
     ) as sanitize:
         result = await create_event(
             ctx,
@@ -82,7 +82,7 @@ async def test_create_event_requires_authenticated_registered_sender():
         )
 
     assert result == {"status": "error", "reason": "sender_not_authenticated"}
-    sanitize.assert_not_awaited()
+    sanitize.assert_not_called()
     session.add.assert_not_called()
 
 
@@ -106,8 +106,8 @@ async def test_create_event_persists_raw_privately_and_returns_only_sealed_proje
 
     with (
         patch(
-            "thenetwork.agent.tools.sanitize_text_high_fidelity",
-            new=AsyncMock(return_value=gist),
+            "thenetwork.agent.tools.sanitize_text",
+            new=MagicMock(return_value=gist),
         ) as sanitize,
         patch(
             "thenetwork.agent.tools.embed_text",
@@ -127,7 +127,7 @@ async def test_create_event_persists_raw_privately_and_returns_only_sealed_proje
     assert stored.text == raw
     assert stored.gist == gist
     assert stored.embedding == [0.25] * 1536
-    sanitize.assert_awaited_once_with(
+    sanitize.assert_called_once_with(
         f"{raw}\nRecurrence: monthly with Alice at alice@example.com"
     )
     embed.assert_awaited_once_with(gist)
@@ -146,7 +146,7 @@ async def test_update_and_cancel_reject_non_owner_without_mutation():
     ctx = _ctx(session, person_id="owner-1")
 
     with patch(
-        "thenetwork.agent.tools.sanitize_text_high_fidelity", new_callable=AsyncMock
+        "thenetwork.agent.tools.sanitize_text", new_callable=AsyncMock
     ) as sanitize:
         update_result = await update_event(
             ctx,
@@ -158,7 +158,7 @@ async def test_update_and_cancel_reject_non_owner_without_mutation():
 
     assert update_result == {"status": "forbidden", "reason": "not_event_owner"}
     assert cancel_result == {"status": "forbidden", "reason": "not_event_owner"}
-    sanitize.assert_not_awaited()
+    sanitize.assert_not_called()
     session.commit.assert_not_called()
 
 
@@ -172,8 +172,8 @@ async def test_owner_update_preserves_event_id_and_rebuilds_sealed_embedding():
 
     with (
         patch(
-            "thenetwork.agent.tools.sanitize_text_high_fidelity",
-            new=AsyncMock(return_value="sealed replacement"),
+            "thenetwork.agent.tools.sanitize_text",
+            new=MagicMock(return_value="sealed replacement"),
         ),
         patch(
             "thenetwork.agent.tools.embed_text",

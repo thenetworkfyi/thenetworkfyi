@@ -28,14 +28,17 @@ from thenetwork.worker.metrics import (
 
 class LLMWorkload(StrEnum):
     EMAIL_AGENT = "email_agent"
+    # Currently unemitted: gist sanitization is a local classifier and bills no
+    # model endpoint. The label is kept - it is a closed metric category, and
+    # dropping it would break existing series - and is where the planned
+    # periodic large-model sweep over stored gists will bill.
     MEMORY_SANITIZER = "memory_sanitizer"
     ABUSE_JUDGE = "abuse_judge"
     EMBEDDING = "embedding"
 
 
 # The daily token budget bills the AGENT_MODEL/SMALL_AGENT_MODEL endpoint:
-# email_agent, memory_sanitizer (SANITIZE_LLM_TIER_ENABLED runs on every
-# person-referencing memory write), and abuse_judge all run there, so summing
+# email_agent, memory_sanitizer, and abuse_judge all run there, so summing
 # their tokens is the correct charge even when SMALL_AGENT_MODEL is a distinct
 # (or, today, identically-priced) tier - if it is ever cheaper than
 # AGENT_MODEL, summing still over-charges rather than under-charging, which

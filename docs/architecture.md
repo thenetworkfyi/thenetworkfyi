@@ -223,7 +223,8 @@ SQLModel over psycopg 3 · Alembic (the `CREATE EXTENSION vector` lives in a mig
 pgvector `Vector(1536)` HNSW cosine · pydantic-ai (multi-provider, chosen by config
 string) · OpenAI `embed_text` wrapper (`embed/`, fixed at 1536 dimensions) · NetworkX ·
 pydantic-settings · imap-tools · BeautifulSoup (HTML-to-visible-text fallback for inbound
-bodies) · stdlib `EmailMessage`/`smtplib` · Procrastinate · `limits` · pytest +
+bodies) · transformers (`SANITIZE_MODEL`, the local gist span classifier) ·
+stdlib `EmailMessage`/`smtplib` · Procrastinate · `limits` · pytest +
 pydantic-evals. Vendor-agnosticism comes from pydantic-ai, selected by `AGENT_MODEL` - no
 LiteLLM, no proxy glue. `EMBED_MODEL` is OpenAI-only and is validated against the
 `Vector(1536)` schema at startup.

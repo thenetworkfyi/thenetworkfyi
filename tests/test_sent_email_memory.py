@@ -118,8 +118,8 @@ async def test_successful_delivery_persists_one_sealed_summary_memory(caplog):
 
     with (
         patch(
-            "thenetwork.memory.sent_email.sanitize_memory_high_fidelity",
-            new=AsyncMock(return_value="a sealed sent-email purpose"),
+            "thenetwork.memory.sent_email.sanitize_memory",
+            new=MagicMock(return_value="a sealed sent-email purpose"),
         ) as sanitize,
         patch(
             "thenetwork.memory.sent_email.embed_text",
@@ -140,7 +140,7 @@ async def test_successful_delivery_persists_one_sealed_summary_memory(caplog):
     assert memory.refs == ["person-alice"]
     assert memory.gist == "a sealed sent-email purpose"
     assert memory.embedding == [0.25] * 1536
-    sanitize.assert_awaited_once_with(memory, session)
+    sanitize.assert_called_once_with(memory, session)
     embed.assert_awaited_once_with("a sealed sent-email purpose")
     serialized = repr(memory)
     assert private_subject not in serialized
@@ -166,8 +166,8 @@ async def test_summary_is_bounded_before_memory_persistence():
 
     with (
         patch(
-            "thenetwork.memory.sent_email.sanitize_memory_high_fidelity",
-            new=AsyncMock(return_value="sealed"),
+            "thenetwork.memory.sent_email.sanitize_memory",
+            new=MagicMock(return_value="sealed"),
         ),
         patch(
             "thenetwork.memory.sent_email.embed_text",
@@ -192,8 +192,8 @@ async def test_person_memory_limit_blocks_sent_memory_without_side_effects():
 
     with (
         patch(
-            "thenetwork.memory.sent_email.sanitize_memory_high_fidelity",
-            new_callable=AsyncMock,
+            "thenetwork.memory.sent_email.sanitize_memory",
+            new_callable=MagicMock,
         ) as sanitize,
         patch(
             "thenetwork.memory.sent_email.embed_text",
@@ -209,7 +209,7 @@ async def test_person_memory_limit_blocks_sent_memory_without_side_effects():
     assert recorded is False
     assert session.added == []
     assert session.commits == 0
-    sanitize.assert_not_awaited()
+    sanitize.assert_not_called()
     embed.assert_not_awaited()
 
 
@@ -219,8 +219,8 @@ async def test_unregistered_recipient_cannot_receive_a_sent_email_memory():
 
     with (
         patch(
-            "thenetwork.memory.sent_email.sanitize_memory_high_fidelity",
-            new_callable=AsyncMock,
+            "thenetwork.memory.sent_email.sanitize_memory",
+            new_callable=MagicMock,
         ) as sanitize,
         patch(
             "thenetwork.memory.sent_email.embed_text",
@@ -235,7 +235,7 @@ async def test_unregistered_recipient_cannot_receive_a_sent_email_memory():
 
     assert recorded is False
     assert session.added == []
-    sanitize.assert_not_awaited()
+    sanitize.assert_not_called()
     embed.assert_not_awaited()
 
 
@@ -245,8 +245,8 @@ async def test_recording_failure_rolls_back_and_never_raises():
 
     with (
         patch(
-            "thenetwork.memory.sent_email.sanitize_memory_high_fidelity",
-            new=AsyncMock(side_effect=RuntimeError("sanitizer unavailable")),
+            "thenetwork.memory.sent_email.sanitize_memory",
+            new=MagicMock(side_effect=RuntimeError("sanitizer unavailable")),
         ),
         patch(
             "thenetwork.memory.sent_email.embed_text",
@@ -405,7 +405,7 @@ async def test_successful_agent_delivery_is_injected_into_the_recipient_next_run
     ctx = _tool_context(store, sender_id=sender_id)
     summary = "an answer about a specific manufacturing introduction"
 
-    async def sanitize(memory, _session):
+    def sanitize(memory, _session):
         return memory.text
 
     with (
@@ -413,8 +413,8 @@ async def test_successful_agent_delivery_is_injected_into_the_recipient_next_run
         patch("thenetwork.agent.tools._consume_daily_dispatch_cap"),
         patch("thenetwork.agent.tools.send_reply"),
         patch(
-            "thenetwork.memory.sent_email.sanitize_memory_high_fidelity",
-            new=AsyncMock(side_effect=sanitize),
+            "thenetwork.memory.sent_email.sanitize_memory",
+            new=MagicMock(side_effect=sanitize),
         ),
         patch(
             "thenetwork.memory.sent_email.embed_text",

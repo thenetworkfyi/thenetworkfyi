@@ -137,8 +137,8 @@ async def test_model_retry_replays_mutating_tools_without_repeating_effects(capl
 
     with (
         patch(
-            "thenetwork.agent.tools.sanitize_text_high_fidelity",
-            new=AsyncMock(return_value="sealed event gist"),
+            "thenetwork.agent.tools.sanitize_text",
+            new=MagicMock(return_value="sealed event gist"),
         ),
         patch(
             "thenetwork.agent.tools.embed_text",

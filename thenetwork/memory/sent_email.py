@@ -17,7 +17,7 @@ from thenetwork.audit import audit_event
 from thenetwork.db.models import Memory, Person
 from thenetwork.db.session import get_session
 from thenetwork.embed.embeddings import embed_text
-from thenetwork.memory.sanitize import sanitize_memory_high_fidelity
+from thenetwork.memory.sanitize import sanitize_memory
 from thenetwork.settings import Settings, get_settings
 
 SENT_EMAIL_SUMMARY_MAX_CHARS = 500
@@ -133,7 +133,7 @@ async def record_sent_email_memory(
 
             memory = Memory(text=text, refs=[delivery.recipient_person_id])
             session.add(memory)
-            gist = await sanitize_memory_high_fidelity(memory, session)
+            gist = sanitize_memory(memory, session)
             if memory.gist is None and isinstance(gist, str):
                 memory.gist = gist
             if not memory.gist:

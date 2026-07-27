@@ -196,7 +196,7 @@ async def test_onboarding_registers_sender_then_remembers_under_sender_id():
 
     mock_session.refresh.side_effect = refresh_person
 
-    async def fake_sanitize(memory, session) -> str:
+    def fake_sanitize(memory, session) -> str:
         return "backend engineer looking to meet ML engineers"
 
     with (
@@ -208,8 +208,8 @@ async def test_onboarding_registers_sender_then_remembers_under_sender_id():
         ),
         patch("thenetwork.agent.tools.match_memories", return_value=[]),
         patch(
-            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
-            new=AsyncMock(side_effect=fake_sanitize),
+            "thenetwork.agent.tools.sanitize_memory",
+            new=MagicMock(side_effect=fake_sanitize),
         ),
         patch("thenetwork.agent.tools._check_daily_dispatch_cap", return_value=True),
         patch("thenetwork.agent.tools._consume_daily_dispatch_cap"),
@@ -612,7 +612,7 @@ async def test_vague_intent_qualification_asks_question_and_no_proposal():
     def fake_send_reply(to_address, subject, body_text, body_html=None, **kwargs):
         sent.append({"to": to_address, "subject": subject, "body": body_text})
 
-    async def fake_sanitize(memory, session):
+    def fake_sanitize(memory, session):
         return "asked about narrowing a broad interest"
 
     with (
@@ -624,8 +624,8 @@ async def test_vague_intent_qualification_asks_question_and_no_proposal():
         ),
         patch("thenetwork.agent.tools.match_memories", return_value=adjacent_match),
         patch(
-            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
-            new=AsyncMock(side_effect=fake_sanitize),
+            "thenetwork.agent.tools.sanitize_memory",
+            new=MagicMock(side_effect=fake_sanitize),
         ),
     ):
         deps = AgentDeps(
@@ -732,7 +732,7 @@ async def test_vague_intent_answer_forgets_asked_note_and_captures_interest():
     def fake_send_reply(to_address, subject, body_text, body_html=None, **kwargs):
         sent.append({"to": to_address, "subject": subject, "body": body_text})
 
-    async def fake_sanitize(memory, session):
+    def fake_sanitize(memory, session):
         return "interested in museum archive provenance research"
 
     with (
@@ -744,8 +744,8 @@ async def test_vague_intent_answer_forgets_asked_note_and_captures_interest():
         ),
         patch("thenetwork.agent.tools.match_memories", return_value=[]),
         patch(
-            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
-            new=AsyncMock(side_effect=fake_sanitize),
+            "thenetwork.agent.tools.sanitize_memory",
+            new=MagicMock(side_effect=fake_sanitize),
         ),
     ):
         deps = AgentDeps(

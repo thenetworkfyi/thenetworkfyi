@@ -28,14 +28,12 @@ dependencies = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "pydantic-evals>=0.0.14",
-    "presidio-analyzer>=2.2",
-    "spacy>=3.7",
-    "en-core-web-lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl",
+    "transformers>=4.60",
     "tenacity>=9.0",
     "jinja2>=3.1",
     "python-disposable>=0.0.13",
     "llamafirewall==1.0.3",
-    "huggingface-hub>=0.23,<1",
+    "huggingface-hub>=0.23",
 ]
 
 [project.optional-dependencies]
@@ -64,5 +62,5 @@ testpaths = ["tests"]
 markers = [
     "integration: marks tests that require a live pgvector DB (deselect with '-m not integration')",
     "live_model: marks tests that call the real configured AGENT_MODEL (also marked integration, so '-m not integration' already excludes them; select explicitly with '-m live_model')",
-    "real_presidio: marks tests that require presidio-analyzer plus its local Spacy model",
+    "real_sanitizer: marks tests that require the local privacy-filter model weights",
 ]

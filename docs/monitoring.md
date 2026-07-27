@@ -136,7 +136,9 @@ batches emit the same accounting record without changing its batching or retry
 behavior.
 
 The request record includes the existing opaque `trace_id`, one of the bounded
-workloads `email_agent`, `memory_sanitizer`, `abuse_judge`, or `embedding`, the
+workloads `email_agent`, `memory_sanitizer` (currently unemitted - gist
+sanitization is a local classifier that bills no model endpoint; the label is
+reserved for the planned periodic gist sweep), `abuse_judge`, or `embedding`, the
 provider and model, request outcome and duration, input/output/cache token
 counts when available, and `estimated_cost_usd`. `cost_status="unavailable"`
 and a null cost distinguish missing price metadata or a failed request from a

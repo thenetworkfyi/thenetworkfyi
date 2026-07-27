@@ -56,7 +56,7 @@ from thenetwork.email.render import (
 )
 from thenetwork.llm_observability import observe_email_lifecycle
 from thenetwork.introductions import process_consent_reply
-from thenetwork.memory.sanitize import assert_presidio_ready
+from thenetwork.memory.sanitize import assert_sanitizer_ready
 from thenetwork.memory.sent_email import record_sent_email_memories
 from thenetwork.security.content_scan import scan_content
 from thenetwork.security.rate_limit import (
@@ -469,7 +469,7 @@ def main() -> None:
     validate_embedding_configuration()
     configure_audit_logging()
     configure_worker_metrics()
-    assert_presidio_ready()
+    assert_sanitizer_ready()
     assert_content_scanner_ready()
     asyncio.run(run_worker())
 

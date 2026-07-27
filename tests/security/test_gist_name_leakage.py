@@ -4,16 +4,15 @@ A memory's raw text is allowed to carry a person's full name; the gist that
 crosses the user boundary (via search, consolidation candidates, or a
 proactive-scan trigger body) must never carry it back out, in any surface
 form: plain ("Alice Chen"), possessive ("Alice Chen's"), or lowercase
-("alice chen" / "alice's"). These tests prove that for both gist-production
-    paths: the deterministic Presidio sanitizer (`sanitize_memory`) and the
-    high-fidelity path `remember()` actually calls in production
-    (`sanitize_memory_high_fidelity`, optional LLM with deterministic fallback).
+("alice chen" / "alice's"). These tests prove that for both halves of the
+one gist-production path: `sanitize_memory`'s substitution of the span
+classifier's output, and the `remember()` call the agent actually makes in
+production.
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -35,36 +34,32 @@ class FakeSession:
         self.flushes += 1
 
 
-@dataclass
-class _FakeRecognizerResult:
-    entity_type: str
-    start: int
-    end: int
+class _NameAwareFakeClassifier:
+    """Stands in for the local openai/privacy-filter pipeline.
 
-
-class _NameAwareFakeAnalyzer:
-    """Stands in for presidio_analyzer.AnalyzerEngine.
-
-    Real Presidio needs a downloaded spacy model, unreachable in the
-    sandboxed test environment (see tests/test_sanitize.py's docstring for
-    the same rationale). Rather than hand-picking a single offset like the
-    existing sanitize tests do, this fake recognizes *every* case-insensitive
-    occurrence of the given name(s) as a PERSON span. That lets these tests
-    exercise the real right-to-left substitution logic in `_strip_pii_ner`
+    The real model is a multi-gigabyte download, unreachable in the sandboxed
+    test environment (see tests/test_sanitize.py's docstring for the same
+    rationale). Rather than hand-picking a single offset, this fake emits a
+    `private_person` span for *every* case-insensitive occurrence of the given
+    name(s), in the exact dict shape the pipeline returns. That lets these
+    tests exercise the real merge-and-substitute logic in `sanitize_text`
     against every surface form the name takes in the raw text - plain,
-    possessive, lowercase - rather than trusting a mock that only ever
-    returns the answer the test wants.
+    possessive, lowercase - rather than trusting a mock that only ever returns
+    the answer the test wants.
     """
 
     def __init__(self, names: list[str]) -> None:
         pattern = "|".join(re.escape(n) for n in sorted(names, key=len, reverse=True))
         self._pattern = re.compile(pattern, re.IGNORECASE)
 
-    def analyze(
-        self, text: str, entities: list[str], language: str
-    ) -> list[_FakeRecognizerResult]:
+    def __call__(self, text: str) -> list[dict]:
         return [
-            _FakeRecognizerResult("PERSON", m.start(), m.end())
+            {
+                "entity_group": "private_person",
+                "start": m.start(),
+                "end": m.end(),
+                "score": 0.99,
+            }
             for m in self._pattern.finditer(text)
         ]
 
@@ -79,7 +74,7 @@ def _assert_no_name_variants(gist: str, name: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Deterministic Presidio path (sanitize_memory)
+# The span-classifier path (sanitize_memory)
 # ---------------------------------------------------------------------------
 
 NAME_VARIANT_TEXTS = [
@@ -103,16 +98,14 @@ NAME_VARIANT_TEXTS = [
 
 
 @pytest.mark.parametrize("text", NAME_VARIANT_TEXTS)
-def test_sanitize_memory_gist_never_contains_name_variant_presidio_active(
-    monkeypatch, text
-):
+def test_sanitize_memory_gist_never_contains_name_variant(monkeypatch, text):
     """No surface form of the referenced name survives into the gist."""
     memory = Memory(text=text, refs=["person-1"])
     session = FakeSession()
     monkeypatch.setattr(
         sanitize_mod,
-        "_get_presidio_analyzer",
-        lambda: _NameAwareFakeAnalyzer(["Alice Chen", "Alice"]),
+        "_get_privacy_filter",
+        lambda: _NameAwareFakeClassifier(["Alice Chen", "Alice"]),
     )
 
     gist = sanitize_mod.sanitize_memory(memory, session)
@@ -134,8 +127,8 @@ def test_sanitize_memory_gist_never_contains_any_variant_in_single_multivariant_
     session = FakeSession()
     monkeypatch.setattr(
         sanitize_mod,
-        "_get_presidio_analyzer",
-        lambda: _NameAwareFakeAnalyzer(["Alice Chen", "Alice"]),
+        "_get_privacy_filter",
+        lambda: _NameAwareFakeClassifier(["Alice Chen", "Alice"]),
     )
 
     gist = sanitize_mod.sanitize_memory(memory, session)
@@ -145,45 +138,27 @@ def test_sanitize_memory_gist_never_contains_any_variant_in_single_multivariant_
 
 
 # ---------------------------------------------------------------------------
-# High-fidelity path (remember()'s actual production call:
-# sanitize_memory_high_fidelity), LLM path
+# remember()'s actual production call: sanitize_memory
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("text", NAME_VARIANT_TEXTS)
-async def test_high_fidelity_gist_never_contains_name_variant_via_llm(
-    monkeypatch, text
-):
-    """remember()'s production path (LLM-first sanitizer) must also drop every
-    surface form of the name, independent of whether Presidio is installed.
-    """
-    from types import SimpleNamespace
-
+def test_stored_gist_never_contains_a_name_variant(monkeypatch, text):
+    """The persisted gist is exactly the sanitizer's output, never the raw text."""
     memory = Memory(text=text, refs=["person-1"])
     session = FakeSession()
-    # The LLM sanitizer is an opt-in tier (settings.sanitize_llm_tier_enabled,
-    # default off); enable it here so this test exercises the LLM path it
-    # asserts on rather than silently falling back to the deterministic one.
+
+    # The classifier stands in for the model here so this asserts what the
+    # repository owns: whatever the sanitizer returns is what gets persisted
+    # as the gist. The model's own coverage of each surface form is an
+    # integration case in tests/test_sanitize.py.
     monkeypatch.setattr(
-        "thenetwork.settings.get_settings",
-        lambda: SimpleNamespace(
-            agent_model="test:model", sanitize_llm_tier_enabled=True
-        ),
+        sanitize_mod,
+        "sanitize_text",
+        lambda raw: re.sub(r"(?i)alice chen'?s?|alice'?s?", "[name]", raw),
     )
 
-    async def fake_llm(mem: Memory, sess: FakeSession) -> str:
-        redacted = re.sub(r"(?i)alice chen'?s?|alice'?s?", "[name]", mem.text)
-        mem.gist = redacted
-        sess.add(mem)
-        sess.flush()
-        return redacted
-
-    monkeypatch.setattr(
-        sanitize_mod, "sanitize_memory_llm", AsyncMock(side_effect=fake_llm)
-    )
-
-    gist = await sanitize_mod.sanitize_memory_high_fidelity(memory, session)
+    gist = sanitize_mod.sanitize_memory(memory, session)
 
     _assert_no_name_variants(gist, "Alice Chen")
     assert memory.gist == gist
@@ -216,7 +191,7 @@ async def test_remember_tool_stores_gist_free_of_name_variants_end_to_end():
         "mentioned that alice chen is heads-down, and alice's team is hiring."
     )
 
-    async def fake_llm(memory, session):
+    def fake_sanitize(memory, session):
         redacted = re.sub(r"(?i)alice chen'?s?|alice'?s?", "[name]", memory.text)
         memory.gist = redacted
         return redacted
@@ -228,8 +203,8 @@ async def test_remember_tool_stores_gist_free_of_name_variants_end_to_end():
             return_value=[0.0] * 1536,
         ),
         patch(
-            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
-            new=AsyncMock(side_effect=fake_llm),
+            "thenetwork.agent.tools.sanitize_memory",
+            new=MagicMock(side_effect=fake_sanitize),
         ),
         patch("thenetwork.agent.tools.match_memories", return_value=[]),
     ):

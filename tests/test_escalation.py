@@ -67,8 +67,8 @@ async def test_escalate_returns_escalated_status():
         ),
         patch("thenetwork.agent.tools.get_session", return_value=cm),
         patch(
-            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
-            new_callable=AsyncMock,
+            "thenetwork.agent.tools.sanitize_memory",
+            new_callable=MagicMock,
         ),
         patch("thenetwork.agent.tools.notify_admins"),
     ):
@@ -94,8 +94,8 @@ async def test_escalate_stores_memory_with_escalation_marker():
         ),
         patch("thenetwork.agent.tools.get_session", return_value=cm),
         patch(
-            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
-            new_callable=AsyncMock,
+            "thenetwork.agent.tools.sanitize_memory",
+            new_callable=MagicMock,
         ),
         patch("thenetwork.agent.tools.notify_admins"),
     ):
@@ -117,7 +117,7 @@ async def test_escalate_includes_sender_id_in_refs_when_known():
     session.add.side_effect = added_objects.append
     sanitized = "[name] asked for human review."
 
-    async def fake_sanitize(memory, session):
+    def fake_sanitize(memory, session):
         memory.gist = sanitized
         return memory.gist
 
@@ -128,8 +128,8 @@ async def test_escalate_includes_sender_id_in_refs_when_known():
         ) as mock_embed,
         patch("thenetwork.agent.tools.get_session", return_value=cm),
         patch(
-            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
-            new=AsyncMock(side_effect=fake_sanitize),
+            "thenetwork.agent.tools.sanitize_memory",
+            new=MagicMock(side_effect=fake_sanitize),
         ) as mock_sanitize,
         patch("thenetwork.agent.tools.notify_admins"),
     ):
@@ -137,7 +137,7 @@ async def test_escalate_includes_sender_id_in_refs_when_known():
 
     mem = added_objects[0]
     assert mem.refs == ["user-abc"]
-    mock_sanitize.assert_awaited_once()
+    mock_sanitize.assert_called_once()
     mock_embed.assert_awaited_once_with(sanitized)
 
 
@@ -158,8 +158,8 @@ async def test_escalate_empty_refs_for_unknown_sender():
         ) as mock_embed,
         patch("thenetwork.agent.tools.get_session", return_value=cm),
         patch(
-            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
-            new_callable=AsyncMock,
+            "thenetwork.agent.tools.sanitize_memory",
+            new_callable=MagicMock,
         ) as mock_sanitize,
         patch("thenetwork.agent.tools.notify_admins"),
     ):
@@ -167,7 +167,7 @@ async def test_escalate_empty_refs_for_unknown_sender():
 
     mem = added_objects[0]
     assert mem.refs == []
-    mock_sanitize.assert_not_awaited()
+    mock_sanitize.assert_not_called()
     mock_embed.assert_awaited_once_with(raw)
 
 
@@ -183,8 +183,8 @@ async def test_escalate_notifies_all_admin_emails():
         ),
         patch("thenetwork.agent.tools.get_session", return_value=cm),
         patch(
-            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
-            new_callable=AsyncMock,
+            "thenetwork.agent.tools.sanitize_memory",
+            new_callable=MagicMock,
         ),
         patch("thenetwork.email.outbound.send_reply") as mock_send,
     ):
@@ -213,8 +213,8 @@ async def test_escalate_no_notification_when_no_admin_emails():
         ),
         patch("thenetwork.agent.tools.get_session", return_value=cm),
         patch(
-            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
-            new_callable=AsyncMock,
+            "thenetwork.agent.tools.sanitize_memory",
+            new_callable=MagicMock,
         ),
         patch("thenetwork.email.outbound.send_reply") as mock_send,
     ):
@@ -235,8 +235,8 @@ async def test_escalate_notification_includes_sender_and_reason():
         ),
         patch("thenetwork.agent.tools.get_session", return_value=cm),
         patch(
-            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
-            new_callable=AsyncMock,
+            "thenetwork.agent.tools.sanitize_memory",
+            new_callable=MagicMock,
         ),
         patch("thenetwork.email.outbound.send_reply") as mock_send,
     ):
@@ -268,8 +268,8 @@ async def test_escalate_welcomes_and_notifies_admins_for_authenticated_unknown_s
         ) as mock_embed,
         patch("thenetwork.agent.tools.get_session") as mock_get_session,
         patch(
-            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
-            new_callable=AsyncMock,
+            "thenetwork.agent.tools.sanitize_memory",
+            new_callable=MagicMock,
         ) as mock_sanitize,
         patch("thenetwork.agent.tools.audit_span_completion") as mock_completion,
         patch("thenetwork.agent.tools.notify_admins") as mock_notify,
@@ -298,7 +298,7 @@ async def test_escalate_welcomes_and_notifies_admins_for_authenticated_unknown_s
     )
     mock_get_session.assert_not_called()
     mock_embed.assert_not_awaited()
-    mock_sanitize.assert_not_awaited()
+    mock_sanitize.assert_not_called()
     mock_notify.assert_called_once_with(
         ctx.deps.settings,
         "[The Network] Manual reply needed: new@example.com",
@@ -383,8 +383,8 @@ async def test_escalate_does_not_acknowledge_unauthenticated_sender():
         ),
         patch("thenetwork.agent.tools.get_session", return_value=cm),
         patch(
-            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
-            new_callable=AsyncMock,
+            "thenetwork.agent.tools.sanitize_memory",
+            new_callable=MagicMock,
         ),
         patch("thenetwork.agent.tools.notify_admins"),
         patch("thenetwork.agent.tools.send_reply") as mock_send,

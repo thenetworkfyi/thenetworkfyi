@@ -124,19 +124,7 @@ async def test_email_capability_signatures_have_no_raw_address_param():
 @pytest.mark.asyncio
 async def test_remember_stored_gist_drops_person_names_before_commit(monkeypatch):
     """Names in a person-referencing memory must not survive into the stored gist."""
-    from types import SimpleNamespace
-
     from thenetwork.agent.tools import remember
-
-    # The LLM sanitizer is an opt-in tier (settings.sanitize_llm_tier_enabled,
-    # default off); enable it here so this test exercises the mocked
-    # sanitize_memory_llm path it asserts on.
-    monkeypatch.setattr(
-        "thenetwork.settings.get_settings",
-        lambda: SimpleNamespace(
-            agent_model="test:model", sanitize_llm_tier_enabled=True
-        ),
-    )
 
     ctx = FakeCtx(sender_email="alice@example.com", sender_user_id="user-alice")
     added: list[object] = []
@@ -144,7 +132,7 @@ async def test_remember_stored_gist_drops_person_names_before_commit(monkeypatch
     ctx._mock_sess.add.side_effect = added.append
     ctx._mock_sess.commit.side_effect = lambda: events.append("commit")
 
-    async def fake_llm_sanitize(memory, session):
+    def fake_sanitize(memory, session):
         events.append("sanitize")
         memory.gist = "[name] builds ML systems and researches privacy."
         session.add(memory)
@@ -165,8 +153,8 @@ async def test_remember_stored_gist_drops_person_names_before_commit(monkeypatch
             "thenetwork.agent.tools.embed_text", new=AsyncMock(side_effect=fake_embed)
         ) as mock_embed,
         patch(
-            "thenetwork.memory.sanitize.sanitize_memory_llm",
-            side_effect=fake_llm_sanitize,
+            "thenetwork.agent.tools.sanitize_memory",
+            side_effect=fake_sanitize,
         ),
     ):
         await remember(ctx, text=raw, refs=["user-alice", "user-bob"])
@@ -214,7 +202,7 @@ async def test_agent_reply_never_leaks_pii(adversarial_body: str):
         mock_settings.return_value.agent_model = test_model
         agent = build_agent()
 
-    async def fake_sanitize(memory, session):
+    def fake_sanitize(memory, session):
         memory.gist = "sanitized memory"
         return memory.gist
 
@@ -226,8 +214,8 @@ async def test_agent_reply_never_leaks_pii(adversarial_body: str):
         ),
         patch("thenetwork.agent.tools.match_memories", return_value=[]),
         patch(
-            "thenetwork.agent.tools.sanitize_memory_high_fidelity",
-            new=AsyncMock(side_effect=fake_sanitize),
+            "thenetwork.agent.tools.sanitize_memory",
+            new=MagicMock(side_effect=fake_sanitize),
         ),
         patch("thenetwork.agent.tools.notify_admins"),
     ):
