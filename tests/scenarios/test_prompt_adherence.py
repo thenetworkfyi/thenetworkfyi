@@ -10,10 +10,11 @@ memory's contents - never prompt-text presence.
 
 Two offline, fast tests guard the harness's own shape and always run under
 `pytest -m "not integration"`:
-  - every judgment-notes bullet in `SYSTEM_PROMPT` maps to exactly one
-    `Commitment` here (order-independent, so later prompt-bullet reordering
-    doesn't break this mapping - only rewording, splitting, or deleting a
-    bullet would, which is exactly the drift this guards against);
+  - every bullet in `prompts.JUDGMENT_BULLETS` maps to exactly one
+    `Commitment` here, matched by the bullet's stable slug, so neither
+    reordering nor rewording a bullet breaks the mapping - only adding,
+    splitting, or deleting one does, which is exactly the drift this guards
+    against;
   - every `Commitment` names at least one real, collected `Case`.
 
 The actual measurement - `test_prompt_adherence_baseline` - calls the real
@@ -44,6 +45,7 @@ from pydantic_evals.evaluators import Evaluator, EvaluatorContext, LLMJudge
 from thenetwork.agent.prompts import JUDGMENT_BULLETS
 from thenetwork.settings import get_settings
 from tests.scenarios.test_live_archetypes import (
+    DidNotDispatchEmail,
     EmailScenario,
     NoPersonalSignoff,
     RunOutcome,
@@ -297,6 +299,96 @@ empty_body_first_contact_case = Case(
     ),
 )
 
+proactive_preference_mismatch_case = Case(
+    name="proactive_preference_mismatch",
+    inputs=EmailScenario(
+        subject="[Proactive] Possible connection",
+        body=(
+            "[System match] A standing signal about one person closely matches a "
+            "standing signal about another (similarity=0.88).\n\n"
+            "Person user-noor: works on ML infrastructure and has said they want "
+            "to meet experienced peers, not beginners.\n"
+            "Person person-hobbyist-2: self-taught hobbyist experimenting with ML "
+            "tooling on weekends, new to the field and eager to learn from "
+            "anyone.\n\n"
+            "You are acting for person user-noor. If the pair is genuinely "
+            "supported, the bound counterpart id is person-hobbyist-2."
+        ),
+        sender_email="noor@example.com",
+        sender_user_id="user-noor",
+        sender_authenticated=True,
+        is_proactive=True,
+        proactive_candidate_id="person-hobbyist-2",
+    ),
+    evaluators=(
+        ToolWasCalled("no_action"),
+        ToolWasNotCalled("propose_introduction"),
+        DidNotDispatchEmail(),
+        LLMJudge(
+            rubric=(
+                "The person being acted for stated a preference for experienced "
+                "peers, and the counterpart's gist directly contradicts it - a "
+                "self-taught hobbyist new to the field. A stated preference is a "
+                "constraint on the match, not decoration, so high topic "
+                "similarity does not rescue it. The only reasonable action is "
+                "no_action; it must not propose the introduction."
+            ),
+            model=_judge_model,
+            include_input=True,
+        ),
+    ),
+)
+
+proactive_capped_capability_case = Case(
+    name="proactive_capped_capability",
+    inputs=EmailScenario(
+        subject="[Proactive] Possible connection",
+        body=(
+            "[System match] A standing signal about one person closely matches a "
+            "standing signal about another (similarity=0.87).\n\n"
+            "Person user-rhea: runs a bakery-supply co-op and has been asking for "
+            "someone with food-logistics distribution experience to help design "
+            "their delivery routing.\n"
+            "Person person-logistics-lead: ten years routing perishable-goods "
+            "deliveries for regional food distributors, has said they want to "
+            "advise small co-ops.\n\n"
+            "You are acting for person user-rhea. If the pair is genuinely "
+            "supported, the bound counterpart id is person-logistics-lead."
+        ),
+        sender_email="rhea@example.com",
+        sender_user_id="user-rhea",
+        sender_authenticated=True,
+        is_proactive=True,
+        proactive_candidate_id="person-logistics-lead",
+        # The pair IS well supported, so the model should try to propose it -
+        # and hit the already-exhausted per-run cap, which returns
+        # `status=deferred`. This is the only status-vocabulary pressure that
+        # can exist on a trigger: no reply and no escalation are registered.
+        introduction_proposal_count=get_settings().introduction_max_proposals_per_run,
+    ),
+    evaluators=(
+        ToolCalledAtMostOnce("propose_introduction"),
+        ToolWasCalled("no_action"),
+        ToolWasNotCalled("send_outreach"),
+        ToolWasNotCalled("reply_to_sender"),
+        DidNotDispatchEmail(),
+        LLMJudge(
+            rubric=(
+                "This proactive trigger describes a genuinely well-supported "
+                "two-sided match, so attempting propose_introduction once is "
+                "correct. That call returns status=deferred because a "
+                "server-side per-run cap is already exhausted. A deferred status "
+                "is not an error to work around: a reasonable response does not "
+                "retry the same call, does not try to reach either person some "
+                "other way, and ends the run by recording no_action. There is no "
+                "reply or escalation path on a trigger run."
+            ),
+            model=_judge_model,
+            include_input=True,
+        ),
+    ),
+)
+
 _NEW_CASES = (
     attachment_awareness_case,
     link_reference_only_case,
@@ -304,6 +396,8 @@ _NEW_CASES = (
     unfamiliar_sender_declines_case,
     first_contact_explains_service_case,
     empty_body_first_contact_case,
+    proactive_preference_mismatch_case,
+    proactive_capped_capability_case,
 )
 
 
@@ -314,14 +408,21 @@ _NEW_CASES = (
 
 @dataclass(frozen=True)
 class Commitment:
-    """One judgment-notes bullet, identified by its stable leading text.
+    """One judgment-notes bullet, identified by that bullet's stable slug.
 
-    `prefix` must match the start of exactly one bullet in `SYSTEM_PROMPT`'s
-    judgment-notes block - see `test_every_judgment_bullet_has_exactly_one_mapped_commitment`.
-    Matching by prefix text rather than position keeps this mapping valid
-    across a later bullet *reorder* (a later task in this chain moves bullets
-    for recall position); only rewording, merging, splitting, or deleting a
-    bullet invalidates it, which is exactly the drift this is meant to catch.
+    `slug` must name exactly one entry in `prompts.JUDGMENT_BULLETS` - see
+    `test_every_judgment_bullet_has_exactly_one_mapped_commitment`. Keying on
+    the slug rather than on position or text keeps the mapping valid across a
+    bullet *reorder* or *reword*; adding, splitting, or deleting a bullet is
+    what invalidates it, which is exactly the drift this guards against.
+
+    `prefix` is a human-readable label, recorded in the committed baseline so
+    a stored measurement stays legible without loading `prompts.py`. It is
+    asserted to still lead its bullet, but it is deliberately no longer the
+    identity: when a commitment applies in every mode yet names a tool only
+    some modes register, the bullet is split into an interactive bullet and a
+    proactive variant that open with the same words
+    (`tool_status_vocabulary` / `tool_status_vocabulary_proactive`).
     """
 
     slug: str
@@ -346,6 +447,11 @@ COMMITMENTS: tuple[Commitment, ...] = (
         "tool_status_vocabulary",
         "- Tool status vocabulary:",
         ("exhausted_reply_cap",),
+    ),
+    Commitment(
+        "tool_status_vocabulary_proactive",
+        "- Tool status vocabulary:",
+        ("proactive_capped_capability",),
     ),
     Commitment(
         "forget_ownership",
@@ -418,6 +524,11 @@ COMMITMENTS: tuple[Commitment, ...] = (
         ("peer_level_qualification", "preference_mismatch"),
     ),
     Commitment(
+        "preferences_about_who_proactive",
+        "- Preferences about who, not just what:",
+        ("proactive_preference_mismatch",),
+    ),
+    Commitment(
         "proactive_people_triggers",
         "- Proactive people triggers surface candidates",
         ("under_supported_proactive_people",),
@@ -447,17 +558,6 @@ COMMITMENTS: tuple[Commitment, ...] = (
         ("stop_event_recommendations_only", "resume_event_recommendations_only"),
     ),
 )
-
-
-def _judgment_notes_bullets() -> list[str]:
-    """The canonical judgment-notes bullets, as `prompts.py` defines them.
-
-    Each bullet now reaches only the modes whose tools it reasons about (see
-    `thenetwork.agent.prompts`), so there is no longer one single flat prompt
-    to parse; the canonical list lives in `JUDGMENT_BULLETS` itself, and this
-    just returns each bullet's exact text in its declared order.
-    """
-    return [bullet.text for bullet in JUDGMENT_BULLETS]
 
 
 adherence_dataset = Dataset[EmailScenario, RunOutcome](
@@ -529,14 +629,26 @@ def write_baseline(
 
 
 def test_every_judgment_bullet_has_exactly_one_mapped_commitment() -> None:
-    bullets = _judgment_notes_bullets()
-    assert len(bullets) == len(COMMITMENTS), (
-        "SYSTEM_PROMPT's judgment-notes bullet count changed - update "
-        "COMMITMENTS in this module to match, one bullet per Commitment."
+    bullets_by_slug = {bullet.slug: bullet for bullet in JUDGMENT_BULLETS}
+    commitment_slugs = [commitment.slug for commitment in COMMITMENTS]
+
+    assert len(commitment_slugs) == len(set(commitment_slugs)), (
+        "two Commitments share a slug - each judgment-notes bullet gets "
+        "exactly one."
     )
+    assert set(commitment_slugs) == set(bullets_by_slug), (
+        "prompts.JUDGMENT_BULLETS and COMMITMENTS have drifted - update "
+        "COMMITMENTS so each bullet has exactly one Commitment with its slug. "
+        f"Unmapped: {sorted(set(bullets_by_slug) - set(commitment_slugs))}; "
+        f"stale: {sorted(set(commitment_slugs) - set(bullets_by_slug))}"
+    )
+
     for commitment in COMMITMENTS:
-        matches = [b for b in bullets if b.startswith(commitment.prefix)]
-        assert len(matches) == 1, (commitment.slug, commitment.prefix, len(matches))
+        bullet = bullets_by_slug[commitment.slug]
+        assert bullet.text.startswith(commitment.prefix), (
+            commitment.slug,
+            commitment.prefix,
+        )
 
 
 def test_every_commitment_maps_to_at_least_one_real_case() -> None:

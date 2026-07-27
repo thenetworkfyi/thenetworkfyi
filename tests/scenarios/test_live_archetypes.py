@@ -107,6 +107,10 @@ class EmailScenario:
     event_recommendations_stopped: bool = False
     admin_emails: list[str] | None = None
     attachment_count: int = 0
+    # Pre-loading the per-run proposal counter is how a scenario reaches
+    # `propose_introduction`'s `status=deferred, reason=run_proposal_cap`
+    # branch without needing a first, successful proposal in the same run.
+    introduction_proposal_count: int = 0
 
 
 @dataclass
@@ -260,6 +264,7 @@ async def run_scenario(inputs: EmailScenario, *, model: Any = None) -> RunOutcom
             proactive_candidate_id=inputs.proactive_candidate_id,
             proactive_event_id=inputs.proactive_event_id,
             proactive_event_version=inputs.proactive_event_version,
+            introduction_proposal_count=inputs.introduction_proposal_count,
         )
         # Mirrors thenetwork/agent/core.py:run_agent_for_email's attachment_line
         # construction, since this harness calls agent.run directly rather than

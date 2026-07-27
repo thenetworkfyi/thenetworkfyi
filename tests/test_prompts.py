@@ -1,4 +1,5 @@
 import inspect
+import re
 
 from thenetwork.agent.prompts import (
     EVENT_TRIGGER,
@@ -215,9 +216,7 @@ def test_progressive_qualification_memory_is_absent_before_registration() -> Non
 
 def test_status_vocabulary_guidance_present() -> None:
     bullet = _bullet("tool_status_vocabulary")
-    assert bullet.modes == frozenset(
-        {PEOPLE_TRIGGER, EVENT_TRIGGER, FIRST_CONTACT, KNOWN_SENDER}
-    )
+    assert bullet.modes == frozenset({FIRST_CONTACT, KNOWN_SENDER})
     for mode in bullet.modes:
         assert bullet.text in SYSTEM_PROMPTS[mode]
 
@@ -229,6 +228,37 @@ def test_status_vocabulary_guidance_present() -> None:
     assert "never work around it" in guidance
     assert "`error` with a `reason` means fix the input once" in guidance
     assert "never loop on the same error" in guidance
+    # The interactive recovery routes - only reachable where they are registered.
+    assert "via `reply_to_sender`" in guidance
+    assert "or escalate" in guidance
+
+
+def test_status_vocabulary_has_a_proactive_variant_with_no_reply_or_escalate() -> None:
+    """The commitment is kept for both proactive modes, not deleted from them.
+
+    The flat bullet told every mode to answer a fired cap "briefly via
+    `reply_to_sender`" and to "escalate" on a repeated error. Neither tool is
+    registered on a proactive trigger, so that text instructed an action the
+    model structurally could not take; `no_action(reason)` is the only way a
+    trigger run can end once its one bound capability is unusable.
+    """
+    bullet = _bullet("tool_status_vocabulary_proactive")
+    assert bullet.modes == frozenset({PEOPLE_TRIGGER, EVENT_TRIGGER})
+    guidance = " ".join(bullet.text.split())
+
+    # The shared commitment survives verbatim.
+    assert "tools never crash" in guidance
+    assert "`limited` or `deferred`" in guidance
+    assert "do not retry the same tool call" in guidance
+    assert "`forbidden` means the action is structurally disallowed" in guidance
+    assert "never work around it" in guidance
+    assert "never loop on the same error" in guidance
+
+    # Redirected to the only terminal action a trigger run actually has.
+    assert "`no_action(reason)`" in guidance
+    assert "no reply and no escalation path" in guidance
+    assert "reply_to_sender" not in guidance
+    assert "escalate" not in guidance
 
 
 def test_operational_and_account_wide_requests_escalate() -> None:
@@ -399,13 +429,37 @@ def test_event_permission_is_scoped_without_service_promises() -> None:
 def test_preferences_about_who_reaches_search_and_proactive_people_matches() -> None:
     """Explicitly names both a `search` hit and a proactive trigger as contexts."""
     bullet = _bullet("preferences_about_who")
-    assert bullet.modes == frozenset({KNOWN_SENDER, PEOPLE_TRIGGER})
+    assert bullet.modes == frozenset({KNOWN_SENDER})
     guidance = " ".join(bullet.text.split())
 
     assert "part of the match, not decoration" in guidance
     assert "a `search` hit or a proactive trigger" in guidance
     assert "treat a stated preference as a constraint" in guidance
     assert "not license to assume it holds" in guidance
+    # The write side is reachable here because `remember` is registered.
+    assert "`remember` it in their own terms" in guidance
+
+
+def test_preferences_about_who_has_a_people_trigger_variant_that_only_judges() -> None:
+    """The constraint half is kept for `people_trigger`; the write half is not.
+
+    The flat bullet told `people_trigger` to "`remember` it in their own terms"
+    and to weigh "a `search` hit", but that mode registers neither `remember`
+    nor `search` - only `propose_introduction` and `no_action`. The variant
+    keeps the judgment commitment, which the trigger can act on, and drops the
+    two instructions it cannot.
+    """
+    bullet = _bullet("preferences_about_who_proactive")
+    assert bullet.modes == frozenset({PEOPLE_TRIGGER})
+    guidance = " ".join(bullet.text.split())
+
+    assert "part of the match, not decoration" in guidance
+    assert "Treat it as a constraint on this trigger" in guidance
+    assert "contradicts the preference" in guidance
+    assert "not license to assume it holds" in guidance
+    assert "call `no_action`" in guidance
+    assert "`remember`" not in guidance
+    assert "`search`" not in guidance
 
 
 # ---------------------------------------------------------------------------
@@ -468,6 +522,213 @@ def test_event_scan_trigger_body_does_not_duplicate_the_prompt_bullet() -> None:
 # ---------------------------------------------------------------------------
 
 
+# Exact per-mode bullet membership. This is the drift alarm for the tagging
+# itself: adding a bullet, retagging one, or splitting one into an interactive
+# and a proactive variant all have to be recorded here deliberately. The size
+# bounds below count the same sets.
+_EXPECTED_BULLETS_BY_MODE: dict[str, frozenset[str]] = {
+    PEOPLE_TRIGGER: frozenset(
+        {
+            "tool_status_vocabulary_proactive",
+            "preferences_about_who_proactive",
+            "proactive_people_triggers",
+        }
+    ),
+    EVENT_TRIGGER: frozenset(
+        {
+            "tool_status_vocabulary_proactive",
+            "proactive_event_triggers",
+        }
+    ),
+    FIRST_CONTACT: frozenset(
+        {
+            "attachments",
+            "links",
+            "search_similarity_discovery_only",
+            "sender_owned_evidence_memory_ids",
+            "tool_status_vocabulary",
+            "forget_ownership",
+            "operational_escalation",
+            "consolidation",
+            "breadth_is_one_fact",
+            "register_person_for_joining_only",
+            "first_contact_judgment_call",
+            "joining_first_contact_reply_style",
+            "outreach_timing_judgment_call",
+            "search_person_id_is_not_sender",
+            "not_every_message_is_career_request",
+            "events_are_secondary",
+            "event_records_vs_interests",
+            "event_recommendation_permission",
+            "asking_for_clarification",
+        }
+    ),
+    KNOWN_SENDER: frozenset(
+        {
+            "attachments",
+            "links",
+            "search_similarity_discovery_only",
+            "sender_owned_evidence_memory_ids",
+            "tool_status_vocabulary",
+            "forget_ownership",
+            "operational_escalation",
+            "consolidation",
+            "breadth_is_one_fact",
+            "outreach_timing_judgment_call",
+            "search_person_id_is_not_sender",
+            "not_every_message_is_career_request",
+            "preferences_about_who",
+            "events_are_secondary",
+            "event_records_vs_interests",
+            "event_recommendation_permission",
+            "asking_for_clarification",
+            "progressive_qualification_memory",
+        }
+    ),
+}
+
+
+def test_per_mode_bullet_membership_is_pinned() -> None:
+    for mode, expected in _EXPECTED_BULLETS_BY_MODE.items():
+        actual = frozenset(
+            bullet.slug for bullet in JUDGMENT_BULLETS if mode in bullet.modes
+        )
+        assert actual == expected, (mode, sorted(actual ^ expected))
+
+
+def test_every_bullet_slug_is_unique_and_reaches_at_least_one_mode() -> None:
+    slugs = [bullet.slug for bullet in JUDGMENT_BULLETS]
+    assert len(slugs) == len(set(slugs))
+    for bullet in JUDGMENT_BULLETS:
+        assert bullet.modes, bullet.slug
+        assert bullet.modes <= frozenset(SYSTEM_PROMPTS), bullet.slug
+
+
+# Tools registered per mode by `agent/core.py:build_agent`. `no_action` is the
+# output tool and is available everywhere.
+_REGISTERED_TOOLS: dict[str, frozenset[str]] = {
+    PEOPLE_TRIGGER: frozenset({"propose_introduction", "no_action"}),
+    EVENT_TRIGGER: frozenset({"send_event_recommendation", "no_action"}),
+    FIRST_CONTACT: frozenset(
+        {
+            "remember",
+            "forget",
+            "search",
+            "propose_introduction",
+            "escalate",
+            "send_first_contact_welcome",
+            "reply_to_sender",
+            "send_outreach",
+            "register_person",
+            "create_event",
+            "update_event",
+            "cancel_event",
+            "search_events",
+            "stop_event_recommendations",
+            "resume_event_recommendations",
+            "no_action",
+        }
+    ),
+}
+_REGISTERED_TOOLS[KNOWN_SENDER] = _REGISTERED_TOOLS[FIRST_CONTACT]
+
+_ALL_TOOLS = frozenset().union(*_REGISTERED_TOOLS.values())
+
+# A clause that forbids a tool may name one the mode does not register - that
+# is the point of "never call `send_outreach`". A clause that does anything
+# else with an unregistered tool name is the bug this test exists to catch.
+_PROHIBITION_MARKERS = ("never", "not ", "no ", "cannot", "instead of")
+
+
+def _clauses(text: str) -> list[str]:
+    return [
+        clause.strip()
+        for clause in re.split(r"(?<=[.;:])\s+|\n", text)
+        if clause.strip()
+    ]
+
+
+def test_no_mode_prompt_instructs_a_tool_that_mode_does_not_register() -> None:
+    """The regression this whole task is about, checked mechanically.
+
+    Reaching a mode with guidance about a tool it cannot call is not a harmless
+    extra sentence: the model is being told to take an action that will not be
+    available, and its only ways out are inventing a call or ending the run on
+    bare text. Prompts name tools in backticks, so unbackticked prose ("search
+    for relevant memories") is deliberately not matched.
+    """
+    offences = {
+        mode: _unregistered_instructions(mode, prompt)
+        for mode, prompt in SYSTEM_PROMPTS.items()
+    }
+    assert not any(offences.values()), {k: v for k, v in offences.items() if v}
+
+
+def _unregistered_instructions(mode: str, text: str) -> list[str]:
+    registered = _REGISTERED_TOOLS[mode]
+    found = []
+    for clause in _clauses(text):
+        named = {tool for tool in _ALL_TOOLS if f"`{tool}" in clause}
+        if not (named - registered):
+            continue
+        if any(marker in clause.lower() for marker in _PROHIBITION_MARKERS):
+            continue
+        found.append(clause)
+    return found
+
+
+def test_the_unregistered_tool_detector_flags_the_original_regression() -> None:
+    """Guards the guard: a detector that cannot fail proves nothing.
+
+    These are the two exact clauses this task removed from the proactive
+    prompts. If a future edit to `_PROHIBITION_MARKERS` or `_clauses` stops
+    matching them, the check above silently becomes a no-op.
+    """
+    removed_cap_clause = (
+        "If the cap blocks what the sender actually asked for, say so briefly "
+        "via `reply_to_sender`; otherwise just capture the fact and move on."
+    )
+    removed_remember_clause = (
+        "`remember` it in their own terms as part of their standing intent so "
+        "it carries into matching."
+    )
+
+    assert _unregistered_instructions(PEOPLE_TRIGGER, removed_cap_clause)
+    assert _unregistered_instructions(EVENT_TRIGGER, removed_cap_clause)
+    assert _unregistered_instructions(PEOPLE_TRIGGER, removed_remember_clause)
+
+    # ...and that it stays quiet for a legitimate prohibition and for a tool
+    # the mode actually registers.
+    assert not _unregistered_instructions(
+        PEOPLE_TRIGGER, "Never use `send_outreach` to deliver this."
+    )
+    assert not _unregistered_instructions(
+        KNOWN_SENDER, "Answer them with `reply_to_sender`."
+    )
+
+
+def test_every_mode_ends_with_a_security_boundaries_section() -> None:
+    """Each mode's untrusted-content text points at "the security boundaries
+    below"; `people_trigger` previously had none, leaving that a dangling
+    reference in the one mode most exposed to sealed-gist injection."""
+    heading = "Security boundaries (structural, not policy):"
+    for mode, prompt in SYSTEM_PROMPTS.items():
+        assert "bypass the security boundaries below" in prompt, mode
+        assert prompt.count(heading) == 1, mode
+        # "below" is only true if the section is genuinely the last block.
+        assert prompt.rstrip().split("\n\n")[-1].startswith(heading), mode
+
+
+def test_people_trigger_security_boundary_covers_its_one_capability() -> None:
+    prompt = SYSTEM_PROMPTS[PEOPLE_TRIGGER]
+    boundaries = prompt.rsplit("Security boundaries (structural, not policy):", 1)[1]
+
+    assert "`propose_introduction` accepts only the opaque person ids" in boundaries
+    assert "sealed gists you supply" in boundaries
+    assert "raw memory text, name, or email address" in boundaries
+    assert "server composes and sends the anonymized opt-in requests" in boundaries
+
+
 def test_every_bullet_appears_only_in_its_declared_modes() -> None:
     for bullet in JUDGMENT_BULLETS:
         for mode, prompt in SYSTEM_PROMPTS.items():
@@ -502,7 +763,7 @@ def test_send_event_recommendation_is_named_only_where_it_is_registered() -> Non
 #     median bullet 725, mean 816, longest 1958 (single flat prompt)
 #   eff77d6 (round 1 assembled):                     22871 chars, 16 bullets,
 #     median 797, mean 1054, longest 2669 (single flat prompt)
-#   this task (per-mode assembly, 23 bullets total - none deleted; see
+#   12c6e20f (per-mode assembly, 23 bullets total - none deleted; see
 #     "proactive_people_triggers" below, which was considered for removal as a
 #     duplicate of worker/proactive.py's trigger body but kept because only
 #     `scan_for_matches`'s body actually restates it, not `scan_for_opportunities`'s):
@@ -510,11 +771,23 @@ def test_send_event_recommendation_is_named_only_where_it_is_registered() -> Non
 #     first_contact:   19603 chars, 19 bullets reach this mode
 #     people_trigger:   4434 chars,  3 bullets reach this mode
 #     event_trigger:    3957 chars,  2 bullets reach this mode
+#   this task (25 bullets total; the two proactive modes stopped being told to
+#     use tools they do not register). `tool_status_vocabulary` and
+#     `preferences_about_who` each split into an interactive bullet plus a
+#     proactive variant, so the total rose by 2 while no mode's bullet count
+#     changed. `people_trigger` also gained a security-boundaries section,
+#     which its untrusted-content text already referred to:
+#     known_sender:    18846 chars, 18 bullets reach this mode  (unchanged)
+#     first_contact:   19603 chars, 19 bullets reach this mode  (unchanged)
+#     people_trigger:   4690 chars,  3 bullets reach this mode  (+256)
+#     event_trigger:    4033 chars,  2 bullets reach this mode  (+76)
 #
 # known_sender/first_contact stayed close to the old flat-prompt size because
 # most bullets reason about tools registered in both interactive modes; the
 # real reduction is in the two proactive-trigger modes, which now only carry
-# the guidance their bound capability can act on.
+# the guidance their bound capability can act on. Both proactive modes grew
+# slightly when the misdirected guidance was rewritten rather than deleted -
+# the cost of keeping the commitment - and both stay far inside their bound.
 _MAX_INTERACTIVE_PROMPT_CHARS = 21000
 _MAX_PROACTIVE_PROMPT_CHARS = 5000
 _MAX_BULLET_CHARS = 2500
