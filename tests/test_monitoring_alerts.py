@@ -111,8 +111,13 @@ def test_application_notification_ownership_is_limited_to_agent_escalation():
         tree = ast.parse(path.read_text())
         if any(
             isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "notify_admins"
+            and (
+                (isinstance(node.func, ast.Name) and node.func.id == "notify_admins")
+                or (
+                    isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "notify_admins"
+                )
+            )
             for node in ast.walk(tree)
         ):
             call_sites.append(path.relative_to(_REPO_ROOT).as_posix())
