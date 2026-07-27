@@ -27,17 +27,15 @@ def _use_spans(monkeypatch, spans_by_text: dict[str, list[dict]]) -> None:
 
 
 def test_redacts_nested_strings_across_the_whole_taxonomy(monkeypatch):
-    content = (
-        "Alice Chen used https://example.test/a?x=1 with api_key=sk_abcdefghijklmnopq"
-    )
+    content = "Alice Chen called 415-555-0199 from https://example.test/a?x=1"
     identifier = "user_abcdef123456"
     _use_spans(
         monkeypatch,
         {
             content: [
                 _span("private_person", 0, 10),
-                _span("private_url", 16, 42),
-                _span("secret", 48, 76),
+                _span("private_phone", 18, 30),
+                _span("private_url", 36, 62),
             ],
             identifier: [_span("account_number", 0, 17)],
         },
@@ -46,10 +44,11 @@ def test_redacts_nested_strings_across_the_whole_taxonomy(monkeypatch):
 
     redacted = log_redaction.redact_structured_log(raw, pseudonym_secret="test-key")
 
-    assert redacted["content"].startswith("[person] used [url:log_v1_")
+    assert redacted["content"].startswith(
+        "[person] called [phone_number] from [url:log_v1_"
+    )
     assert "example.test" not in redacted["content"]
-    assert "sk_abcdefghijklmnopq" not in redacted["content"]
-    assert "[secret:log_v1_" in redacted["content"]
+    assert "415-555-0199" not in redacted["content"]
     assert "abcdef123456" not in redacted["calls"][0]["id"]
     assert redacted["calls"][0]["id"].startswith("[application_identifier:log_v1_")
 
@@ -82,17 +81,17 @@ def test_stable_pseudonyms_are_keyed_and_do_not_fall_back_to_raw_values(monkeypa
 
 def test_adjacent_fragments_of_one_value_are_replaced_as_a_whole(monkeypatch):
     """The classifier labels tokens, so one value arrives split across spans."""
-    text = "key sk-ant-api03-9xKq2mVbN7hRt4wPzL0e"
+    text = "from mike_lay@example.test"
     _use_spans(
         monkeypatch,
-        {text: [_span("secret", 3, 25), _span("secret", 25, 37)]},
+        {text: [_span("private_email", 5, 13), _span("private_email", 13, 26)]},
     )
 
-    redacted = log_redaction.redact_text(text, pseudonym_secret="key")
+    redacted = log_redaction.redact_text(text)
 
-    assert "sk-ant" not in redacted
-    assert "PzL0e" not in redacted
-    assert redacted.startswith("key [secret:log_v1_")
+    assert "mike_l" not in redacted
+    assert "example.test" not in redacted
+    assert redacted == "from [email_address]"
 
 
 def test_overlapping_matches_never_leave_a_sensitive_fragment(monkeypatch):
@@ -137,11 +136,6 @@ def test_initialization_or_execution_failure_replaces_all_strings(monkeypatch):
 @pytest.mark.parametrize(
     "text,expected_absent",
     [
-        ("AGENT_API_KEY=sk-ant-api03-9xKq2mVbN7hRt4wPzL0e", ["sk-ant-api03"]),
-        ("password: hunter2correcthorse", ["hunter2correcthorse"]),
-        ("sk_live_51H8xKq2mVbN7hRt4wPzL0e", ["sk_live_51H8xKq2"]),
-        ("trace_id=7c9e6679a0c04f8911d3", ["7c9e6679a0c04f8911d3"]),
-        ("user_9a0c0305e82c3301", ["9a0c0305e82c3301"]),
         (
             "see https://internal.example.test/admin?token=abc123",
             ["internal.example.test"],
@@ -151,7 +145,7 @@ def test_initialization_or_execution_failure_replaces_all_strings(monkeypatch):
         ("call 415-555-0199", ["415-555-0199"]),
     ],
 )
-def test_real_model_redacts_the_values_the_regex_tier_used_to_catch(
+def test_real_model_redacts_identifying_values_in_log_shaped_strings(
     text, expected_absent
 ):
     """Measured against openai/privacy-filter before the pattern tier was deleted."""

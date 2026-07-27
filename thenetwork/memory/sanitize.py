@@ -31,7 +31,6 @@ _ENTITY_LABELS = {
     "private_address": "[address]",
     "private_url": "[url]",
     "account_number": "[id]",
-    "secret": "[secret]",
 }
 
 

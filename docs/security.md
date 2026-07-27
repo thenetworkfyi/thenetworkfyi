@@ -34,7 +34,7 @@ prompt-injection exfiltrate it, so the privacy boundary cannot be "withhold a co
    cannot load is a deployment error, not a silent downgrade, and there is no setting
    that disables sanitization.
    The allow-list is the policy. `private_person`, `private_email`, `private_phone`,
-   `private_address`, `private_url`, `account_number`, and `secret` are redacted;
+   `private_address`, `private_url`, and `account_number` are redacted;
    `private_date` is not, because "a Rust meetup Thursday" is the perishability and
    recall signal a gist exists to carry. Organizations and place names have no label in
    this taxonomy at all, which matches the long-standing decision to keep them for
