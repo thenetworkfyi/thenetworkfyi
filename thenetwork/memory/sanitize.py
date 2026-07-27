@@ -68,17 +68,25 @@ def assert_sanitizer_ready() -> None:
     _get_privacy_filter()
 
 
-def _merge_spans(spans: list[dict], text: str) -> list[tuple[int, int, str]]:
-    """Coalesce the classifier's fragmented spans into whole redactable runs.
+def classify_spans(text: str, labels) -> list[tuple[int, int, str]]:
+    """Label `text` and return merged spans whose label is in `labels`.
+
+    Shared with `thenetwork.security.log_redaction`, which keeps a different
+    allow-list over the same taxonomy. Routing both through one function means
+    one loaded copy of the weights rather than two.
 
     The model labels tokens, not words, so one value arrives in pieces: a name
     as ' mike_l' + 'ay', a phone as '415-555-267' + '1'. Splicing those
     separately would emit a token per fragment, and - worse - a fragment whose
-    label fell outside the allow-list would leave part of the value in the
-    gist. Adjacent spans sharing a label are therefore joined first.
+    label fell outside the allow-list would leave part of the value behind.
+    Adjacent spans sharing a label are therefore joined first.
     """
     ordered = sorted(
-        (span for span in spans if span["entity_group"] in _ENTITY_LABELS),
+        (
+            span
+            for span in _get_privacy_filter()(text)
+            if span["entity_group"] in labels
+        ),
         key=lambda span: (span["start"], span["end"]),
     )
     merged: list[tuple[int, int, str]] = []
@@ -104,7 +112,7 @@ def sanitize_text(text: str) -> str:
     """
     if not text.strip():
         return text
-    spans = _merge_spans(_get_privacy_filter()(text), text)
+    spans = classify_spans(text, _ENTITY_LABELS)
     # Redact right-to-left so earlier spans' offsets stay valid.
     for start, end, label in sorted(spans, key=lambda span: span[0], reverse=True):
         text = text[:start] + _ENTITY_LABELS[label] + text[end:]

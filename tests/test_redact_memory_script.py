@@ -471,7 +471,7 @@ def test_redact_memory_dry_run_leaves_persisted_row_unchanged(
     seeded_db, pg_engine, monkeypatch
 ):
     """A dry run through main() against a real session persists no change."""
-    pytest.importorskip("presidio_analyzer")
+    pytest.importorskip("transformers")
     memory_id = str(uuid.uuid4())
     raw_text = "Contact Jane Roe at jane.roe@example.com about the merger"
     original_gist = "discussed a business matter"
@@ -513,7 +513,7 @@ def test_redact_memory_commit_persists_gist_regenerated_from_redacted_text(
     seeded_db, pg_engine, monkeypatch
 ):
     """A committed run persists redacted text, a fresh gist, and a gist embedding."""
-    pytest.importorskip("presidio_analyzer")
+    pytest.importorskip("transformers")
     memory_id = str(uuid.uuid4())
     raw_text = "Contact Priya Singh at priya.singh@example.com about the deal"
     with pg_engine.connect() as conn:
@@ -556,7 +556,7 @@ def test_redact_memory_dry_run_then_commit_end_to_end(
     seeded_db, pg_engine, monkeypatch
 ):
     """dry run then --commit on a ref-carrying memory exercises the assembled chain."""
-    pytest.importorskip("presidio_analyzer")
+    pytest.importorskip("transformers")
     memory_id = str(uuid.uuid4())
     raw_text = "Reach out to Marco Diaz at marco.diaz@example.com re: onboarding"
     with pg_engine.connect() as conn:

@@ -61,6 +61,19 @@ thin wrapper over a well-adopted library, swappable by config.
   `LinkedIn` as a person. It costs ~2 GB of local weights and one forward pass, no
   credential and no network call, and it removes `presidio-analyzer`, `spacy`,
   `en_core_web_lg`, and a per-write model call from the write path.
+- **Response-log redaction runs the same classifier, not its own recognizer stack.**
+  `security/log_redaction.py` used to be Presidio plus eight hand-written regexes for
+  intro tokens, UUIDs, `user_`/`request_`/`trace_` prefixes, and provider key shapes.
+  Measured against the classifier, those patterns were mostly redundant: it labels
+  `sk-ant-...`, `sk_live_...`, `password:` values, `api_key=` assignments, `trace_id=`
+  and `user_...` identifiers, URLs, emails, names, and phone numbers on its own. Both
+  callers now go through `sanitize.classify_spans`, so the 2.7 GB of weights load once
+  per process instead of twice, and the last reason to depend on `presidio-analyzer`
+  is gone. The allow-lists stay separate: logs also redact `private_date`, which gists
+  keep. Two measured gaps - an AWS `AKIA...` key and a bare `[intro:<uuid>]` token -
+  now pass through, which is acceptable because log redaction is defense in depth for
+  diagnostics, not a boundary the SEAL rests on; the SEAL's boundary is
+  `memory/sanitize.py` and the search projections.
 - **Sanitization has no off switch.** There is no `SANITIZE_*_ENABLED` setting and no
   fallback path. A sanitizer that can be disabled or that degrades silently is a
   sanitizer you cannot reason about at the SEAL boundary, and the failure mode is a
@@ -122,6 +135,8 @@ understanding why it was dropped.
   handles, dictionary-word handles, and obfuscated addresses the patterns missed.
 - ❌ A per-write LLM sanitizer tier → one local forward pass, plus a periodic
   large-model sweep over stored gists for what the classifier missed.
+- ❌ Presidio + a custom regex recognizer list in the response-log redactor → the same
+  classifier, one loaded copy, one shared span function, its own allow-list.
 - ❌ LiteLLM / proxy glue → pydantic-ai native multi-provider.
 - ❌ `np.random.rand(1536)` placeholder embeddings → OpenAI embedding wrapper constrained to 1536 dimensions.
 - ❌ Bespoke rate limiting → `limits`.

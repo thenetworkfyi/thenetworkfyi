@@ -42,24 +42,32 @@ def _events(caplog) -> list[dict]:
     ]
 
 
-class _LogAnalyzer:
-    def analyze(self, *, text, language):
-        matches = []
-        for value, entity_type in (
-            ("Alice Example", "PERSON"),
-            ("alice@example.test", "EMAIL_ADDRESS"),
-        ):
-            start = text.find(value)
-            while start >= 0:
-                matches.append(
-                    SimpleNamespace(
-                        start=start,
-                        end=start + len(value),
-                        entity_type=entity_type,
-                    )
-                )
-                start = text.find(value, start + len(value))
-        return matches
+def _fake_classify(text):
+    """Deterministic stand-in for the local span classifier the redactor uses.
+
+    The real weights are a multi-gigabyte download and CI runs
+    `pytest -m "not integration"`, so these tests never load them. Spans are
+    shaped exactly like the pipeline's output.
+    """
+    spans = []
+    for value, label in (
+        ("Alice Example", "private_person"),
+        ("alice@example.test", "private_email"),
+        ("https://example.test/path", "private_url"),
+    ):
+        start = text.find(value)
+        while start >= 0:
+            spans.append(
+                {
+                    "entity_group": label,
+                    "start": start,
+                    "end": start + len(value),
+                    "score": 0.99,
+                }
+            )
+            start = text.find(value, start + len(value))
+    spans.sort(key=lambda span: (span["start"], span["end"]))
+    return spans
 
 
 def _format_foreign_log(
@@ -140,7 +148,7 @@ def test_procrastinate_start_log_preserves_metadata_and_redacts_only_job_content
     monkeypatch,
 ):
     monkeypatch.setattr(
-        "thenetwork.security.log_redaction._get_log_analyzer", _LogAnalyzer
+        "thenetwork.memory.sanitize._get_privacy_filter", lambda: _fake_classify
     )
     event = _format_foreign_log(
         logger_name="procrastinate.worker.worker",
@@ -171,7 +179,7 @@ def test_procrastinate_start_log_preserves_metadata_and_redacts_only_job_content
 
 def test_procrastinate_success_log_preserves_completion_metadata(monkeypatch):
     monkeypatch.setattr(
-        "thenetwork.security.log_redaction._get_log_analyzer", _LogAnalyzer
+        "thenetwork.memory.sanitize._get_privacy_filter", lambda: _fake_classify
     )
     extra = _procrastinate_job_extra(
         action="job_success", result="Reply for alice@example.test"
@@ -205,7 +213,7 @@ def test_procrastinate_success_log_preserves_completion_metadata(monkeypatch):
 
 def test_procrastinate_failure_log_redacts_result_and_exception_content(monkeypatch):
     monkeypatch.setattr(
-        "thenetwork.security.log_redaction._get_log_analyzer", _LogAnalyzer
+        "thenetwork.memory.sanitize._get_privacy_filter", lambda: _fake_classify
     )
     private_error = "Delivery failed for alice@example.test and Alice Example"
     try:
@@ -988,27 +996,9 @@ def test_model_response_audit_logs_redacted_complete_parts(caplog, monkeypatch):
 
     caplog.set_level(logging.INFO, logger=LOGGER_NAME)
 
-    class Analyzer:
-        def analyze(self, *, text, language):
-            matches = []
-            for value, entity_type in (
-                ("Alice Example", "PERSON"),
-                ("alice@example.test", "EMAIL_ADDRESS"),
-            ):
-                start = text.find(value)
-                if start >= 0:
-                    matches.append(
-                        SimpleNamespace(
-                            start=start,
-                            end=start + len(value),
-                            entity_type=entity_type,
-                        )
-                    )
-            return matches
-
     monkeypatch.setattr(
-        "thenetwork.security.log_redaction._get_log_analyzer",
-        Analyzer,
+        "thenetwork.memory.sanitize._get_privacy_filter",
+        lambda: _fake_classify,
     )
     raw_name = "Alice Example"
     raw_email = "alice@example.test"

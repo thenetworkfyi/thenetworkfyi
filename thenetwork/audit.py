@@ -463,9 +463,10 @@ def configure_audit_logging() -> None:
     # Procrastinate's job start/finish/retry/failure logs are worth surfacing
     # at INFO rather than vanishing under root's default WARNING threshold.
     logging.getLogger("procrastinate").setLevel(logging.INFO)
-    # Initializing Presidio can emit recognizer warnings; keep them from
-    # recursively entering the foreign-log redactor while it is starting.
-    logging.getLogger("presidio-analyzer").setLevel(logging.ERROR)
+    # Loading the span classifier the redactor depends on emits transformers
+    # progress and device warnings; keep them from recursively entering the
+    # foreign-log redactor while it is still starting.
+    logging.getLogger("transformers").setLevel(logging.ERROR)
 
 
 class _AuditFileFilter(logging.Filter):
