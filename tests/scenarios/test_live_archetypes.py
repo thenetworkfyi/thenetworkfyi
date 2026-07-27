@@ -53,6 +53,13 @@ from sqlmodel import select
 
 pytestmark = [pytest.mark.integration, pytest.mark.live_model]
 
+_CASSETTE_REPLAY_API_KEY = "cassette-replay-placeholder"
+
+
+def _provider_api_key(configured_key: str) -> str:
+    """Construct provider clients during key-free cassette replay."""
+    return configured_key or _CASSETTE_REPLAY_API_KEY
+
 
 def _skip_without_credentials() -> None:
     settings = get_settings()
@@ -78,7 +85,7 @@ _judge_settings = get_settings()
 _judge_model = (
     model_with_api_key(
         _judge_settings.test_llm_judge_model,
-        _judge_settings.test_llm_judge_api_key,
+        _provider_api_key(_judge_settings.test_llm_judge_api_key),
         _judge_settings.model_request_timeout_seconds,
     )
     if _judge_settings.test_llm_judge_model
@@ -134,6 +141,22 @@ class RunOutcome:
     created_events: list[Event]
 
 
+def _snapshot_record(record):
+    """Copy a SQLModel table row as plain loaded field values.
+
+    ``model_copy`` preserves SQLAlchemy instrumentation rather than reliably
+    constructing a new table row, while returning queried rows directly lets
+    their attributes expire when the scenario session commits.
+    """
+    record_type = type(record)
+    return record_type(
+        **{
+            field_name: getattr(record, field_name)
+            for field_name in record_type.model_fields
+        }
+    )
+
+
 def _seed_scenario_database(
     inputs: EmailScenario, session_factory
 ) -> tuple[set[str], set[str]]:
@@ -182,9 +205,9 @@ def _seed_scenario_database(
         session.add_all(memories.values())
 
         if inputs.event is not None:
-            session.add(inputs.event.model_copy(deep=True))
+            session.add(_snapshot_record(inputs.event))
         if inputs.event_recommendation is not None:
-            session.add(inputs.event_recommendation.model_copy(deep=True))
+            session.add(_snapshot_record(inputs.event_recommendation))
         if inputs.event_recommendations_stopped and inputs.sender_user_id is not None:
             session.add(EventSuppression(person_id=inputs.sender_user_id))
         session.commit()
@@ -266,6 +289,10 @@ async def run_scenario(
                 new=AsyncMock(side_effect=fake_embed_text),
             ),
             patch(
+                "thenetwork.memory.sent_email.embed_text",
+                new=AsyncMock(side_effect=fake_embed_text),
+            ),
+            patch(
                 "thenetwork.agent.tools.match_memories",
                 return_value=inputs.search_results,
             ),
@@ -276,6 +303,10 @@ async def run_scenario(
             patch(
                 "thenetwork.agent.tools.sanitize_memory",
                 new=MagicMock(side_effect=fake_sanitize),
+            ),
+            patch(
+                "thenetwork.memory.sent_email.sanitize_memory",
+                new=MagicMock(return_value="sent email record"),
             ),
             patch(
                 "thenetwork.agent.tools.sanitize_text",
@@ -293,8 +324,15 @@ async def run_scenario(
         settings = get_settings()
         if inputs.admin_emails is not None:
             settings = settings.model_copy(update={"admin_emails": inputs.admin_emails})
+        configured_model = model
+        if configured_model is None:
+            configured_model = model_with_api_key(
+                settings.agent_model,
+                _provider_api_key(settings.agent_api_key),
+                settings.model_request_timeout_seconds,
+            )
         agent = build_agent(
-            model=model if model is not None else settings.agent_model,
+            model=configured_model,
             is_proactive=inputs.is_proactive,
             proactive_candidate_id=inputs.proactive_candidate_id,
             proactive_event_id=inputs.proactive_event_id,
@@ -352,7 +390,7 @@ async def run_scenario(
                 if memory_id not in initial_memory_ids
             )
             created_events.extend(
-                event
+                _snapshot_record(event)
                 for event in session.exec(select(Event))
                 if event.id not in initial_event_ids
             )
