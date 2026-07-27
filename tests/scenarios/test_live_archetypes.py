@@ -43,6 +43,7 @@ from thenetwork.db.models import (
     Memory,
 )
 from thenetwork.model_config import model_with_api_key
+from thenetwork.search.events import EventMatch
 from thenetwork.search.match import MemoryMatch
 from thenetwork.settings import get_settings
 
@@ -96,6 +97,10 @@ class EmailScenario:
     known_people: dict[str, str] = field(default_factory=dict)  # id -> email
     memory_refs: dict[str, list[str]] = field(default_factory=dict)
     search_results: list[MemoryMatch] = field(default_factory=list)
+    # `search_events` calls `match_events`, a second real query path beside
+    # `match_memories`. Unpatched it reached the database and raised
+    # OperationalError mid-run.
+    event_search_results: list[EventMatch] = field(default_factory=list)
     outbound_send_count: int = 0
     is_proactive: bool = False
     proactive_candidate_id: str | None = None
@@ -202,6 +207,22 @@ async def run_scenario(inputs: EmailScenario, *, model: Any = None) -> RunOutcom
             {"to": to_address, "subject": subject, "body": body_text or ""}
         )
 
+    def fake_send_event_fyi(*, to_address, event_gist, notice, trace_id=None):
+        """`send_event_fyi` is a SECOND real SMTP entry point in `tools.py`.
+
+        Patching only `send_reply` left the event-recommendation path live: it
+        opened real SMTP connections with the deployment's configured sender.
+        Every send function imported into `thenetwork.agent.tools` must be
+        patched here, or a live_model run mails real people.
+        """
+        dispatched.append(
+            {
+                "to": to_address,
+                "subject": EVENT_RECOMMENDATION_SUBJECT,
+                "body": event_gist,
+            }
+        )
+
     async def fake_embed_text(text: str) -> list[float]:
         return [0.0] * 1536
 
@@ -215,6 +236,7 @@ async def run_scenario(inputs: EmailScenario, *, model: Any = None) -> RunOutcom
     with (
         patch("thenetwork.agent.tools.get_session", return_value=mock_session),
         patch("thenetwork.agent.tools.send_reply", side_effect=fake_send_reply),
+        patch("thenetwork.agent.tools.send_event_fyi", side_effect=fake_send_event_fyi),
         patch("thenetwork.agent.tools.notify_admins"),
         patch("thenetwork.introductions.send_reply", side_effect=fake_send_reply),
         # The re-sanitization of proposal gists is a second, independent SEAL
@@ -231,6 +253,10 @@ async def run_scenario(inputs: EmailScenario, *, model: Any = None) -> RunOutcom
         ),
         patch(
             "thenetwork.agent.tools.match_memories", return_value=inputs.search_results
+        ),
+        patch(
+            "thenetwork.agent.tools.match_events",
+            return_value=inputs.event_search_results,
         ),
         patch(
             "thenetwork.agent.tools.sanitize_memory",
