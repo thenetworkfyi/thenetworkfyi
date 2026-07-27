@@ -211,6 +211,14 @@ more container/image disk space, model-cache space, memory, and CPU inference ti
 the disabled installation. The 86M model runs locally; no email text is sent to a
 scanner service.
 
+The image installs torch from PyTorch's CPU-only index (`--build-arg
+TORCH_VERSION`, default matching the resolved version). PyPI's Linux torch wheel
+depends on roughly fifteen `nvidia-*` CUDA wheels plus `triton`, which are several
+GB of GPU runtime this deployment cannot use. A pip constraint pins the `+cpu`
+local version, since `--extra-index-url` on its own leaves pip free to resolve
+torch from PyPI and silently reinstate all of them. A GPU deployment would need
+that constraint dropped.
+
 ## Gist sanitizer
 
 `SANITIZE_MODEL` is the single local span classifier behind

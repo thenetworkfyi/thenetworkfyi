@@ -28,7 +28,20 @@ for dependency in pyproject["build-system"]["requires"]:
 for dependency in pyproject["project"]["dependencies"]:
     print(dependency)
 PY
-RUN pip install -r /tmp/project-requirements.txt
+# torch arrives transitively (llamafirewall's Prompt Guard, transformers), and
+# PyPI's Linux torch wheel depends on ~15 nvidia-* CUDA wheels plus triton -
+# several GB of GPU runtime. This worker does CPU inference on a VPS with no
+# GPU, so pull torch from PyTorch's CPU-only index instead.
+#
+# The constraint is what makes this stick. `--extra-index-url` alone leaves pip
+# free to resolve torch from PyPI, which silently reinstates every CUDA wheel;
+# pinning the local version `+cpu` means only the CPU index can satisfy it.
+ARG TORCH_VERSION=2.12.0
+RUN echo "torch==${TORCH_VERSION}+cpu" > /tmp/torch-constraint.txt \
+    && pip install \
+        --extra-index-url https://download.pytorch.org/whl/cpu \
+        -c /tmp/torch-constraint.txt \
+        -r /tmp/project-requirements.txt
 
 # Bake the gist sanitizer's weights into the image. Sanitization is mandatory
 # and has no fallback (docs/security.md THE SEAL layer 4), so a first start

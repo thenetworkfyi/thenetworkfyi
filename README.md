@@ -346,7 +346,8 @@ enabled worker startup. `CONTENT_SCAN_ENABLED` is the only feature switch: when
 enabled, startup downloads and initializes the model before queue processing;
 later starts use `HF_HOME` and need no token. LlamaFirewall brings PyTorch and
 its platform wheels, so allow materially more image/disk space and memory even
-when scanning is disabled at runtime.
+when scanning is disabled at runtime. The image installs the CPU-only torch
+build, since the deployment target has no GPU.
 
 ### 3. Start Postgres and apply migrations
 
