@@ -26,13 +26,17 @@ Three offline, fast tests guard the harness's own shape and always run under
   - the scoring and comparison helpers behave against fake report/record
     shapes.
 
-The actual measurement - `test_prompt_adherence_measurement` - calls the real
-configured `AGENT_MODEL`/`TEST_LLM_JUDGE_MODEL` the same way
-`test_live_archetypes.py` does: marked `integration` + `live_model`, skipped
-without credentials, real isolated pgvector schemas, and deterministic outbound
-mail. Run it deliberately:
+The actual measurement - the 32 parametrizations of
+`test_prompt_adherence_case` - calls the real configured
+`AGENT_MODEL`/`TEST_LLM_JUDGE_MODEL` the same way
+`test_live_archetypes.py` does: marked `integration` + `live_model`, requiring
+credentials only while recording, with real isolated pgvector schemas and
+deterministic outbound mail. Each case has its own cassette, so a failed
+recording can be retried by node id without paying for cases that already
+succeeded. Run it deliberately:
 
-    uv run pytest -m live_model tests/scenarios/test_prompt_adherence.py::test_prompt_adherence_measurement
+    uv run pytest -m live_model --record-mode=once \
+        tests/scenarios/test_prompt_adherence.py::test_prompt_adherence_case
 
 `BASELINE_PATH` (`docs/prompt-adherence-baseline.json`) is the immutable
 flat-prompt reference measured before this chain started - a run never
@@ -54,6 +58,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import partial
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -64,6 +69,7 @@ from pydantic_evals.evaluators import Evaluator, EvaluatorContext, LLMJudge
 from tenacity import retry_if_exception, stop_after_attempt, wait_exponential_jitter
 
 from thenetwork.agent.prompts import JUDGMENT_BULLETS
+from thenetwork.model_config import model_with_api_key
 from thenetwork.settings import get_settings
 from tests.scenarios.test_live_archetypes import (
     DidNotDispatchEmail,
@@ -74,7 +80,10 @@ from tests.scenarios.test_live_archetypes import (
     ToolWasCalled,
     ToolWasNotCalled,
     _judge_model,
+    _provider_api_key,
+    _snapshot_record,
     _skip_without_credentials,
+    _strong_event,
     archetype_dataset,
     run_scenario,
 )
@@ -87,15 +96,6 @@ BASELINE_PATH = _DOCS / "prompt-adherence-baseline.json"
 
 #: Append-only log of later measurements, newest last.
 MEASUREMENTS_PATH = _DOCS / "prompt-adherence-measurements.json"
-
-#: `Dataset.evaluate` is unbounded by default, which fires all 32 cases - each a
-#: multi-turn agent run plus a judge call - at the provider simultaneously. A
-#: measurement that dies on rate limiting is not a measurement, and silently
-#: scoring the throttled cases as failures would be worse: it would read as an
-#: adherence regression.
-MEASUREMENT_MAX_CONCURRENCY = int(
-    os.environ.get("PROMPT_ADHERENCE_MAX_CONCURRENCY", "4")
-)
 
 
 def _retry_on_rate_limit() -> RetryConfig:
@@ -619,6 +619,64 @@ adherence_dataset = Dataset[EmailScenario, RunOutcome](
     name="prompt_adherence",
     cases=[*archetype_dataset.cases, *_NEW_CASES],
 )
+ADHERENCE_CASES = tuple(adherence_dataset.cases)
+ADHERENCE_CASE_IDS = tuple(case.name for case in ADHERENCE_CASES)
+
+
+def _set_case_judge_model(
+    adherence_case: Case[EmailScenario, RunOutcome, object], model: Any
+) -> None:
+    """Give every LLM evaluator in one case the same fresh provider client."""
+    for evaluator in adherence_case.evaluators:
+        if isinstance(evaluator, LLMJudge):
+            evaluator.model = model
+
+
+@dataclass
+class AdherenceMeasurementRun:
+    """Successful per-case reports collected during one pytest session."""
+
+    reports: list[Any]
+
+    @property
+    def cases(self) -> list[Any]:
+        return [case for report in self.reports for case in report.cases]
+
+    def add(self, report: Any) -> None:
+        self.reports.append(report)
+
+    def is_complete(self) -> bool:
+        return {case.name for case in self.cases} == set(ADHERENCE_CASE_IDS)
+
+
+@pytest.fixture(scope="session")
+def adherence_measurement_run(record_mode: str):
+    """Aggregate a complete run without coupling the cases into one test.
+
+    A targeted case or ``--lf`` retry intentionally produces no measurement.
+    Once all cassettes exist, a full replay is cheap. Measurement writing is a
+    separate opt-in so routine validation never dirties the repository.
+    """
+    run = AdherenceMeasurementRun(reports=[])
+    yield run
+    if (
+        not run.is_complete()
+        or os.environ.get("PROMPT_ADHERENCE_WRITE_MEASUREMENT") != "1"
+    ):
+        return
+
+    settings = get_settings()
+    baseline = load_baseline()
+    rates = compute_commitment_adherence(SimpleNamespace(cases=run.cases))
+    measurement = build_measurement(
+        rates,
+        model=settings.agent_model,
+        commit=_current_commit_sha(),
+        baseline=baseline,
+        replayed=record_mode == "none",
+    )
+    record_measurement(MEASUREMENTS_PATH, measurement)
+    print("\n" + format_comparison(measurement))
 
 
 def compute_commitment_adherence(report: Any) -> dict[str, float]:
@@ -720,7 +778,12 @@ def compare_to_baseline(
 
 
 def build_measurement(
-    rates: dict[str, float], *, model: str, commit: str, baseline: dict[str, Any]
+    rates: dict[str, float],
+    *,
+    model: str,
+    commit: str,
+    baseline: dict[str, Any],
+    replayed: bool = False,
 ) -> dict[str, Any]:
     # Score the full commitment set, so a case missing from a partial report
     # lands as an explicit 0.0 rather than dropping out of the record.
@@ -736,6 +799,7 @@ def build_measurement(
         "commit": commit,
         "measured_at": datetime.now(timezone.utc).isoformat(),
         "prompt_shape": "per_mode",
+        "replayed": replayed,
         "overall_rate": (
             (sum(full_rates.values()) / len(full_rates)) if full_rates else 0.0
         ),
@@ -826,6 +890,32 @@ def test_every_commitment_maps_to_at_least_one_real_case() -> None:
             assert case_name in case_names, (commitment.slug, case_name)
 
 
+def test_each_parametrized_case_can_receive_a_fresh_judge_model() -> None:
+    evaluator = LLMJudge(rubric="test rubric", model="test:old")
+    case = Case(name="judge_client", inputs=object(), evaluators=(evaluator,))
+    fresh_model = object()
+
+    _set_case_judge_model(case, fresh_model)
+
+    assert evaluator.model is fresh_model
+
+
+def test_key_free_replay_uses_only_an_internal_provider_placeholder() -> None:
+    assert _provider_api_key("") == "cassette-replay-placeholder"
+    assert _provider_api_key("configured-secret") == "configured-secret"
+
+
+def test_scenario_record_snapshot_preserves_table_fields() -> None:
+    snapshot = _snapshot_record(_strong_event)
+
+    assert snapshot is not _strong_event
+    assert snapshot.id == _strong_event.id
+    assert snapshot.submitter_id == "user-event-owner"
+    assert snapshot.text == "Private raw event submission"
+    assert snapshot.gist == _strong_event.gist
+    assert snapshot.expires_at == _strong_event.expires_at
+
+
 def test_compute_commitment_adherence_averages_case_assertions() -> None:
     """Offline unit test of the scoring function against a fake report shape."""
 
@@ -907,11 +997,23 @@ def test_build_measurement_averages_the_delta_over_baseline_commitments_only() -
     assert measurement["overall_delta_vs_baseline"] is None
     assert measurement["dropped_since_baseline"] == ["gone", "kept_flat", "kept_risen"]
     assert measurement["prompt_shape"] == "per_mode"
+    assert measurement["replayed"] is False
     assert measurement["baseline_commit"] == _FAKE_BASELINE["commit"]
     assert all(
         entry["status"] == "new_since_baseline"
         for entry in measurement["commitments"].values()
     )
+
+
+def test_build_measurement_marks_cassette_replay() -> None:
+    measurement = build_measurement(
+        {},
+        model="test:model",
+        commit="1" * 40,
+        baseline=_FAKE_BASELINE,
+        replayed=True,
+    )
+    assert measurement["replayed"] is True
 
 
 def test_record_measurement_appends_and_never_targets_the_baseline(
@@ -952,31 +1054,63 @@ def test_the_committed_baseline_is_readable_and_predates_the_split_bullets() -> 
 
 
 # ---------------------------------------------------------------------------
-# The live measurement
+# The live per-case measurements
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def default_cassette_name(adherence_case: Case[EmailScenario, RunOutcome, object]):
+    """Give each scenario a stable cassette independent of pytest node syntax."""
+    return adherence_case.name
 
 
 @pytest.mark.integration
 @pytest.mark.live_model
+@pytest.mark.vcr
+@pytest.mark.block_network
 @pytest.mark.asyncio
-async def test_prompt_adherence_measurement(scenario_database) -> None:
-    """Measure per-commitment adherence against the real AGENT_MODEL.
+@pytest.mark.parametrize("adherence_case", ADHERENCE_CASES, ids=ADHERENCE_CASE_IDS)
+async def test_prompt_adherence_case(
+    adherence_case: Case[EmailScenario, RunOutcome, object],
+    scenario_database,
+    adherence_measurement_run: AdherenceMeasurementRun,
+    successful_cassette_only,
+    record_mode: str,
+) -> None:
+    """Run and score one scenario against the real configured model.
 
-    Run deliberately - this appends a record to `MEASUREMENTS_PATH` and prints
-    the per-commitment comparison against the immutable flat-prompt baseline:
+    Record all missing per-scenario cassettes deliberately:
 
-        uv run pytest -s -m live_model \
-            tests/scenarios/test_prompt_adherence.py::test_prompt_adherence_measurement
+        uv run pytest -s -m live_model --record-mode=once \
+            tests/scenarios/test_prompt_adherence.py::test_prompt_adherence_case
 
-    Use the model recorded in the baseline, or the comparison is measuring two
-    models rather than two prompt shapes.
+    The default record mode is ``none``: it replays the committed cassette and
+    fails on a miss rather than reaching the network. A failed case can be
+    retried by its node id without re-recording successful cases. A full run
+    Set ``PROMPT_ADHERENCE_WRITE_MEASUREMENT=1`` on a complete run to append
+    the aggregate comparison; ordinary replays have no repository side effect.
     """
-    _skip_without_credentials()
+    if record_mode != "none":
+        _skip_without_credentials()
     settings = get_settings()
     baseline = load_baseline()
-    report = await adherence_dataset.evaluate(
+    assert settings.agent_model == baseline["model"], (
+        "prompt-adherence recording must use the baseline model: "
+        f"expected {baseline['model']!r}, got {settings.agent_model!r}"
+    )
+    judge_model = model_with_api_key(
+        settings.test_llm_judge_model,
+        _provider_api_key(settings.test_llm_judge_api_key),
+        settings.model_request_timeout_seconds,
+    )
+    _set_case_judge_model(adherence_case, judge_model)
+    case_dataset = Dataset[EmailScenario, RunOutcome](
+        name=f"prompt_adherence_{adherence_case.name}",
+        cases=[adherence_case],
+    )
+    report = await case_dataset.evaluate(
         partial(run_scenario, scenario_database=scenario_database),
-        max_concurrency=MEASUREMENT_MAX_CONCURRENCY,
+        max_concurrency=1,
         retry_task=_retry_on_rate_limit(),
         retry_evaluators=_retry_on_rate_limit(),
     )
@@ -987,20 +1121,18 @@ async def test_prompt_adherence_measurement(scenario_database) -> None:
     # to provider errors rather than publishing a fake regression.
     failures = getattr(report, "failures", [])
     assert not failures, (
-        f"{len(failures)} of {len(adherence_dataset.cases)} cases failed to "
-        "run, so this is not a measurement. Re-run it; if the cause is "
-        "provider rate limiting, lower PROMPT_ADHERENCE_MAX_CONCURRENCY "
-        f"(currently {MEASUREMENT_MAX_CONCURRENCY}). Failed cases: "
-        f"{sorted(getattr(f, 'name', '?') for f in failures)}"
+        f"scenario {adherence_case.name!r} did not produce a measurement: "
+        f"{[(failure.name, failure.error_message) for failure in failures]}"
     )
-
-    rates = compute_commitment_adherence(report)
-    measurement = build_measurement(
-        rates,
-        model=settings.agent_model,
-        commit=_current_commit_sha(),
-        baseline=baseline,
+    assert len(report.cases) == 1
+    evaluator_failures = [
+        failure for case in report.cases for failure in case.evaluator_failures
+    ] + report.report_evaluator_failures
+    assert not evaluator_failures, (
+        f"scenario {adherence_case.name!r} could not be scored: "
+        f"{[failure.error_message for failure in evaluator_failures]}"
     )
-    record_measurement(MEASUREMENTS_PATH, measurement)
-    print("\n" + format_comparison(measurement))
-    assert measurement["commitments"].keys() == {c.slug for c in COMMITMENTS}
+    assert isinstance(report.cases[0].output, RunOutcome), (
+        "scenario task was not awaited before evaluation"
+    )
+    adherence_measurement_run.add(report)
