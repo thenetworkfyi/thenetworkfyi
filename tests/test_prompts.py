@@ -1,6 +1,14 @@
+import asyncio
+from functools import cache
 import inspect
 import re
+from typing import Any
 
+from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+from thenetwork.agent.core import build_agent
+from thenetwork.agent.deps import AgentDeps
 from thenetwork.agent.prompts import (
     EVENT_TRIGGER,
     FIRST_CONTACT,
@@ -604,35 +612,53 @@ def test_every_bullet_slug_is_unique_and_reaches_at_least_one_mode() -> None:
         assert bullet.modes <= frozenset(SYSTEM_PROMPTS), bullet.slug
 
 
-# Tools registered per mode by `agent/core.py:build_agent`. `no_action` is the
-# output tool and is available everywhere.
-_REGISTERED_TOOLS: dict[str, frozenset[str]] = {
-    PEOPLE_TRIGGER: frozenset({"propose_introduction", "no_action"}),
-    EVENT_TRIGGER: frozenset({"send_event_recommendation", "no_action"}),
-    FIRST_CONTACT: frozenset(
-        {
-            "remember",
-            "forget",
-            "search",
-            "propose_introduction",
-            "escalate",
-            "send_first_contact_welcome",
-            "reply_to_sender",
-            "send_outreach",
-            "register_person",
-            "create_event",
-            "update_event",
-            "cancel_event",
-            "search_events",
-            "stop_event_recommendations",
-            "resume_event_recommendations",
-            "no_action",
-        }
-    ),
+# The build_agent arguments that put a run in each mode. These mirror
+# `prompts.system_prompt_for`'s own branch, which is the point: the tool set
+# below is read out of the agent `build_agent` actually constructs for these
+# arguments, so `core.py` stays the single source of truth and the two
+# mode-selection branches are exercised against each other.
+_MODE_BUILD_KWARGS: dict[str, dict[str, Any]] = {
+    PEOPLE_TRIGGER: {
+        "is_proactive": True,
+        "proactive_candidate_id": "person-under-test",
+    },
+    EVENT_TRIGGER: {"is_proactive": True, "proactive_event_id": "event-under-test"},
+    FIRST_CONTACT: {"sender_known": False},
+    KNOWN_SENDER: {"sender_known": True},
 }
-_REGISTERED_TOOLS[KNOWN_SENDER] = _REGISTERED_TOOLS[FIRST_CONTACT]
 
-_ALL_TOOLS = frozenset().union(*_REGISTERED_TOOLS.values())
+
+@cache
+def _registered_tools(mode: str) -> frozenset[str]:
+    """Tool names a run in `mode` can actually call, read from the built agent.
+
+    Restating these by hand is how the check below silently becomes a no-op:
+    a tool added, removed, or moved between the branches of `build_agent`
+    leaves a hand-written copy stale with nothing to detect the drift, and the
+    prompts then get validated against a list that no longer describes any
+    real run. Running the agent is the only way to ask it what it registered.
+
+    `no_action` arrives via `info.output_tools` rather than `info.function_tools`
+    because it is the output tool, so both are unioned instead of adding its
+    name back by hand.
+    """
+    observed: set[str] = set()
+
+    async def capture(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        observed.update(tool.name for tool in info.function_tools)
+        observed.update(tool.name for tool in info.output_tools)
+        return ModelResponse(
+            parts=[
+                ToolCallPart(tool_name="no_action", args={"reason": "probe"}),
+            ]
+        )
+
+    agent = build_agent(model=FunctionModel(capture), **_MODE_BUILD_KWARGS[mode])
+    asyncio.run(agent.run("probe", deps=AgentDeps()))
+    return frozenset(observed)
+
+
+_ALL_TOOLS = frozenset().union(*(_registered_tools(mode) for mode in SYSTEM_PROMPTS))
 
 # A clause that forbids a tool may name one the mode does not register - that
 # is the point of "never call `send_outreach`". A clause that does anything
@@ -665,7 +691,7 @@ def test_no_mode_prompt_instructs_a_tool_that_mode_does_not_register() -> None:
 
 
 def _unregistered_instructions(mode: str, text: str) -> list[str]:
-    registered = _REGISTERED_TOOLS[mode]
+    registered = _registered_tools(mode)
     found = []
     for clause in _clauses(text):
         named = {tool for tool in _ALL_TOOLS if f"`{tool}" in clause}
@@ -675,6 +701,34 @@ def _unregistered_instructions(mode: str, text: str) -> list[str]:
             continue
         found.append(clause)
     return found
+
+
+def test_the_derived_tool_sets_are_populated_and_mode_specific() -> None:
+    """Guards the derivation: empty sets would make the detector vacuous.
+
+    `_unregistered_instructions` can only flag a clause that names a tool in
+    `_ALL_TOOLS`. If the probe run silently registered nothing, that union is
+    empty, no clause ever matches, and the check above passes while inspecting
+    nothing - the same silent no-op this task removed the hand-written list to
+    avoid. Pin the shape of what `build_agent` returns, not just that it ran.
+    """
+    for mode in SYSTEM_PROMPTS:
+        assert _registered_tools(mode), mode
+        # The output tool reaches every mode and must come from `output_tools`.
+        assert "no_action" in _registered_tools(mode), mode
+
+    assert "propose_introduction" in _registered_tools(PEOPLE_TRIGGER)
+    assert "send_event_recommendation" in _registered_tools(EVENT_TRIGGER)
+
+    # The proactive modes are capability grants for exactly one bound action.
+    for mode in (PEOPLE_TRIGGER, EVENT_TRIGGER):
+        assert len(_registered_tools(mode)) == 2, (mode, _registered_tools(mode))
+
+    # `send_event_recommendation` is withheld from ordinary inbound runs; the
+    # security-boundary text for the interactive modes depends on that.
+    for mode in (FIRST_CONTACT, KNOWN_SENDER):
+        assert "reply_to_sender" in _registered_tools(mode), mode
+        assert "send_event_recommendation" not in _registered_tools(mode), mode
 
 
 def test_the_unregistered_tool_detector_flags_the_original_regression() -> None:
