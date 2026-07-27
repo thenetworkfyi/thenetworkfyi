@@ -29,7 +29,8 @@ Three offline, fast tests guard the harness's own shape and always run under
 The actual measurement - `test_prompt_adherence_measurement` - calls the real
 configured `AGENT_MODEL`/`TEST_LLM_JUDGE_MODEL` the same way
 `test_live_archetypes.py` does: marked `integration` + `live_model`, skipped
-without credentials, DB/outbound mail mocked. Run it deliberately:
+without credentials, real isolated pgvector schemas, and deterministic outbound
+mail. Run it deliberately:
 
     uv run pytest -m live_model tests/scenarios/test_prompt_adherence.py::test_prompt_adherence_measurement
 
@@ -51,6 +52,7 @@ import os
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -957,7 +959,7 @@ def test_the_committed_baseline_is_readable_and_predates_the_split_bullets() -> 
 @pytest.mark.integration
 @pytest.mark.live_model
 @pytest.mark.asyncio
-async def test_prompt_adherence_measurement() -> None:
+async def test_prompt_adherence_measurement(scenario_database) -> None:
     """Measure per-commitment adherence against the real AGENT_MODEL.
 
     Run deliberately - this appends a record to `MEASUREMENTS_PATH` and prints
@@ -973,7 +975,7 @@ async def test_prompt_adherence_measurement() -> None:
     settings = get_settings()
     baseline = load_baseline()
     report = await adherence_dataset.evaluate(
-        run_scenario,
+        partial(run_scenario, scenario_database=scenario_database),
         max_concurrency=MEASUREMENT_MAX_CONCURRENCY,
         retry_task=_retry_on_rate_limit(),
         retry_evaluators=_retry_on_rate_limit(),

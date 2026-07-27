@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -48,22 +49,129 @@ def seeded_people():
 
 @pytest.fixture(scope="session")
 def pg_engine():
-    """Session-scoped test engine; skips entire session if pgvector DB unreachable."""
+    """Migrated pgvector engine, with a container fallback for developer hosts."""
+    from alembic import command
+    from alembic.config import Config
     from sqlalchemy import create_engine, text
-    from sqlmodel import SQLModel
+    from sqlalchemy.engine import make_url
+    import thenetwork.settings as settings_module
 
+    database_url = TEST_DATABASE_URL
+    container = None
     try:
-        engine = create_engine(TEST_DATABASE_URL, pool_pre_ping=True)
+        engine = create_engine(database_url, pool_pre_ping=True)
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
             conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
             conn.commit()
-        SQLModel.metadata.create_all(engine)
-        yield engine
-        SQLModel.metadata.drop_all(engine)
+    except Exception as direct_error:
         engine.dispose()
+        try:
+            from testcontainers.postgres import PostgresContainer
+
+            container = PostgresContainer("pgvector/pgvector:pg18")
+            container.start()
+            database_url = container.get_connection_url().replace(
+                "postgresql+psycopg2://", "postgresql+psycopg://", 1
+            )
+            engine = create_engine(database_url, pool_pre_ping=True)
+            with engine.connect() as conn:
+                conn.execute(text("SELECT 1"))
+                conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+                conn.commit()
+        except Exception as fallback_error:
+            if container is not None:
+                container.stop()
+            pytest.skip(
+                "pgvector DB is unavailable and the testcontainers fallback "
+                f"could not start (direct={direct_error!r}, fallback={fallback_error!r})"
+            )
+
+    # Alembic owns the schema. The box image/bootstrap owns only the server,
+    # databases, and vector extension because the repository migrations are not
+    # present when that image is built. Temporarily point the cached Settings at
+    # the selected test database because alembic/env.py deliberately constructs
+    # its URL from Settings rather than trusting alembic.ini.
+    parsed_url = make_url(database_url)
+    original_settings = settings_module._settings
+    migration_settings = settings_module.get_settings().model_copy(
+        update={
+            "postgres_host": parsed_url.host or "localhost",
+            "postgres_port": parsed_url.port or 5432,
+            "postgres_db": parsed_url.database or "test_thenetwork",
+            "postgres_user": parsed_url.username or "network",
+            "postgres_password": parsed_url.password or "network",
+        }
+    )
+    settings_module._settings = migration_settings
+    try:
+        config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+        command.upgrade(config, "head")
     except Exception as exc:
-        pytest.skip(f"pgvector DB not reachable ({TEST_DATABASE_URL}): {exc}")
+        raise RuntimeError(
+            f"failed to migrate scenario test database {database_url!r}"
+        ) from exc
+    finally:
+        settings_module._settings = original_settings
+
+    try:
+        yield engine
+    finally:
+        engine.dispose()
+        if container is not None:
+            container.stop()
+
+
+@pytest.fixture
+def scenario_database(pg_engine):
+    """Give one scenario run an isolated real PostgreSQL schema and sessions.
+
+    A dataset evaluates cases concurrently and intentionally reuses opaque ids
+    such as ``user-maya``. Separate schemas keep those realistic database
+    writes independent without replacing SQLModel sessions with MagicMocks.
+    """
+    from sqlalchemy.orm import sessionmaker
+    from sqlmodel import Session, SQLModel
+
+    @contextmanager
+    def isolated_session_factory():
+        schema = f"scenario_{uuid.uuid4().hex}"
+        with pg_engine.connect() as connection:
+            connection.exec_driver_sql(f'CREATE SCHEMA "{schema}"')
+            connection.exec_driver_sql(f'SET search_path TO "{schema}", public')
+            # PostgreSQL's table-existence check follows the full search_path;
+            # public contains the migrated schema, so checkfirst would mistake
+            # those tables for this run's and send writes back to public.
+            SQLModel.metadata.create_all(connection, checkfirst=False)
+            connection.commit()
+            factory = sessionmaker(
+                bind=connection,
+                class_=Session,
+                autocommit=False,
+                autoflush=False,
+            )
+
+            @contextmanager
+            def open_session():
+                session = factory()
+                try:
+                    yield session
+                    session.commit()
+                except Exception:
+                    session.rollback()
+                    raise
+                finally:
+                    session.close()
+
+            try:
+                yield open_session
+            finally:
+                connection.rollback()
+
+        with pg_engine.begin() as connection:
+            connection.exec_driver_sql(f'DROP SCHEMA "{schema}" CASCADE')
+
+    return isolated_session_factory
 
 
 @pytest.fixture
