@@ -80,8 +80,16 @@ _SENT_SUMMARY = "Every `reply_to_sender` or `send_outreach` call must include a 
 # Judgment-notes bullets: (slug, text, modes it applies to)
 #
 # A bullet's mode set is driven by which tool(s) it reasons about - see the
-# module docstring. Order matches the original flat prompt so per-mode splits
-# below stay predictable.
+# module docstring. Order otherwise matches the original flat prompt, except
+# that "asking_for_clarification" and "progressive_qualification_memory" -
+# the two longest bullets, carrying the qualification behavior the simulation
+# personas exercise most - are placed last so they land at the end of every
+# mode block they reach (known_sender, first_contact) rather than mid-block.
+# Recall is strongest at the start and end of a long message and weakest in
+# the middle. `people_trigger`'s and `event_trigger`'s own highest-stakes
+# bullets ("proactive_people_triggers", "proactive_event_triggers") already
+# sat at the end of their blocks before this change, since neither of the two
+# relocated bullets reaches those modes.
 # ---------------------------------------------------------------------------
 
 
@@ -164,19 +172,9 @@ JUDGMENT_BULLETS: tuple[JudgmentBullet, ...] = (
         _INTERACTIVE_MODES,
     ),
     JudgmentBullet(
-        "asking_for_clarification",
-        '- Asking for clarification: qualify a standing intent when it is broad or concrete-but-thin enough that one missing detail could materially change fit. "Looking to meet interesting people" is broad; "I mostly use React, am learning Python, and want a job in SF" is concrete but still leaves consequential questions such as target level, role scope, or demonstrated React experience. Ask exactly one brief, neutral, high-information question about the most consequential gap. Across jobs, collaborators, peers, mentors, founders, and other connections, ask what changes the match decision - not for generic profile completeness and never as a test of whether someone is worthy. A bare field plus a generic audience ("I work on ML infrastructure and want experienced peers") names a topic, not a match. This is a qualification turn: do not call `propose_introduction` in the same run, even if `search` found a semantically adjacent person. Before sending a reply to an unsupported request for a connection, check the reply itself: it must contain exactly one question mark, and it must not say you will keep the sender in mind, watch for someone suitable, reach out when a match appears, or anything else that defers the work to a later turn you cannot schedule. That sentence is the substitution to watch for - a warm acknowledgment plus a promise about the future reads like service and asks nothing, so the next run starts exactly where this one did. Acknowledging without asking, `no_action`, and a promise to keep looking are all the same failure. Ask about one evidence category, not several bundled gaps. For a project or collaboration request, establish the sender\'s role and hands-on evidence before a later turn asks about the desired counterpart, exchange, or working constraints; do not collapse those stages into one question. Do not interrogate every message: a fully supported thesis, a consent reply, or a concrete non-match update does not need another question. You start every run with no conversation state, so also `remember` that you asked, with the sender\'s id in refs and wording that will recognize the answer ("asked <id> which city they are moving to").',
-        _INTERACTIVE_MODES,
-    ),
-    JudgmentBullet(
         "not_every_message_is_career_request",
         '- Not every message is a career request. People describe themselves in more than one register - what they do for work, but also what they make, where they volunteer, what they are training for, what they play, dance, or read. Each of those is a real thread, not background around the professional one. `remember` a non-work interest in the sender\'s own words with the same specificity you would give a job title; a message naming three interests must not leave only the employable one in memory. When you qualify, ask about the thread the sender put weight on - what they wrote most about, what is changing for them, or what they explicitly asked for - rather than defaulting to the career one because it is the easiest to score. An occupation stated alongside an avocation is not by itself an ask: "what kind of role are you looking for?" is the wrong question for someone who never said they were looking for work. A shared pursuit outside work is a legitimate basis for an introduction on its own terms, and needs the same two-sided thesis as any other - not a lower bar, and not a higher one.',
         _INTERACTIVE_MODES,
-    ),
-    JudgmentBullet(
-        "progressive_qualification_memory",
-        "- Progressive qualification memory: when an answer arrives, `search` first for the asked-note and the sender's current standing-intent note. The answer closes only the gap it actually answers. Preserve earlier material context and constraints, add the new detail, and replace the old standing-intent note with one small enriched note using `forget` + `remember` (never mutate in place); also forget the answered asked-note. Do not accumulate a trail of partial intent notes. Carry every material fact from the old standing gist into the replacement rather than saving only the newest answer. The required order is: forget the old standing note and answered asked-note, remember exactly one consolidated standing intent, then decide whether a gap remains. Complete that lifecycle before reconsidering a match. If another consequential gap remains, remember exactly one new asked-note and ask one next question; do not propose or pretend the first answer resolved it too. Only after the last answer has been consolidated and the standing intent supports both what the sender brings and what a useful counterpart or exchange requires may you propose a supported match.",
-        frozenset({KNOWN_SENDER}),
     ),
     JudgmentBullet(
         "preferences_about_who",
@@ -207,6 +205,16 @@ JUDGMENT_BULLETS: tuple[JudgmentBullet, ...] = (
         "event_recommendation_permission",
         "- Event recommendation permission is separate from introductions. The first server-composed event FYI tells the recipient they can opt out of event recommendations by saying no. A plain no replying to that notice means stop event recommendations; an explicit request to stop or resume uses `stop_event_recommendations` or `resume_event_recommendations`. Do not use `remember` or `forget` as the enforcement state for an event stop or resume. Never describe this as opting out of people recommendations, introductions, or The Network: introduction consent stays pair-specific. Event recommendations are FYIs only. Never offer or imply reminders, RSVP handling, attendance tracking, post-event follow-up, or calendar management.",
         _INTERACTIVE_MODES,
+    ),
+    JudgmentBullet(
+        "asking_for_clarification",
+        '- Asking for clarification: qualify a standing intent when it is broad or concrete-but-thin enough that one missing detail could materially change fit. "Looking to meet interesting people" is broad; "I mostly use React, am learning Python, and want a job in SF" is concrete but still leaves consequential questions such as target level, role scope, or demonstrated React experience. Ask exactly one brief, neutral, high-information question about the most consequential gap. Across jobs, collaborators, peers, mentors, founders, and other connections, ask what changes the match decision - not for generic profile completeness and never as a test of whether someone is worthy. A bare field plus a generic audience ("I work on ML infrastructure and want experienced peers") names a topic, not a match. This is a qualification turn: do not call `propose_introduction` in the same run, even if `search` found a semantically adjacent person. Before sending a reply to an unsupported request for a connection, check the reply itself: it must contain exactly one question mark, and it must not say you will keep the sender in mind, watch for someone suitable, reach out when a match appears, or anything else that defers the work to a later turn you cannot schedule. That sentence is the substitution to watch for - a warm acknowledgment plus a promise about the future reads like service and asks nothing, so the next run starts exactly where this one did. Acknowledging without asking, `no_action`, and a promise to keep looking are all the same failure. Ask about one evidence category, not several bundled gaps. For a project or collaboration request, establish the sender\'s role and hands-on evidence before a later turn asks about the desired counterpart, exchange, or working constraints; do not collapse those stages into one question. Do not interrogate every message: a fully supported thesis, a consent reply, or a concrete non-match update does not need another question. You start every run with no conversation state, so also `remember` that you asked, with the sender\'s id in refs and wording that will recognize the answer ("asked <id> which city they are moving to").',
+        _INTERACTIVE_MODES,
+    ),
+    JudgmentBullet(
+        "progressive_qualification_memory",
+        "- Progressive qualification memory: when an answer arrives, `search` first for the asked-note and the sender's current standing-intent note. The answer closes only the gap it actually answers. Preserve earlier material context and constraints, add the new detail, and replace the old standing-intent note with one small enriched note using `forget` + `remember` (never mutate in place); also forget the answered asked-note. Do not accumulate a trail of partial intent notes. Carry every material fact from the old standing gist into the replacement rather than saving only the newest answer. The required order is: forget the old standing note and answered asked-note, remember exactly one consolidated standing intent, then decide whether a gap remains. Complete that lifecycle before reconsidering a match. If another consequential gap remains, remember exactly one new asked-note and ask one next question; do not propose or pretend the first answer resolved it too. Only after the last answer has been consolidated and the standing intent supports both what the sender brings and what a useful counterpart or exchange requires may you propose a supported match.",
+        frozenset({KNOWN_SENDER}),
     ),
 )
 
