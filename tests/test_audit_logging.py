@@ -697,7 +697,7 @@ async def test_agent_run_applies_configured_usage_limits():
         )
 
     assert result == "ok"
-    build_agent.assert_called_once_with(model="test:model")
+    build_agent.assert_called_once_with(model="test:model", sender_known=True)
     usage_limits.assert_called_once_with(request_limit=3, total_tokens_limit=1234)
     fake_agent.run.assert_awaited_once()
     assert fake_agent.run.await_args.kwargs["usage_limits"].request_limit == 3

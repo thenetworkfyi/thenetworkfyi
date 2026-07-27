@@ -22,7 +22,13 @@ from procrastinate import utils as procrastinate_utils
 from thenetwork.audit import audit_jsonl_file
 from sqlmodel import select
 
-from thenetwork.agent.prompts import SYSTEM_PROMPT
+from thenetwork.agent.prompts import (
+    EVENT_TRIGGER,
+    FIRST_CONTACT,
+    KNOWN_SENDER,
+    PEOPLE_TRIGGER,
+    SYSTEM_PROMPTS,
+)
 from thenetwork.db.models import (
     Event,
     EventRecommendation,
@@ -496,7 +502,10 @@ def _runtime_provenance(config: SimRunConfig, process_mode: str) -> dict[str, An
             "sanitizer_mode": "privacy-filter",
         },
         "static_prompt_sha256": {
-            "agent": _sha256_text(SYSTEM_PROMPT),
+            "agent_known_sender": _sha256_text(SYSTEM_PROMPTS[KNOWN_SENDER]),
+            "agent_first_contact": _sha256_text(SYSTEM_PROMPTS[FIRST_CONTACT]),
+            "agent_people_trigger": _sha256_text(SYSTEM_PROMPTS[PEOPLE_TRIGGER]),
+            "agent_event_trigger": _sha256_text(SYSTEM_PROMPTS[EVENT_TRIGGER]),
             "persona_template": _sha256_text(_PERSONA_PROMPT),
         },
     }
