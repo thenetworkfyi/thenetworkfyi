@@ -124,6 +124,33 @@ async def test_disabled_scan_does_not_load_optional_dependency():
         assert await content_scan.scan_content("hello") == (True, "disabled")
 
 
+def test_build_scanner_restores_hf_folder_before_llamafirewall_import(monkeypatch):
+    import huggingface_hub
+
+    from thenetwork.security import content_scan
+
+    scanner = object()
+
+    class FakePromptGuardScanner:
+        def __new__(cls):
+            return scanner
+
+    fake_module = SimpleNamespace(PromptGuardScanner=FakePromptGuardScanner)
+    real_import = __import__
+
+    def import_with_compat_check(name, *args, **kwargs):
+        if name == "llamafirewall.scanners.prompt_guard_scanner":
+            assert huggingface_hub.HfFolder.get_token() == "test-token"
+            return fake_module
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.delattr(huggingface_hub, "HfFolder", raising=False)
+    monkeypatch.setattr(huggingface_hub, "get_token", lambda: "test-token")
+    monkeypatch.setattr("builtins.__import__", import_with_compat_check)
+
+    assert content_scan._build_scanner() is scanner
+
+
 @pytest.mark.asyncio
 async def test_scanner_is_initialized_once(monkeypatch):
     from thenetwork.security import content_scan

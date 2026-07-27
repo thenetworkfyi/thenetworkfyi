@@ -32,8 +32,27 @@ class ContentScanReason(StrEnum):
 _scanner: Any | None = None
 
 
+class _HfFolderCompat:
+    """Provide the token lookup API removed by huggingface-hub 1.0."""
+
+    @staticmethod
+    def get_token() -> str | None:
+        from huggingface_hub import get_token
+
+        return get_token()
+
+
+def _install_hf_folder_compat() -> None:
+    """Keep LlamaFirewall 1.0.3 importable with current huggingface-hub."""
+    import huggingface_hub
+
+    if not hasattr(huggingface_hub, "HfFolder"):
+        setattr(huggingface_hub, "HfFolder", _HfFolderCompat)
+
+
 def _build_scanner() -> Any:
     """Import and construct Prompt Guard only after scanning is enabled."""
+    _install_hf_folder_compat()
     from llamafirewall.scanners.prompt_guard_scanner import PromptGuardScanner
 
     return PromptGuardScanner()
