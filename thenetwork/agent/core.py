@@ -11,7 +11,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
 
 from thenetwork.agent.deps import AgentDeps
-from thenetwork.agent.prompts import SYSTEM_PROMPT
+from thenetwork.agent.prompts import system_prompt_for
 from thenetwork.agent.tools import (
     cancel_event,
     create_event,
@@ -63,6 +63,7 @@ def build_agent(
     is_proactive: bool = False,
     proactive_candidate_id: str | None = None,
     proactive_event_id: str | None = None,
+    sender_known: bool = True,
 ) -> Agent[AgentDeps, str]:
     """Construct an agent with the capabilities appropriate to this run."""
     settings = None
@@ -84,7 +85,12 @@ def build_agent(
 
     agent: Agent[AgentDeps, str] = Agent(
         model=model,
-        system_prompt=SYSTEM_PROMPT,
+        system_prompt=system_prompt_for(
+            is_proactive=is_proactive,
+            proactive_candidate_id=proactive_candidate_id,
+            proactive_event_id=proactive_event_id,
+            sender_known=sender_known,
+        ),
         deps_type=AgentDeps,
         output_type=[
             str,
@@ -210,7 +216,9 @@ async def run_agent_for_email(
                 proactive_event_id=proactive_event_id,
             )
         else:
-            agent = build_agent(model=settings.agent_model)
+            agent = build_agent(
+                model=settings.agent_model, sender_known=sender_user_id is not None
+            )
         usage_limits = UsageLimits(
             request_limit=settings.agent_request_limit,
             total_tokens_limit=settings.agent_total_tokens_limit,

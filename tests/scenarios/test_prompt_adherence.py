@@ -31,7 +31,6 @@ later prompt-restructuring tasks in this chain have something to diff against.
 from __future__ import annotations
 
 import json
-import re
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -42,7 +41,7 @@ import pytest
 from pydantic_evals import Case, Dataset
 from pydantic_evals.evaluators import Evaluator, EvaluatorContext, LLMJudge
 
-from thenetwork.agent.prompts import SYSTEM_PROMPT
+from thenetwork.agent.prompts import JUDGMENT_BULLETS
 from thenetwork.settings import get_settings
 from tests.scenarios.test_live_archetypes import (
     EmailScenario,
@@ -451,18 +450,14 @@ COMMITMENTS: tuple[Commitment, ...] = (
 
 
 def _judgment_notes_bullets() -> list[str]:
-    """The judgment-notes bullets, as the model receives them.
+    """The canonical judgment-notes bullets, as `prompts.py` defines them.
 
-    Mirrors `tests/test_prompts.py`'s `_judgment_bullets` (kept as a small,
-    independent copy rather than a cross-module import, since this module's
-    coverage guarantee should not silently drift if that helper's shape
-    changes under a later prompt-restructuring task).
+    Each bullet now reaches only the modes whose tools it reasons about (see
+    `thenetwork.agent.prompts`), so there is no longer one single flat prompt
+    to parse; the canonical list lives in `JUDGMENT_BULLETS` itself, and this
+    just returns each bullet's exact text in its declared order.
     """
-    block = SYSTEM_PROMPT.split(
-        "Judgment notes that go beyond the tool descriptions:", 1
-    )[1]
-    block = block.split("\n\nUntrusted content:", 1)[0]
-    return [("- " + part).strip() for part in re.split(r"^- ", block, flags=re.M)[1:]]
+    return [bullet.text for bullet in JUDGMENT_BULLETS]
 
 
 adherence_dataset = Dataset[EmailScenario, RunOutcome](

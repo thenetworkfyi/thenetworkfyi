@@ -242,7 +242,13 @@ async def run_scenario(inputs: EmailScenario, *, model: Any = None) -> RunOutcom
         settings = get_settings()
         if inputs.admin_emails is not None:
             settings = settings.model_copy(update={"admin_emails": inputs.admin_emails})
-        agent = build_agent(model=model if model is not None else settings.agent_model)
+        agent = build_agent(
+            model=model if model is not None else settings.agent_model,
+            is_proactive=inputs.is_proactive,
+            proactive_candidate_id=inputs.proactive_candidate_id,
+            proactive_event_id=inputs.proactive_event_id,
+            sender_known=inputs.sender_user_id is not None,
+        )
         deps = AgentDeps(
             settings=settings,
             sender_email=inputs.sender_email,
