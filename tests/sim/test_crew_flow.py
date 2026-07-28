@@ -1,4 +1,4 @@
-"""Unit tests for CrewAI simulation flow orchestrator."""
+"""End-to-end unit tests for CrewAI simulation flow orchestrator and full sim suite."""
 
 import pytest
 from pydantic_ai.models.test import TestModel
