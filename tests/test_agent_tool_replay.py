@@ -15,7 +15,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from thenetwork.agent.core import build_agent
-from thenetwork.agent.deps import AgentDeps
+from thenetwork.agent.deps import AgentCapabilities, AgentDeps
 from thenetwork.audit import LOGGER_NAME
 from thenetwork.db.models import Event, Person
 from thenetwork.settings import Settings
@@ -116,6 +116,9 @@ async def test_model_retry_replays_mutating_tools_without_repeating_effects(capl
             stored_events.append(row)
 
     session.add.side_effect = add
+    delivered: list[dict] = []
+    consume_quota = MagicMock()
+    record_memory = AsyncMock(return_value=True)
     deps = AgentDeps(
         settings=Settings(
             agent_model="test:model",
@@ -125,32 +128,22 @@ async def test_model_retry_replays_mutating_tools_without_repeating_effects(capl
             dispatch_recipient_daily_cap=10,
             dispatch_sender_reply_daily_cap=10,
         ),
+        capabilities=AgentCapabilities(
+            sanitize_text=MagicMock(return_value="sealed event gist"),
+            embed_text=AsyncMock(return_value=[0.0] * 1536),
+            send_reply=MagicMock(side_effect=lambda **kwargs: delivered.append(kwargs)),
+            record_sent_email_memory=record_memory,
+        ),
         sender_email="sender@example.test",
         sender_user_id="person-sender",
         sender_authenticated=True,
         trace_id="trace-replay-test",
         session_factory=lambda: session,
     )
-    delivered: list[dict] = []
-    consume_quota = MagicMock()
-    record_memory = AsyncMock(return_value=True)
 
     with (
-        patch(
-            "thenetwork.agent.tools.sanitize_text",
-            new=MagicMock(return_value="sealed event gist"),
-        ),
-        patch(
-            "thenetwork.agent.tools.embed_text",
-            new=AsyncMock(return_value=[0.0] * 1536),
-        ),
         patch("thenetwork.agent.tools._check_daily_dispatch_cap", return_value=True),
         patch("thenetwork.agent.tools._consume_daily_dispatch_cap", consume_quota),
-        patch(
-            "thenetwork.agent.tools.send_reply",
-            side_effect=lambda **kwargs: delivered.append(kwargs),
-        ),
-        patch("thenetwork.agent.tools.record_sent_email_memory", record_memory),
     ):
         result = await build_agent(model=FunctionModel(retrying_model)).run(
             "Record this event and acknowledge it.", deps=deps

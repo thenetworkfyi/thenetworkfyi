@@ -258,8 +258,9 @@ def _tool_ctx(
     sender_email: str = "alice@example.com",
     sender_user_id: str | None = None,
     sender_authenticated: bool = True,
+    capabilities=None,
 ):
-    from thenetwork.agent.deps import AgentDeps
+    from thenetwork.agent.deps import AgentCapabilities, AgentDeps
     from thenetwork.settings import Settings
 
     mock_session = MagicMock()
@@ -271,6 +272,9 @@ def _tool_ctx(
                 agent_model="test:model",
                 small_agent_model="test:model",
                 embed_model="test:embed",
+            ),
+            capabilities=(
+                capabilities if capabilities is not None else AgentCapabilities()
             ),
             sender_email=sender_email,
             sender_user_id=sender_user_id,
@@ -616,22 +620,26 @@ async def test_propose_introduction_audits_run_proposal_cap_deferred(caplog):
 
 @pytest.mark.asyncio
 async def test_propose_introduction_audits_recipient_cap_deferred(caplog):
+    from thenetwork.agent.deps import AgentCapabilities
     from thenetwork.agent.tools import propose_introduction
 
-    ctx, _ = _tool_ctx(sender_user_id="alice-id")
+    ctx, _ = _tool_ctx(
+        sender_user_id="alice-id",
+        capabilities=AgentCapabilities(
+            propose_pair=MagicMock(
+                return_value={
+                    "status": "deferred",
+                    "reason": "recipient_consent_request_cap",
+                    "limit": 3,
+                }
+            )
+        ),
+    )
     caplog.set_level(logging.INFO, logger=LOGGER_NAME)
 
-    with patch(
-        "thenetwork.agent.tools.propose_pair",
-        return_value={
-            "status": "deferred",
-            "reason": "recipient_consent_request_cap",
-            "limit": 3,
-        },
-    ):
-        result = await propose_introduction(
-            ctx, other_person_id="bob-id", sender_gist="a gist", other_gist="b gist"
-        )
+    result = await propose_introduction(
+        ctx, other_person_id="bob-id", sender_gist="a gist", other_gist="b gist"
+    )
 
     assert result["status"] == "deferred"
     events = _events(caplog)
@@ -642,18 +650,22 @@ async def test_propose_introduction_audits_recipient_cap_deferred(caplog):
 
 @pytest.mark.asyncio
 async def test_propose_introduction_audits_suppressed_consent_state(caplog):
+    from thenetwork.agent.deps import AgentCapabilities
     from thenetwork.agent.tools import propose_introduction
 
-    ctx, _ = _tool_ctx(sender_user_id="alice-id")
+    ctx, _ = _tool_ctx(
+        sender_user_id="alice-id",
+        capabilities=AgentCapabilities(
+            propose_pair=MagicMock(
+                return_value={"status": "suppressed", "reason": "one_consented"}
+            )
+        ),
+    )
     caplog.set_level(logging.INFO, logger=LOGGER_NAME)
 
-    with patch(
-        "thenetwork.agent.tools.propose_pair",
-        return_value={"status": "suppressed", "reason": "one_consented"},
-    ):
-        result = await propose_introduction(
-            ctx, other_person_id="bob-id", sender_gist="a gist", other_gist="b gist"
-        )
+    result = await propose_introduction(
+        ctx, other_person_id="bob-id", sender_gist="a gist", other_gist="b gist"
+    )
 
     assert result["status"] == "suppressed"
     events = _events(caplog)
@@ -871,16 +883,13 @@ async def test_agent_failure_after_successful_reply_does_not_escape_for_job_retr
     recorded_summary = AsyncMock(return_value=True)
     caplog.set_level(logging.INFO, logger=LOGGER_NAME)
 
+    from thenetwork.agent.deps import AgentCapabilities
+
     with (
         patch("thenetwork.agent.core.get_settings", return_value=settings),
         patch("thenetwork.agent.core.build_agent", return_value=test_agent),
         patch("thenetwork.agent.tools._check_daily_dispatch_cap", return_value=True),
         patch("thenetwork.agent.tools._consume_daily_dispatch_cap"),
-        patch("thenetwork.agent.tools.send_reply", delivered),
-        patch(
-            "thenetwork.agent.tools.record_sent_email_memory",
-            recorded_summary,
-        ),
     ):
         result = await run_agent_for_email(
             sender_email="sender@example.test",
@@ -890,6 +899,10 @@ async def test_agent_failure_after_successful_reply_does_not_escape_for_job_retr
             email_body="What is this?",
             trace_id="trace-post-send-timeout",
             session_factory=lambda: session,
+            capabilities=AgentCapabilities(
+                send_reply=delivered,
+                record_sent_email_memory=recorded_summary,
+            ),
         )
 
     assert result == ""
@@ -1297,13 +1310,12 @@ async def test_no_action_tool_call_prevents_undispatched_escalation():
 
 @pytest.mark.asyncio
 async def test_tool_and_database_events_do_not_log_arguments(caplog):
-    from thenetwork.agent.deps import AgentDeps
+    from thenetwork.agent.deps import AgentCapabilities, AgentDeps
     from thenetwork.agent.tools import search
     from thenetwork.search.match import MemoryMatch
 
     secret_query = "Find Alice at alice.private@example.com"
     secret_gist = "Alice is quietly raising a seed round"
-    ctx = SimpleNamespace(deps=AgentDeps())
     session = MagicMock()
     session.__enter__.return_value = session
     session.__exit__.return_value = None
@@ -1315,17 +1327,17 @@ async def test_tool_and_database_events_do_not_log_arguments(caplog):
             similarity=0.9,
         )
     ]
+    ctx = SimpleNamespace(
+        deps=AgentDeps(
+            capabilities=AgentCapabilities(
+                embed_text=AsyncMock(return_value=[0.0] * 1536),
+                match_memories=MagicMock(return_value=matches),
+            )
+        )
+    )
     caplog.set_level(logging.INFO, logger=LOGGER_NAME)
 
-    with (
-        patch("thenetwork.agent.tools._get_session", return_value=session),
-        patch(
-            "thenetwork.agent.tools.embed_text",
-            new_callable=AsyncMock,
-            return_value=[0.0] * 1536,
-        ),
-        patch("thenetwork.agent.tools.match_memories", return_value=matches),
-    ):
+    with patch("thenetwork.agent.tools._get_session", return_value=session):
         result = await search(ctx, query=secret_query)
 
     assert result[0]["evidence"] == [{"gist": secret_gist}]

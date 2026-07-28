@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from limits import storage, strategies
 
-from thenetwork.agent.deps import AgentDeps
+from thenetwork.agent.deps import AgentCapabilities, AgentDeps
 from thenetwork.settings import Settings
 
 
@@ -37,6 +37,7 @@ def _ctx(
     sender_authenticated: bool = True,
     inbound_subject: str = "Question",
     inbound_body: str = "Hi",
+    capabilities: AgentCapabilities | None = None,
 ) -> SimpleNamespace:
     settings = Settings(
         agent_model="test:model",
@@ -48,6 +49,7 @@ def _ctx(
     settings.dispatch_sender_reply_daily_cap = 99
     deps = AgentDeps(
         settings=settings,
+        capabilities=capabilities if capabilities is not None else AgentCapabilities(),
         sender_email=sender_email,
         sender_user_id=sender_user_id,
         sender_authenticated=sender_authenticated,
@@ -187,18 +189,24 @@ async def test_agent_can_choose_fixed_welcome_without_registration_or_escalation
     )
 
     _reset_dispatch_limiter()
-    ctx = _ctx(inbound_subject="", inbound_body="Hi")
+    send_reply = MagicMock()
+    notify_admins = MagicMock()
+    get_session = MagicMock()
+    ctx = _ctx(
+        inbound_subject="",
+        inbound_body="Hi",
+        capabilities=AgentCapabilities(
+            send_reply=send_reply,
+            notify_admins=notify_admins,
+            default_session_factory=get_session,
+        ),
+    )
     ctx.deps.inbound_message_id = "<abc123@example.com>"
     ctx.deps.inbound_references = "<root@example.com>"
     ctx.deps.inbound_body_for_quote = "Hi"
     ctx.deps.inbound_date = "Sat, 04 Jul 2026 12:00:00 -0700"
 
-    with (
-        patch("thenetwork.agent.tools.send_reply") as send_reply,
-        patch("thenetwork.agent.tools.notify_admins") as notify_admins,
-        patch("thenetwork.agent.tools.get_session") as get_session,
-    ):
-        result = await send_first_contact_welcome(ctx)
+    result = await send_first_contact_welcome(ctx)
 
     assert result == {"status": "sent"}
     send_reply.assert_called_once_with(
@@ -222,12 +230,13 @@ async def test_fixed_welcome_is_limited_once_per_sender_per_day() -> None:
     from thenetwork.agent.tools import send_first_contact_welcome
 
     _reset_dispatch_limiter()
-    first_ctx = _ctx(sender_email="New@Example.COM")
-    second_ctx = _ctx(sender_email="new@example.com")
+    send_reply = MagicMock()
+    capabilities = AgentCapabilities(send_reply=send_reply)
+    first_ctx = _ctx(sender_email="New@Example.COM", capabilities=capabilities)
+    second_ctx = _ctx(sender_email="new@example.com", capabilities=capabilities)
 
-    with patch("thenetwork.agent.tools.send_reply") as send_reply:
-        first = await send_first_contact_welcome(first_ctx)
-        second = await send_first_contact_welcome(second_ctx)
+    first = await send_first_contact_welcome(first_ctx)
+    second = await send_first_contact_welcome(second_ctx)
 
     assert first == {"status": "sent"}
     assert second == {
@@ -243,16 +252,14 @@ async def test_failed_welcome_delivery_preserves_quota_for_retry() -> None:
     from thenetwork.agent.tools import send_first_contact_welcome
 
     _reset_dispatch_limiter()
-    first_ctx = _ctx(sender_email="New@Example.COM")
-    retry_ctx = _ctx(sender_email="new@example.com")
+    send_reply = MagicMock(side_effect=[RuntimeError("SMTP unavailable"), None])
+    capabilities = AgentCapabilities(send_reply=send_reply)
+    first_ctx = _ctx(sender_email="New@Example.COM", capabilities=capabilities)
+    retry_ctx = _ctx(sender_email="new@example.com", capabilities=capabilities)
 
-    with patch(
-        "thenetwork.agent.tools.send_reply",
-        side_effect=[RuntimeError("SMTP unavailable"), None],
-    ) as send_reply:
-        with pytest.raises(RuntimeError, match="SMTP unavailable"):
-            await send_first_contact_welcome(first_ctx)
-        retry = await send_first_contact_welcome(retry_ctx)
+    with pytest.raises(RuntimeError, match="SMTP unavailable"):
+        await send_first_contact_welcome(first_ctx)
+    retry = await send_first_contact_welcome(retry_ctx)
 
     assert retry == {"status": "sent"}
     assert send_reply.call_count == 2
@@ -263,15 +270,24 @@ async def test_failed_welcome_delivery_preserves_quota_for_retry() -> None:
     ("ctx", "expected"),
     [
         (
-            _ctx(sender_user_id="known-person"),
+            _ctx(
+                sender_user_id="known-person",
+                capabilities=AgentCapabilities(send_reply=MagicMock()),
+            ),
             {"status": "error", "reason": "already_registered"},
         ),
         (
-            _ctx(sender_authenticated=False),
+            _ctx(
+                sender_authenticated=False,
+                capabilities=AgentCapabilities(send_reply=MagicMock()),
+            ),
             {"status": "error", "reason": "sender_not_authenticated"},
         ),
         (
-            _ctx(inbound_body="Please do not retain my data. I am opting out."),
+            _ctx(
+                inbound_body="Please do not retain my data. I am opting out.",
+                capabilities=AgentCapabilities(send_reply=MagicMock()),
+            ),
             {"status": "no_action", "reason": "sender_declined_participation"},
         ),
     ],
@@ -283,11 +299,10 @@ async def test_fixed_welcome_rejects_ineligible_sender(
     from thenetwork.agent.tools import send_first_contact_welcome
 
     _reset_dispatch_limiter()
-    with patch("thenetwork.agent.tools.send_reply") as send_reply:
-        result = await send_first_contact_welcome(ctx)
+    result = await send_first_contact_welcome(ctx)
 
     assert result == expected
-    send_reply.assert_not_called()
+    ctx.deps.capabilities.send_reply.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -295,17 +310,17 @@ async def test_unknown_sender_can_receive_only_one_response_per_run() -> None:
     from thenetwork.agent.tools import reply_to_sender, send_first_contact_welcome
 
     _reset_dispatch_limiter()
-    ctx = _ctx()
-    with patch("thenetwork.agent.tools.send_reply") as send_reply:
-        welcome = await send_first_contact_welcome(ctx)
-        # A later registration in the same run must not turn the sender into a
-        # second available reply target after the fixed welcome was sent.
-        ctx.deps.sender_user_id = "newly-registered"
-        second = await reply_to_sender(
-            ctx,
-            subject="Re: Question",
-            body_text="A second response.",
-        )
+    send_reply = MagicMock()
+    ctx = _ctx(capabilities=AgentCapabilities(send_reply=send_reply))
+    welcome = await send_first_contact_welcome(ctx)
+    # A later registration in the same run must not turn the sender into a
+    # second available reply target after the fixed welcome was sent.
+    ctx.deps.sender_user_id = "newly-registered"
+    second = await reply_to_sender(
+        ctx,
+        subject="Re: Question",
+        body_text="A second response.",
+    )
 
     assert welcome == {"status": "sent"}
     assert second == {

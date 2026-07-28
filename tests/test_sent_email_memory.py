@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from thenetwork.agent.deps import AgentDeps
+from thenetwork.agent.deps import AgentCapabilities, AgentDeps
 from thenetwork.agent.tools import reply_to_sender, send_outreach
 from thenetwork.audit import LOGGER_NAME, audit_event
 from thenetwork.db.models import Memory, Person
@@ -377,9 +377,17 @@ class MemoryStoreSession:
         return None
 
 
-def _tool_context(store: MemoryStoreSession, *, sender_id: str):
+def _tool_context(
+    store: MemoryStoreSession,
+    *,
+    sender_id: str,
+    capabilities: AgentCapabilities | None = None,
+):
     return SimpleNamespace(
         deps=AgentDeps(
+            capabilities=capabilities
+            if capabilities is not None
+            else AgentCapabilities(),
             settings=_settings(
                 dispatch_recipient_daily_cap=99,
                 dispatch_sender_reply_daily_cap=99,
@@ -402,7 +410,11 @@ async def test_successful_agent_delivery_is_injected_into_the_recipient_next_run
     store = MemoryStoreSession()
     sender_id = "person-alice"
     recipient_id = "person-alice" if delivery_kind == "reply" else "person-bob"
-    ctx = _tool_context(store, sender_id=sender_id)
+    ctx = _tool_context(
+        store,
+        sender_id=sender_id,
+        capabilities=AgentCapabilities(send_reply=MagicMock()),
+    )
     summary = "an answer about a specific manufacturing introduction"
 
     def sanitize(memory, _session):
@@ -411,7 +423,6 @@ async def test_successful_agent_delivery_is_injected_into_the_recipient_next_run
     with (
         patch("thenetwork.agent.tools._check_daily_dispatch_cap", return_value=True),
         patch("thenetwork.agent.tools._consume_daily_dispatch_cap"),
-        patch("thenetwork.agent.tools.send_reply"),
         patch(
             "thenetwork.memory.sent_email.sanitize_memory",
             new=MagicMock(side_effect=sanitize),
@@ -470,15 +481,15 @@ async def test_successful_agent_delivery_is_injected_into_the_recipient_next_run
 @pytest.mark.asyncio
 async def test_failed_agent_delivery_is_absent_from_later_context():
     store = MemoryStoreSession()
-    ctx = _tool_context(store, sender_id="person-alice")
-
-    with (
-        patch("thenetwork.agent.tools._check_daily_dispatch_cap", return_value=True),
-        patch(
-            "thenetwork.agent.tools.send_reply",
-            side_effect=RuntimeError("smtp unavailable"),
+    ctx = _tool_context(
+        store,
+        sender_id="person-alice",
+        capabilities=AgentCapabilities(
+            send_reply=MagicMock(side_effect=RuntimeError("smtp unavailable"))
         ),
-    ):
+    )
+
+    with patch("thenetwork.agent.tools._check_daily_dispatch_cap", return_value=True):
         with pytest.raises(RuntimeError, match="smtp unavailable"):
             await send_outreach(
                 ctx,

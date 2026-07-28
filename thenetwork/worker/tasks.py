@@ -19,6 +19,7 @@ from thenetwork.admin.auth import (
 )
 from thenetwork.admin.commands import handle_admin_command
 from thenetwork.agent.core import run_agent_for_email
+from thenetwork.agent.deps import AgentCapabilities
 from thenetwork.audit import (
     audit_event,
     audit_run,
@@ -207,12 +208,17 @@ async def process_email(
     proactive_event_version: int | None = None,
     source_mailbox: MailboxKind | None = None,
     intake_observed_at_epoch_seconds: float | None = None,
+    capabilities: AgentCapabilities | None = None,
 ) -> None:
     """Procrastinate worker task: run the agent for one inbound email.
 
     Checks rate limit and optional content scan before handing off.
     Admin requests are handled directly; regular mail goes to the agent.
     Agent runs with sender's existing user_id (None if first contact).
+
+    ``capabilities`` is never set by production `.defer()` callers - it is an
+    optional test-only override forwarded to `run_agent_for_email`, letting
+    tests exercise this task end to end without patching module globals.
 
     ``sender_authenticated`` reflects the third-party IMAP provider's DKIM/SPF
     verdict on the From: header (see email/inbound.py). An unauthenticated
@@ -431,6 +437,8 @@ async def process_email(
             agent_kwargs["inbound_references"] = inbound_references
             agent_kwargs["inbound_body_for_quote"] = inbound_body_for_quote or body
             agent_kwargs["inbound_date"] = inbound_date
+        if capabilities is not None:
+            agent_kwargs["capabilities"] = capabilities
         try:
             await run_agent_for_email(**agent_kwargs)
         except Exception as exc:

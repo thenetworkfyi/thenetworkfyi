@@ -12,7 +12,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from sqlmodel import select
 
 from thenetwork.agent.core import build_agent
-from thenetwork.agent.deps import AgentDeps
+from thenetwork.agent.deps import AgentCapabilities, AgentDeps
 from thenetwork.agent.tools import (
     FIRST_EVENT_RECOMMENDATION_NOTICE,
     create_event,
@@ -35,9 +35,13 @@ def _ctx(
     person_id: str,
     event_id: str | None = None,
     event_version: int | None = None,
+    capabilities: AgentCapabilities | None = None,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         deps=AgentDeps(
+            capabilities=capabilities
+            if capabilities is not None
+            else AgentCapabilities(),
             sender_email=email,
             sender_user_id=person_id,
             sender_authenticated=True,
@@ -83,22 +87,19 @@ async def test_submit_scan_send_suppress_and_people_match_remains_eligible(seede
     raw_submission = "Owner-private compiler circle details"
     sealed_gist = "small compiler engineering circle"
 
-    with (
-        patch(
-            "thenetwork.agent.tools.sanitize_text",
-            new=MagicMock(return_value=sealed_gist),
+    created = await create_event(
+        _ctx(
+            email="alice@test.com",
+            person_id=owner_id,
+            capabilities=AgentCapabilities(
+                sanitize_text=MagicMock(return_value=sealed_gist),
+                embed_text=AsyncMock(return_value=event_embedding),
+            ),
         ),
-        patch(
-            "thenetwork.agent.tools.embed_text",
-            new=AsyncMock(return_value=event_embedding),
-        ),
-    ):
-        created = await create_event(
-            _ctx(email="alice@test.com", person_id=owner_id),
-            text=raw_submission,
-            expires_at=expiry.isoformat(),
-            recurrence="every Friday",
-        )
+        text=raw_submission,
+        expires_at=expiry.isoformat(),
+        recurrence="every Friday",
+    )
 
     assert created["status"] == "created"
     event_id = created["event_id"]
@@ -195,12 +196,13 @@ async def test_submit_scan_send_suppress_and_people_match_remains_eligible(seede
         patch("thenetwork.agent.core.audit_model_trace"),
         patch("thenetwork.agent.tools._check_daily_dispatch_cap", return_value=True),
         patch("thenetwork.agent.tools._consume_daily_dispatch_cap"),
-        patch(
-            "thenetwork.agent.tools.send_event_fyi",
-            side_effect=fake_send_event_fyi,
-        ),
     ):
-        await process_email.func(**job)
+        await process_email.func(
+            **job,
+            capabilities=AgentCapabilities(
+                send_event_fyi=MagicMock(side_effect=fake_send_event_fyi)
+            ),
+        )
 
     assert model_calls == 2
     assert len(delivered) == 1
@@ -321,21 +323,20 @@ async def test_updated_event_requires_a_fresh_version_bound_evaluation(seeded_db
     recipient_embedding[1] = 1.0
     expiry = datetime.now(timezone.utc) + timedelta(days=30)
 
-    with (
-        patch(
-            "thenetwork.agent.tools.sanitize_text",
-            new=MagicMock(return_value="relevant compiler engineering circle"),
+    created = await create_event(
+        _ctx(
+            email="alice@test.com",
+            person_id=owner_id,
+            capabilities=AgentCapabilities(
+                sanitize_text=MagicMock(
+                    return_value="relevant compiler engineering circle"
+                ),
+                embed_text=AsyncMock(return_value=recipient_embedding),
+            ),
         ),
-        patch(
-            "thenetwork.agent.tools.embed_text",
-            new=AsyncMock(return_value=recipient_embedding),
-        ),
-    ):
-        created = await create_event(
-            _ctx(email="alice@test.com", person_id=owner_id),
-            text="original relevant event",
-            expires_at=expiry.isoformat(),
-        )
+        text="original relevant event",
+        expires_at=expiry.isoformat(),
+    )
 
     event_id = created["event_id"]
     with (
@@ -351,22 +352,21 @@ async def test_updated_event_requires_a_fresh_version_bound_evaluation(seeded_db
     assert stale_job["proactive_event_version"] == 1
     assert "relevant compiler engineering circle" in stale_job["body"]
 
-    with (
-        patch(
-            "thenetwork.agent.tools.sanitize_text",
-            new=MagicMock(return_value="unrelated online cooking webinar"),
+    updated = await update_event(
+        _ctx(
+            email="alice@test.com",
+            person_id=owner_id,
+            capabilities=AgentCapabilities(
+                sanitize_text=MagicMock(
+                    return_value="unrelated online cooking webinar"
+                ),
+                embed_text=AsyncMock(return_value=recipient_embedding),
+            ),
         ),
-        patch(
-            "thenetwork.agent.tools.embed_text",
-            new=AsyncMock(return_value=recipient_embedding),
-        ),
-    ):
-        updated = await update_event(
-            _ctx(email="alice@test.com", person_id=owner_id),
-            event_id=event_id,
-            text="replacement unrelated event",
-            expires_at=expiry.isoformat(),
-        )
+        event_id=event_id,
+        text="replacement unrelated event",
+        expires_at=expiry.isoformat(),
+    )
     assert updated["status"] == "updated"
 
     stale_ctx = _ctx(
@@ -440,21 +440,20 @@ async def test_event_scan_over_budget_leaves_no_orphaned_recommendation_row(
     event_embedding[1] = 1.0
     expiry = datetime.now(timezone.utc) + timedelta(days=30)
 
-    with (
-        patch(
-            "thenetwork.agent.tools.sanitize_text",
-            new=MagicMock(return_value="small compiler engineering circle"),
+    created = await create_event(
+        _ctx(
+            email="alice@test.com",
+            person_id=owner_id,
+            capabilities=AgentCapabilities(
+                sanitize_text=MagicMock(
+                    return_value="small compiler engineering circle"
+                ),
+                embed_text=AsyncMock(return_value=event_embedding),
+            ),
         ),
-        patch(
-            "thenetwork.agent.tools.embed_text",
-            new=AsyncMock(return_value=event_embedding),
-        ),
-    ):
-        created = await create_event(
-            _ctx(email="alice@test.com", person_id=owner_id),
-            text="owner-private compiler circle details",
-            expires_at=expiry.isoformat(),
-        )
+        text="owner-private compiler circle details",
+        expires_at=expiry.isoformat(),
+    )
     event_id = created["event_id"]
 
     token_budget._limiter = None

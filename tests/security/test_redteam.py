@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from thenetwork.agent.deps import AgentDeps
+from thenetwork.agent.deps import AgentCapabilities, AgentDeps
 from thenetwork.search.match import MemoryMatch
 
 
@@ -53,15 +53,9 @@ async def test_search_never_leaks_pii(adversarial_text: str):
     )
 
     ctx = FakeCtx()
-    with (
-        patch(
-            "thenetwork.agent.tools.embed_text",
-            new_callable=AsyncMock,
-            return_value=[0.0] * 1536,
-        ),
-        patch("thenetwork.agent.tools.match_memories", return_value=[mock_match]),
-    ):
-        results = await search(ctx, query=adversarial_text)
+    ctx.deps.capabilities.embed_text = AsyncMock(return_value=[0.0] * 1536)
+    ctx.deps.capabilities.match_memories = MagicMock(return_value=[mock_match])
+    results = await search(ctx, query=adversarial_text)
 
     for r in results:
         assert "name" not in r, f"name leaked for query: {adversarial_text!r}"
@@ -87,15 +81,9 @@ async def test_search_result_keys_sealed(adversarial_text: str):
     )
 
     ctx = FakeCtx()
-    with (
-        patch(
-            "thenetwork.agent.tools.embed_text",
-            new_callable=AsyncMock,
-            return_value=[0.0] * 1536,
-        ),
-        patch("thenetwork.agent.tools.match_memories", return_value=[mock_match]),
-    ):
-        results = await search(ctx, query=adversarial_text)
+    ctx.deps.capabilities.embed_text = AsyncMock(return_value=[0.0] * 1536)
+    ctx.deps.capabilities.match_memories = MagicMock(return_value=[mock_match])
+    results = await search(ctx, query=adversarial_text)
 
     allowed_keys = {"person_id", "evidence", "similarity", "is_sender_owned"}
     for r in results:
@@ -148,16 +136,10 @@ async def test_remember_stored_gist_drops_person_names_before_commit(monkeypatch
         events.append(f"embed:{text}")
         return [0.0] * 1536
 
-    with (
-        patch(
-            "thenetwork.agent.tools.embed_text", new=AsyncMock(side_effect=fake_embed)
-        ) as mock_embed,
-        patch(
-            "thenetwork.agent.tools.sanitize_memory",
-            side_effect=fake_sanitize,
-        ),
-    ):
-        await remember(ctx, text=raw, refs=["user-alice", "user-bob"])
+    mock_embed = AsyncMock(side_effect=fake_embed)
+    ctx.deps.capabilities.embed_text = mock_embed
+    ctx.deps.capabilities.sanitize_memory = MagicMock(side_effect=fake_sanitize)
+    await remember(ctx, text=raw, refs=["user-alice", "user-bob"])
 
     stored = added[0]
     assert events == [
@@ -191,7 +173,18 @@ async def test_agent_reply_never_leaks_pii(adversarial_body: str):
         )
     )
 
+    def fake_sanitize(memory, session):
+        memory.gist = "sanitized memory"
+        return memory.gist
+
+    capabilities = AgentCapabilities(
+        embed_text=AsyncMock(return_value=[0.0] * 1536),
+        match_memories=MagicMock(return_value=[]),
+        sanitize_memory=MagicMock(side_effect=fake_sanitize),
+        notify_admins=MagicMock(),
+    )
     deps = AgentDeps(
+        capabilities=capabilities,
         sender_email="attacker@evil.com",
         sender_user_id="user-attacker",
         session_factory=lambda: mock_sess,
@@ -202,24 +195,7 @@ async def test_agent_reply_never_leaks_pii(adversarial_body: str):
         mock_settings.return_value.agent_model = test_model
         agent = build_agent()
 
-    def fake_sanitize(memory, session):
-        memory.gist = "sanitized memory"
-        return memory.gist
-
-    with (
-        patch(
-            "thenetwork.agent.tools.embed_text",
-            new_callable=AsyncMock,
-            return_value=[0.0] * 1536,
-        ),
-        patch("thenetwork.agent.tools.match_memories", return_value=[]),
-        patch(
-            "thenetwork.agent.tools.sanitize_memory",
-            new=MagicMock(side_effect=fake_sanitize),
-        ),
-        patch("thenetwork.agent.tools.notify_admins"),
-    ):
-        result = await agent.run(adversarial_body, deps=deps)
+    result = await agent.run(adversarial_body, deps=deps)
 
     reply = result.output or ""
     assert "VICTIM_FULL_NAME" not in reply

@@ -9,7 +9,7 @@ from __future__ import annotations
 import pytest
 from limits import storage, strategies
 from thenetwork.agent.core import build_agent
-from thenetwork.agent.deps import AgentDeps
+from thenetwork.agent.deps import AgentCapabilities, AgentDeps
 
 
 @pytest.fixture(autouse=True)
@@ -23,7 +23,7 @@ def _use_in_memory_dispatch_limiter():
 
 async def _run_attachment_reply_scenario(attachment_count: int) -> dict[str, str]:
     from types import SimpleNamespace
-    from unittest.mock import AsyncMock, patch
+    from unittest.mock import AsyncMock, MagicMock, patch
 
     from pydantic_ai.messages import (
         ModelMessage,
@@ -88,16 +88,15 @@ async def _run_attachment_reply_scenario(attachment_count: int) -> dict[str, str
     def capture_reply(*, to_address: str, subject: str, body_text: str, **_kwargs):
         sent.append({"to": to_address, "subject": subject, "body": body_text})
 
+    capabilities = AgentCapabilities(
+        send_reply=MagicMock(side_effect=capture_reply),
+        record_sent_email_memory=AsyncMock(),
+    )
     with (
         patch("thenetwork.agent.core.get_settings", return_value=settings),
         patch("thenetwork.agent.core.build_agent", return_value=agent),
         patch("thenetwork.agent.tools._check_daily_dispatch_cap", return_value=True),
         patch("thenetwork.agent.tools._consume_daily_dispatch_cap"),
-        patch("thenetwork.agent.tools.send_reply", side_effect=capture_reply),
-        patch(
-            "thenetwork.agent.tools.record_sent_email_memory",
-            new_callable=AsyncMock,
-        ),
     ):
         await run_agent_for_email(
             sender_email="sender@example.com",
@@ -106,6 +105,7 @@ async def _run_attachment_reply_scenario(attachment_count: int) -> dict[str, str
             email_subject="Project details",
             email_body="Please review the material I sent.",
             attachment_count=attachment_count,
+            capabilities=capabilities,
         )
 
     assert len(sent) == 1
@@ -199,27 +199,22 @@ async def test_onboarding_registers_sender_then_remembers_under_sender_id():
     def fake_sanitize(memory, session) -> str:
         return "backend engineer looking to meet ML engineers"
 
+    send = MagicMock()
+    capabilities = AgentCapabilities(
+        default_session_factory=lambda: mock_session,
+        embed_text=AsyncMock(return_value=[0.0] * 1536),
+        match_memories=MagicMock(return_value=[]),
+        sanitize_memory=MagicMock(side_effect=fake_sanitize),
+        send_reply=send,
+        record_sent_email_memory=AsyncMock(),
+    )
     with (
-        patch("thenetwork.agent.tools.get_session", return_value=mock_session),
         patch("thenetwork.agent.tools._hit_registration_quota", return_value=True),
-        patch(
-            "thenetwork.agent.tools.embed_text",
-            new=AsyncMock(return_value=[0.0] * 1536),
-        ),
-        patch("thenetwork.agent.tools.match_memories", return_value=[]),
-        patch(
-            "thenetwork.agent.tools.sanitize_memory",
-            new=MagicMock(side_effect=fake_sanitize),
-        ),
         patch("thenetwork.agent.tools._check_daily_dispatch_cap", return_value=True),
         patch("thenetwork.agent.tools._consume_daily_dispatch_cap"),
-        patch("thenetwork.agent.tools.send_reply") as send,
-        patch(
-            "thenetwork.agent.tools.record_sent_email_memory",
-            new_callable=AsyncMock,
-        ),
     ):
         deps = AgentDeps(
+            capabilities=capabilities,
             sender_email="priya@example.com",
             sender_user_id=None,
             sender_authenticated=True,
@@ -254,8 +249,8 @@ async def test_onboarding_registers_sender_then_remembers_under_sender_id():
 async def test_matchmaking_returns_opaque_ids_only():
     """search must never expose names/emails/bios in its return value."""
     from thenetwork.agent.tools import search
-    from thenetwork.agent.deps import AgentDeps
-    from unittest.mock import AsyncMock, patch, MagicMock
+    from thenetwork.agent.deps import AgentCapabilities, AgentDeps
+    from unittest.mock import AsyncMock, MagicMock
     from thenetwork.search.match import MemoryMatch
 
     mock_results = [
@@ -267,7 +262,20 @@ async def test_matchmaking_returns_opaque_ids_only():
         )
     ]
 
-    deps = AgentDeps(sender_email="alice@example.com", sender_user_id="user-alice")
+    mock_session = MagicMock()
+    mock_session.__enter__ = MagicMock(return_value=mock_session)
+    mock_session.__exit__ = MagicMock(return_value=False)
+
+    capabilities = AgentCapabilities(
+        default_session_factory=lambda: mock_session,
+        embed_text=AsyncMock(return_value=[0.0] * 1536),
+        match_memories=MagicMock(return_value=mock_results),
+    )
+    deps = AgentDeps(
+        capabilities=capabilities,
+        sender_email="alice@example.com",
+        sender_user_id="user-alice",
+    )
 
     class FakeCtx:
         pass
@@ -275,20 +283,7 @@ async def test_matchmaking_returns_opaque_ids_only():
     ctx = FakeCtx()
     ctx.deps = deps
 
-    mock_session = MagicMock()
-    mock_session.__enter__ = MagicMock(return_value=mock_session)
-    mock_session.__exit__ = MagicMock(return_value=False)
-
-    with (
-        patch(
-            "thenetwork.agent.tools.embed_text",
-            new_callable=AsyncMock,
-            return_value=[0.0] * 1536,
-        ),
-        patch("thenetwork.agent.tools.get_session", return_value=mock_session),
-        patch("thenetwork.agent.tools.match_memories", return_value=mock_results),
-    ):
-        result = await search(ctx, query="looking for ML engineers")
+    result = await search(ctx, query="looking for ML engineers")
 
     assert len(result) == 1
     candidate = result[0]
@@ -310,7 +305,7 @@ async def test_matchmaking_returns_opaque_ids_only():
 async def test_send_outreach_resolves_address_server_side():
     """send_outreach must look up the address by ID, never accept a raw address."""
     from thenetwork.agent.tools import send_outreach
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import MagicMock
 
     fake_profile = MagicMock()
     fake_profile.email = "bob@example.com"
@@ -320,22 +315,20 @@ async def test_send_outreach_resolves_address_server_side():
 
     ctx = FakeCtx()
 
-    with (
-        patch("thenetwork.agent.tools.get_session") as mock_get_session,
-        patch("thenetwork.agent.tools.send_reply") as mock_send,
-    ):
-        mock_session = MagicMock()
-        mock_session.__enter__ = MagicMock(return_value=mock_session)
-        mock_session.__exit__ = MagicMock(return_value=False)
-        mock_session.get.return_value = fake_profile
-        mock_get_session.return_value = mock_session
+    mock_session = MagicMock()
+    mock_session.__enter__ = MagicMock(return_value=mock_session)
+    mock_session.__exit__ = MagicMock(return_value=False)
+    mock_session.get.return_value = fake_profile
+    mock_send = MagicMock()
+    ctx.deps.capabilities.default_session_factory = lambda: mock_session
+    ctx.deps.capabilities.send_reply = mock_send
 
-        result = await send_outreach(
-            ctx,
-            recipient_user_id="user-bob",
-            subject="Hello",
-            body_text="Let's connect.",
-        )
+    result = await send_outreach(
+        ctx,
+        recipient_user_id="user-bob",
+        subject="Hello",
+        body_text="Let's connect.",
+    )
 
     assert result["status"] == "sent"
     mock_send.assert_called_once()
@@ -353,7 +346,7 @@ async def test_send_outreach_resolves_address_server_side():
 async def test_double_intro_emails_both_parties():
     """The separate reply and outreach capabilities can email both parties."""
     from thenetwork.agent.tools import reply_to_sender, send_outreach
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import MagicMock
 
     sent_to: list[str] = []
 
@@ -373,23 +366,17 @@ async def test_double_intro_emails_both_parties():
 
     ctx = FakeCtx()
 
-    with (
-        patch("thenetwork.agent.tools.get_session") as mock_gs,
-        patch(
-            "thenetwork.agent.tools.send_reply",
-            new=MagicMock(side_effect=fake_send_reply),
-        ),
-    ):
-        mock_session = MagicMock()
-        mock_session.__enter__ = MagicMock(return_value=mock_session)
-        mock_session.__exit__ = MagicMock(return_value=False)
-        mock_session.get.side_effect = lambda _, uid: profiles.get(uid)
-        mock_gs.return_value = mock_session
+    mock_session = MagicMock()
+    mock_session.__enter__ = MagicMock(return_value=mock_session)
+    mock_session.__exit__ = MagicMock(return_value=False)
+    mock_session.get.side_effect = lambda _, uid: profiles.get(uid)
+    ctx.deps.capabilities.default_session_factory = lambda: mock_session
+    ctx.deps.capabilities.send_reply = MagicMock(side_effect=fake_send_reply)
 
-        await reply_to_sender(ctx, subject="Intro", body_text="Hi Alice.")
-        await send_outreach(
-            ctx, recipient_user_id="user-bob", subject="Intro", body_text="Hi Bob."
-        )
+    await reply_to_sender(ctx, subject="Intro", body_text="Hi Alice.")
+    await send_outreach(
+        ctx, recipient_user_id="user-bob", subject="Intro", body_text="Hi Bob."
+    )
 
     assert "alice@example.com" in sent_to
     assert "bob@example.com" in sent_to
@@ -404,7 +391,7 @@ async def test_double_intro_emails_both_parties():
 async def test_forget_rejects_multi_ref_memory():
     """A memory co-owned by two people must not be deletable by either sender."""
     from thenetwork.agent.tools import forget
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import MagicMock
 
     fake_memory = MagicMock()
     fake_memory.refs = ["user-alice", "user-bob"]
@@ -414,14 +401,13 @@ async def test_forget_rejects_multi_ref_memory():
 
     ctx = FakeCtx()
 
-    with patch("thenetwork.agent.tools.get_session") as mock_gs:
-        mock_session = MagicMock()
-        mock_session.__enter__ = MagicMock(return_value=mock_session)
-        mock_session.__exit__ = MagicMock(return_value=False)
-        mock_session.get.return_value = fake_memory
-        mock_gs.return_value = mock_session
+    mock_session = MagicMock()
+    mock_session.__enter__ = MagicMock(return_value=mock_session)
+    mock_session.__exit__ = MagicMock(return_value=False)
+    mock_session.get.return_value = fake_memory
+    ctx.deps.capabilities.default_session_factory = lambda: mock_session
 
-        result = await forget(ctx, memory_id="mem-shared")
+    result = await forget(ctx, memory_id="mem-shared")
 
     assert result["status"] == "forbidden"
     assert result["reason"] == "not_sender_memory"
@@ -438,7 +424,7 @@ async def test_forget_rejects_multi_ref_memory():
 async def test_send_outreach_limited_once_run_cap_exhausted():
     """Once outbound_send_count reaches the per-run cap, sends stop."""
     from thenetwork.agent.tools import send_outreach
-    from unittest.mock import patch
+    from unittest.mock import MagicMock
 
     class FakeCtx:
         deps = AgentDeps(sender_email="alice@example.com", sender_user_id="user-alice")
@@ -446,16 +432,17 @@ async def test_send_outreach_limited_once_run_cap_exhausted():
     ctx = FakeCtx()
     ctx.deps.outbound_send_count = ctx.deps.settings.dispatch_max_sends_per_run
 
-    with (
-        patch("thenetwork.agent.tools.get_session") as mock_gs,
-        patch("thenetwork.agent.tools.send_reply") as mock_send,
-    ):
-        result = await send_outreach(
-            ctx,
-            recipient_user_id="user-bob",
-            subject="Hello",
-            body_text="Let's connect.",
-        )
+    mock_gs = MagicMock()
+    mock_send = MagicMock()
+    ctx.deps.capabilities.default_session_factory = mock_gs
+    ctx.deps.capabilities.send_reply = mock_send
+
+    result = await send_outreach(
+        ctx,
+        recipient_user_id="user-bob",
+        subject="Hello",
+        body_text="Let's connect.",
+    )
 
     assert result["status"] == "limited"
     assert result["reason"] == "max_sends_per_run"
@@ -480,7 +467,7 @@ async def test_escalate_sends_welcome_and_notifies_admin_for_unregistered_sender
         FirstContactWelcomeEmailContext,
         FixedEmailTemplate,
     )
-    from unittest.mock import patch
+    from unittest.mock import MagicMock
 
     class FakeCtx:
         deps = AgentDeps(
@@ -491,12 +478,14 @@ async def test_escalate_sends_welcome_and_notifies_admin_for_unregistered_sender
 
     ctx = FakeCtx()
 
-    with (
-        patch("thenetwork.agent.tools.send_reply") as mock_send,
-        patch("thenetwork.agent.tools.notify_admins") as mock_notify,
-        patch("thenetwork.agent.tools.get_session") as mock_gs,
-    ):
-        result = await escalate(ctx, reason="unclear intent")
+    mock_send = MagicMock()
+    mock_notify = MagicMock()
+    mock_gs = MagicMock()
+    ctx.deps.capabilities.send_reply = mock_send
+    ctx.deps.capabilities.notify_admins = mock_notify
+    ctx.deps.capabilities.default_session_factory = mock_gs
+
+    result = await escalate(ctx, reason="unclear intent")
 
     assert result["status"] == "welcomed_and_escalated"
 
@@ -538,7 +527,7 @@ def _tool_call_names(result) -> list[str]:
 async def test_vague_intent_qualification_asks_question_and_no_proposal():
     """A broad, self-described-uncertain domain gets one narrowing question and
     an asked-note, not a proposal - even with an adjacent search match present."""
-    from unittest.mock import patch, MagicMock, AsyncMock
+    from unittest.mock import MagicMock, AsyncMock
     from pydantic_ai.models.function import FunctionModel, AgentInfo
     from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, TextPart
     from thenetwork.search.match import MemoryMatch
@@ -615,29 +604,24 @@ async def test_vague_intent_qualification_asks_question_and_no_proposal():
     def fake_sanitize(memory, session):
         return "asked about narrowing a broad interest"
 
-    with (
-        patch("thenetwork.agent.tools.get_session", return_value=mock_session),
-        patch("thenetwork.agent.tools.send_reply", side_effect=fake_send_reply),
-        patch(
-            "thenetwork.agent.tools.embed_text",
-            new=AsyncMock(return_value=[0.0] * 1536),
-        ),
-        patch("thenetwork.agent.tools.match_memories", return_value=adjacent_match),
-        patch(
-            "thenetwork.agent.tools.sanitize_memory",
-            new=MagicMock(side_effect=fake_sanitize),
-        ),
-    ):
-        deps = AgentDeps(
-            sender_email="petra@example.com",
-            sender_user_id="user-petra",
-            sender_authenticated=True,
-        )
-        result = await agent.run(
-            "I'm interested in archival science and data management broadly, but "
-            "honestly I'm not sure yet what specific connection would actually help me.",
-            deps=deps,
-        )
+    capabilities = AgentCapabilities(
+        default_session_factory=lambda: mock_session,
+        send_reply=MagicMock(side_effect=fake_send_reply),
+        embed_text=AsyncMock(return_value=[0.0] * 1536),
+        match_memories=MagicMock(return_value=adjacent_match),
+        sanitize_memory=MagicMock(side_effect=fake_sanitize),
+    )
+    deps = AgentDeps(
+        capabilities=capabilities,
+        sender_email="petra@example.com",
+        sender_user_id="user-petra",
+        sender_authenticated=True,
+    )
+    result = await agent.run(
+        "I'm interested in archival science and data management broadly, but "
+        "honestly I'm not sure yet what specific connection would actually help me.",
+        deps=deps,
+    )
 
     tool_names = _tool_call_names(result)
 
@@ -658,7 +642,7 @@ async def test_vague_intent_qualification_asks_question_and_no_proposal():
 async def test_vague_intent_answer_forgets_asked_note_and_captures_interest():
     """Once Petra names the specific interest, forget the asked-note and
     remember the specific interest, in that order."""
-    from unittest.mock import patch, MagicMock, AsyncMock
+    from unittest.mock import MagicMock, AsyncMock
     from pydantic_ai.models.function import FunctionModel, AgentInfo
     from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart, TextPart
 
@@ -735,28 +719,23 @@ async def test_vague_intent_answer_forgets_asked_note_and_captures_interest():
     def fake_sanitize(memory, session):
         return "interested in museum archive provenance research"
 
-    with (
-        patch("thenetwork.agent.tools.get_session", return_value=mock_session),
-        patch("thenetwork.agent.tools.send_reply", side_effect=fake_send_reply),
-        patch(
-            "thenetwork.agent.tools.embed_text",
-            new=AsyncMock(return_value=[0.0] * 1536),
-        ),
-        patch("thenetwork.agent.tools.match_memories", return_value=[]),
-        patch(
-            "thenetwork.agent.tools.sanitize_memory",
-            new=MagicMock(side_effect=fake_sanitize),
-        ),
-    ):
-        deps = AgentDeps(
-            sender_email="petra@example.com",
-            sender_user_id="user-petra",
-            sender_authenticated=True,
-        )
-        result = await agent.run(
-            "Museum archive provenance research specifically - that's what I'm after.",
-            deps=deps,
-        )
+    capabilities = AgentCapabilities(
+        default_session_factory=lambda: mock_session,
+        send_reply=MagicMock(side_effect=fake_send_reply),
+        embed_text=AsyncMock(return_value=[0.0] * 1536),
+        match_memories=MagicMock(return_value=[]),
+        sanitize_memory=MagicMock(side_effect=fake_sanitize),
+    )
+    deps = AgentDeps(
+        capabilities=capabilities,
+        sender_email="petra@example.com",
+        sender_user_id="user-petra",
+        sender_authenticated=True,
+    )
+    result = await agent.run(
+        "Museum archive provenance research specifically - that's what I'm after.",
+        deps=deps,
+    )
 
     tool_names = _tool_call_names(result)
 
@@ -776,7 +755,7 @@ async def test_vague_intent_answer_forgets_asked_note_and_captures_interest():
 async def test_suppressed_introduction_result_carries_no_send_note():
     """A suppressed propose_introduction result must tell the model plainly
     that no consent request was sent, independent of any reply it later writes."""
-    from unittest.mock import patch, MagicMock
+    from unittest.mock import MagicMock
     from pydantic_ai.models.function import FunctionModel, AgentInfo
     from pydantic_ai.messages import (
         ModelMessage,
@@ -836,23 +815,23 @@ async def test_suppressed_introduction_result_carries_no_send_note():
     def fake_send_reply(to_address, subject, body_text, body_html=None, **kwargs):
         sent.append({"to": to_address, "subject": subject, "body": body_text})
 
-    with (
-        patch("thenetwork.agent.tools.get_session", return_value=mock_session),
-        patch("thenetwork.agent.tools.send_reply", side_effect=fake_send_reply),
-        patch(
-            "thenetwork.agent.tools.propose_pair",
-            return_value={"status": "suppressed", "reason": "declined"},
+    capabilities = AgentCapabilities(
+        default_session_factory=lambda: mock_session,
+        send_reply=MagicMock(side_effect=fake_send_reply),
+        propose_pair=MagicMock(
+            return_value={"status": "suppressed", "reason": "declined"}
         ),
-    ):
-        deps = AgentDeps(
-            sender_email="jordan@example.com",
-            sender_user_id="user-jordan",
-            sender_authenticated=True,
-        )
-        result = await agent.run(
-            "Any luck finding me an ML engineer to talk to?",
-            deps=deps,
-        )
+    )
+    deps = AgentDeps(
+        capabilities=capabilities,
+        sender_email="jordan@example.com",
+        sender_user_id="user-jordan",
+        sender_authenticated=True,
+    )
+    result = await agent.run(
+        "Any luck finding me an ML engineer to talk to?",
+        deps=deps,
+    )
 
     tool_names = _tool_call_names(result)
     assert "propose_introduction" in tool_names

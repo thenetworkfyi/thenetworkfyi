@@ -6,7 +6,7 @@ import pytest
 from limits import storage, strategies
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from thenetwork.agent.deps import AgentDeps
+from thenetwork.agent.deps import AgentCapabilities, AgentDeps
 from thenetwork.settings import Settings
 
 
@@ -33,9 +33,11 @@ def _ctx(
     admin_emails=None,
     sender_authenticated=False,
     inbound_subject="",
+    capabilities=None,
 ):
     deps = AgentDeps(
         settings=_make_settings(admin_emails=admin_emails),
+        capabilities=capabilities if capabilities is not None else AgentCapabilities(),
         sender_email=sender_email,
         sender_user_id=sender_user_id,
         sender_authenticated=sender_authenticated,
@@ -60,19 +62,13 @@ async def test_escalate_returns_escalated_status():
     from thenetwork.agent.tools import escalate
 
     cm, _ = _mock_session()
-    with (
-        patch(
-            "thenetwork.agent.tools.embed_text",
-            new=AsyncMock(return_value=[0.0] * 1536),
-        ),
-        patch("thenetwork.agent.tools.get_session", return_value=cm),
-        patch(
-            "thenetwork.agent.tools.sanitize_memory",
-            new_callable=MagicMock,
-        ),
-        patch("thenetwork.agent.tools.notify_admins"),
-    ):
-        result = await escalate(_ctx(), reason="Intent unclear")
+    capabilities = AgentCapabilities(
+        embed_text=AsyncMock(return_value=[0.0] * 1536),
+        default_session_factory=MagicMock(return_value=cm),
+        sanitize_memory=MagicMock(),
+        notify_admins=MagicMock(),
+    )
+    result = await escalate(_ctx(capabilities=capabilities), reason="Intent unclear")
 
     assert result["status"] == "escalated"
     assert "memory_id" in result
@@ -87,19 +83,13 @@ async def test_escalate_stores_memory_with_escalation_marker():
     added_objects = []
     session.add.side_effect = added_objects.append
 
-    with (
-        patch(
-            "thenetwork.agent.tools.embed_text",
-            new=AsyncMock(return_value=[0.0] * 1536),
-        ),
-        patch("thenetwork.agent.tools.get_session", return_value=cm),
-        patch(
-            "thenetwork.agent.tools.sanitize_memory",
-            new_callable=MagicMock,
-        ),
-        patch("thenetwork.agent.tools.notify_admins"),
-    ):
-        await escalate(_ctx(), reason="Cannot determine intent")
+    capabilities = AgentCapabilities(
+        embed_text=AsyncMock(return_value=[0.0] * 1536),
+        default_session_factory=MagicMock(return_value=cm),
+        sanitize_memory=MagicMock(),
+        notify_admins=MagicMock(),
+    )
+    await escalate(_ctx(capabilities=capabilities), reason="Cannot determine intent")
 
     assert len(added_objects) == 1
     mem = added_objects[0]
@@ -121,19 +111,17 @@ async def test_escalate_includes_sender_id_in_refs_when_known():
         memory.gist = sanitized
         return memory.gist
 
-    with (
-        patch(
-            "thenetwork.agent.tools.embed_text",
-            new=AsyncMock(return_value=[0.0] * 1536),
-        ) as mock_embed,
-        patch("thenetwork.agent.tools.get_session", return_value=cm),
-        patch(
-            "thenetwork.agent.tools.sanitize_memory",
-            new=MagicMock(side_effect=fake_sanitize),
-        ) as mock_sanitize,
-        patch("thenetwork.agent.tools.notify_admins"),
-    ):
-        await escalate(_ctx(sender_user_id="user-abc"), reason="Unclear")
+    mock_embed = AsyncMock(return_value=[0.0] * 1536)
+    mock_sanitize = MagicMock(side_effect=fake_sanitize)
+    capabilities = AgentCapabilities(
+        embed_text=mock_embed,
+        default_session_factory=MagicMock(return_value=cm),
+        sanitize_memory=mock_sanitize,
+        notify_admins=MagicMock(),
+    )
+    await escalate(
+        _ctx(sender_user_id="user-abc", capabilities=capabilities), reason="Unclear"
+    )
 
     mem = added_objects[0]
     assert mem.refs == ["user-abc"]
@@ -151,19 +139,15 @@ async def test_escalate_empty_refs_for_unknown_sender():
     reason = "New sender, unclear intent"
     raw = f"[ESCALATED] {reason}"
 
-    with (
-        patch(
-            "thenetwork.agent.tools.embed_text",
-            new=AsyncMock(return_value=[0.0] * 1536),
-        ) as mock_embed,
-        patch("thenetwork.agent.tools.get_session", return_value=cm),
-        patch(
-            "thenetwork.agent.tools.sanitize_memory",
-            new_callable=MagicMock,
-        ) as mock_sanitize,
-        patch("thenetwork.agent.tools.notify_admins"),
-    ):
-        await escalate(_ctx(sender_user_id=None), reason=reason)
+    mock_embed = AsyncMock(return_value=[0.0] * 1536)
+    mock_sanitize = MagicMock()
+    capabilities = AgentCapabilities(
+        embed_text=mock_embed,
+        default_session_factory=MagicMock(return_value=cm),
+        sanitize_memory=mock_sanitize,
+        notify_admins=MagicMock(),
+    )
+    await escalate(_ctx(sender_user_id=None, capabilities=capabilities), reason=reason)
 
     mem = added_objects[0]
     assert mem.refs == []
@@ -176,22 +160,17 @@ async def test_escalate_notifies_all_admin_emails():
     from thenetwork.agent.tools import escalate
 
     cm, _ = _mock_session()
-    with (
-        patch(
-            "thenetwork.agent.tools.embed_text",
-            new=AsyncMock(return_value=[0.0] * 1536),
-        ),
-        patch("thenetwork.agent.tools.get_session", return_value=cm),
-        patch(
-            "thenetwork.agent.tools.sanitize_memory",
-            new_callable=MagicMock,
-        ),
-        patch("thenetwork.email.outbound.send_reply") as mock_send,
-    ):
+    capabilities = AgentCapabilities(
+        embed_text=AsyncMock(return_value=[0.0] * 1536),
+        default_session_factory=MagicMock(return_value=cm),
+        sanitize_memory=MagicMock(),
+    )
+    with patch("thenetwork.email.outbound.send_reply") as mock_send:
         await escalate(
             _ctx(
                 sender_email="user@test.com",
                 admin_emails=["admin1@example.com", "admin2@example.com"],
+                capabilities=capabilities,
             ),
             reason="Ambiguous request",
         )
@@ -206,19 +185,15 @@ async def test_escalate_no_notification_when_no_admin_emails():
     from thenetwork.agent.tools import escalate
 
     cm, _ = _mock_session()
-    with (
-        patch(
-            "thenetwork.agent.tools.embed_text",
-            new=AsyncMock(return_value=[0.0] * 1536),
-        ),
-        patch("thenetwork.agent.tools.get_session", return_value=cm),
-        patch(
-            "thenetwork.agent.tools.sanitize_memory",
-            new_callable=MagicMock,
-        ),
-        patch("thenetwork.email.outbound.send_reply") as mock_send,
-    ):
-        await escalate(_ctx(admin_emails=[]), reason="Unclear")
+    capabilities = AgentCapabilities(
+        embed_text=AsyncMock(return_value=[0.0] * 1536),
+        default_session_factory=MagicMock(return_value=cm),
+        sanitize_memory=MagicMock(),
+    )
+    with patch("thenetwork.email.outbound.send_reply") as mock_send:
+        await escalate(
+            _ctx(admin_emails=[], capabilities=capabilities), reason="Unclear"
+        )
 
     mock_send.assert_not_called()
 
@@ -228,22 +203,17 @@ async def test_escalate_notification_includes_sender_and_reason():
     from thenetwork.agent.tools import escalate
 
     cm, _ = _mock_session()
-    with (
-        patch(
-            "thenetwork.agent.tools.embed_text",
-            new=AsyncMock(return_value=[0.0] * 1536),
-        ),
-        patch("thenetwork.agent.tools.get_session", return_value=cm),
-        patch(
-            "thenetwork.agent.tools.sanitize_memory",
-            new_callable=MagicMock,
-        ),
-        patch("thenetwork.email.outbound.send_reply") as mock_send,
-    ):
+    capabilities = AgentCapabilities(
+        embed_text=AsyncMock(return_value=[0.0] * 1536),
+        default_session_factory=MagicMock(return_value=cm),
+        sanitize_memory=MagicMock(),
+    )
+    with patch("thenetwork.email.outbound.send_reply") as mock_send:
         await escalate(
             _ctx(
                 sender_email="user@example.com",
                 admin_emails=["admin@example.com"],
+                capabilities=capabilities,
             ),
             reason="Sensitive topic, needs human judgment",
         )
@@ -261,25 +231,25 @@ async def test_escalate_welcomes_and_notifies_admins_for_authenticated_unknown_s
         FixedEmailTemplate,
     )
 
-    with (
-        patch(
-            "thenetwork.agent.tools.embed_text",
-            new=AsyncMock(return_value=[0.0] * 1536),
-        ) as mock_embed,
-        patch("thenetwork.agent.tools.get_session") as mock_get_session,
-        patch(
-            "thenetwork.agent.tools.sanitize_memory",
-            new_callable=MagicMock,
-        ) as mock_sanitize,
-        patch("thenetwork.agent.tools.audit_span_completion") as mock_completion,
-        patch("thenetwork.agent.tools.notify_admins") as mock_notify,
-        patch("thenetwork.agent.tools.send_reply") as mock_send,
-    ):
+    mock_embed = AsyncMock(return_value=[0.0] * 1536)
+    mock_get_session = MagicMock()
+    mock_sanitize = MagicMock()
+    mock_notify = MagicMock()
+    mock_send = MagicMock()
+    capabilities = AgentCapabilities(
+        embed_text=mock_embed,
+        default_session_factory=mock_get_session,
+        sanitize_memory=mock_sanitize,
+        notify_admins=mock_notify,
+        send_reply=mock_send,
+    )
+    with patch("thenetwork.agent.tools.audit_span_completion") as mock_completion:
         ctx = _ctx(
             sender_email="new@example.com",
             sender_authenticated=True,
             inbound_subject="Question",
             admin_emails=["admin@example.com"],
+            capabilities=capabilities,
         )
         ctx.deps.trace_id = "trace-test-123"
         result = await escalate(ctx, reason="Ambiguous first contact")
@@ -314,16 +284,19 @@ async def test_escalate_welcomes_and_notifies_admins_for_authenticated_unknown_s
 async def test_unknown_sender_escalation_remains_terminal_when_welcome_is_limited():
     from thenetwork.agent.tools import escalate
 
-    with (
-        patch("thenetwork.agent.tools._check_daily_dispatch_cap", return_value=False),
-        patch("thenetwork.agent.tools.notify_admins") as notify_admins,
-        patch("thenetwork.agent.tools.send_reply") as send_reply,
-    ):
+    notify_admins = MagicMock()
+    send_reply = MagicMock()
+    capabilities = AgentCapabilities(
+        notify_admins=notify_admins,
+        send_reply=send_reply,
+    )
+    with patch("thenetwork.agent.tools._check_daily_dispatch_cap", return_value=False):
         ctx = _ctx(
             sender_email="new@example.com",
             sender_authenticated=True,
             inbound_subject="Question",
             admin_emails=["admin@example.com"],
+            capabilities=capabilities,
         )
         result = await escalate(ctx, reason="Ambiguous first contact")
 
@@ -338,24 +311,28 @@ async def test_unknown_sender_escalation_remains_terminal_when_welcome_is_limite
 async def test_explicit_unknown_sender_opt_out_is_not_welcomed_or_escalated():
     from thenetwork.agent.tools import escalate, register_person
 
+    mock_notify = MagicMock()
+    mock_send = MagicMock()
+    mock_session = MagicMock()
+    capabilities = AgentCapabilities(
+        notify_admins=mock_notify,
+        send_reply=mock_send,
+        default_session_factory=mock_session,
+    )
     ctx = _ctx(
         sender_email="private@example.com",
         sender_authenticated=True,
         inbound_subject="Privacy request",
         admin_emails=["admin@example.com"],
+        capabilities=capabilities,
     )
     ctx.deps.inbound_body = (
         "Please do not retain information about me. I am opting out and do not "
         "want to participate."
     )
 
-    with (
-        patch("thenetwork.agent.tools.notify_admins") as mock_notify,
-        patch("thenetwork.agent.tools.send_reply") as mock_send,
-        patch("thenetwork.agent.tools.get_session") as mock_session,
-    ):
-        registration = await register_person(ctx, name="Private Sender")
-        escalation = await escalate(ctx, reason="Unclear first contact")
+    registration = await register_person(ctx, name="Private Sender")
+    escalation = await escalate(ctx, reason="Unclear first contact")
 
     assert registration == {
         "status": "error",
@@ -376,25 +353,21 @@ async def test_escalate_does_not_acknowledge_unauthenticated_sender():
     from thenetwork.agent.tools import escalate
 
     cm, _ = _mock_session()
-    with (
-        patch(
-            "thenetwork.agent.tools.embed_text",
-            new=AsyncMock(return_value=[0.0] * 1536),
+    mock_send = MagicMock()
+    capabilities = AgentCapabilities(
+        embed_text=AsyncMock(return_value=[0.0] * 1536),
+        default_session_factory=MagicMock(return_value=cm),
+        sanitize_memory=MagicMock(),
+        notify_admins=MagicMock(),
+        send_reply=mock_send,
+    )
+    await escalate(
+        _ctx(
+            sender_email="spoof@example.com",
+            sender_authenticated=False,
+            capabilities=capabilities,
         ),
-        patch("thenetwork.agent.tools.get_session", return_value=cm),
-        patch(
-            "thenetwork.agent.tools.sanitize_memory",
-            new_callable=MagicMock,
-        ),
-        patch("thenetwork.agent.tools.notify_admins"),
-        patch("thenetwork.agent.tools.send_reply") as mock_send,
-    ):
-        await escalate(
-            _ctx(
-                sender_email="spoof@example.com",
-                sender_authenticated=False,
-            ),
-            reason="Ambiguous first contact",
-        )
+        reason="Ambiguous first contact",
+    )
 
     mock_send.assert_not_called()
