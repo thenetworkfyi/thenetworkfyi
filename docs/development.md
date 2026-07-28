@@ -325,33 +325,57 @@ under `alembic/versions/`.
 - `pytest -m "integration and not live_model"` runs the database-backed integration
   tests without running scenarios that call a real model. Use `pytest -m live_model`
   only for deliberate, credentialed live-model runs.
+- Model access is default-deny for the entire test session. `tests/conftest.py` sets
+  pydantic-ai's `ALLOW_MODEL_REQUESTS = False`, and the autouse `model_request_gate`
+  fixture opens it only for tests marked `live_model`. Cassette replay still constructs
+  pydantic-ai provider models before VCR intercepts their HTTP transport, so replay tests
+  must retain the `live_model` marker even though replay makes no network request or paid
+  model call.
 - `tests/conftest.py` fixtures:
   - `seeded_people` - in-memory `Person` objects, no DB.
   - `pg_engine` (session-scoped) - connects to `TEST_DATABASE_URL` (default
-    `…/test_thenetwork`); **skips the whole session** if pgvector is unreachable.
+    `…/test_thenetwork`) and runs Alembic through `head`. If that pgvector database is
+    unavailable, it starts a disposable `pgvector/pgvector` testcontainer and migrates
+    that instead; database-backed tests skip only if neither path is available.
+  - `scenario_database` - gives every live scenario run a separate PostgreSQL schema and
+    real SQLModel session factory. Concurrent dataset cases can reuse their opaque fixture
+    ids without colliding; the scenario suites no longer substitute a `MagicMock` session.
   - `seeded_db` - persists alice/bob/carol/dave + four memories with hand-built
     embeddings; `monkeypatch`es `db.session._engine`/`_SessionLocal` so app code hits the
     test DB. Read its docstring before asserting on similarity ordering - the embedding
     geometry (`e0`/`e1` axes) is deliberate.
+  - `smtp_sink` - points the unmodified `thenetwork/email/outbound.py` send path at an
+    in-process `aiosmtpd` server, exercising its real STARTTLS, authentication, MIME, and
+    SMTP DATA behavior while capturing the messages. The sink is opt-in per test, not a
+    session-wide SMTP override: a new outbound test that omits `smtp_sink` uses the
+    configured `SMTP_HOST`.
 - Suites: `tests/security/` (the SEAL), `tests/scenarios/` (emergent-behavior evals via
   pydantic-evals), `tests/test_match_pipeline.py` (semantic match), `tests/test_proactive.py`,
   and `tests/test_event_end_to_end.py` (the assembled database-backed event lifecycle).
 - `asyncio_mode = "auto"` - async tests need no decorator.
-- `tests/scenarios/test_live_archetypes.py` - a pydantic-evals `Dataset` of five archetype
-  emails (onboarding, weak match, strong match, prompt-injection attempt, ambiguous intent)
-  run against the *real* configured `AGENT_MODEL`, not `TestModel`/`FunctionModel` like the
-  rest of `tests/scenarios/`. Each case is scored by structural assertions (was the expected
-  tool called, did the reply leak another person's PII, etc.) plus a pydantic-evals
-  `LLMJudge` evaluator that grades reasonableness of the action against a rubric. DB access
-  and outbound mail are mocked the same way as `test_archetypes.py`, so a run only costs
-  model calls, not a live Postgres/SMTP round trip. Every case is marked both `integration`
-  and `live_model` (both declared in `pyproject.toml`) and the module skips itself if no
-  `AGENT_API_KEY` is set, so `pytest -m "not integration"` (CI) never
-  reaches a live model. The `LLMJudge` evaluators require `TEST_LLM_JUDGE_MODEL` (and
-  `TEST_LLM_JUDGE_API_KEY`) to be set too - unlike a bare pydantic-evals `LLMJudge`, which
-  defaults to calling `openai:gpt-5.2` with no configured key, this suite skips rather than
-  falling back to that implicit third-party default. Run deliberately with
-  `uv run pytest -m live_model tests/scenarios/test_live_archetypes.py`.
+- `tests/scenarios/test_live_archetypes.py` runs the pydantic-evals archetype dataset
+  against the real configured `AGENT_MODEL`, using `scenario_database` for real isolated
+  PostgreSQL state while keeping embeddings, search results, and outbound delivery
+  deterministic. Each case is scored by structural assertions (was the expected tool
+  called, did the reply leak another person's PII, etc.) plus an `LLMJudge` evaluator that
+  grades the action against a rubric. The suite requires `AGENT_API_KEY`,
+  `TEST_LLM_JUDGE_MODEL`, and `TEST_LLM_JUDGE_API_KEY` when recording; it never falls back
+  to pydantic-evals' implicit third-party judge default.
+- Live prompt-adherence measurement is split into 32 parametrized
+  `test_prompt_adherence_case` runs. Each scenario has its own cassette beneath
+  `tests/scenarios/cassettes/`, so a failed or missing case can be recorded independently.
+  The default record mode is replay-only (`none`) and fails on a cassette miss. Deliberate,
+  credentialed recording is an explicit opt-in:
+
+  ```bash
+  uv run pytest -m live_model --record-mode=once \
+    tests/scenarios/test_prompt_adherence.py::test_prompt_adherence_case
+  ```
+
+  Cassette hooks remove credential headers and query parameters and scrub provider ids
+  before successful recordings reach disk. Set
+  `PROMPT_ADHERENCE_WRITE_MEASUREMENT=1` separately on a complete run to append the
+  aggregate measurement; recording or replaying cases alone does not write one.
 
 ## Deployment
 
