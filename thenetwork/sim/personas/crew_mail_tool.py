@@ -29,7 +29,7 @@ def build_sim_email_message(
     subject: str = "The Network",
     reply_to: EmailMessage | None = None,
 ) -> EmailMessage:
-    """Construct an EmailMessage with In-Reply-To, References, X-Sim headers, and signature options matching TinyPersonEmailAdapter output."""
+    """Construct an RFC 5322 EmailMessage with In-Reply-To, References, X-Sim headers, and signature options matching TinyPersonEmailAdapter output."""
     msg = EmailMessage()
     msg["From"] = f"{config.name} <{config.email}>"
     reply_address = (
