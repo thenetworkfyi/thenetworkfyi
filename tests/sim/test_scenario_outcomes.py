@@ -910,42 +910,45 @@ def test_match_depth_outcome_evidence_is_privacy_safe():
         assert private_value not in evidence
 
 
-def test_ines_clarification_check_ignores_other_personas_clarify_events():
-    outcome = replace(
-        _default_outcome(),
-        audit_events=(
-            {
-                "event": "introduction.consent_transition",
-                "action": "clarify",
-                "outcome": "success",
-                "sender_id_hash": "snd_v1_vic",
-            },
+@pytest.mark.parametrize(
+    ("audit_events", "sender_id_hashes"),
+    [
+        pytest.param(
+            (
+                {
+                    "event": "introduction.consent_transition",
+                    "action": "clarify",
+                    "outcome": "success",
+                    "sender_id_hash": "snd_v1_vic",
+                },
+            ),
+            None,
+            id="other_personas_clarify_event",
         ),
-    )
-
-    score = score_scenario_outcomes(
-        outcome,
-        (DEFAULT_OUTCOME_CHECKS[2],),
-        real_process=True,
-        llm_personas=True,
-    )
-
-    assert score.passed is False
-    assert score.findings[0].evidence == {"clarify_events": []}
-
-
-def test_ines_clarification_check_ignores_unscoped_clarify_events():
-    outcome = replace(
-        _default_outcome(),
-        audit_events=(
-            {
-                "event": "introduction.consent_transition",
-                "action": "clarify",
-                "outcome": "success",
-            },
+        pytest.param(
+            (
+                {
+                    "event": "introduction.consent_transition",
+                    "action": "clarify",
+                    "outcome": "success",
+                },
+            ),
+            {"omar.sim@example.test": "snd_v1_omar"},
+            id="unscoped_clarify_event",
         ),
-        sender_id_hashes={"omar.sim@example.test": "snd_v1_omar"},
-    )
+    ],
+)
+def test_ines_clarification_check_ignores_events_not_bound_to_her(
+    audit_events: tuple[dict, ...], sender_id_hashes: dict[str, str] | None
+):
+    if sender_id_hashes is None:
+        outcome = replace(_default_outcome(), audit_events=audit_events)
+    else:
+        outcome = replace(
+            _default_outcome(),
+            audit_events=audit_events,
+            sender_id_hashes=sender_id_hashes,
+        )
 
     score = score_scenario_outcomes(
         outcome,
@@ -1223,45 +1226,40 @@ def test_match_depth_memory_expectations_are_unexercised_without_persona_mail():
     )
 
 
-def test_match_depth_memory_expectation_waits_for_every_prerequisite_group():
-    expectation = DEFAULT_EXPECTATIONS[4]
-    opening_only = MailFacts(
-        sender=LEILA_EMAIL,
-        recipients=frozenset({"join@example.test"}),
-        subject="Lab tools",
-        body="I am building inventory software for community science labs.",
-    )
-
-    unexercised = score_memory_expectations(
-        (), (expectation,), mail_facts=(opening_only,)
-    )
-    exercised = score_memory_expectations(
-        (),
-        (expectation,),
-        mail_facts=(
-            opening_only,
-            MailFacts(
-                sender=LEILA_EMAIL,
-                recipients=frozenset({"join@example.test"}),
-                subject="Re: Lab tools",
-                body="I have piloted it with two volunteer-run community science labs.",
-            ),
+@pytest.mark.parametrize(
+    ("expectation_index", "sender", "vague_subject", "vague_body", "scoped_body"),
+    [
+        pytest.param(
+            4,
+            LEILA_EMAIL,
+            "Lab tools",
+            "I am building inventory software for community science labs.",
+            "I have piloted it with two volunteer-run community science labs.",
+            id="leila_prerequisite_groups",
         ),
-    )
-
-    assert unexercised.passed is True
-    assert unexercised.findings[0].evidence["unexercised"] is True
-    assert exercised.passed is False
-    assert exercised.findings[0].evidence == {}
-
-
-def test_hugo_scope_memory_waits_for_the_clarifying_reply():
-    expectation = DEFAULT_EXPECTATIONS[2]
+        pytest.param(
+            2,
+            HUGO_EMAIL,
+            "Clinic systems",
+            "I want an introduction to someone working with community health clinics.",
+            "The scope is patient-scheduling systems.",
+            id="hugo_clarifying_reply",
+        ),
+    ],
+)
+def test_memory_expectation_waits_for_the_clarifying_reply(
+    expectation_index: int,
+    sender: str,
+    vague_subject: str,
+    vague_body: str,
+    scoped_body: str,
+):
+    expectation = DEFAULT_EXPECTATIONS[expectation_index]
     vague_opening = MailFacts(
-        sender=HUGO_EMAIL,
+        sender=sender,
         recipients=frozenset({"join@example.test"}),
-        subject="Clinic systems",
-        body="I want an introduction to someone working with community health clinics.",
+        subject=vague_subject,
+        body=vague_body,
     )
 
     unexercised = score_memory_expectations(
@@ -1273,10 +1271,10 @@ def test_hugo_scope_memory_waits_for_the_clarifying_reply():
         mail_facts=(
             vague_opening,
             MailFacts(
-                sender=HUGO_EMAIL,
+                sender=sender,
                 recipients=frozenset({"join@example.test"}),
-                subject="Re: Clinic systems",
-                body="The scope is patient-scheduling systems.",
+                subject=f"Re: {vague_subject}",
+                body=scoped_body,
             ),
         ),
     )
