@@ -253,6 +253,4 @@ def test_observation_migration_downgrade_removes_table(monkeypatch):
 
     migration.downgrade()
 
-    assert operation.drop_table.call_args_list == [
-        call("primary_intake_observations")
-    ]
+    assert operation.drop_table.call_args_list == [call("primary_intake_observations")]
