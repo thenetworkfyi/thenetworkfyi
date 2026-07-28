@@ -1,22 +1,56 @@
 """Structured audit coverage without creating a PII-at-rest side channel."""
-
 from __future__ import annotations
-
 import io
 import json
 import logging
 import sys
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
-
 import pytest
-
+from thenetwork.agent.core import build_agent, run_agent_for_email
+from thenetwork.agent.deps import AgentCapabilities, AgentDeps
+from thenetwork.agent.tools import (
+    no_action,
+    propose_introduction,
+    register_person,
+    search,
+)
 from thenetwork.audit import (
     LOGGER_NAME,
     audit_event,
     audit_jsonl_file,
+    audit_model_trace,
     audit_run,
+    audit_sender,
+    audit_trace,
     audit_warning_event,
+)
+from thenetwork.db.models import Person
+from thenetwork.email.inbound import (
+    MAX_BODY_CHARS,
+    MAX_RAW_BODY_CHARS,
+    MAX_SUBJECT_CHARS,
+    REJECT_BODY_OVERSIZE,
+    InboundMessage,
+)
+from thenetwork.email.intake_observations import BurstObservationResult
+from thenetwork.email.render import (
+    FixedEmailTemplate,
+    InfrastructureRejectionEmailContext,
+    InfrastructureRejectionReason,
+)
+from thenetwork.search.match import MemoryMatch
+from thenetwork.security.sender_identifier import sender_identifier
+from thenetwork.settings import Settings
+from thenetwork.worker.producer import (
+    REJECT_DISPOSABLE_DOMAIN,
+    _poll_and_enqueue,
+    _poll_mailbox_and_enqueue,
+)
+from thenetwork.worker.tasks import (
+    REJECT_CONTENT_SCAN,
+    REJECT_RATE_LIMIT,
+    process_email,
 )
 
 
@@ -24,7 +58,6 @@ from thenetwork.audit import (
 def _empty_recent_sender_memory_context(monkeypatch):
     """Audit tests inject no DB history unless they explicitly exercise it."""
     from thenetwork.memory.recent_context import RecentSenderMemoryContext
-
     monkeypatch.setattr(
         "thenetwork.agent.core.load_recent_sender_memory_context",
         lambda *_args, **_kwargs: RecentSenderMemoryContext(),
@@ -32,6 +65,12 @@ def _empty_recent_sender_memory_context(monkeypatch):
     monkeypatch.setattr(
         "thenetwork.worker.producer.is_primary_intake_paused", lambda: False
     )
+
+
+@pytest.fixture(autouse=True)
+def _audit_caplog_captures_info(caplog):
+    """Every test in this module asserts on captured audit records."""
+    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
 
 
 def _events(caplog) -> list[dict]:
@@ -44,7 +83,6 @@ def _events(caplog) -> list[dict]:
 
 def _fake_classify(text):
     """Deterministic stand-in for the local span classifier the redactor uses.
-
     The real weights are a multi-gigabyte download and CI runs
     `pytest -m "not integration"`, so these tests never load them. Spans are
     shaped exactly like the pipeline's output.
@@ -78,7 +116,6 @@ def _format_foreign_log(
     exc_info=None,
 ) -> dict:
     from thenetwork import audit
-
     stream = io.StringIO()
     handler = logging.StreamHandler(stream)
     handler.setFormatter(
@@ -118,12 +155,7 @@ def _procrastinate_job_extra(*, action: str, result=None) -> dict:
     }
     extra = {
         "action": action,
-        "worker": {
-            "name": None,
-            "worker_id": 7,
-            "job_id": 35,
-            "queues": [],
-        },
+        "worker": {"name": None, "worker_id": 7, "job_id": 35, "queues": []},
         "job": {
             "id": 35,
             "status": "doing",
@@ -144,6 +176,15 @@ def _procrastinate_job_extra(*, action: str, result=None) -> dict:
     return extra
 
 
+def _assert_procrastinate_metadata_preserved_and_content_redacted(event, serialized):
+    assert event["logger"] == "procrastinate.worker.worker"
+    assert event["job"]["task_name"] == (
+        "thenetwork.worker.abuse_judge.judge_primary_email_abuse"
+    )
+    assert "alice@example.test" not in serialized
+    assert "Alice Example" not in serialized
+
+
 def test_procrastinate_start_log_preserves_metadata_and_redacts_only_job_content(
     monkeypatch,
 ):
@@ -159,22 +200,15 @@ def test_procrastinate_start_log_preserves_metadata_and_redacts_only_job_content
         ),
         extra=_procrastinate_job_extra(action="start_job"),
     )
-
     serialized = json.dumps(event)
+    _assert_procrastinate_metadata_preserved_and_content_redacted(event, serialized)
     assert event["event"] == "procrastinate.start_job"
-    assert event["logger"] == "procrastinate.worker.worker"
     assert event["level"] == "info"
-    assert event["action"] == "start_job"
-    assert event["job"]["task_name"] == (
-        "thenetwork.worker.abuse_judge.judge_primary_email_abuse"
-    )
     assert event["job"]["task_kwargs"]["timestamp"] == 1784614500.0
     assert event["start_timestamp"] == 1784614500.0
     assert "call_string" not in event["job"]
     assert "[url]er" not in serialized
     assert "[phone_number]" not in serialized
-    assert "alice@example.test" not in serialized
-    assert "Alice Example" not in serialized
 
 
 def test_procrastinate_success_log_preserves_completion_metadata(monkeypatch):
@@ -194,33 +228,26 @@ def test_procrastinate_success_log_preserves_completion_metadata(monkeypatch):
         ),
         extra=extra,
     )
-
     serialized = json.dumps(event)
+    _assert_procrastinate_metadata_preserved_and_content_redacted(event, serialized)
     assert event["event"] == "procrastinate.job_success"
-    assert event["logger"] == "procrastinate.worker.worker"
     assert event["level"] == "info"
     assert event["job"]["id"] == 35
-    assert event["job"]["task_name"] == (
-        "thenetwork.worker.abuse_judge.judge_primary_email_abuse"
-    )
     assert event["start_timestamp"] == 1784614500.0
     assert event["end_timestamp"] == 1784614504.992
     assert event["duration"] == 4.992
     assert "[url]er" not in serialized
     assert "[phone_number]" not in serialized
-    assert "alice@example.test" not in serialized
 
 
 def test_procrastinate_failure_log_redacts_result_and_exception_content(monkeypatch):
     monkeypatch.setattr(
         "thenetwork.memory.sanitize._get_privacy_filter", lambda: _fake_classify
     )
-    private_error = "Delivery failed for alice@example.test and Alice Example"
     try:
-        raise RuntimeError(private_error)
+        raise RuntimeError("Delivery failed for alice@example.test and Alice Example")
     except RuntimeError:
         exc_info = sys.exc_info()
-
     event = _format_foreign_log(
         logger_name="procrastinate.worker.worker",
         message=(
@@ -232,15 +259,12 @@ def test_procrastinate_failure_log_redacts_result_and_exception_content(monkeypa
         ),
         exc_info=exc_info,
     )
-
     serialized = json.dumps(event)
+    _assert_procrastinate_metadata_preserved_and_content_redacted(event, serialized)
     assert event["event"] == "procrastinate.job_error"
-    assert event["logger"] == "procrastinate.worker.worker"
     assert event["level"] == "error"
     assert event["job"]["id"] == 35
     assert event["duration"] == 4.992
-    assert "alice@example.test" not in serialized
-    assert "Alice Example" not in serialized
     assert "RuntimeError" in event["exception"]
 
 
@@ -260,9 +284,6 @@ def _tool_ctx(
     sender_authenticated: bool = True,
     capabilities=None,
 ):
-    from thenetwork.agent.deps import AgentCapabilities, AgentDeps
-    from thenetwork.settings import Settings
-
     mock_session = MagicMock()
     mock_session.__enter__ = MagicMock(return_value=mock_session)
     mock_session.__exit__ = MagicMock(return_value=False)
@@ -302,12 +323,9 @@ def _database_action_event(events: list[dict], *, record_type: str) -> dict:
 
 
 def test_audit_events_are_json_and_correlated(caplog):
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
     with audit_run():
         audit_event("test.event", message_count=2, outcome="success")
         audit_event("test.next", sender_known=True)
-
     events = _events(caplog)
     assert [event["event"] for event in events] == ["test.event", "test.next"]
     assert events[0]["run_id"] == events[1]["run_id"]
@@ -319,11 +337,9 @@ def test_audit_jsonl_file_reenables_disabled_logger_and_restores_it(tmp_path):
     logger = logging.getLogger(LOGGER_NAME)
     previous_disabled = logger.disabled
     logger.disabled = True
-
     try:
         with audit_jsonl_file(audit_path):
             audit_event("test.event", message_count=1)
-
         assert json.loads(audit_path.read_text())["event"] == "test.event"
         assert logger.disabled is True
     finally:
@@ -333,7 +349,6 @@ def test_audit_jsonl_file_reenables_disabled_logger_and_restores_it(tmp_path):
 def test_audit_jsonl_file_can_exclude_content_bearing_model_responses(tmp_path):
     audit_path = tmp_path / "audit.jsonl"
     logger = logging.getLogger(LOGGER_NAME)
-
     with audit_jsonl_file(audit_path, include_model_responses=False):
         audit_event("agent.tool.completed", tool_name="create_event", outcome="success")
         logger.info(
@@ -344,7 +359,6 @@ def test_audit_jsonl_file_can_exclude_content_bearing_model_responses(tmp_path):
                 }
             )
         )
-
     artifact = audit_path.read_text()
     assert "agent.tool.completed" in artifact
     assert "agent.model_response" not in artifact
@@ -357,50 +371,33 @@ def test_audit_api_rejects_content_bearing_fields():
 
 
 def test_audit_categories_replace_arbitrary_values(caplog):
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
     audit_event("worker.message_rejected", reason="private_secret")
-
     assert _events(caplog)[0]["reason"] == "unknown"
     assert "private_secret" not in caplog.records[0].message
 
 
-def test_audit_model_name_preserves_openrouter_vendor_slash_ids(caplog):
+@pytest.mark.parametrize(
+    ("model_name", "expected"),
+    [
+        ("google/gemma-4-31b-it", "google/gemma-4-31b-it"),
+        ('vendor/model"\ninjected', "unknown"),
+        ("vendor/" + "m" * 80, "unknown"),
+    ],
+    ids=["openrouter_vendor_slash_id", "unsafe_characters", "over_eighty_chars"],
+)
+def test_audit_model_name_handling(caplog, model_name, expected):
     """model_name is provider-returned data, not a closed category, so it must
-    not be collapsed to "unknown" by the generic _safe_token charset - that
-    charset lacks "/", which every OpenRouter `vendor/model` id contains."""
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
-    audit_event("llm.request.completed", model_name="google/gemma-4-31b-it")
-
-    assert _events(caplog)[0]["model_name"] == "google/gemma-4-31b-it"
-
-
-def test_audit_model_name_still_rejects_unsafe_characters(caplog):
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
-    audit_event("llm.request.completed", model_name='vendor/model"\ninjected')
-
-    assert _events(caplog)[0]["model_name"] == "unknown"
-
-
-def test_audit_model_name_still_rejects_names_over_eighty_characters(caplog):
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
-    audit_event("llm.request.completed", model_name="vendor/" + "m" * 80)
-
-    assert _events(caplog)[0]["model_name"] == "unknown"
+    not be collapsed to "unknown" by the generic _safe_token charset unless it
+    is actually unsafe or oversized - that charset lacks "/", which every
+    OpenRouter `vendor/model` id contains."""
+    audit_event("llm.request.completed", model_name=model_name)
+    assert _events(caplog)[0]["model_name"] == expected
 
 
 @pytest.mark.asyncio
 async def test_no_action_output_has_exact_audit_name_and_outcome(caplog):
-    from thenetwork.agent.tools import no_action
-
     ctx, _session = _tool_ctx()
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
     result = await no_action(ctx, "private reason that must not be logged")
-
     assert result == ""
     events = _events(caplog)
     assert [event["event"] for event in events] == [
@@ -415,15 +412,12 @@ async def test_no_action_output_has_exact_audit_name_and_outcome(caplog):
 
 
 def test_audit_event_level_split_error_vs_expected_negative_outcomes(caplog):
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
     audit_event("test.error_outcome", outcome="error")
     audit_event("test.error_type_only", error_type="ValueError")
     audit_event("test.rate_limited", outcome="rate_limited")
     audit_event("test.rejected", outcome="rejected_forbidden")
     audit_event("test.not_found", outcome="not_found")
     audit_event("test.tool_limited", tool_outcome="limited")
-
     levels_by_event = {
         record.message and json.loads(record.message)["event"]: record.levelname
         for record in caplog.records
@@ -437,14 +431,11 @@ def test_audit_event_level_split_error_vs_expected_negative_outcomes(caplog):
 
 
 def test_audit_warning_event_uses_warning_level(caplog):
-    caplog.set_level(logging.WARNING, logger=LOGGER_NAME)
-
     audit_warning_event(
         "test.warning",
         authserv_id="mx.example.com",
         auth_result_mechanisms=["arc", "x-provider"],
     )
-
     event = _events(caplog)[0]
     assert event["event"] == "test.warning"
     assert event["authserv_id"] == "mx.example.com"
@@ -453,16 +444,11 @@ def test_audit_warning_event_uses_warning_level(caplog):
 
 
 def test_audit_trace_correlates_events_without_content(caplog):
-    from thenetwork.audit import audit_sender, audit_trace
-
     trace_id = "2d24f8a9-c332-4e3f-85af-b1785e9ce4ab"
     sender_id_hash = "snd_v1_YWJjZGVmZ2hpamtsbW5vcA"
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
     with audit_trace(trace_id), audit_sender(sender_id_hash):
         audit_event("test.event", message_count=1)
         audit_event("test.next", sender_known=True)
-
     events = _events(caplog)
     assert [event["trace_id"] for event in events] == [trace_id, trace_id]
     assert [event["sender_id_hash"] for event in events] == [
@@ -472,14 +458,11 @@ def test_audit_trace_correlates_events_without_content(caplog):
 
 
 def test_audit_correlation_fields_sanitize_raw_sender_values(caplog):
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
     audit_event(
         "test.event",
         trace_id="not a safe trace id with spaces",
         sender_id_hash="alice.private@example.com",
     )
-
     event = _events(caplog)[0]
     assert event["trace_id"] == "unknown"
     assert event["sender_id_hash"] == "unknown"
@@ -487,202 +470,196 @@ def test_audit_correlation_fields_sanitize_raw_sender_values(caplog):
 
 
 @pytest.mark.asyncio
-async def test_register_person_audits_unauthenticated_return_path(caplog):
-    from thenetwork.agent.tools import register_person
-
-    ctx, _ = _tool_ctx(sender_authenticated=False)
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
-    result = await register_person(ctx, name="Alice")
-
-    assert result == {"status": "error", "reason": "sender_not_authenticated"}
-    events = _events(caplog)
-    database_event = _database_action_event(events, record_type="person")
-    assert database_event["action"] == "insert"
-    assert database_event["outcome"] == "rejected_unauthenticated"
-    completed = _tool_completed_event(events, "register_person")
-    assert completed["outcome"] == "success"
-    assert completed["tool_outcome"] == "error"
-    assert completed["tool_reason"] == "sender_not_authenticated"
-
-
-@pytest.mark.asyncio
-async def test_register_person_audits_already_registered_return_path(caplog):
-    from thenetwork.agent.tools import register_person
-
-    ctx, _ = _tool_ctx(sender_user_id="person-id")
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
-    result = await register_person(ctx, name="Alice")
-
-    assert result == {
-        "status": "error",
-        "reason": "already_registered",
-        "person_id": "person-id",
-    }
-    events = _events(caplog)
-    database_event = _database_action_event(events, record_type="person")
-    assert database_event["action"] == "insert"
-    assert database_event["outcome"] == "rejected_already_registered"
-    completed = _tool_completed_event(events, "register_person")
-    assert completed["tool_outcome"] == "error"
-    assert completed["tool_reason"] == "already_registered"
-
-
-@pytest.mark.asyncio
-async def test_register_person_audits_existing_person_return_path(caplog):
-    from thenetwork.agent.tools import register_person
-
-    ctx, session = _tool_ctx()
-    session.exec.return_value.first.return_value = SimpleNamespace(id="existing-id")
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
-    result = await register_person(ctx, name="Alice")
-
-    assert result == {"status": "exists", "person_id": "existing-id"}
-    events = _events(caplog)
-    database_event = _database_action_event(events, record_type="person")
-    assert database_event["action"] == "lookup"
-    assert database_event["outcome"] == "exists"
-    completed = _tool_completed_event(events, "register_person")
-    assert completed["tool_outcome"] == "exists"
-
-
-@pytest.mark.asyncio
-async def test_register_person_audits_rate_limited_return_path(caplog):
-    from thenetwork.agent.tools import register_person
-
-    ctx, session = _tool_ctx()
-    ctx.deps.settings.registration_limit_per_day = 1
-    session.exec.return_value.first.return_value = None
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
-    with patch("thenetwork.agent.tools._hit_registration_quota", return_value=False):
-        result = await register_person(ctx, name="Alice")
-
-    assert result == {
-        "status": "error",
-        "reason": "registration_quota_exceeded",
-        "limit": 1,
-    }
-    events = _events(caplog)
-    database_event = _database_action_event(events, record_type="person")
-    assert database_event["action"] == "insert"
-    assert database_event["outcome"] == "rate_limited"
-    completed = _tool_completed_event(events, "register_person")
-    assert completed["tool_outcome"] == "error"
-    assert completed["tool_reason"] == "registration_quota_exceeded"
-
-
-@pytest.mark.asyncio
-async def test_register_person_audits_created_return_path(caplog):
-    from thenetwork.agent.tools import register_person
-
-    ctx, session = _tool_ctx()
-    session.exec.return_value.first.return_value = None
-    session.refresh.side_effect = lambda person: setattr(person, "id", "new-person-id")
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
-    with patch("thenetwork.agent.tools._hit_registration_quota", return_value=True):
-        result = await register_person(ctx, name="Alice")
-
-    assert result == {"status": "created", "person_id": "new-person-id"}
-    events = _events(caplog)
-    database_event = _database_action_event(events, record_type="person")
-    assert database_event["action"] == "insert"
-    assert database_event["outcome"] == "success"
-    completed = _tool_completed_event(events, "register_person")
-    assert completed["tool_outcome"] == "created"
-
-
-@pytest.mark.asyncio
-async def test_propose_introduction_audits_run_proposal_cap_deferred(caplog):
-    from thenetwork.agent.tools import propose_introduction
-
-    ctx, _ = _tool_ctx(sender_user_id="alice-id")
-    ctx.deps.settings.introduction_max_proposals_per_run = 1
-    ctx.deps.introduction_proposal_count = 1
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
-    result = await propose_introduction(
-        ctx, other_person_id="bob-id", sender_gist="a gist", other_gist="b gist"
-    )
-
-    assert result["status"] == "deferred"
-    assert result["reason"] == "run_proposal_cap"
-    assert result["limit"] == 1
-    assert "no consent request was sent" in result["note"]
-    events = _events(caplog)
-    completed = _tool_completed_event(events, "propose_introduction")
-    assert completed["tool_outcome"] == "deferred"
-    assert completed["tool_reason"] == "run_proposal_cap"
-
-
-@pytest.mark.asyncio
-async def test_propose_introduction_audits_recipient_cap_deferred(caplog):
-    from thenetwork.agent.deps import AgentCapabilities
-    from thenetwork.agent.tools import propose_introduction
-
-    ctx, _ = _tool_ctx(
-        sender_user_id="alice-id",
-        capabilities=AgentCapabilities(
-            propose_pair=MagicMock(
-                return_value={
-                    "status": "deferred",
-                    "reason": "recipient_consent_request_cap",
-                    "limit": 3,
-                }
-            )
+@pytest.mark.parametrize(
+    (
+        "sender_authenticated",
+        "sender_user_id",
+        "existing_person_id",
+        "registration_limit",
+        "quota_available",
+        "expected_result",
+        "db_action",
+        "db_outcome",
+        "tool_outcome",
+        "tool_reason",
+    ),
+    [
+        pytest.param(
+            False,
+            None,
+            None,
+            None,
+            None,
+            {"status": "error", "reason": "sender_not_authenticated"},
+            "insert",
+            "rejected_unauthenticated",
+            "error",
+            "sender_not_authenticated",
+            id="unauthenticated",
         ),
+        pytest.param(
+            True,
+            "person-id",
+            None,
+            None,
+            None,
+            {
+                "status": "error",
+                "reason": "already_registered",
+                "person_id": "person-id",
+            },
+            "insert",
+            "rejected_already_registered",
+            "error",
+            "already_registered",
+            id="already_registered",
+        ),
+        pytest.param(
+            True,
+            None,
+            "existing-id",
+            None,
+            None,
+            {"status": "exists", "person_id": "existing-id"},
+            "lookup",
+            "exists",
+            "exists",
+            None,
+            id="existing_person",
+        ),
+        pytest.param(
+            True,
+            None,
+            None,
+            1,
+            False,
+            {
+                "status": "error",
+                "reason": "registration_quota_exceeded",
+                "limit": 1,
+            },
+            "insert",
+            "rate_limited",
+            "error",
+            "registration_quota_exceeded",
+            id="rate_limited",
+        ),
+        pytest.param(
+            True,
+            None,
+            None,
+            None,
+            True,
+            {"status": "created", "person_id": "new-person-id"},
+            "insert",
+            "success",
+            "created",
+            None,
+            id="created",
+        ),
+    ],
+)
+async def test_register_person_audits_return_path(
+    caplog,
+    monkeypatch,
+    sender_authenticated,
+    sender_user_id,
+    existing_person_id,
+    registration_limit,
+    quota_available,
+    expected_result,
+    db_action,
+    db_outcome,
+    tool_outcome,
+    tool_reason,
+):
+    ctx, session = _tool_ctx(
+        sender_authenticated=sender_authenticated, sender_user_id=sender_user_id
     )
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
-    result = await propose_introduction(
-        ctx, other_person_id="bob-id", sender_gist="a gist", other_gist="b gist"
+    session.exec.return_value.first.return_value = (
+        SimpleNamespace(id=existing_person_id) if existing_person_id else None
     )
-
-    assert result["status"] == "deferred"
+    if registration_limit is not None:
+        ctx.deps.settings.registration_limit_per_day = registration_limit
+    if quota_available is not None:
+        monkeypatch.setattr(
+            "thenetwork.agent.tools._hit_registration_quota",
+            lambda *_a, **_kw: quota_available,
+        )
+    if tool_outcome == "created":
+        session.refresh.side_effect = lambda person: setattr(
+            person, "id", "new-person-id"
+        )
+    result = await register_person(ctx, name="Alice")
+    assert result == expected_result
     events = _events(caplog)
-    completed = _tool_completed_event(events, "propose_introduction")
-    assert completed["tool_outcome"] == "deferred"
-    assert completed["tool_reason"] == "recipient_consent_request_cap"
+    database_event = _database_action_event(events, record_type="person")
+    assert database_event["action"] == db_action
+    assert database_event["outcome"] == db_outcome
+    completed = _tool_completed_event(events, "register_person")
+    assert completed["tool_outcome"] == tool_outcome
+    if tool_reason is not None:
+        assert completed["tool_reason"] == tool_reason
 
 
 @pytest.mark.asyncio
-async def test_propose_introduction_audits_suppressed_consent_state(caplog):
-    from thenetwork.agent.deps import AgentCapabilities
-    from thenetwork.agent.tools import propose_introduction
-
-    ctx, _ = _tool_ctx(
-        sender_user_id="alice-id",
-        capabilities=AgentCapabilities(
-            propose_pair=MagicMock(
-                return_value={"status": "suppressed", "reason": "one_consented"}
-            )
+@pytest.mark.parametrize(
+    ("run_cap", "run_count", "propose_pair_result", "expected_status", "expected_reason"),
+    [
+        pytest.param(1, 1, None, "deferred", "run_proposal_cap", id="run_proposal_cap"),
+        pytest.param(
+            None,
+            0,
+            {
+                "status": "deferred",
+                "reason": "recipient_consent_request_cap",
+                "limit": 3,
+            },
+            "deferred",
+            "recipient_consent_request_cap",
+            id="recipient_cap",
         ),
+        pytest.param(
+            None,
+            0,
+            {"status": "suppressed", "reason": "one_consented"},
+            "suppressed",
+            "one_consented",
+            id="suppressed_consent",
+        ),
+    ],
+)
+async def test_propose_introduction_audits_deferred_and_suppressed_outcomes(
+    caplog, run_cap, run_count, propose_pair_result, expected_status, expected_reason
+):
+    capabilities = (
+        AgentCapabilities(propose_pair=MagicMock(return_value=propose_pair_result))
+        if propose_pair_result is not None
+        else None
     )
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
+    ctx, _ = _tool_ctx(sender_user_id="alice-id", capabilities=capabilities)
+    if run_cap is not None:
+        ctx.deps.settings.introduction_max_proposals_per_run = run_cap
+        ctx.deps.introduction_proposal_count = run_count
     result = await propose_introduction(
         ctx, other_person_id="bob-id", sender_gist="a gist", other_gist="b gist"
     )
-
-    assert result["status"] == "suppressed"
-    events = _events(caplog)
-    completed = _tool_completed_event(events, "propose_introduction")
-    assert completed["tool_outcome"] == "suppressed"
-    assert completed["tool_reason"] == "one_consented"
+    assert result["status"] == expected_status
+    if run_cap is not None:
+        assert result["reason"] == expected_reason
+        assert result["limit"] == run_cap
+        assert "no consent request was sent" in result["note"]
+    completed = _tool_completed_event(_events(caplog), "propose_introduction")
+    assert completed["tool_outcome"] == expected_status
+    assert completed["tool_reason"] == expected_reason
 
 
 @pytest.mark.asyncio
 async def test_agent_run_applies_configured_usage_limits():
-    from thenetwork.agent.core import run_agent_for_email
-
     class FakeUsageLimits:
         def __init__(self, *, request_limit, total_tokens_limit):
             self.request_limit = request_limit
             self.total_tokens_limit = total_tokens_limit
-
     fake_result = SimpleNamespace(output="ok", all_messages=lambda: [])
     fake_agent = SimpleNamespace(run=AsyncMock(return_value=fake_result))
     settings = SimpleNamespace(
@@ -691,12 +668,11 @@ async def test_agent_run_applies_configured_usage_limits():
         agent_total_tokens_limit=1234,
         admin_emails=[],
     )
-
     with (
         patch("thenetwork.agent.core.get_settings", return_value=settings),
         patch(
             "thenetwork.agent.core.build_agent", return_value=fake_agent
-        ) as build_agent,
+        ) as build_agent_mock,
         patch(
             "thenetwork.agent.core.UsageLimits", side_effect=FakeUsageLimits
         ) as usage_limits,
@@ -707,9 +683,8 @@ async def test_agent_run_applies_configured_usage_limits():
             email_subject="Hello",
             email_body="Please remember this",
         )
-
     assert result == "ok"
-    build_agent.assert_called_once_with(model="test:model", sender_known=True)
+    build_agent_mock.assert_called_once_with(model="test:model", sender_known=True)
     usage_limits.assert_called_once_with(request_limit=3, total_tokens_limit=1234)
     fake_agent.run.assert_awaited_once()
     assert fake_agent.run.await_args.kwargs["usage_limits"].request_limit == 3
@@ -718,17 +693,20 @@ async def test_agent_run_applies_configured_usage_limits():
 
 
 @pytest.mark.asyncio
-async def test_agent_usage_limit_breach_is_audited_without_raising(caplog):
-    from thenetwork.agent.core import run_agent_for_email
-
+@pytest.mark.parametrize(
+    ("sender_user_id", "admin_emails"),
+    [("opaque-person-id", []), (None, ["admin@example.com"])],
+    ids=["known_sender", "unknown_sender"],
+)
+async def test_agent_usage_limit_breach_is_audited_without_raising(
+    caplog, sender_user_id, admin_emails
+):
     class FakeUsageLimitExceeded(Exception):
         pass
-
     class FakeUsageLimits:
         def __init__(self, *, request_limit, total_tokens_limit):
             self.request_limit = request_limit
             self.total_tokens_limit = total_tokens_limit
-
     secrets = {
         "sender": "alice.private@example.com",
         "subject": "Confidential acquisition",
@@ -741,24 +719,27 @@ async def test_agent_usage_limit_breach_is_audited_without_raising(caplog):
         agent_model="test:model",
         agent_request_limit=1,
         agent_total_tokens_limit=50,
-        admin_emails=[],
+        admin_emails=admin_emails,
     )
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
     with (
         patch("thenetwork.agent.core.get_settings", return_value=settings),
         patch("thenetwork.agent.core.build_agent", return_value=fake_agent),
         patch("thenetwork.agent.core.UsageLimits", side_effect=FakeUsageLimits),
         patch("thenetwork.agent.core.UsageLimitExceeded", FakeUsageLimitExceeded),
+        patch("thenetwork.email.outbound.notify_admins") as mock_notify,
+        patch(
+            "thenetwork.agent.core.record_agent_usage_limit_exceeded"
+        ) as record_usage_limit,
     ):
         result = await run_agent_for_email(
             sender_email=secrets["sender"],
-            sender_user_id="opaque-person-id",
+            sender_user_id=sender_user_id,
             email_subject=secrets["subject"],
             email_body=secrets["body"],
         )
-
     assert result == ""
+    record_usage_limit.assert_called_once_with()
+    mock_notify.assert_not_called()
     serialized = "\n".join(record.message for record in caplog.records)
     for secret in secrets.values():
         assert secret not in serialized
@@ -778,69 +759,12 @@ async def test_agent_usage_limit_breach_is_audited_without_raising(caplog):
 
 
 @pytest.mark.asyncio
-async def test_agent_usage_limit_breach_records_metric_without_direct_notification(
-    caplog,
-):
-    from thenetwork.agent.core import run_agent_for_email
-
-    class FakeUsageLimitExceeded(Exception):
-        pass
-
-    class FakeUsageLimits:
-        def __init__(self, *, request_limit, total_tokens_limit):
-            self.request_limit = request_limit
-            self.total_tokens_limit = total_tokens_limit
-
-    secrets = {
-        "sender": "alice.private@example.com",
-        "subject": "Confidential acquisition",
-        "body": "Call me at 415-555-0100 about Project Finch",
-    }
-    fake_agent = SimpleNamespace(
-        run=AsyncMock(side_effect=FakeUsageLimitExceeded("Project Finch token ceiling"))
-    )
-    settings = SimpleNamespace(
-        agent_model="test:model",
-        agent_request_limit=1,
-        agent_total_tokens_limit=50,
-        admin_emails=["admin@example.com"],
-    )
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
-    with (
-        patch("thenetwork.agent.core.get_settings", return_value=settings),
-        patch("thenetwork.agent.core.build_agent", return_value=fake_agent),
-        patch("thenetwork.agent.core.UsageLimits", side_effect=FakeUsageLimits),
-        patch("thenetwork.agent.core.UsageLimitExceeded", FakeUsageLimitExceeded),
-        patch("thenetwork.email.outbound.notify_admins") as mock_notify,
-        patch(
-            "thenetwork.agent.core.record_agent_usage_limit_exceeded"
-        ) as record_usage_limit,
-    ):
-        result = await run_agent_for_email(
-            sender_email=secrets["sender"],
-            sender_user_id=None,
-            email_subject=secrets["subject"],
-            email_body=secrets["body"],
-        )
-
-    assert result == ""
-    record_usage_limit.assert_called_once_with()
-    mock_notify.assert_not_called()
-
-
-@pytest.mark.asyncio
 async def test_agent_failure_after_successful_reply_does_not_escape_for_job_retry(
     caplog,
 ):
     from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
     from pydantic_ai.models.function import AgentInfo, FunctionModel
-
-    from thenetwork.agent.core import build_agent, run_agent_for_email
-    from thenetwork.db.models import Person
-
     model_calls = 0
-
     async def reply_then_timeout(
         _messages: list[ModelMessage], _info: AgentInfo
     ) -> ModelResponse:
@@ -860,7 +784,6 @@ async def test_agent_failure_after_successful_reply_does_not_escape_for_job_retr
                 ]
             )
         raise RuntimeError("provider timed out after delivery")
-
     session = MagicMock()
     session.__enter__ = MagicMock(return_value=session)
     session.__exit__ = MagicMock(return_value=False)
@@ -881,10 +804,6 @@ async def test_agent_failure_after_successful_reply_does_not_escape_for_job_retr
     test_agent = build_agent(model=FunctionModel(reply_then_timeout))
     delivered = MagicMock()
     recorded_summary = AsyncMock(return_value=True)
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
-    from thenetwork.agent.deps import AgentCapabilities
-
     with (
         patch("thenetwork.agent.core.get_settings", return_value=settings),
         patch("thenetwork.agent.core.build_agent", return_value=test_agent),
@@ -904,7 +823,6 @@ async def test_agent_failure_after_successful_reply_does_not_escape_for_job_retr
                 record_sent_email_memory=recorded_summary,
             ),
         )
-
     assert result == ""
     assert model_calls == 2
     delivered.assert_called_once()
@@ -919,12 +837,9 @@ async def test_agent_failure_after_successful_reply_does_not_escape_for_job_retr
 
 @pytest.mark.asyncio
 async def test_agent_failure_before_any_send_still_escapes_for_job_retry():
-    from thenetwork.agent.core import run_agent_for_email
-
     fake_agent = SimpleNamespace(
         run=AsyncMock(side_effect=RuntimeError("provider unavailable"))
     )
-
     with patch("thenetwork.agent.core.build_agent", return_value=fake_agent):
         with pytest.raises(RuntimeError, match="provider unavailable"):
             await run_agent_for_email(
@@ -938,8 +853,6 @@ async def test_agent_failure_before_any_send_still_escapes_for_job_retry():
 
 @pytest.mark.asyncio
 async def test_agent_trace_logs_structure_but_never_content(caplog):
-    from thenetwork.agent.core import run_agent_for_email
-
     secrets = {
         "sender": "alice.private@example.com",
         "subject": "Confidential acquisition",
@@ -964,8 +877,6 @@ async def test_agent_trace_logs_structure_but_never_content(caplog):
         ],
     )
     fake_agent = SimpleNamespace(run=AsyncMock(return_value=fake_result))
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
     with (
         patch("thenetwork.agent.core.build_agent", return_value=fake_agent),
         patch("thenetwork.email.outbound.notify_admins"),
@@ -977,12 +888,10 @@ async def test_agent_trace_logs_structure_but_never_content(caplog):
             email_body=secrets["body"],
             attachment_count=10_000,
         )
-
     assert result == secrets["reply"]
     serialized = "\n".join(record.message for record in caplog.records)
     for secret in secrets.values():
         assert secret not in serialized
-
     events = _events(caplog)
     event_names = {event["event"] for event in events}
     assert {
@@ -1004,11 +913,6 @@ async def test_agent_trace_logs_structure_but_never_content(caplog):
 
 def test_model_response_audit_logs_redacted_complete_parts(caplog, monkeypatch):
     from pydantic_ai.messages import ModelResponse, TextPart, ThinkingPart, ToolCallPart
-
-    from thenetwork import audit
-
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
     monkeypatch.setattr(
         "thenetwork.memory.sanitize._get_privacy_filter",
         lambda: _fake_classify,
@@ -1029,9 +933,7 @@ def test_model_response_audit_logs_redacted_complete_parts(caplog, monkeypatch):
             )
         ]
     )
-
-    audit.audit_model_trace(result, pseudonym_secret="test-key")
-
+    audit_model_trace(result, pseudonym_secret="test-key")
     serialized = "\n".join(record.message for record in caplog.records)
     assert raw_name not in serialized
     assert raw_email not in serialized
@@ -1045,16 +947,11 @@ def test_model_response_audit_logs_redacted_complete_parts(caplog, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_agent_run_audits_trace_id_on_lifecycle_events(caplog):
-    from thenetwork.agent.core import run_agent_for_email
-    from thenetwork.security.sender_identifier import sender_identifier
-
     trace_id = "8b8c9907-2d7b-4347-967a-412c6fe63c27"
     sender_email = "alice.private@example.com"
     expected_sender_id_hash = sender_identifier(sender_email, secret="audit-secret")
     fake_result = SimpleNamespace(output="ok", all_messages=lambda: [])
     fake_agent = SimpleNamespace(run=AsyncMock(return_value=fake_result))
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
     with (
         patch("thenetwork.agent.core.build_agent", return_value=fake_agent),
         patch("thenetwork.email.outbound.notify_admins"),
@@ -1070,7 +967,6 @@ async def test_agent_run_audits_trace_id_on_lifecycle_events(caplog):
             email_body="Please remember this",
             trace_id=trace_id,
         )
-
     assert result == "ok"
     lifecycle = [
         event for event in _events(caplog) if event["event"].startswith("agent.")
@@ -1086,8 +982,6 @@ async def test_agent_run_audits_trace_id_on_lifecycle_events(caplog):
 @pytest.mark.asyncio
 async def test_agent_no_tool_call_is_flagged_without_admin_notification(caplog):
     """A validator-bypassing double is audited but cannot create an alert."""
-    from thenetwork.agent.core import run_agent_for_email
-
     fake_result = SimpleNamespace(
         output="I don't know where to get a pizza.",
         all_messages=lambda: [
@@ -1104,8 +998,6 @@ async def test_agent_no_tool_call_is_flagged_without_admin_notification(caplog):
         ],
     )
     fake_agent = SimpleNamespace(run=AsyncMock(return_value=fake_result))
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
     with (
         patch("thenetwork.agent.core.build_agent", return_value=fake_agent),
         patch("thenetwork.email.outbound.notify_admins") as notify_admins,
@@ -1117,7 +1009,6 @@ async def test_agent_no_tool_call_is_flagged_without_admin_notification(caplog):
             email_body="I would really like a pizza.",
             trace_id="8b8c9907-2d7b-4347-967a-412c6fe63c27",
         )
-
     events = _events(caplog)
     response_event = next(e for e in events if e["event"] == "agent.response_generated")
     assert response_event["tool_called"] is False
@@ -1134,11 +1025,8 @@ async def test_agent_no_tool_call_is_flagged_without_admin_notification(caplog):
 
 @pytest.mark.asyncio
 async def test_empty_agent_output_does_not_escalate_as_undispatched():
-    from thenetwork.agent.core import run_agent_for_email
-
     fake_result = SimpleNamespace(output="   ", all_messages=lambda: [])
     fake_agent = SimpleNamespace(run=AsyncMock(return_value=fake_result))
-
     with (
         patch("thenetwork.agent.core.build_agent", return_value=fake_agent),
         patch("thenetwork.email.outbound.notify_admins") as notify_admins,
@@ -1149,56 +1037,25 @@ async def test_empty_agent_output_does_not_escalate_as_undispatched():
             email_subject="No action",
             email_body="FYI",
         )
-
     notify_admins.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_proactive_no_action_is_audited_without_admin_notification(caplog):
-    from thenetwork.agent.core import run_agent_for_email
-
+@pytest.mark.parametrize("run_count", [1, 17], ids=["single", "seventeen"])
+async def test_proactive_no_action_is_audited_without_admin_notification(
+    caplog, run_count
+):
+    """Seventeen runs models the alert-heavy simulation regression fixture."""
     fake_result = SimpleNamespace(
         output="No specific common ground supports an introduction.",
         all_messages=lambda: [],
     )
     fake_agent = SimpleNamespace(run=AsyncMock(return_value=fake_result))
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
     with (
         patch("thenetwork.agent.core.build_agent", return_value=fake_agent),
         patch("thenetwork.email.outbound.notify_admins") as notify_admins,
     ):
-        await run_agent_for_email(
-            sender_email="mike@mkly.io",
-            sender_user_id="person-mike",
-            email_subject="[Proactive] Possible connection",
-            email_body="[System match] Consider a connection.",
-            is_proactive=True,
-        )
-
-    events = _events(caplog)
-    assert any(event["event"] == "agent.proactive_no_action" for event in events)
-    assert not any(event["event"] == "agent.undispatched_response" for event in events)
-    notify_admins.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_proactive_no_op_alert_regression_fixture_has_no_admin_messages(caplog):
-    """Seventeen no-op proactive jobs model the alert-heavy simulation run."""
-    from thenetwork.agent.core import run_agent_for_email
-
-    fake_result = SimpleNamespace(
-        output="No supported action for this proactive candidate.",
-        all_messages=lambda: [],
-    )
-    fake_agent = SimpleNamespace(run=AsyncMock(return_value=fake_result))
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
-    with (
-        patch("thenetwork.agent.core.build_agent", return_value=fake_agent),
-        patch("thenetwork.email.outbound.notify_admins") as notify_admins,
-    ):
-        for _ in range(17):
+        for _ in range(run_count):
             await run_agent_for_email(
                 sender_email="mike@mkly.io",
                 sender_user_id="person-mike",
@@ -1206,28 +1063,41 @@ async def test_proactive_no_op_alert_regression_fixture_has_no_admin_messages(ca
                 email_body="[System match] Consider a connection.",
                 is_proactive=True,
             )
-
+    events = _events(caplog)
     assert (
-        len([e for e in _events(caplog) if e["event"] == "agent.proactive_no_action"])
-        == 17
+        len([e for e in events if e["event"] == "agent.proactive_no_action"])
+        == run_count
     )
+    assert not any(event["event"] == "agent.undispatched_response" for event in events)
     notify_admins.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_server_side_send_prevents_undispatched_escalation():
-    from thenetwork.agent.core import run_agent_for_email
-
-    fake_result = SimpleNamespace(
-        output="A consent request was sent.", all_messages=lambda: []
-    )
-
-    async def run_with_server_side_send(_message, *, deps, usage_limits):
-        deps.server_side_send_count = 2
-        return fake_result
-
-    fake_agent = SimpleNamespace(run=AsyncMock(side_effect=run_with_server_side_send))
-
+@pytest.mark.parametrize(
+    ("mode", "tool_name", "output"),
+    [
+        ("server_side_send", None, "A consent request was sent."),
+        ("tool_call", "reply_to_sender", "Your reply was sent."),
+        ("tool_call", "no_action", "No action was needed."),
+    ],
+)
+async def test_dispatch_activity_prevents_undispatched_escalation(mode, tool_name, output):
+    if mode == "server_side_send":
+        fake_result = SimpleNamespace(output=output, all_messages=lambda: [])
+        async def run_side_effect(_message, *, deps, usage_limits):
+            deps.server_side_send_count = 2
+            return fake_result
+        fake_agent = SimpleNamespace(run=AsyncMock(side_effect=run_side_effect))
+    else:
+        fake_result = SimpleNamespace(
+            output=output,
+            all_messages=lambda: [
+                SimpleNamespace(
+                    parts=[SimpleNamespace(part_kind="tool-call", tool_name=tool_name)]
+                )
+            ],
+        )
+        fake_agent = SimpleNamespace(run=AsyncMock(return_value=fake_result))
     with (
         patch("thenetwork.agent.core.build_agent", return_value=fake_agent),
         patch("thenetwork.email.outbound.notify_admins") as notify_admins,
@@ -1238,82 +1108,11 @@ async def test_server_side_send_prevents_undispatched_escalation():
             email_subject="Introduce me",
             email_body="Please make the introduction.",
         )
-
-    notify_admins.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_reply_tool_call_prevents_undispatched_escalation():
-    from thenetwork.agent.core import run_agent_for_email
-
-    fake_result = SimpleNamespace(
-        output="Your reply was sent.",
-        all_messages=lambda: [
-            SimpleNamespace(
-                parts=[
-                    SimpleNamespace(
-                        part_kind="tool-call",
-                        tool_name="reply_to_sender",
-                    )
-                ]
-            )
-        ],
-    )
-    fake_agent = SimpleNamespace(run=AsyncMock(return_value=fake_result))
-
-    with (
-        patch("thenetwork.agent.core.build_agent", return_value=fake_agent),
-        patch("thenetwork.email.outbound.notify_admins") as notify_admins,
-    ):
-        await run_agent_for_email(
-            sender_email="mike@mkly.io",
-            sender_user_id="person-mike",
-            email_subject="Reply",
-            email_body="Please respond.",
-        )
-
-    notify_admins.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_no_action_tool_call_prevents_undispatched_escalation():
-    from thenetwork.agent.core import run_agent_for_email
-
-    fake_result = SimpleNamespace(
-        output="No action was needed.",
-        all_messages=lambda: [
-            SimpleNamespace(
-                parts=[
-                    SimpleNamespace(
-                        part_kind="tool-call",
-                        tool_name="no_action",
-                    )
-                ]
-            )
-        ],
-    )
-    fake_agent = SimpleNamespace(run=AsyncMock(return_value=fake_result))
-
-    with (
-        patch("thenetwork.agent.core.build_agent", return_value=fake_agent),
-        patch("thenetwork.email.outbound.notify_admins") as notify_admins,
-    ):
-        await run_agent_for_email(
-            sender_email="mike@mkly.io",
-            sender_user_id="person-mike",
-            email_subject="Thanks",
-            email_body="No new info here.",
-        )
-
     notify_admins.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_tool_and_database_events_do_not_log_arguments(caplog):
-    from thenetwork.agent.deps import AgentCapabilities, AgentDeps
-    from thenetwork.agent.tools import search
-    from thenetwork.search.match import MemoryMatch
-
     secret_query = "Find Alice at alice.private@example.com"
     secret_gist = "Alice is quietly raising a seed round"
     session = MagicMock()
@@ -1335,11 +1134,8 @@ async def test_tool_and_database_events_do_not_log_arguments(caplog):
             )
         )
     )
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
     with patch("thenetwork.agent.tools._get_session", return_value=session):
         result = await search(ctx, query=secret_query)
-
     assert result[0]["evidence"] == [{"gist": secret_gist}]
     serialized = "\n".join(record.message for record in caplog.records)
     assert secret_query not in serialized
@@ -1352,10 +1148,42 @@ async def test_tool_and_database_events_do_not_log_arguments(caplog):
     )
 
 
-def test_intake_logs_header_metadata_without_values(caplog):
-    from thenetwork.email.inbound import InboundMessage
-    from thenetwork.worker.producer import _poll_and_enqueue
+@pytest.fixture
+def poll_env(monkeypatch):
+    """Default happy-path collaborators for thenetwork.worker.producer polling."""
+    env = SimpleNamespace(
+        process_email=MagicMock(),
+        mark_seen=MagicMock(),
+        is_message_processed=MagicMock(return_value=False),
+        mark_message_processed=MagicMock(),
+        unmark_message_processed=MagicMock(),
+    )
+    monkeypatch.setattr("thenetwork.worker.producer.process_email", env.process_email)
+    monkeypatch.setattr("thenetwork.worker.producer.mark_messages_seen", env.mark_seen)
+    monkeypatch.setattr(
+        "thenetwork.worker.producer.is_message_processed", env.is_message_processed
+    )
+    monkeypatch.setattr(
+        "thenetwork.worker.producer.mark_message_processed",
+        env.mark_message_processed,
+    )
+    monkeypatch.setattr(
+        "thenetwork.worker.producer.unmark_message_processed",
+        env.unmark_message_processed,
+    )
+    monkeypatch.setattr(
+        "thenetwork.worker.producer.check_daily_token_budget", lambda *_a, **_kw: True
+    )
+    return env
 
+
+def _poll_message(monkeypatch, message):
+    monkeypatch.setattr(
+        "thenetwork.worker.producer.poll_unseen", lambda *_a, **_kw: [message]
+    )
+
+
+def test_intake_logs_header_metadata_without_values(poll_env, monkeypatch, caplog):
     message = InboundMessage(
         uid="123",
         sender="alice.private@example.com",
@@ -1364,17 +1192,9 @@ def test_intake_logs_header_metadata_without_values(caplog):
         auto_submitted=None,
         sender_authenticated=True,
     )
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
-    with (
-        patch("thenetwork.worker.producer.poll_unseen", return_value=[message]),
-        patch("thenetwork.worker.producer.process_email") as process_email,
-        patch("thenetwork.worker.producer.mark_messages_seen") as mark_seen,
-        patch("thenetwork.worker.producer.check_daily_token_budget", return_value=True),
-    ):
-        assert _poll_and_enqueue() == 1
-
-    process_email.defer.assert_called_once_with(
+    _poll_message(monkeypatch, message)
+    assert _poll_and_enqueue() == 1
+    poll_env.process_email.defer.assert_called_once_with(
         sender_email=message.sender,
         subject=message.subject,
         body=message.body,
@@ -1386,7 +1206,7 @@ def test_intake_logs_header_metadata_without_values(caplog):
         source_mailbox="primary",
         intake_observed_at_epoch_seconds=ANY,
     )
-    mark_seen.assert_called_once_with(["123"], mailbox="primary")
+    poll_env.mark_seen.assert_called_once_with(["123"], mailbox="primary")
     serialized = "\n".join(record.message for record in caplog.records)
     assert message.sender not in serialized
     assert message.subject not in serialized
@@ -1400,10 +1220,7 @@ def test_intake_logs_header_metadata_without_values(caplog):
     assert received["trace_id"] == message.trace_id
 
 
-def test_intake_enqueues_inbound_message_id_when_present(caplog):
-    from thenetwork.email.inbound import InboundMessage
-    from thenetwork.worker.producer import _poll_and_enqueue
-
+def test_intake_enqueues_inbound_message_id_when_present(poll_env, monkeypatch):
     message = InboundMessage(
         uid="123",
         sender="alice.private@example.com",
@@ -1415,19 +1232,9 @@ def test_intake_enqueues_inbound_message_id_when_present(caplog):
         message_references="<root@example.com> <parent@example.com>",
         message_date="Sat, 04 Jul 2026 12:00:00 -0700",
     )
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
-    with (
-        patch("thenetwork.worker.producer.poll_unseen", return_value=[message]),
-        patch("thenetwork.worker.producer.process_email") as process_email,
-        patch("thenetwork.worker.producer.mark_messages_seen"),
-        patch("thenetwork.worker.producer.is_message_processed", return_value=False),
-        patch("thenetwork.worker.producer.mark_message_processed") as mark_processed,
-        patch("thenetwork.worker.producer.check_daily_token_budget", return_value=True),
-    ):
-        assert _poll_and_enqueue() == 1
-
-    process_email.defer.assert_called_once_with(
+    _poll_message(monkeypatch, message)
+    assert _poll_and_enqueue() == 1
+    poll_env.process_email.defer.assert_called_once_with(
         sender_email=message.sender,
         subject=message.subject,
         body=message.body,
@@ -1443,13 +1250,12 @@ def test_intake_enqueues_inbound_message_id_when_present(caplog):
         inbound_body_for_quote=message.body,
         inbound_date=message.message_date,
     )
-    mark_processed.assert_called_once_with(message.message_id)
+    poll_env.mark_message_processed.assert_called_once_with(message.message_id)
 
 
-def test_intake_enqueues_recipient_without_audit_logging_it(caplog):
-    from thenetwork.email.inbound import InboundMessage
-    from thenetwork.worker.producer import _poll_and_enqueue
-
+def test_intake_enqueues_recipient_without_audit_logging_it(
+    poll_env, monkeypatch, caplog
+):
     recipient = "hidden-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa@relay.private.example"
     message = InboundMessage(
         uid="123",
@@ -1460,24 +1266,18 @@ def test_intake_enqueues_recipient_without_audit_logging_it(caplog):
         sender_authenticated=True,
         recipient_address=recipient,
     )
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
-    with (
-        patch("thenetwork.worker.producer.poll_unseen", return_value=[message]),
-        patch("thenetwork.worker.producer.process_email") as process_email,
-        patch("thenetwork.worker.producer.mark_messages_seen"),
-        patch("thenetwork.worker.producer.check_daily_token_budget", return_value=True),
-    ):
-        assert _poll_and_enqueue() == 1
-
-    assert process_email.defer.call_args.kwargs["recipient_address"] == recipient
+    _poll_message(monkeypatch, message)
+    assert _poll_and_enqueue() == 1
+    assert (
+        poll_env.process_email.defer.call_args.kwargs["recipient_address"]
+        == recipient
+    )
     assert recipient not in "\n".join(record.message for record in caplog.records)
 
 
-def test_intake_reserves_message_id_before_defer_and_releases_on_defer_failure():
-    from thenetwork.email.inbound import InboundMessage
-    from thenetwork.worker.producer import _poll_and_enqueue
-
+def test_intake_reserves_message_id_before_defer_and_releases_on_defer_failure(
+    poll_env, monkeypatch
+):
     message = InboundMessage(
         uid="123",
         sender="alice@example.com",
@@ -1487,35 +1287,18 @@ def test_intake_reserves_message_id_before_defer_and_releases_on_defer_failure()
         sender_authenticated=True,
         message_id="<abc@example.com>",
     )
+    _poll_message(monkeypatch, message)
     calls: list[str] = []
-    with (
-        patch("thenetwork.worker.producer.poll_unseen", return_value=[message]),
-        patch("thenetwork.worker.producer.is_message_processed", return_value=False),
-        patch("thenetwork.worker.producer.mark_messages_seen") as mark_seen,
-        patch(
-            "thenetwork.worker.producer.mark_message_processed",
-            side_effect=lambda _: calls.append("reserve"),
-        ),
-        patch(
-            "thenetwork.worker.producer.unmark_message_processed",
-            side_effect=lambda _: calls.append("release"),
-        ),
-        patch("thenetwork.worker.producer.process_email") as process_email,
-        patch("thenetwork.worker.producer.check_daily_token_budget", return_value=True),
-    ):
-        process_email.defer.side_effect = RuntimeError("queue unavailable")
-        with pytest.raises(RuntimeError, match="queue unavailable"):
-            _poll_and_enqueue()
-
+    poll_env.mark_message_processed.side_effect = lambda _: calls.append("reserve")
+    poll_env.unmark_message_processed.side_effect = lambda _: calls.append("release")
+    poll_env.process_email.defer.side_effect = RuntimeError("queue unavailable")
+    with pytest.raises(RuntimeError, match="queue unavailable"):
+        _poll_and_enqueue()
     assert calls == ["reserve", "release"]
-    mark_seen.assert_not_called()
+    poll_env.mark_seen.assert_not_called()
 
 
-def test_intake_enqueue_audits_and_defers_same_trace_id(caplog):
-    from thenetwork.email.inbound import InboundMessage
-    from thenetwork.security.sender_identifier import sender_identifier
-    from thenetwork.worker.producer import _poll_and_enqueue
-
+def test_intake_enqueue_audits_and_defers_same_trace_id(poll_env, monkeypatch, caplog):
     message = InboundMessage(
         uid="123",
         sender="alice.private@example.com",
@@ -1526,22 +1309,16 @@ def test_intake_enqueue_audits_and_defers_same_trace_id(caplog):
         trace_id="399005c4-1494-4c94-bc5c-cc1036666679",
     )
     expected_sender_id_hash = sender_identifier(message.sender, secret="audit-secret")
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
-    with (
-        patch("thenetwork.worker.producer.poll_unseen", return_value=[message]),
-        patch("thenetwork.worker.producer.process_email") as process_email,
-        patch("thenetwork.worker.producer.mark_messages_seen"),
-        patch(
-            "thenetwork.security.sender_identifier.get_settings",
-            return_value=SimpleNamespace(sender_identifier_secret="audit-secret"),
-        ),
-        patch("thenetwork.worker.producer.check_daily_token_budget", return_value=True),
-    ):
-        assert _poll_and_enqueue() == 1
-
-    process_email.defer.assert_called_once()
-    assert process_email.defer.call_args.kwargs["trace_id"] == message.trace_id
+    _poll_message(monkeypatch, message)
+    monkeypatch.setattr(
+        "thenetwork.security.sender_identifier.get_settings",
+        lambda: SimpleNamespace(sender_identifier_secret="audit-secret"),
+    )
+    assert _poll_and_enqueue() == 1
+    poll_env.process_email.defer.assert_called_once()
+    assert (
+        poll_env.process_email.defer.call_args.kwargs["trace_id"] == message.trace_id
+    )
     received = next(
         event
         for event in _events(caplog)
@@ -1552,130 +1329,74 @@ def test_intake_enqueue_audits_and_defers_same_trace_id(caplog):
     assert message.sender not in "\n".join(record.message for record in caplog.records)
 
 
-def test_intake_skips_duplicate_message_id_without_reenqueueing(caplog):
-    """If a Message-ID was already processed (e.g. \\Seen got reset after the
-    fact), the producer must not re-enqueue it - that would re-run the agent
-    against an already-handled email, risking duplicate replies/memories/sends."""
-    from thenetwork.email.inbound import InboundMessage
-    from thenetwork.worker.producer import _poll_and_enqueue
-
-    message = InboundMessage(
-        uid="123",
-        sender="alice.private@example.com",
-        subject="Confidential acquisition",
-        body="Project Finch closes Friday",
-        auto_submitted=None,
-        sender_authenticated=True,
-        message_id="<abc123@example.com>",
-    )
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
-    with (
-        patch("thenetwork.worker.producer.poll_unseen", return_value=[message]),
-        patch("thenetwork.worker.producer.process_email") as process_email,
-        patch("thenetwork.worker.producer.mark_messages_seen") as mark_seen,
-        patch("thenetwork.worker.producer.is_message_processed", return_value=True),
-        patch("thenetwork.worker.producer.mark_message_processed") as mark_processed,
-        patch("thenetwork.worker.producer.check_daily_token_budget", return_value=True),
-    ):
-        assert _poll_and_enqueue() == 0
-
-    process_email.defer.assert_not_called()
-    mark_processed.assert_not_called()
-    mark_seen.assert_called_once_with(["123"], mailbox="primary")
+@pytest.mark.parametrize(
+    ("overrides", "expected_event", "expected_fields", "duplicate"),
+    [
+        pytest.param(
+            {"message_id": "<abc123@example.com>"},
+            "intake.message_duplicate_skipped",
+            {"subject_chars": len("Confidential acquisition")},
+            True,
+            id="duplicate_message_id",
+        ),
+        pytest.param(
+            {
+                "body": "",
+                "rejection_reason": REJECT_BODY_OVERSIZE,
+                "body_chars": 100_001,
+            },
+            "intake.message_rejected",
+            {"reason": REJECT_BODY_OVERSIZE, "body_chars": 100_001},
+            False,
+            id="bad_shape",
+        ),
+        pytest.param(
+            {"sender": "private-user@mailinator.com"},
+            "intake.message_rejected",
+            {"reason": REJECT_DISPOSABLE_DOMAIN},
+            False,
+            id="disposable_domain",
+        ),
+    ],
+)
+def test_intake_rejection_paths_are_pii_safe(
+    poll_env, monkeypatch, caplog, overrides, expected_event, expected_fields, duplicate
+):
+    """A rejected or already-processed inbound message must never enqueue,
+    reply, or leak sender/subject/body into the audit log - whether the
+    rejection is shape validation, a disposable domain, or a duplicate
+    Message-ID (e.g. after \\Seen is reset)."""
+    fields = {
+        "uid": "123",
+        "sender": "alice.private@example.com",
+        "subject": "Confidential acquisition",
+        "body": "Project Finch closes Friday",
+        "auto_submitted": None,
+        "sender_authenticated": True,
+        **overrides,
+    }
+    message = InboundMessage(**fields)
+    _poll_message(monkeypatch, message)
+    if duplicate:
+        poll_env.is_message_processed.return_value = True
+    assert _poll_and_enqueue() == 0
+    poll_env.process_email.defer.assert_not_called()
+    poll_env.mark_seen.assert_called_once_with(["123"], mailbox="primary")
+    if duplicate:
+        poll_env.mark_message_processed.assert_not_called()
     serialized = "\n".join(record.message for record in caplog.records)
     assert message.sender not in serialized
     assert message.subject not in serialized
-    duplicate = next(
-        event
-        for event in _events(caplog)
-        if event["event"] == "intake.message_duplicate_skipped"
-    )
-    assert duplicate["subject_chars"] == len(message.subject)
+    if message.body:
+        assert message.body not in serialized
+    event = next(e for e in _events(caplog) if e["event"] == expected_event)
+    for key, value in expected_fields.items():
+        assert event[key] == value
 
 
-def test_intake_rejects_bad_shape_without_enqueueing_or_replying(caplog):
-    from thenetwork.email.inbound import REJECT_BODY_OVERSIZE, InboundMessage
-    from thenetwork.worker.producer import _poll_and_enqueue
-
-    message = InboundMessage(
-        uid="123",
-        sender="alice.private@example.com",
-        subject="Confidential acquisition",
-        body="",
-        auto_submitted=None,
-        sender_authenticated=True,
-        rejection_reason=REJECT_BODY_OVERSIZE,
-        body_chars=100_001,
-    )
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
-    with (
-        patch("thenetwork.worker.producer.poll_unseen", return_value=[message]),
-        patch("thenetwork.worker.producer.process_email") as process_email,
-        patch("thenetwork.worker.producer.mark_messages_seen") as mark_seen,
-        patch("thenetwork.worker.producer.check_daily_token_budget", return_value=True),
-    ):
-        assert _poll_and_enqueue() == 0
-
-    process_email.defer.assert_not_called()
-    mark_seen.assert_called_once_with(["123"], mailbox="primary")
-    serialized = "\n".join(record.message for record in caplog.records)
-    assert message.sender not in serialized
-    assert message.subject not in serialized
-    rejected = next(
-        event
-        for event in _events(caplog)
-        if event["event"] == "intake.message_rejected"
-    )
-    assert rejected["reason"] == REJECT_BODY_OVERSIZE
-    assert rejected["body_chars"] == 100_001
-
-
-def test_intake_disposable_rejection_audit_is_pii_safe(caplog):
-    from thenetwork.email.inbound import InboundMessage
-    from thenetwork.worker.producer import (
-        REJECT_DISPOSABLE_DOMAIN,
-        _poll_and_enqueue,
-    )
-
-    message = InboundMessage(
-        uid="123",
-        sender="private-user@mailinator.com",
-        subject="Confidential acquisition",
-        body="Project Finch closes Friday",
-        auto_submitted=None,
-        sender_authenticated=True,
-    )
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
-    with (
-        patch("thenetwork.worker.producer.poll_unseen", return_value=[message]),
-        patch("thenetwork.worker.producer.process_email") as process_email,
-        patch("thenetwork.worker.producer.mark_messages_seen") as mark_seen,
-        patch("thenetwork.worker.producer.check_daily_token_budget", return_value=True),
-    ):
-        assert _poll_and_enqueue() == 0
-
-    process_email.defer.assert_not_called()
-    mark_seen.assert_called_once_with(["123"], mailbox="primary")
-    serialized = "\n".join(record.message for record in caplog.records)
-    assert message.sender not in serialized
-    assert message.subject not in serialized
-    assert message.body not in serialized
-    rejected = next(
-        event
-        for event in _events(caplog)
-        if event["event"] == "intake.message_rejected"
-    )
-    assert rejected["reason"] == REJECT_DISPOSABLE_DOMAIN
-
-
-def test_new_sender_burst_audit_contains_only_bounded_metadata(caplog):
-    from thenetwork.email.inbound import InboundMessage
-    from thenetwork.email.intake_observations import BurstObservationResult
-    from thenetwork.worker.producer import _poll_mailbox_and_enqueue
-
+def test_new_sender_burst_audit_contains_only_bounded_metadata(
+    poll_env, monkeypatch, caplog
+):
     message = InboundMessage(
         uid="burst-1",
         sender="private.sender@example.com",
@@ -1684,33 +1405,24 @@ def test_new_sender_burst_audit_contains_only_bounded_metadata(caplog):
         auto_submitted=None,
         sender_authenticated=False,
     )
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
-    with (
-        patch("thenetwork.worker.producer.poll_unseen", return_value=[message]),
-        patch(
-            "thenetwork.worker.producer.get_settings",
-            return_value=SimpleNamespace(
-                primary_intake_burst_monitoring_enabled=True,
-                sender_identifier_secret="monitor-secret",
-                relay_domain="relay.example.com",
-            ),
+    _poll_message(monkeypatch, message)
+    monkeypatch.setattr(
+        "thenetwork.worker.producer.get_settings",
+        lambda: SimpleNamespace(
+            primary_intake_burst_monitoring_enabled=True,
+            sender_identifier_secret="monitor-secret",
+            relay_domain="relay.example.com",
         ),
-        patch(
-            "thenetwork.worker.producer.observe_primary_intake_batch",
-            return_value=BurstObservationResult(
-                paused=True,
-                newly_observed=25,
-                distinct_new_senders=25,
-            ),
+    )
+    monkeypatch.setattr(
+        "thenetwork.worker.producer.observe_primary_intake_batch",
+        lambda *_a, **_kw: BurstObservationResult(
+            paused=True, newly_observed=25, distinct_new_senders=25
         ),
-        patch("thenetwork.worker.producer.process_email") as process_email,
-        patch("thenetwork.worker.producer.mark_messages_seen") as mark_seen,
-    ):
-        assert _poll_mailbox_and_enqueue("primary") == 0
-
-    process_email.defer.assert_not_called()
-    mark_seen.assert_called_once_with([], mailbox="primary")
+    )
+    assert _poll_mailbox_and_enqueue("primary") == 0
+    poll_env.process_email.defer.assert_not_called()
+    poll_env.mark_seen.assert_called_once_with([], mailbox="primary")
     serialized = "\n".join(record.message for record in caplog.records)
     assert message.sender not in serialized
     assert message.subject not in serialized
@@ -1725,24 +1437,45 @@ def test_new_sender_burst_audit_contains_only_bounded_metadata(caplog):
     assert event["result_count"] == 25
 
 
-@pytest.mark.asyncio
-async def test_worker_rejection_logs_reason_without_message_content(caplog):
-    from thenetwork.worker.tasks import process_email
-
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-    with (
-        patch("thenetwork.worker.tasks.check_rate_limit", return_value=False),
-        patch(
-            "thenetwork.worker.tasks.get_session",
-            return_value=_mock_sender_lookup(None),
-        ),
+@pytest.fixture
+def worker_env(monkeypatch):
+    """Default happy-path collaborators for thenetwork.worker.tasks.process_email."""
+    session = _mock_sender_lookup(None)
+    env = SimpleNamespace(
+        session=session,
+        check_rate_limit=MagicMock(return_value=True),
+        scan_content=AsyncMock(return_value=(True, None)),
+        verify_admin_request=MagicMock(return_value=None),
+        get_session=MagicMock(return_value=session),
+        send_reply=MagicMock(),
+        run_agent_for_email=AsyncMock(),
+        record_job_exhausted=MagicMock(),
+        notify_admins=MagicMock(),
+    )
+    for name in (
+        "check_rate_limit",
+        "scan_content",
+        "verify_admin_request",
+        "get_session",
+        "send_reply",
+        "run_agent_for_email",
+        "record_job_exhausted",
     ):
-        await process_email.func(
-            sender_email="alice.private@example.com",
-            subject="Confidential acquisition",
-            body="Project Finch closes Friday",
-        )
+        monkeypatch.setattr(f"thenetwork.worker.tasks.{name}", getattr(env, name))
+    monkeypatch.setattr("thenetwork.email.outbound.notify_admins", env.notify_admins)
+    return env
 
+
+@pytest.mark.asyncio
+async def test_worker_rejection_logs_reason_without_message_content(
+    worker_env, caplog
+):
+    worker_env.check_rate_limit.return_value = False
+    await process_email.func(
+        sender_email="alice.private@example.com",
+        subject="Confidential acquisition",
+        body="Project Finch closes Friday",
+    )
     serialized = "\n".join(record.message for record in caplog.records)
     assert "alice.private@example.com" not in serialized
     assert "Confidential acquisition" not in serialized
@@ -1754,156 +1487,79 @@ async def test_worker_rejection_logs_reason_without_message_content(caplog):
 
 
 @pytest.mark.asyncio
-async def test_agent_failure_is_audited_and_reraised_for_retry(caplog):
-    from thenetwork.worker.tasks import process_email
-
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-    with (
-        patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
-        patch(
-            "thenetwork.worker.tasks.scan_content",
-            new=AsyncMock(return_value=(True, None)),
-        ),
-        patch("thenetwork.worker.tasks.verify_admin_request", return_value=None),
-        patch(
-            "thenetwork.worker.tasks.get_session",
-            return_value=_mock_sender_lookup("user-alice"),
-        ),
-        patch(
-            "thenetwork.worker.tasks.run_agent_for_email",
-            AsyncMock(side_effect=RuntimeError("provider unavailable")),
-        ),
-        patch("thenetwork.email.outbound.notify_admins") as notify,
-        patch("thenetwork.worker.tasks.record_job_exhausted") as record_exhausted,
-    ):
-        with pytest.raises(RuntimeError, match="provider unavailable"):
-            await process_email.func(
-                sender_email="alice@example.com",
-                subject="Hi",
-                body="Please introduce me",
-                sender_authenticated=True,
-            )
-
-    notify.assert_not_called()
-    record_exhausted.assert_not_called()
+async def test_agent_failure_is_audited_and_reraised_for_retry(worker_env, caplog):
+    worker_env.get_session.return_value = _mock_sender_lookup("user-alice")
+    worker_env.run_agent_for_email.side_effect = RuntimeError("provider unavailable")
+    with pytest.raises(RuntimeError, match="provider unavailable"):
+        await process_email.func(
+            sender_email="alice@example.com",
+            subject="Hi",
+            body="Please introduce me",
+            sender_authenticated=True,
+        )
+    worker_env.notify_admins.assert_not_called()
+    worker_env.record_job_exhausted.assert_not_called()
     assert any(
-        event["event"] == "worker.agent_failed"
-        and event["error_type"] == "RuntimeError"
+        event["event"] == "worker.agent_failed" and event["error_type"] == "RuntimeError"
         for event in _events(caplog)
     )
 
 
 @pytest.mark.asyncio
-async def test_final_agent_failure_records_metric_without_direct_notification():
-    from thenetwork.worker.tasks import process_email
-
+async def test_final_agent_failure_records_metric_without_direct_notification(
+    worker_env,
+):
+    worker_env.get_session.return_value = _mock_sender_lookup("user-alice")
+    worker_env.run_agent_for_email.side_effect = RuntimeError()
     final_context = SimpleNamespace(job=SimpleNamespace(attempts=3))
-    with (
-        patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
-        patch(
-            "thenetwork.worker.tasks.scan_content",
-            new=AsyncMock(return_value=(True, None)),
-        ),
-        patch("thenetwork.worker.tasks.verify_admin_request", return_value=None),
-        patch(
-            "thenetwork.worker.tasks.get_session",
-            return_value=_mock_sender_lookup("user-alice"),
-        ),
-        patch(
-            "thenetwork.worker.tasks.run_agent_for_email",
-            AsyncMock(side_effect=RuntimeError()),
-        ),
-        patch("thenetwork.email.outbound.notify_admins") as notify,
-        patch("thenetwork.worker.tasks.record_job_exhausted") as record_exhausted,
-    ):
-        with pytest.raises(RuntimeError):
-            await process_email.func(
-                final_context,
-                sender_email="alice@example.com",
-                subject="Hi",
-                body="Please introduce me",
-                sender_authenticated=True,
-            )
-
-    notify.assert_not_called()
-    record_exhausted.assert_called_once_with()
+    with pytest.raises(RuntimeError):
+        await process_email.func(
+            final_context,
+            sender_email="alice@example.com",
+            subject="Hi",
+            body="Please introduce me",
+            sender_authenticated=True,
+        )
+    worker_env.notify_admins.assert_not_called()
+    worker_env.record_job_exhausted.assert_called_once_with()
 
 
 @pytest.mark.asyncio
-async def test_worker_caps_subject_and_body_before_agent():
-    from thenetwork.email.inbound import MAX_BODY_CHARS, MAX_SUBJECT_CHARS
-    from thenetwork.worker.tasks import process_email
-
-    mock_agent = AsyncMock()
-
-    with (
-        patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
-        patch(
-            "thenetwork.worker.tasks.scan_content",
-            new=AsyncMock(return_value=(True, None)),
-        ) as scan_content,
-        patch("thenetwork.worker.tasks.verify_admin_request", return_value=None),
-        patch("thenetwork.worker.tasks.get_session") as mock_get_session,
-        patch("thenetwork.worker.tasks.run_agent_for_email", mock_agent),
-    ):
-        mock_session = MagicMock()
-        mock_session.__enter__ = MagicMock(return_value=mock_session)
-        mock_session.__exit__ = MagicMock(return_value=False)
-        mock_session.get.return_value = None
-        mock_session.exec.return_value.first.return_value = None
-        mock_get_session.return_value = mock_session
-        await process_email.func(
-            sender_email="alice@example.com",
-            subject="s" * (MAX_SUBJECT_CHARS + 20),
-            body="b" * (MAX_BODY_CHARS + 20),
-            sender_authenticated=True,
-        )
-
-    scan_content.assert_awaited_once_with("b" * MAX_BODY_CHARS)
-    mock_agent.assert_awaited_once()
-    _, kwargs = mock_agent.await_args
+async def test_worker_caps_subject_and_body_before_agent(worker_env):
+    await process_email.func(
+        sender_email="alice@example.com",
+        subject="s" * (MAX_SUBJECT_CHARS + 20),
+        body="b" * (MAX_BODY_CHARS + 20),
+        sender_authenticated=True,
+    )
+    worker_env.scan_content.assert_awaited_once_with("b" * MAX_BODY_CHARS)
+    worker_env.run_agent_for_email.assert_awaited_once()
+    kwargs = worker_env.run_agent_for_email.await_args.kwargs
     assert kwargs["email_subject"] == "s" * MAX_SUBJECT_CHARS
     assert kwargs["email_body"] == "b" * MAX_BODY_CHARS
 
 
 @pytest.mark.asyncio
-async def test_worker_threads_trace_id_to_agent_and_audit(caplog):
-    from thenetwork.security.sender_identifier import sender_identifier
-    from thenetwork.worker.tasks import process_email
-
+async def test_worker_threads_trace_id_to_agent_and_audit(
+    worker_env, caplog, monkeypatch
+):
     trace_id = "9f97d361-4ccb-4638-a0bf-98bdbfd254b1"
     sender_email = "alice@example.com"
     expected_sender_id_hash = sender_identifier(sender_email, secret="audit-secret")
-    mock_agent = AsyncMock()
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-
-    with (
-        patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
-        patch(
-            "thenetwork.worker.tasks.scan_content",
-            new=AsyncMock(return_value=(True, None)),
-        ),
-        patch("thenetwork.worker.tasks.verify_admin_request", return_value=None),
-        patch(
-            "thenetwork.worker.tasks.get_session",
-            return_value=_mock_sender_lookup("person-id"),
-        ),
-        patch("thenetwork.worker.tasks.run_agent_for_email", mock_agent),
-        patch(
-            "thenetwork.security.sender_identifier.get_settings",
-            return_value=SimpleNamespace(sender_identifier_secret="audit-secret"),
-        ),
-    ):
-        await process_email.func(
-            sender_email=sender_email,
-            subject="Hello",
-            body="Project Finch closes Friday",
-            sender_authenticated=True,
-            trace_id=trace_id,
-        )
-
-    mock_agent.assert_awaited_once()
-    assert mock_agent.await_args.kwargs["trace_id"] == trace_id
+    worker_env.get_session.return_value = _mock_sender_lookup("person-id")
+    monkeypatch.setattr(
+        "thenetwork.security.sender_identifier.get_settings",
+        lambda: SimpleNamespace(sender_identifier_secret="audit-secret"),
+    )
+    await process_email.func(
+        sender_email=sender_email,
+        subject="Hello",
+        body="Project Finch closes Friday",
+        sender_authenticated=True,
+        trace_id=trace_id,
+    )
+    worker_env.run_agent_for_email.assert_awaited_once()
+    assert worker_env.run_agent_for_email.await_args.kwargs["trace_id"] == trace_id
     worker_events = [
         event
         for event in _events(caplog)
@@ -1917,31 +1573,18 @@ async def test_worker_threads_trace_id_to_agent_and_audit(caplog):
 
 
 @pytest.mark.asyncio
-async def test_worker_rejects_oversized_body_without_reply_or_agent(caplog):
-    from thenetwork.email.inbound import MAX_RAW_BODY_CHARS, REJECT_BODY_OVERSIZE
-    from thenetwork.worker.tasks import process_email
-
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-    with (
-        patch("thenetwork.worker.tasks.check_rate_limit") as check_rate_limit,
-        patch("thenetwork.worker.tasks.scan_content") as scan_content,
-        patch("thenetwork.worker.tasks.send_reply") as send_reply,
-        patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()) as mock_agent,
-        patch(
-            "thenetwork.worker.tasks.get_session",
-            return_value=_mock_sender_lookup(None),
-        ),
-    ):
-        await process_email.func(
-            sender_email="alice@example.com",
-            subject="Hello",
-            body="a" * (MAX_RAW_BODY_CHARS + 1),
-        )
-
-    check_rate_limit.assert_not_called()
-    scan_content.assert_not_called()
-    send_reply.assert_not_called()
-    mock_agent.assert_not_called()
+async def test_worker_rejects_oversized_body_without_reply_or_agent(
+    worker_env, caplog
+):
+    await process_email.func(
+        sender_email="alice@example.com",
+        subject="Hello",
+        body="a" * (MAX_RAW_BODY_CHARS + 1),
+    )
+    worker_env.check_rate_limit.assert_not_called()
+    worker_env.scan_content.assert_not_called()
+    worker_env.send_reply.assert_not_called()
+    worker_env.run_agent_for_email.assert_not_called()
     assert any(
         event["event"] == "worker.message_rejected"
         and event["reason"] == REJECT_BODY_OVERSIZE
@@ -1949,93 +1592,21 @@ async def test_worker_rejects_oversized_body_without_reply_or_agent(caplog):
     )
 
 
-@pytest.mark.parametrize("reason", ["body_oversize", "rate_limit", "content_scan"])
 @pytest.mark.asyncio
-async def test_worker_replies_to_known_authenticated_sender_on_infrastructure_rejection(
-    reason,
-):
-    from thenetwork.email.inbound import MAX_RAW_BODY_CHARS, REJECT_BODY_OVERSIZE
-    from thenetwork.worker.tasks import (
-        REJECT_CONTENT_SCAN,
-        REJECT_RATE_LIMIT,
-        process_email,
+async def test_worker_threads_infrastructure_rejection_reply(worker_env):
+    worker_env.get_session.return_value = _mock_sender_lookup("person-id")
+    worker_env.check_rate_limit.return_value = False
+    await process_email.func(
+        sender_email="alice@example.com",
+        subject="Hello",
+        body="Project Finch closes Friday",
+        sender_authenticated=True,
+        inbound_message_id="<abc123@example.com>",
+        inbound_references="<root@example.com> <parent@example.com>",
+        inbound_body_for_quote="Project Finch closes Friday",
+        inbound_date="Sat, 04 Jul 2026 12:00:00 -0700",
     )
-    from thenetwork.email.render import (
-        FixedEmailTemplate,
-        InfrastructureRejectionEmailContext,
-        InfrastructureRejectionReason,
-    )
-
-    body = "Project Finch closes Friday"
-    if reason == REJECT_BODY_OVERSIZE:
-        body = "a" * (MAX_RAW_BODY_CHARS + 1)
-
-    mock_session = _mock_sender_lookup("person-id")
-
-    with (
-        patch("thenetwork.worker.tasks.get_session", return_value=mock_session),
-        patch(
-            "thenetwork.worker.tasks.check_rate_limit",
-            return_value=reason != REJECT_RATE_LIMIT,
-        ) as check_rate_limit,
-        patch(
-            "thenetwork.worker.tasks.scan_content",
-            return_value=(reason != REJECT_CONTENT_SCAN, None),
-        ) as scan_content,
-        patch("thenetwork.worker.tasks.send_reply") as send_reply,
-        patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()) as mock_agent,
-    ):
-        await process_email.func(
-            sender_email="alice@example.com",
-            subject="Hello",
-            body=body,
-            sender_authenticated=True,
-        )
-
-    send_reply.assert_called_once_with(
-        to_address="alice@example.com",
-        subject="Re: Hello",
-        fixed_template=FixedEmailTemplate.INFRASTRUCTURE_REJECTION,
-        fixed_context=InfrastructureRejectionEmailContext(
-            InfrastructureRejectionReason(reason)
-        ),
-    )
-    mock_agent.assert_not_called()
-
-    if reason == REJECT_BODY_OVERSIZE:
-        check_rate_limit.assert_not_called()
-        scan_content.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_worker_threads_infrastructure_rejection_reply():
-    from thenetwork.worker.tasks import process_email
-    from thenetwork.email.render import (
-        FixedEmailTemplate,
-        InfrastructureRejectionEmailContext,
-        InfrastructureRejectionReason,
-    )
-
-    mock_session = _mock_sender_lookup("person-id")
-
-    with (
-        patch("thenetwork.worker.tasks.get_session", return_value=mock_session),
-        patch("thenetwork.worker.tasks.check_rate_limit", return_value=False),
-        patch("thenetwork.worker.tasks.send_reply") as send_reply,
-        patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()),
-    ):
-        await process_email.func(
-            sender_email="alice@example.com",
-            subject="Hello",
-            body="Project Finch closes Friday",
-            sender_authenticated=True,
-            inbound_message_id="<abc123@example.com>",
-            inbound_references="<root@example.com> <parent@example.com>",
-            inbound_body_for_quote="Project Finch closes Friday",
-            inbound_date="Sat, 04 Jul 2026 12:00:00 -0700",
-        )
-
-    send_reply.assert_called_once_with(
+    worker_env.send_reply.assert_called_once_with(
         to_address="alice@example.com",
         subject="Re: Hello",
         fixed_template=FixedEmailTemplate.INFRASTRUCTURE_REJECTION,
@@ -2050,39 +1621,25 @@ async def test_worker_threads_infrastructure_rejection_reply():
 
 
 @pytest.mark.asyncio
-async def test_worker_sends_verified_admin_command_reply_as_internal_plain_mail():
-    from thenetwork.worker.tasks import process_email
-
-    with (
-        patch(
-            "thenetwork.worker.tasks.get_session",
-            return_value=_mock_sender_lookup(None),
-        ),
-        patch("thenetwork.worker.tasks.check_rate_limit", return_value=True),
-        patch(
-            "thenetwork.worker.tasks.scan_content",
-            new=AsyncMock(return_value=(True, None)),
-        ),
-        patch(
-            "thenetwork.worker.tasks.verify_admin_request",
-            return_value="COMMAND: status",
-        ),
-        patch("thenetwork.worker.tasks.extract_command", return_value="status"),
-        patch("thenetwork.worker.tasks.extract_body_text", return_value=""),
-        patch(
-            "thenetwork.worker.tasks.handle_admin_command",
-            new=AsyncMock(return_value="admin result"),
-        ),
-        patch("thenetwork.worker.tasks.send_reply") as send_reply,
-    ):
-        await process_email.func(
-            sender_email="admin@example.com",
-            subject="ADMIN: status",
-            body="signed command",
-            raw_message_b64="c2lnbmVk",
-        )
-
-    send_reply.assert_called_once_with(
+async def test_worker_sends_verified_admin_command_reply_as_internal_plain_mail(
+    worker_env, monkeypatch
+):
+    worker_env.verify_admin_request.return_value = "COMMAND: status"
+    monkeypatch.setattr(
+        "thenetwork.worker.tasks.extract_command", lambda _body: "status"
+    )
+    monkeypatch.setattr("thenetwork.worker.tasks.extract_body_text", lambda _b: "")
+    monkeypatch.setattr(
+        "thenetwork.worker.tasks.handle_admin_command",
+        AsyncMock(return_value="admin result"),
+    )
+    await process_email.func(
+        sender_email="admin@example.com",
+        subject="ADMIN: status",
+        body="signed command",
+        raw_message_b64="c2lnbmVk",
+    )
+    worker_env.send_reply.assert_called_once_with(
         to_address="admin@example.com",
         subject="Re: ADMIN: status",
         body_text="admin result",
@@ -2092,103 +1649,74 @@ async def test_worker_sends_verified_admin_command_reply_as_internal_plain_mail(
 
 @pytest.mark.parametrize("reason", ["body_oversize", "rate_limit", "content_scan"])
 @pytest.mark.parametrize(
-    ("sender_authenticated", "sender_id"),
-    [(False, "person-id"), (True, None)],
+    ("sender_authenticated", "sender_id", "expect_reply"),
+    [
+        (True, "person-id", True),
+        (False, "person-id", False),
+        (True, None, False),
+    ],
+    ids=["known_authenticated", "unauthenticated", "unregistered"],
 )
 @pytest.mark.asyncio
-async def test_worker_keeps_infrastructure_rejection_silent_for_unauthenticated_or_unknown_sender(
-    reason,
-    sender_authenticated,
-    sender_id,
+async def test_worker_infrastructure_rejection_replies_only_for_known_authenticated_sender(
+    worker_env, reason, sender_authenticated, sender_id, expect_reply
 ):
-    from thenetwork.email.inbound import MAX_RAW_BODY_CHARS, REJECT_BODY_OVERSIZE
-    from thenetwork.worker.tasks import (
-        REJECT_CONTENT_SCAN,
-        REJECT_RATE_LIMIT,
-        process_email,
-    )
-
     body = "Project Finch closes Friday"
     if reason == REJECT_BODY_OVERSIZE:
         body = "a" * (MAX_RAW_BODY_CHARS + 1)
-
-    mock_session = _mock_sender_lookup(sender_id)
-
-    with (
-        patch(
-            "thenetwork.worker.tasks.get_session",
-            return_value=mock_session,
-        ) as get_session,
-        patch(
-            "thenetwork.worker.tasks.check_rate_limit",
-            return_value=reason != REJECT_RATE_LIMIT,
-        ),
-        patch(
-            "thenetwork.worker.tasks.scan_content",
-            return_value=(reason != REJECT_CONTENT_SCAN, None),
-        ),
-        patch("thenetwork.worker.tasks.send_reply") as send_reply,
-        patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()) as mock_agent,
-    ):
-        await process_email.func(
-            sender_email="alice@example.com",
-            subject="Hello",
-            body=body,
-            sender_authenticated=sender_authenticated,
+    worker_env.get_session.return_value = _mock_sender_lookup(sender_id)
+    worker_env.check_rate_limit.return_value = reason != REJECT_RATE_LIMIT
+    worker_env.scan_content.return_value = (reason != REJECT_CONTENT_SCAN, None)
+    await process_email.func(
+        sender_email="alice@example.com",
+        subject="Hello",
+        body=body,
+        sender_authenticated=sender_authenticated,
+    )
+    worker_env.run_agent_for_email.assert_not_called()
+    if reason == REJECT_BODY_OVERSIZE:
+        worker_env.check_rate_limit.assert_not_called()
+        worker_env.scan_content.assert_not_called()
+    if expect_reply:
+        worker_env.send_reply.assert_called_once_with(
+            to_address="alice@example.com",
+            subject="Re: Hello",
+            fixed_template=FixedEmailTemplate.INFRASTRUCTURE_REJECTION,
+            fixed_context=InfrastructureRejectionEmailContext(
+                InfrastructureRejectionReason(reason)
+            ),
         )
-
-    send_reply.assert_not_called()
-    mock_agent.assert_not_called()
-    if sender_authenticated:
-        assert get_session.call_count == 2
     else:
-        get_session.assert_called_once()
+        worker_env.send_reply.assert_not_called()
+        if sender_authenticated:
+            assert worker_env.get_session.call_count == 2
+        else:
+            worker_env.get_session.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_worker_routes_authenticated_empty_body_to_agent_after_safety_gates(
-    caplog,
+    worker_env, caplog, monkeypatch
 ):
-    from thenetwork.worker.tasks import process_email
-
-    caplog.set_level(logging.INFO, logger=LOGGER_NAME)
-    with (
-        patch(
-            "thenetwork.worker.tasks.check_rate_limit", return_value=True
-        ) as check_rate_limit,
-        patch(
-            "thenetwork.worker.tasks.scan_content",
-            new=AsyncMock(return_value=(True, None)),
-        ) as scan_content,
-        patch("thenetwork.worker.tasks.send_reply") as send_reply,
-        patch("thenetwork.worker.tasks.run_agent_for_email", AsyncMock()) as mock_agent,
-        patch(
-            "thenetwork.worker.tasks.process_consent_reply",
-            return_value=SimpleNamespace(handled=False, sent_email_memories=[]),
-        ),
-        patch(
-            "thenetwork.worker.tasks.record_sent_email_memories",
-            new_callable=AsyncMock,
-        ),
-        patch(
-            "thenetwork.worker.tasks.get_session",
-            return_value=_mock_sender_lookup(None),
-        ),
-    ):
-        await process_email.func(
-            sender_email="alice@example.com",
-            subject="Hello",
-            body=" \n",
-            sender_authenticated=True,
-        )
-
-    check_rate_limit.assert_called_once_with(
-        "alice@example.com",
+    monkeypatch.setattr(
+        "thenetwork.worker.tasks.process_consent_reply",
+        lambda *_a, **_kw: SimpleNamespace(handled=False, sent_email_memories=[]),
+    )
+    monkeypatch.setattr(
+        "thenetwork.worker.tasks.record_sent_email_memories", AsyncMock()
+    )
+    await process_email.func(
+        sender_email="alice@example.com",
+        subject="Hello",
+        body=" \n",
         sender_authenticated=True,
     )
-    scan_content.assert_awaited_once_with(" \n")
-    send_reply.assert_not_called()
-    mock_agent.assert_awaited_once()
+    worker_env.check_rate_limit.assert_called_once_with(
+        "alice@example.com", sender_authenticated=True
+    )
+    worker_env.scan_content.assert_awaited_once_with(" \n")
+    worker_env.send_reply.assert_not_called()
+    worker_env.run_agent_for_email.assert_awaited_once()
     assert not any(
         event["event"] == "worker.message_rejected"
         and event.get("reason") == "body_empty"
