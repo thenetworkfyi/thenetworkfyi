@@ -20,7 +20,6 @@ from thenetwork.sim.run.mail import (
     SimMessageObserver,
     SimPostOffice,
     _extract_body,
-    capture_outbound,
     deliver_inbound,
 )
 from thenetwork.sim.personas.persona import TinyPersonEmailAdapter
@@ -57,7 +56,7 @@ class SimLoopResult:
 
 
 class SimTickLoop:
-    """Drive persona email turns and periodic discovery over discrete ticks."""
+    """Drive persona email turns and periodic discovery over discrete ticks via NetworkSimulationFlow."""
 
     def __init__(
         self,
@@ -76,69 +75,27 @@ class SimTickLoop:
         turn_concurrency: int | None = None,
         mbox_path: Path | None = None,
     ) -> None:
-        if proactive_every is not None and proactive_every < 1:
-            raise ValueError("proactive_every must be at least 1")
-        self.adapters = tuple(adapters)
-        self.run_dir = run_dir
-        self.process = process
-        self.proactive_every = proactive_every
-        self.rate_limit_per_hour = rate_limit_per_hour
-        self.schedule = schedule or SimSchedule()
-        self.progress = progress
-        self.on_proactive_trigger = on_proactive_trigger
-        self.on_stage_timing = on_stage_timing
-        self.drain_jobs = drain_jobs
-        self.turn_concurrency = (
-            get_settings().worker_concurrency
-            if turn_concurrency is None
-            else turn_concurrency
+        from thenetwork.sim.run.crew_flow import NetworkSimulationFlow
+
+        self.flow = NetworkSimulationFlow(
+            adapters,
+            run_dir=run_dir,
+            process=process,
+            proactive_every=proactive_every,
+            rate_limit_per_hour=rate_limit_per_hour,
+            schedule=schedule,
+            progress=progress,
+            on_delivery=on_delivery,
+            on_proactive_trigger=on_proactive_trigger,
+            on_stage_timing=on_stage_timing,
+            drain_jobs=drain_jobs,
+            turn_concurrency=turn_concurrency,
+            mbox_path=mbox_path,
         )
-        if self.turn_concurrency < 1:
-            raise ValueError("turn_concurrency must be at least 1")
-        self.post_office = SimPostOffice(
-            mbox_path=mbox_path or run_dir / "all-mail.mbox", on_deliver=on_delivery
-        )
+        self.post_office = self.flow.post_office
 
     async def run(self, *, ticks: int) -> SimLoopResult:
-        if ticks < 1:
-            raise ValueError("ticks must be at least 1")
-        self.run_dir.mkdir(parents=True, exist_ok=True)
-
-        results: list[TickResult] = []
-        with (
-            override_rate_limits(self.rate_limit_per_hour),
-            capture_outbound(self.post_office),
-        ):
-            for tick in range(1, ticks + 1):
-                self._report(f"tick {tick}/{ticks}: started")
-                persona_messages = await self._run_persona_turns(
-                    tick, total_ticks=ticks
-                )
-                proactive_jobs = 0
-                if (
-                    self.proactive_every is not None
-                    and tick % self.proactive_every == 0
-                ):
-                    proactive_jobs = await run_proactive_scans(
-                        timestamp=tick,
-                        process=self.process,
-                        on_defer=self.on_proactive_trigger,
-                        on_stage_timing=self.on_stage_timing,
-                    )
-                    await self._drain_jobs()
-                results.append(
-                    TickResult(
-                        tick=tick,
-                        persona_messages=persona_messages,
-                        proactive_jobs=proactive_jobs,
-                    )
-                )
-                self._report(
-                    f"tick {tick}/{ticks}: completed "
-                    f"({persona_messages} persona messages, {proactive_jobs} proactive jobs)"
-                )
-
-        return SimLoopResult(ticks=tuple(results), post_office=self.post_office)
+        return await self.flow.run(ticks=ticks)
 
     async def _run_persona_turns(self, tick: int, *, total_ticks: int) -> int:
         semaphore = asyncio.Semaphore(self.turn_concurrency)

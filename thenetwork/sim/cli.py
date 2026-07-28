@@ -20,7 +20,10 @@ from thenetwork.sim.personas.population import (
     SimSchedule,
     default_population,
 )
+from thenetwork.sim.run.crew_flow import NetworkSimulationFlow
 from thenetwork.sim.run.recorder import SimRunConfig, SimRunRecorder
+
+__all__ = ["main", "run_sim", "NetworkSimulationFlow"]
 
 
 class ScriptedTinyPerson:
