@@ -1,4 +1,4 @@
-"""CrewAI Flow orchestrator for simulation tick loop runs."""
+"""CrewAI Flow orchestrator with proactive discovery and observer support for simulation tick loop runs."""
 
 from __future__ import annotations
 
