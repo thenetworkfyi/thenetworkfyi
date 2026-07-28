@@ -4,9 +4,15 @@ from __future__ import annotations
 
 import os
 import json
+import socket
+import ssl
 import uuid
 from contextlib import contextmanager
+from dataclasses import dataclass, field
+from email import policy
+from email.parser import BytesParser
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import pydantic_ai.models as pydantic_ai_models
@@ -172,6 +178,151 @@ def vcr_config():
         "before_record_response": scrub_cassette_response,
         "decode_compressed_response": True,
     }
+
+
+@dataclass
+class _CapturedEnvelope:
+    peer: tuple
+    mail_from: str | None
+    rcpt_tos: list[str] = field(default_factory=list)
+    data: bytes = b""
+
+
+class _CapturingHandler:
+    """aiosmtpd handler that records every DATA command instead of relaying it."""
+
+    def __init__(self) -> None:
+        self.messages: list[_CapturedEnvelope] = []
+
+    async def handle_DATA(self, server, session, envelope):
+        self.messages.append(
+            _CapturedEnvelope(
+                peer=session.peer,
+                mail_from=envelope.mail_from,
+                rcpt_tos=list(envelope.rcpt_tos),
+                data=envelope.content,
+            )
+        )
+        return "250 Message accepted for delivery"
+
+
+@pytest.fixture(scope="session")
+def _smtp_sink_server():
+    """Session-scoped in-process SMTP+STARTTLS server for outbound mail tests.
+
+    thenetwork/email/outbound.py's send functions call the real smtplib.SMTP
+    against this server instead of being replaced by a mock, so the actual
+    STARTTLS/AUTH/DATA wire path (headers, MIME structure) is exercised. The
+    ephemeral port is pre-allocated via a throwaway socket bind: passing
+    port=0 straight to aiosmtpd's Controller triggers a connection-refused
+    race because it never learns the real bound port before its own
+    readiness probe.
+    """
+    import trustme
+    from aiosmtpd.controller import Controller
+    from aiosmtpd.smtp import AuthResult
+
+    ca = trustme.CA()
+    server_cert = ca.issue_cert("127.0.0.1")
+    tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server_cert.configure_cert(tls_context)
+
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe.bind(("127.0.0.1", 0))
+    port = probe.getsockname()[1]
+    probe.close()
+
+    handler = _CapturingHandler()
+    controller = Controller(
+        handler,
+        hostname="127.0.0.1",
+        port=port,
+        tls_context=tls_context,
+        authenticator=lambda *args, **kwargs: AuthResult(success=True),
+        auth_require_tls=True,
+    )
+    controller.start()
+    try:
+        with ca.cert_pem.tempfile() as ca_cert_path:
+            yield SimpleNamespace(
+                host="127.0.0.1",
+                port=port,
+                handler=handler,
+                ca_cert_path=ca_cert_path,
+            )
+    finally:
+        controller.stop()
+
+
+@pytest.fixture
+def smtp_sink(_smtp_sink_server, monkeypatch):
+    """Point the real Settings singleton at the in-process SMTP sink.
+
+    Tests exercise thenetwork.email.outbound's send functions unmodified;
+    only Settings.smtp_host/smtp_port (and the other fields that path reads)
+    are swapped, mirroring the pg_engine fixture's settings-swap pattern. No
+    test configuration reaches the deployment SMTP_HOST default
+    (smtp.gmail.com) because every field this path reads is overridden here.
+    """
+    import thenetwork.settings as settings_module
+
+    server = _smtp_sink_server
+    server.handler.messages.clear()
+    monkeypatch.setenv("SSL_CERT_FILE", server.ca_cert_path)
+
+    sink_settings = settings_module.get_settings().model_copy(
+        update={
+            "smtp_host": server.host,
+            "smtp_port": server.port,
+            "smtp_account": "sink-agent@example.com",
+            "smtp_password": "sink-password",
+            "email_from": "agent@example.com",
+            "imap_account": "agent@example.com",
+            "imap_password": "secret",
+            "imap_host": "imap.example.com",
+            "imap_port": 993,
+            "imap_sent_folder": "Sent",
+            "relay_domain": "relay.example.com",
+            "admin_emails": [],
+            "growth_footer_enabled": False,
+        }
+    )
+    monkeypatch.setattr(settings_module, "_settings", sink_settings)
+
+    class _Sink:
+        host = server.host
+        port = server.port
+
+        @staticmethod
+        def override(**overrides) -> None:
+            """Layer additional Settings overrides onto the sink config."""
+            monkeypatch.setattr(
+                settings_module,
+                "_settings",
+                settings_module.get_settings().model_copy(update=overrides),
+            )
+
+        @property
+        def envelopes(self) -> list[_CapturedEnvelope]:
+            return list(server.handler.messages)
+
+        @property
+        def raw_messages(self) -> list[bytes]:
+            return [envelope.data for envelope in server.handler.messages]
+
+        @property
+        def messages(self):
+            # Normalize wire CRLF to LF before parsing so get_content() matches
+            # the LF-terminated text callers compose with EmailMessage/policy
+            # default, rather than asserting on an SMTP-transport artifact.
+            return [
+                BytesParser(policy=policy.default).parsebytes(
+                    envelope.data.replace(b"\r\n", b"\n")
+                )
+                for envelope in server.handler.messages
+            ]
+
+    return _Sink()
 
 
 @pytest.fixture

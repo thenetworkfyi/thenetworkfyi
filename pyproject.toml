@@ -45,6 +45,8 @@ dev = [
     "pytest-recording>=0.13",
     "ruff>=0.12",
     "testcontainers[postgres]>=4.0",
+    "aiosmtpd>=1.4.6",
+    "trustme>=1.1",
 ]
 
 [project.scripts]
