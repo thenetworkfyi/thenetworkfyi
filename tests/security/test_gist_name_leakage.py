@@ -13,11 +13,11 @@ production.
 from __future__ import annotations
 
 import re
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from thenetwork.agent.deps import AgentDeps
+from thenetwork.agent.deps import AgentCapabilities, AgentDeps
 from thenetwork.db.models import Memory
 from thenetwork.memory import sanitize as sanitize_mod
 
@@ -177,12 +177,6 @@ async def test_remember_tool_stores_gist_free_of_name_variants_end_to_end():
     mock_sess.__enter__ = MagicMock(return_value=mock_sess)
     mock_sess.__exit__ = MagicMock(return_value=False)
     mock_sess.exec.return_value.one.return_value = 0
-    ctx = MagicMock()
-    ctx.deps = AgentDeps(
-        sender_email="bob@example.com",
-        sender_user_id="user-bob",
-        session_factory=lambda: mock_sess,
-    )
     added: list[object] = []
     mock_sess.add.side_effect = added.append
 
@@ -196,19 +190,19 @@ async def test_remember_tool_stores_gist_free_of_name_variants_end_to_end():
         memory.gist = redacted
         return redacted
 
-    with (
-        patch(
-            "thenetwork.agent.tools.embed_text",
-            new_callable=AsyncMock,
-            return_value=[0.0] * 1536,
+    ctx = MagicMock()
+    ctx.deps = AgentDeps(
+        capabilities=AgentCapabilities(
+            embed_text=AsyncMock(return_value=[0.0] * 1536),
+            sanitize_memory=MagicMock(side_effect=fake_sanitize),
+            match_memories=MagicMock(return_value=[]),
         ),
-        patch(
-            "thenetwork.agent.tools.sanitize_memory",
-            new=MagicMock(side_effect=fake_sanitize),
-        ),
-        patch("thenetwork.agent.tools.match_memories", return_value=[]),
-    ):
-        await remember(ctx, text=raw, refs=["user-alice", "user-bob"])
+        sender_email="bob@example.com",
+        sender_user_id="user-bob",
+        session_factory=lambda: mock_sess,
+    )
+
+    await remember(ctx, text=raw, refs=["user-alice", "user-bob"])
 
     stored = added[0]
     _assert_no_name_variants(stored.gist, "Alice Chen")

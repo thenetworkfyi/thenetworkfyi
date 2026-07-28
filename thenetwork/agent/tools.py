@@ -65,23 +65,6 @@ from thenetwork.search.match import (
 )
 from thenetwork.search.events import EventMatch
 
-# Compatibility targets for tests that have not yet migrated from patching
-# module globals. AgentCapabilities resolves these dynamically, so production
-# and new tests still invoke every effect through the dependency bundle.
-get_session = None
-embed_text = None
-send_reply = None
-send_event_fyi = None
-notify_admins = None
-sanitize_memory = None
-sanitize_text = None
-record_sent_email_memory = None
-record_sent_email_memories = None
-propose_pair = None
-match_memories = None
-match_events = None
-load_person_evidence = None
-
 MAX_CONSOLIDATION_CANDIDATES = 3
 # match_memories returns one row per ref, so a single multi-ref memory can
 # occupy several rows; over-fetch before deduping by memory_id so a run of

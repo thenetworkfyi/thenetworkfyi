@@ -18,6 +18,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from thenetwork.agent.core import build_agent
+from thenetwork.agent.deps import AgentCapabilities
 from thenetwork.email.inbound import InboundMessage, count_stripped_attachments
 from thenetwork.introductions import ConsentReplyResult
 from thenetwork.worker.producer import _poll_mailbox_and_enqueue
@@ -118,6 +119,10 @@ async def test_real_attachment_count_reaches_agent_without_attachment_metadata(c
     def capture_reply(*, to_address: str, subject: str, body_text: str, **_kwargs):
         sent.append({"to": to_address, "subject": subject, "body": body_text})
 
+    capabilities = AgentCapabilities(
+        send_reply=MagicMock(side_effect=capture_reply),
+        record_sent_email_memory=AsyncMock(),
+    )
     with (
         patch("thenetwork.worker.tasks.get_settings", return_value=worker_settings),
         patch("thenetwork.worker.tasks.get_session", return_value=session),
@@ -142,13 +147,8 @@ async def test_real_attachment_count_reaches_agent_without_attachment_metadata(c
         patch("thenetwork.agent.core.build_agent", return_value=agent),
         patch("thenetwork.agent.tools._check_daily_dispatch_cap", return_value=True),
         patch("thenetwork.agent.tools._consume_daily_dispatch_cap"),
-        patch("thenetwork.agent.tools.send_reply", side_effect=capture_reply),
-        patch(
-            "thenetwork.agent.tools.record_sent_email_memory",
-            new_callable=AsyncMock,
-        ),
     ):
-        await process_email.func(**job_kwargs)
+        await process_email.func(**job_kwargs, capabilities=capabilities)
 
     assert len(sent) == 1
     assert "attachment was not read" in sent[0]["body"].lower()

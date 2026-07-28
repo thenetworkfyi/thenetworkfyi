@@ -10,7 +10,7 @@ from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
 
-from thenetwork.agent.deps import AgentDeps
+from thenetwork.agent.deps import AgentCapabilities, AgentDeps
 from thenetwork.agent.prompts import system_prompt_for
 from thenetwork.agent.tools import (
     cancel_event,
@@ -170,12 +170,19 @@ async def run_agent_for_email(
     proactive_event_id: str | None = None,
     proactive_event_version: int | None = None,
     session_factory: Callable | None = None,
+    capabilities: AgentCapabilities | None = None,
 ) -> str:
     """Run the agent for one inbound email.
 
     The untrusted email body and bounded sender-memory gist projection are
     passed as user-role message content. Neither is ever concatenated into the
     system prompt (role separation, THE SEAL).
+
+    ``capabilities`` is an optional override of the production infrastructure
+    ports (see `thenetwork/agent/deps.py:AgentCapabilities`); production
+    callers never pass it, so the default remains the real capability bundle.
+    It exists so tests exercising this entrypoint (or `worker.tasks.process_email`
+    end to end) can substitute fakes without patching module globals.
     """
     with (
         audit_run(),
@@ -191,6 +198,7 @@ async def run_agent_for_email(
     ):
         attachment_count = max(0, min(attachment_count, MAX_ATTACHMENT_COUNT))
         deps = AgentDeps(
+            **({"capabilities": capabilities} if capabilities is not None else {}),
             sender_email=sender_email,
             sender_user_id=sender_user_id,
             sender_authenticated=sender_authenticated,

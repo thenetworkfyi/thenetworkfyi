@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
@@ -7,7 +7,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
 from thenetwork.agent.core import build_agent
-from thenetwork.agent.deps import AgentDeps
+from thenetwork.agent.deps import AgentCapabilities, AgentDeps
 from thenetwork.settings import Settings
 
 
@@ -233,6 +233,7 @@ async def test_successful_dispatch_allows_concise_final_operator_text():
             )
         return ModelResponse(parts=[TextPart(content="Reply dispatched.")])
 
+    send = MagicMock()
     deps = AgentDeps(
         settings=Settings(
             _env_file=None,
@@ -244,13 +245,13 @@ async def test_successful_dispatch_allows_concise_final_operator_text():
             dispatch_recipient_daily_cap=10,
             dispatch_sender_reply_daily_cap=10,
         ),
+        capabilities=AgentCapabilities(send_reply=send),
         sender_email="new@example.com",
         sender_authenticated=True,
     )
     with (
         patch("thenetwork.agent.tools._check_daily_dispatch_cap", return_value=True),
         patch("thenetwork.agent.tools._consume_daily_dispatch_cap"),
-        patch("thenetwork.agent.tools.send_reply") as send,
     ):
         result = await build_agent(model=FunctionModel(reply_then_finish)).run(
             "What does this do?", deps=deps

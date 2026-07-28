@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from thenetwork.agent.deps import AgentDeps
+from thenetwork.agent.deps import AgentCapabilities, AgentDeps
 from thenetwork.agent.tools import (
     EVENT_RECOMMENDATION_STOP_NOTICE,
     FIRST_EVENT_RECOMMENDATION_NOTICE,
@@ -35,6 +35,7 @@ def _ctx(
     authenticated=True,
     event_id=None,
     event_version=1,
+    capabilities=None,
 ):
     return SimpleNamespace(
         deps=AgentDeps(
@@ -43,6 +44,9 @@ def _ctx(
                 small_agent_model="test:model",
                 embed_model="test:embed",
                 dispatch_recipient_daily_cap=99,
+            ),
+            capabilities=(
+                capabilities if capabilities is not None else AgentCapabilities()
             ),
             sender_email="owner@example.com",
             sender_user_id=person_id,
@@ -70,16 +74,19 @@ def _active_event(**overrides):
 @pytest.mark.asyncio
 async def test_create_event_requires_authenticated_registered_sender():
     session = MagicMock()
-    ctx = _ctx(session, person_id=None, authenticated=False)
+    sanitize = AsyncMock()
+    ctx = _ctx(
+        session,
+        person_id=None,
+        authenticated=False,
+        capabilities=AgentCapabilities(sanitize_text=sanitize),
+    )
 
-    with patch(
-        "thenetwork.agent.tools.sanitize_text", new_callable=AsyncMock
-    ) as sanitize:
-        result = await create_event(
-            ctx,
-            text="event",
-            expires_at=datetime.now(timezone.utc) + timedelta(days=1),
-        )
+    result = await create_event(
+        ctx,
+        text="event",
+        expires_at=datetime.now(timezone.utc) + timedelta(days=1),
+    )
 
     assert result == {"status": "error", "reason": "sender_not_authenticated"}
     sanitize.assert_not_called()
@@ -100,26 +107,22 @@ async def test_invalid_event_expiry_is_a_structured_error_not_validation_retry()
 @pytest.mark.asyncio
 async def test_create_event_persists_raw_privately_and_returns_only_sealed_projection():
     session = MagicMock()
-    ctx = _ctx(session, person_id="owner-1")
     raw = "Alice hosts a compiler meetup; alice@example.com"
     gist = "[name] hosts a compiler meetup; [email]"
+    sanitize = MagicMock(return_value=gist)
+    embed = AsyncMock(return_value=[0.25] * 1536)
+    ctx = _ctx(
+        session,
+        person_id="owner-1",
+        capabilities=AgentCapabilities(sanitize_text=sanitize, embed_text=embed),
+    )
 
-    with (
-        patch(
-            "thenetwork.agent.tools.sanitize_text",
-            new=MagicMock(return_value=gist),
-        ) as sanitize,
-        patch(
-            "thenetwork.agent.tools.embed_text",
-            new=AsyncMock(return_value=[0.25] * 1536),
-        ) as embed,
-    ):
-        result = await create_event(
-            ctx,
-            text=raw,
-            recurrence="monthly with Alice at alice@example.com",
-            expires_at=datetime.now(timezone.utc) + timedelta(days=90),
-        )
+    result = await create_event(
+        ctx,
+        text=raw,
+        recurrence="monthly with Alice at alice@example.com",
+        expires_at=datetime.now(timezone.utc) + timedelta(days=90),
+    )
 
     stored = session.add.call_args.args[0]
     assert isinstance(stored, Event)
@@ -143,18 +146,20 @@ async def test_update_and_cancel_reject_non_owner_without_mutation():
     event = _active_event(submitter_id="owner-2")
     session = MagicMock()
     session.get.return_value = event
-    ctx = _ctx(session, person_id="owner-1")
+    sanitize = AsyncMock()
+    ctx = _ctx(
+        session,
+        person_id="owner-1",
+        capabilities=AgentCapabilities(sanitize_text=sanitize),
+    )
 
-    with patch(
-        "thenetwork.agent.tools.sanitize_text", new_callable=AsyncMock
-    ) as sanitize:
-        update_result = await update_event(
-            ctx,
-            event_id=event.id,
-            text="replacement",
-            expires_at=datetime.now(timezone.utc) + timedelta(days=3),
-        )
-        cancel_result = await cancel_event(ctx, event.id)
+    update_result = await update_event(
+        ctx,
+        event_id=event.id,
+        text="replacement",
+        expires_at=datetime.now(timezone.utc) + timedelta(days=3),
+    )
+    cancel_result = await cancel_event(ctx, event.id)
 
     assert update_result == {"status": "forbidden", "reason": "not_event_owner"}
     assert cancel_result == {"status": "forbidden", "reason": "not_event_owner"}
@@ -167,26 +172,23 @@ async def test_owner_update_preserves_event_id_and_rebuilds_sealed_embedding():
     event = _active_event(submitter_id="owner-1")
     session = MagicMock()
     session.get.return_value = event
-    ctx = _ctx(session, person_id="owner-1")
     expiry = datetime.now(timezone.utc) + timedelta(days=10)
+    ctx = _ctx(
+        session,
+        person_id="owner-1",
+        capabilities=AgentCapabilities(
+            sanitize_text=MagicMock(return_value="sealed replacement"),
+            embed_text=AsyncMock(return_value=[0.5] * 1536),
+        ),
+    )
 
-    with (
-        patch(
-            "thenetwork.agent.tools.sanitize_text",
-            new=MagicMock(return_value="sealed replacement"),
-        ),
-        patch(
-            "thenetwork.agent.tools.embed_text",
-            new=AsyncMock(return_value=[0.5] * 1536),
-        ),
-    ):
-        result = await update_event(
-            ctx,
-            event_id="event-1",
-            text="raw replacement",
-            expires_at=expiry,
-            recurrence="weekly",
-        )
+    result = await update_event(
+        ctx,
+        event_id="event-1",
+        text="raw replacement",
+        expires_at=expiry,
+        recurrence="weekly",
+    )
 
     assert event.id == "event-1"
     assert event.text == "raw replacement"

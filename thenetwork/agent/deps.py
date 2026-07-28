@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -21,17 +20,6 @@ from thenetwork.search.match import load_person_evidence, match_memories
 from thenetwork.settings import Settings, get_settings
 
 
-def _legacy_tool_override(name: str, production: Callable) -> Callable:
-    """Route old test patches through the capability port during migration."""
-
-    def call(*args, **kwargs):
-        tools_module = sys.modules.get("thenetwork.agent.tools")
-        override = getattr(tools_module, name, None) if tools_module else None
-        return (override or production)(*args, **kwargs)
-
-    return call
-
-
 @dataclass
 class AgentCapabilities:
     """Server-owned infrastructure ports available to agent tools.
@@ -41,29 +29,19 @@ class AgentCapabilities:
     single dependency bundle in tests and simulations.
     """
 
-    default_session_factory: Callable = _legacy_tool_override(
-        "get_session", get_session
-    )
-    embed_text: Callable = _legacy_tool_override("embed_text", embed_text)
-    send_reply: Callable = _legacy_tool_override("send_reply", send_reply)
-    send_event_fyi: Callable = _legacy_tool_override("send_event_fyi", send_event_fyi)
-    notify_admins: Callable = _legacy_tool_override("notify_admins", notify_admins)
-    sanitize_memory: Callable = _legacy_tool_override(
-        "sanitize_memory", sanitize_memory
-    )
-    sanitize_text: Callable = _legacy_tool_override("sanitize_text", sanitize_text)
-    record_sent_email_memory: Callable = _legacy_tool_override(
-        "record_sent_email_memory", record_sent_email_memory
-    )
-    record_sent_email_memories: Callable = _legacy_tool_override(
-        "record_sent_email_memories", record_sent_email_memories
-    )
-    propose_pair: Callable = _legacy_tool_override("propose_pair", propose_pair)
-    match_memories: Callable = _legacy_tool_override("match_memories", match_memories)
-    match_events: Callable = _legacy_tool_override("match_events", match_events)
-    load_person_evidence: Callable = _legacy_tool_override(
-        "load_person_evidence", load_person_evidence
-    )
+    default_session_factory: Callable = get_session
+    embed_text: Callable = embed_text
+    send_reply: Callable = send_reply
+    send_event_fyi: Callable = send_event_fyi
+    notify_admins: Callable = notify_admins
+    sanitize_memory: Callable = sanitize_memory
+    sanitize_text: Callable = sanitize_text
+    record_sent_email_memory: Callable = record_sent_email_memory
+    record_sent_email_memories: Callable = record_sent_email_memories
+    propose_pair: Callable = propose_pair
+    match_memories: Callable = match_memories
+    match_events: Callable = match_events
+    load_person_evidence: Callable = load_person_evidence
     check_daily_dispatch_cap: Callable | None = None
     consume_daily_dispatch_cap: Callable | None = None
 

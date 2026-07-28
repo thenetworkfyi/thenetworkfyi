@@ -4,11 +4,11 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from thenetwork.agent.deps import AgentDeps
+from thenetwork.agent.deps import AgentCapabilities, AgentDeps
 from thenetwork.agent.tools import create_event, search_events
 from thenetwork.search.events import EventMatch, match_events
 
@@ -48,28 +48,25 @@ async def test_search_events_returns_only_opaque_id_gist_and_lifecycle_fields():
     session = MagicMock()
     session.__enter__ = MagicMock(return_value=session)
     session.__exit__ = MagicMock(return_value=False)
-    ctx = SimpleNamespace(
-        deps=AgentDeps(
-            sender_user_id="person-1",
-            sender_authenticated=True,
-            session_factory=lambda: session,
-        )
-    )
     match = EventMatch(
         event_id="opaque-event",
         gist="sealed gist",
         expires_at=datetime.now(timezone.utc) + timedelta(days=1),
         similarity=0.8,
     )
+    ctx = SimpleNamespace(
+        deps=AgentDeps(
+            capabilities=AgentCapabilities(
+                embed_text=AsyncMock(return_value=[0.0] * 1536),
+                match_events=MagicMock(return_value=[match]),
+            ),
+            sender_user_id="person-1",
+            sender_authenticated=True,
+            session_factory=lambda: session,
+        )
+    )
 
-    with (
-        patch(
-            "thenetwork.agent.tools.embed_text",
-            new=AsyncMock(return_value=[0.0] * 1536),
-        ),
-        patch("thenetwork.agent.tools.match_events", return_value=[match]),
-    ):
-        result = await search_events(ctx, "compiler meetup")
+    result = await search_events(ctx, "compiler meetup")
 
     assert set(result[0]) == {
         "event_id",
@@ -88,29 +85,24 @@ async def test_event_create_gist_path_never_returns_raw_cross_user_content():
     session = MagicMock()
     session.__enter__ = MagicMock(return_value=session)
     session.__exit__ = MagicMock(return_value=False)
+    sanitize = MagicMock(return_value=gist)
     ctx = SimpleNamespace(
         deps=AgentDeps(
+            capabilities=AgentCapabilities(
+                sanitize_text=sanitize,
+                embed_text=AsyncMock(return_value=[0.0] * 1536),
+            ),
             sender_user_id="person-owner",
             sender_authenticated=True,
             session_factory=lambda: session,
         )
     )
 
-    with (
-        patch(
-            "thenetwork.agent.tools.sanitize_text",
-            new=MagicMock(return_value=gist),
-        ) as sanitize,
-        patch(
-            "thenetwork.agent.tools.embed_text",
-            new=AsyncMock(return_value=[0.0] * 1536),
-        ),
-    ):
-        result = await create_event(
-            ctx,
-            text=raw,
-            expires_at=datetime.now(timezone.utc) + timedelta(days=2),
-        )
+    result = await create_event(
+        ctx,
+        text=raw,
+        expires_at=datetime.now(timezone.utc) + timedelta(days=2),
+    )
 
     sanitize.assert_called_once_with(raw)
     assert result["gist"] == gist

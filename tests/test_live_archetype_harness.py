@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 from pydantic_ai.messages import (
@@ -50,10 +50,6 @@ async def test_forced_escalation_is_captured_without_outbound_infrastructure(
         patch(
             "socket.getaddrinfo",
             side_effect=AssertionError("DNS resolution was attempted"),
-        ),
-        patch(
-            "thenetwork.agent.tools.embed_text",
-            new=AsyncMock(return_value=[0.0] * 1536),
         ),
     ):
         outcome = await run_scenario(
