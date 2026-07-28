@@ -1,4 +1,5 @@
 """Structured audit coverage without creating a PII-at-rest side channel."""
+
 from __future__ import annotations
 import io
 import json
@@ -58,6 +59,7 @@ from thenetwork.worker.tasks import (
 def _empty_recent_sender_memory_context(monkeypatch):
     """Audit tests inject no DB history unless they explicitly exercise it."""
     from thenetwork.memory.recent_context import RecentSenderMemoryContext
+
     monkeypatch.setattr(
         "thenetwork.agent.core.load_recent_sender_memory_context",
         lambda *_args, **_kwargs: RecentSenderMemoryContext(),
@@ -116,6 +118,7 @@ def _format_foreign_log(
     exc_info=None,
 ) -> dict:
     from thenetwork import audit
+
     stream = io.StringIO()
     handler = logging.StreamHandler(stream)
     handler.setFormatter(
@@ -604,7 +607,13 @@ async def test_register_person_audits_return_path(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("run_cap", "run_count", "propose_pair_result", "expected_status", "expected_reason"),
+    (
+        "run_cap",
+        "run_count",
+        "propose_pair_result",
+        "expected_status",
+        "expected_reason",
+    ),
     [
         pytest.param(1, 1, None, "deferred", "run_proposal_cap", id="run_proposal_cap"),
         pytest.param(
@@ -660,6 +669,7 @@ async def test_agent_run_applies_configured_usage_limits():
         def __init__(self, *, request_limit, total_tokens_limit):
             self.request_limit = request_limit
             self.total_tokens_limit = total_tokens_limit
+
     fake_result = SimpleNamespace(output="ok", all_messages=lambda: [])
     fake_agent = SimpleNamespace(run=AsyncMock(return_value=fake_result))
     settings = SimpleNamespace(
@@ -703,10 +713,12 @@ async def test_agent_usage_limit_breach_is_audited_without_raising(
 ):
     class FakeUsageLimitExceeded(Exception):
         pass
+
     class FakeUsageLimits:
         def __init__(self, *, request_limit, total_tokens_limit):
             self.request_limit = request_limit
             self.total_tokens_limit = total_tokens_limit
+
     secrets = {
         "sender": "alice.private@example.com",
         "subject": "Confidential acquisition",
@@ -764,7 +776,9 @@ async def test_agent_failure_after_successful_reply_does_not_escape_for_job_retr
 ):
     from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
     from pydantic_ai.models.function import AgentInfo, FunctionModel
+
     model_calls = 0
+
     async def reply_then_timeout(
         _messages: list[ModelMessage], _info: AgentInfo
     ) -> ModelResponse:
@@ -784,6 +798,7 @@ async def test_agent_failure_after_successful_reply_does_not_escape_for_job_retr
                 ]
             )
         raise RuntimeError("provider timed out after delivery")
+
     session = MagicMock()
     session.__enter__ = MagicMock(return_value=session)
     session.__exit__ = MagicMock(return_value=False)
@@ -913,6 +928,7 @@ async def test_agent_trace_logs_structure_but_never_content(caplog):
 
 def test_model_response_audit_logs_redacted_complete_parts(caplog, monkeypatch):
     from pydantic_ai.messages import ModelResponse, TextPart, ThinkingPart, ToolCallPart
+
     monkeypatch.setattr(
         "thenetwork.memory.sanitize._get_privacy_filter",
         lambda: _fake_classify,
@@ -1081,12 +1097,16 @@ async def test_proactive_no_action_is_audited_without_admin_notification(
         ("tool_call", "no_action", "No action was needed."),
     ],
 )
-async def test_dispatch_activity_prevents_undispatched_escalation(mode, tool_name, output):
+async def test_dispatch_activity_prevents_undispatched_escalation(
+    mode, tool_name, output
+):
     if mode == "server_side_send":
         fake_result = SimpleNamespace(output=output, all_messages=lambda: [])
+
         async def run_side_effect(_message, *, deps, usage_limits):
             deps.server_side_send_count = 2
             return fake_result
+
         fake_agent = SimpleNamespace(run=AsyncMock(side_effect=run_side_effect))
     else:
         fake_result = SimpleNamespace(
@@ -1269,8 +1289,7 @@ def test_intake_enqueues_recipient_without_audit_logging_it(
     _poll_message(monkeypatch, message)
     assert _poll_and_enqueue() == 1
     assert (
-        poll_env.process_email.defer.call_args.kwargs["recipient_address"]
-        == recipient
+        poll_env.process_email.defer.call_args.kwargs["recipient_address"] == recipient
     )
     assert recipient not in "\n".join(record.message for record in caplog.records)
 
@@ -1316,9 +1335,7 @@ def test_intake_enqueue_audits_and_defers_same_trace_id(poll_env, monkeypatch, c
     )
     assert _poll_and_enqueue() == 1
     poll_env.process_email.defer.assert_called_once()
-    assert (
-        poll_env.process_email.defer.call_args.kwargs["trace_id"] == message.trace_id
-    )
+    assert poll_env.process_email.defer.call_args.kwargs["trace_id"] == message.trace_id
     received = next(
         event
         for event in _events(caplog)
@@ -1467,9 +1484,7 @@ def worker_env(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_worker_rejection_logs_reason_without_message_content(
-    worker_env, caplog
-):
+async def test_worker_rejection_logs_reason_without_message_content(worker_env, caplog):
     worker_env.check_rate_limit.return_value = False
     await process_email.func(
         sender_email="alice.private@example.com",
@@ -1500,7 +1515,8 @@ async def test_agent_failure_is_audited_and_reraised_for_retry(worker_env, caplo
     worker_env.notify_admins.assert_not_called()
     worker_env.record_job_exhausted.assert_not_called()
     assert any(
-        event["event"] == "worker.agent_failed" and event["error_type"] == "RuntimeError"
+        event["event"] == "worker.agent_failed"
+        and event["error_type"] == "RuntimeError"
         for event in _events(caplog)
     )
 
@@ -1573,9 +1589,7 @@ async def test_worker_threads_trace_id_to_agent_and_audit(
 
 
 @pytest.mark.asyncio
-async def test_worker_rejects_oversized_body_without_reply_or_agent(
-    worker_env, caplog
-):
+async def test_worker_rejects_oversized_body_without_reply_or_agent(worker_env, caplog):
     await process_email.func(
         sender_email="alice@example.com",
         subject="Hello",
