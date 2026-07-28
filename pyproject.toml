@@ -35,6 +35,7 @@ dependencies = [
     "llamafirewall==1.0.3",
     "huggingface-hub>=0.23",
     "torch==2.12.0",
+    "crewai>=0.80.0",
 ]
 
 [project.optional-dependencies]
