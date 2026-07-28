@@ -97,6 +97,26 @@ BASELINE_PATH = _DOCS / "prompt-adherence-baseline.json"
 #: Append-only log of later measurements, newest last.
 MEASUREMENTS_PATH = _DOCS / "prompt-adherence-measurements.json"
 
+#: Recorded on every measurement so a reader cannot mistake the delta for a
+#: pure prompt-shape effect: the scenario harness itself changed after the
+#: baseline was recorded (a MagicMock database session replaced by a real
+#: migrated pgvector schema, and `forget_attempts` now collected from `forget`
+#: tool call arguments rather than intercepted session lookups).
+HARNESS_CHANGE_NOTE = (
+    "the scenario harness changed between the baseline and this run: the "
+    "MagicMock database session was replaced by a real migrated pgvector "
+    "schema, and forget_attempts is now collected from forget tool call "
+    "arguments rather than from intercepted session lookups - do not "
+    "attribute the delta to the prompt shape alone"
+)
+
+#: The two commitments that moved off a 0.0 baseline, and are therefore the
+#: ones most likely confounded by the harness change above rather than by any
+#: prompt-shape difference.
+CONFOUNDED_BY_HARNESS_CHANGE = frozenset(
+    {"progressive_qualification_memory", "sender_owned_evidence_memory_ids"}
+)
+
 
 def _retry_on_rate_limit() -> RetryConfig:
     """Retry a whole case when the provider throttles it.
@@ -809,11 +829,14 @@ def build_measurement(
         "overall_delta_vs_baseline": (
             sum(measured) / len(measured) if measured else None
         ),
+        "harness_change_note": HARNESS_CHANGE_NOTE,
         "commitments": {
             commitment.slug: {
                 "prefix": commitment.prefix,
                 "cases": list(commitment.case_names),
                 "rate": rates.get(commitment.slug, 0.0),
+                "confounded_by_harness_change": commitment.slug
+                in CONFOUNDED_BY_HARNESS_CHANGE,
                 **comparison[commitment.slug],
             }
             for commitment in COMMITMENTS
@@ -841,15 +864,23 @@ def format_comparison(measurement: dict[str, Any]) -> str:
         f"  overall {measurement['overall_rate']:.3f} "
         f"(baseline {measurement['baseline_commit'][:12]}, "
         f"mean delta {measurement['overall_delta_vs_baseline']})",
+        f"  note: {measurement['harness_change_note']}",
     ]
     for slug, entry in sorted(measurement["commitments"].items()):
+        suffix = (
+            " [confounded by harness change]"
+            if entry["confounded_by_harness_change"]
+            else ""
+        )
         if entry["status"] == "measured":
             lines.append(
                 f"  {slug:<42} {entry['baseline']:.3f} -> "
-                f"{entry['current']:.3f} ({entry['delta']:+.3f})"
+                f"{entry['current']:.3f} ({entry['delta']:+.3f}){suffix}"
             )
         else:
-            lines.append(f"  {slug:<42} {entry['status']}: {entry['current']:.3f}")
+            lines.append(
+                f"  {slug:<42} {entry['status']}: {entry['current']:.3f}{suffix}"
+            )
     for slug in measurement["dropped_since_baseline"]:
         lines.append(f"  {slug:<42} dropped since baseline")
     return "\n".join(lines)
@@ -1005,6 +1036,35 @@ def test_build_measurement_averages_the_delta_over_baseline_commitments_only() -
     )
 
 
+def test_build_measurement_records_the_harness_change_caveat() -> None:
+    measurement = build_measurement(
+        {slug: 1.0 for slug in (c.slug for c in COMMITMENTS)},
+        model="test:model",
+        commit="1" * 40,
+        baseline=_FAKE_BASELINE,
+    )
+
+    assert measurement["harness_change_note"] == HARNESS_CHANGE_NOTE
+
+    for slug in CONFOUNDED_BY_HARNESS_CHANGE:
+        assert measurement["commitments"][slug]["confounded_by_harness_change"] is True
+
+    unflagged = next(
+        commitment.slug
+        for commitment in COMMITMENTS
+        if commitment.slug not in CONFOUNDED_BY_HARNESS_CHANGE
+    )
+    assert (
+        measurement["commitments"][unflagged]["confounded_by_harness_change"] is False
+    )
+
+    formatted = format_comparison(measurement)
+    assert HARNESS_CHANGE_NOTE in formatted
+    for slug in CONFOUNDED_BY_HARNESS_CHANGE:
+        assert f"{slug:<42}" in formatted
+    assert "[confounded by harness change]" in formatted
+
+
 def test_build_measurement_marks_cassette_replay() -> None:
     measurement = build_measurement(
         {},
@@ -1086,7 +1146,7 @@ async def test_prompt_adherence_case(
 
     The default record mode is ``none``: it replays the committed cassette and
     fails on a miss rather than reaching the network. A failed case can be
-    retried by its node id without re-recording successful cases. A full run
+    retried by its node id without re-recording successful cases.
     Set ``PROMPT_ADHERENCE_WRITE_MEASUREMENT=1`` on a complete run to append
     the aggregate comparison; ordinary replays have no repository side effect.
     """
