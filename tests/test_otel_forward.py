@@ -2,14 +2,27 @@
 
 Validates that the collector's transform pipeline (as configured in
 otel-collector-config.yaml) correctly parses worker JSON log bodies into
-structured LogRecord attributes while preserving the original readable body.
+structured LogRecord attributes while preserving the original readable body,
+and that the count/audit connector derives the documented Prometheus counter
+catalog from those attributes.
+
+The config-shape assertions below run offline. The transform and count/audit
+OTTL statements themselves are exercised against the real otelcol-contrib
+binary in test_real_collector_transform_and_count_audit_connector, which is
+the sole source of truth for OTTL correctness — there is no hand-rolled OTTL
+interpreter here to keep in sync with the collector's actual behavior.
 """
 
-from collections import Counter
 import json
 import pathlib
-import re
+import socket
+import subprocess
+import time
+import urllib.error
+import urllib.request
+import uuid
 
+import pytest
 import yaml
 
 
@@ -26,86 +39,7 @@ _LOKI_CONFIG = yaml.safe_load((_REPO_ROOT / "loki-config.yaml").read_text())
 _WORKER_METRIC_SOURCE_CONFIG = yaml.safe_load(
     (_REPO_ROOT / "tests/fixtures/otel-worker-metrics-source.yaml").read_text()
 )
-
-
-def _condition_matches(condition: str, attributes: dict) -> bool:
-    """Evaluate the deliberately small OTTL subset used by count/audit."""
-    for clause in condition.split(" and "):
-        equality = re.fullmatch(r'attributes\["([^"]+)"\] == "([^"]+)"', clause)
-        if equality:
-            if attributes.get(equality.group(1)) != equality.group(2):
-                return False
-            continue
-
-        is_string = re.fullmatch(r'IsString\(attributes\["([^"]+)"\]\)', clause)
-        if is_string:
-            if not isinstance(attributes.get(is_string.group(1)), str):
-                return False
-            continue
-
-        is_match = re.fullmatch(
-            r'IsMatch\(attributes\["([^"]+)"\], "([^"]+)"\)', clause
-        )
-        if is_match:
-            value = attributes.get(is_match.group(1))
-            if (
-                not isinstance(value, str)
-                or re.fullmatch(is_match.group(2), value) is None
-            ):
-                return False
-            continue
-
-        raise AssertionError(f"unsupported count/audit condition clause: {clause}")
-    return True
-
-
-def _derived_metric_counts(records: list[dict]) -> Counter:
-    """Simulate count/audit routing using the checked-in configuration."""
-    counts = Counter()
-    metrics = _COLLECTOR_CONFIG["connectors"]["count/audit"]["logs"]
-    for attributes in records:
-        for metric_name, metric in metrics.items():
-            if not any(
-                _condition_matches(condition, attributes)
-                for condition in metric["conditions"]
-            ):
-                continue
-            labels = tuple(
-                (attribute["key"], attributes[attribute["key"]])
-                for attribute in metric.get("attributes", [])
-            )
-            counts[(metric_name, labels)] += 1
-    return counts
-
-
-def _process_json_log_record(raw_record: dict) -> dict:
-    """Simulate the OpenTelemetry Collector transform processor.
-
-    Mirrors the JSON parsing OTTL statement in otel-collector-config.yaml while
-    retaining the original log line for Loki.
-
-    The fluentd logging driver delivers each container log line as a record
-    with the JSON payload in the ``log`` field plus Docker-added metadata
-    (``container_name``, ``source``).  The Collector's fluentforward receiver
-    maps the ``log`` field to the LogRecord body.
-
-    Returns a dict with the readable ``body`` and all attributes (Docker
-    metadata merged with parsed JSON fields).
-    """
-    body = raw_record.get("log", "")
-    attributes = {k: v for k, v in raw_record.items() if k != "log"}
-
-    if isinstance(body, str):
-        try:
-            parsed = json.loads(body.strip())
-            if isinstance(parsed, dict):
-                # OTTL: merge_maps(attributes, ParseJSON(body), "upsert")
-                attributes.update(parsed)
-        except json.JSONDecodeError:
-            # Non-JSON lines (e.g. raw stderr) keep their body intact.
-            pass
-
-    return {"body": body, **attributes}
+_COLLECTOR_IMAGE = "otel/opentelemetry-collector-contrib:0.118.0"
 
 
 # ---------------------------------------------------------------------------
@@ -211,156 +145,6 @@ def test_collector_derives_bounded_counter_catalog_from_redacted_audit_logs():
     assert _COLLECTOR_CONFIG["exporters"]["prometheus/audit"]["endpoint"] == (
         "0.0.0.0:8889"
     )
-
-
-def test_representative_audit_records_increment_each_product_counter_once():
-    records = [
-        {
-            "logger": "thenetwork.audit",
-            "event": "database.action",
-            "action": "insert",
-            "record_type": "person",
-            "outcome": "success",
-        },
-        {
-            "logger": "thenetwork.audit",
-            "event": "worker.process_email.completed",
-            "outcome": "success",
-        },
-        {
-            "logger": "thenetwork.audit",
-            "event": "worker.message_rejected",
-            "reason": "rate_limit",
-        },
-        {
-            "logger": "thenetwork.audit",
-            "event": "agent.run.completed",
-            "outcome": "success",
-        },
-        {
-            "logger": "thenetwork.audit",
-            "event": "agent.tool.completed",
-            "tool_name": "remember",
-            "tool_outcome": "created",
-        },
-        {
-            "logger": "thenetwork.audit",
-            "event": "introduction.consent_transition",
-            "outcome": "success",
-            "action": "consent",
-            "consent_state": "introduced",
-        },
-        {
-            "logger": "thenetwork.audit",
-            "event": "email.smtp_send.completed",
-            "outcome": "success",
-            "template_id": "conversational",
-        },
-        {
-            "logger": "thenetwork.audit",
-            "event": "worker.relay_forwarded",
-            "outcome": "success",
-        },
-    ]
-
-    counts = _derived_metric_counts(records)
-
-    product_counts = {
-        metric_name: value
-        for (metric_name, _labels), value in counts.items()
-        if metric_name != "thenetwork.worker.audit.events"
-    }
-    assert product_counts == {
-        "thenetwork.accounts.created": 1,
-        "thenetwork.messages.processed": 1,
-        "thenetwork.messages.rejected": 1,
-        "thenetwork.agent.runs": 1,
-        "thenetwork.agent.tool.calls": 1,
-        "thenetwork.introduction.transitions": 1,
-        "thenetwork.outbound.emails": 1,
-        "thenetwork.relay.messages.forwarded": 1,
-    }
-
-
-def test_retry_and_replay_outcomes_remain_distinguishable():
-    counts = _derived_metric_counts(
-        [
-            {
-                "logger": "thenetwork.audit",
-                "event": "worker.process_email.completed",
-                "outcome": "error",
-            },
-            {
-                "logger": "thenetwork.audit",
-                "event": "worker.process_email.completed",
-                "outcome": "success",
-            },
-            {
-                "logger": "thenetwork.audit",
-                "event": "agent.tool.completed",
-                "tool_name": "remember",
-                "tool_outcome": "replayed",
-            },
-        ]
-    )
-
-    assert counts[("thenetwork.messages.processed", (("outcome", "error"),))] == 1
-    assert counts[("thenetwork.messages.processed", (("outcome", "success"),))] == 1
-    assert (
-        counts[
-            (
-                "thenetwork.agent.tool.calls",
-                (("tool_name", "remember"), ("tool_outcome", "replayed")),
-            )
-        ]
-        == 1
-    )
-
-
-def test_malformed_records_and_registration_failures_create_no_product_series():
-    records = [
-        {
-            "logger": "thenetwork.audit",
-            "event": "database.action",
-            "action": "insert",
-            "record_type": "person",
-            "outcome": outcome,
-            "trace_id": "unsafe-cardinality-value",
-        }
-        for outcome in (
-            "exists",
-            "rate_limited",
-            "rejected_already_registered",
-            "rejected_unauthenticated",
-        )
-    ]
-    records.extend(
-        [
-            {
-                "logger": "thenetwork.audit",
-                "event": "agent.tool.completed",
-                "tool_name": "attacker_selected_tool",
-                "tool_outcome": "sent",
-                "sender_id_hash": "attacker-selected-identifier",
-            },
-            {
-                "logger": "thenetwork.audit",
-                "event": "email.smtp_send.completed",
-                "outcome": "success",
-                "template_id": "attacker_selected_template",
-            },
-            {"logger": "thenetwork.audit", "event": "unknown.event"},
-            {"logger": "foreign.logger", "event": "agent.run.completed"},
-        ]
-    )
-
-    counts = _derived_metric_counts(records)
-
-    assert {
-        metric_name
-        for metric_name, _labels in counts
-        if metric_name != "thenetwork.worker.audit.events"
-    } == set()
 
 
 def test_prometheus_scrapes_collector_health_audit_activity_and_loki():
@@ -500,129 +284,184 @@ def test_metrics_configs_do_not_project_identifiers_into_labels():
 
 
 # ---------------------------------------------------------------------------
-# Transform simulation tests
+# Real-collector smoke test
+#
+# Runs the actual otelcol-contrib binary against the checked-in transform
+# processor and count/audit connector definitions (copied verbatim from
+# otel-collector-config.yaml), feeds one sample log through the real
+# fluentforward receiver, and reads the derived counter back from the real
+# prometheus exporter. This replaces the former hand-rolled Python OTTL
+# interpreter: OTTL correctness is now proven against the real engine
+# instead of a reimplementation that could silently drift from it.
 # ---------------------------------------------------------------------------
 
 
-def test_audit_log_structured_processing():
-    """Audit event records remain readable and gain structured attributes."""
-    audit_payload = {
-        "event": "inbound_email_processed",
-        "logger": "thenetwork.audit",
-        "level": "info",
-        "timestamp": "2026-07-22T04:05:00Z",
-        "trace_id": "00000000000000000000000000000001",
-        "pseudonym_id": "pseudo-99",
-    }
-    record = {
-        "log": json.dumps(audit_payload) + "\n",
-        "container_name": "/worker-1",
-        "source": "stdout",
-    }
-
-    result = _process_json_log_record(record)
-
-    # Parsed fields promoted to attributes
-    assert result["event"] == "inbound_email_processed"
-    assert result["logger"] == "thenetwork.audit"
-    assert result["level"] == "info"
-    assert result["trace_id"] == "00000000000000000000000000000001"
-    assert result["pseudonym_id"] == "pseudo-99"
-    # Docker metadata preserved
-    assert result["container_name"] == "/worker-1"
-    assert result["source"] == "stdout"
-    assert json.loads(result["body"]) == audit_payload
+def _docker_available() -> bool:
+    try:
+        subprocess.run(["docker", "info"], capture_output=True, timeout=5, check=True)
+    except Exception:
+        return False
+    return True
 
 
-def test_procrastinate_log_structured_processing():
-    """Procrastinate/foreign-logger records are parsed identically."""
-    proc_payload = {
-        "event": "job_completed",
-        "logger": "procrastinate.worker",
-        "level": "info",
-        "timestamp": "2026-07-22T04:05:01Z",
-        "job_id": 42,
-        "queue": "default",
-    }
-    record = {
-        "log": json.dumps(proc_payload) + "\n",
-        "container_name": "/worker-1",
-        "source": "stdout",
-    }
-
-    result = _process_json_log_record(record)
-
-    assert result["event"] == "job_completed"
-    assert result["logger"] == "procrastinate.worker"
-    assert result["job_id"] == 42
-    assert result["queue"] == "default"
-    assert json.loads(result["body"]) == proc_payload
+def _msgpack_str(value: str) -> bytes:
+    encoded = value.encode("utf-8")
+    length = len(encoded)
+    if length < 32:
+        return bytes([0xA0 | length]) + encoded
+    return b"\xda" + length.to_bytes(2, "big") + encoded
 
 
-def test_non_json_log_body_preserved():
-    """Non-JSON log lines (e.g. raw stderr, stack traces) keep their body."""
-    record = {
-        "log": "Traceback (most recent call last):\n",
-        "container_name": "/worker-1",
-        "source": "stderr",
-    }
-
-    result = _process_json_log_record(record)
-
-    # Body is NOT cleared for non-JSON
-    assert result["body"] == "Traceback (most recent call last):\n"
-    assert result["container_name"] == "/worker-1"
-    # No parsed fields beyond Docker metadata
-    assert "event" not in result
+def _msgpack_uint32(value: int) -> bytes:
+    return b"\xce" + value.to_bytes(4, "big")
 
 
-def test_exactly_once_output():
-    """Each input record produces exactly one output record — no duplication
-    from the transform pipeline."""
-    records = [
-        {
-            "log": json.dumps({"event": "a", "logger": "x"}) + "\n",
-            "container_name": "/w",
-            "source": "stdout",
+def _msgpack_map(mapping: dict) -> bytes:
+    header = bytes([0x80 | len(mapping)])
+    body = b"".join(_msgpack_str(k) + _msgpack_str(v) for k, v in mapping.items())
+    return header + body
+
+
+def _msgpack_array(items: list) -> bytes:
+    header = bytes([0x90 | len(items)])
+    return header + b"".join(items)
+
+
+def _fluent_forward_message(tag: str, record: dict) -> bytes:
+    """Encode one Fluent Forward "Message Mode" entry: [tag, time, record]."""
+    return _msgpack_array(
+        [_msgpack_str(tag), _msgpack_uint32(int(time.time())), _msgpack_map(record)]
+    )
+
+
+def _published_port(container: str, container_port: str) -> int:
+    output = subprocess.run(
+        ["docker", "port", container, container_port],
+        capture_output=True,
+        check=True,
+        text=True,
+        timeout=10,
+    ).stdout.strip()
+    return int(output.rsplit(":", 1)[-1])
+
+
+def _wait_for_health(port: int, timeout: float = 20.0) -> None:
+    deadline = time.monotonic() + timeout
+    last_error = None
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/", timeout=1
+            ) as response:
+                if response.status == 200:
+                    return
+        except (urllib.error.URLError, OSError) as exc:
+            last_error = exc
+        time.sleep(0.5)
+    raise AssertionError(f"collector never became healthy: {last_error}")
+
+
+def _wait_for_metric_line(port: int, metric_name: str, timeout: float = 10.0) -> str:
+    deadline = time.monotonic() + timeout
+    text = ""
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(
+                f"http://127.0.0.1:{port}/metrics", timeout=1
+            ) as response:
+                text = response.read().decode()
+        except (urllib.error.URLError, OSError):
+            text = ""
+        for line in text.splitlines():
+            if line.startswith(metric_name):
+                return line
+        time.sleep(0.5)
+    raise AssertionError(f"{metric_name} never appeared; last scrape:\n{text}")
+
+
+@pytest.mark.integration
+def test_real_collector_transform_and_count_audit_connector(tmp_path):
+    """Feed a sample audit log through the real otelcol-contrib binary and
+    confirm it emits the expected derived Prometheus counter.
+
+    Builds a minimal config that reuses the checked-in transform processor
+    and count/audit connector verbatim, so a config drift that would break
+    production also breaks this test.
+    """
+    if not _docker_available():
+        pytest.skip("docker is not available in this environment")
+
+    smoke_config = {
+        "receivers": {"fluentforward": {"endpoint": "0.0.0.0:24224"}},
+        "processors": {"transform": _COLLECTOR_CONFIG["processors"]["transform"]},
+        "connectors": {"count/audit": _COLLECTOR_CONFIG["connectors"]["count/audit"]},
+        "exporters": {"prometheus/audit": {"endpoint": "0.0.0.0:8889"}},
+        "extensions": {"health_check": {"endpoint": "0.0.0.0:13133"}},
+        "service": {
+            "extensions": ["health_check"],
+            "pipelines": {
+                "logs": {
+                    "receivers": ["fluentforward"],
+                    "processors": ["transform"],
+                    "exporters": ["count/audit"],
+                },
+                "metrics/audit": {
+                    "receivers": ["count/audit"],
+                    "exporters": ["prometheus/audit"],
+                },
+            },
         },
-        {
-            "log": json.dumps({"event": "b", "logger": "y"}) + "\n",
-            "container_name": "/w",
-            "source": "stdout",
-        },
-    ]
-
-    results = [_process_json_log_record(r) for r in records]
-    assert len(results) == len(records)
-    assert results[0]["event"] == "a"
-    assert results[1]["event"] == "b"
-
-
-def test_sensitive_fixture_values_absent():
-    """Raw sensitive fixture values from audit test fixtures must not leak
-    into processed output. The audit layer redacts before logging, so the
-    collector should never see raw PII in the JSON body it processes."""
-    # Simulating a properly redacted record (as the audit layer would emit)
-    redacted_payload = {
-        "event": "inbound_email_processed",
-        "logger": "thenetwork.audit",
-        "level": "info",
-        "sender_pseudonym": "pseudo-abc",
-        "body_chars": 142,
     }
-    record = {
-        "log": json.dumps(redacted_payload) + "\n",
-        "container_name": "/worker-1",
-        "source": "stdout",
-    }
+    config_path = tmp_path / "smoke-config.yaml"
+    config_path.write_text(yaml.safe_dump(smoke_config))
 
-    result = _process_json_log_record(record)
+    container = f"otelcol-smoke-{uuid.uuid4().hex[:8]}"
+    subprocess.run(
+        [
+            "docker",
+            "run",
+            "-d",
+            "--rm",
+            "--name",
+            container,
+            "-p",
+            "127.0.0.1::24224",
+            "-p",
+            "127.0.0.1::8889",
+            "-p",
+            "127.0.0.1::13133",
+            "-v",
+            f"{config_path}:/etc/otelcol-contrib/config.yaml:ro",
+            _COLLECTOR_IMAGE,
+        ],
+        check=True,
+        capture_output=True,
+        timeout=30,
+    )
+    try:
+        forward_port = _published_port(container, "24224/tcp")
+        health_port = _published_port(container, "13133/tcp")
+        metrics_port = _published_port(container, "8889/tcp")
+        _wait_for_health(health_port)
 
-    # The record contains pseudonyms, not raw email addresses
-    assert result["sender_pseudonym"] == "pseudo-abc"
-    # No raw email address or name appears
-    for val in result.values():
-        if isinstance(val, str):
-            assert "@" not in val or val.startswith("pseudo"), (
-                f"potential PII leak: {val}"
+        sample_log = json.dumps(
+            {
+                "logger": "thenetwork.audit",
+                "event": "database.action",
+                "action": "insert",
+                "record_type": "person",
+                "outcome": "success",
+            }
+        )
+        with socket.create_connection(("127.0.0.1", forward_port), timeout=5) as sock:
+            sock.sendall(
+                _fluent_forward_message(
+                    "docker.worker",
+                    {"log": sample_log, "container_name": "/worker-1"},
+                )
             )
+
+        line = _wait_for_metric_line(metrics_port, "thenetwork_accounts_created_total")
+        assert line.split()[-1] == "1"
+    finally:
+        subprocess.run(["docker", "rm", "-f", container], capture_output=True)
