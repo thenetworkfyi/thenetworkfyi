@@ -1695,9 +1695,32 @@ def test_simulation_job_drainer_does_not_duplicate_observed_retry(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_simulation_job_drainer_skips_worker_without_tracked_jobs(tmp_path):
+@pytest.mark.parametrize(
+    ("job_ids", "listed_jobs"),
+    [
+        pytest.param(set(), [], id="no_tracked_jobs"),
+        pytest.param(
+            {1},
+            [
+                SimpleNamespace(
+                    id=1,
+                    status="succeeded",
+                    attempts=1,
+                    task_kwargs={
+                        "sender_email": "alice@example.test",
+                        "trace_id": "trace-1",
+                    },
+                )
+            ],
+            id="only_terminal_jobs",
+        ),
+    ],
+)
+async def test_simulation_job_drainer_skips_worker_when_no_work_is_ready(
+    tmp_path, job_ids, listed_jobs
+):
     events = EventsLog(tmp_path / "events.jsonl")
-    drainer = _SimulationJobDrainer(events)
+    drainer = _SimulationJobDrainer(events, job_ids=job_ids)
 
     with (
         patch.object(app, "run_worker_async", new_callable=AsyncMock) as run_worker,
@@ -1705,33 +1728,7 @@ async def test_simulation_job_drainer_skips_worker_without_tracked_jobs(tmp_path
             app.job_manager,
             "list_jobs_async",
             new_callable=AsyncMock,
-            return_value=[],
-        ) as list_jobs,
-    ):
-        await drainer()
-
-    run_worker.assert_not_awaited()
-    list_jobs.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_simulation_job_drainer_skips_worker_for_terminal_jobs(tmp_path):
-    events = EventsLog(tmp_path / "events.jsonl")
-    drainer = _SimulationJobDrainer(events, job_ids={1})
-    terminal = SimpleNamespace(
-        id=1,
-        status="succeeded",
-        attempts=1,
-        task_kwargs={"sender_email": "alice@example.test", "trace_id": "trace-1"},
-    )
-
-    with (
-        patch.object(app, "run_worker_async", new_callable=AsyncMock) as run_worker,
-        patch.object(
-            app.job_manager,
-            "list_jobs_async",
-            new_callable=AsyncMock,
-            return_value=[terminal],
+            return_value=listed_jobs,
         ),
     ):
         await drainer()
