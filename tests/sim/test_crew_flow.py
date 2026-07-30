@@ -34,9 +34,10 @@ async def test_network_simulation_flow_initialization_and_run(tmp_path):
     async def mock_process(**kwargs):
         pass
 
+    run_dir = tmp_path / "run"
     flow = NetworkSimulationFlow(
         [adapter],
-        run_dir=tmp_path,
+        run_dir=run_dir,
         process=mock_process,
         proactive_every=None,
         progress=lambda msg: progress_reports.append(msg),
@@ -52,5 +53,10 @@ async def test_network_simulation_flow_initialization_and_run(tmp_path):
     assert flow.state.total_ticks == 2
     assert flow.state.current_tick == 2
     assert len(flow.state.completed_ticks) == 2
+    assert run_dir.is_dir()
+    assert flow.method_outputs[0] == "initialized"
+    assert flow.method_outputs[-1] is result
     assert any("started" in report for report in progress_reports)
-    assert any(event == "sim.persona_generation_completed" for event, _ in stage_timings)
+    assert any(
+        event == "sim.persona_generation_completed" for event, _ in stage_timings
+    )

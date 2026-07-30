@@ -42,8 +42,6 @@ from thenetwork.sim.run.mail import (
 class NetworkSimulationState(BaseModel):
     total_ticks: int = 1
     current_tick: int = 0
-    persona_messages: int = 0
-    proactive_jobs: int = 0
     completed_ticks: list[dict[str, Any]] = []
 
 
@@ -67,7 +65,7 @@ class NetworkSimulationFlow(Flow[NetworkSimulationState]):
         turn_concurrency: int | None = None,
         mbox_path: Path | None = None,
     ) -> None:
-        super().__init__()
+        super().__init__(suppress_flow_events=True)
         if proactive_every is not None and proactive_every < 1:
             raise ValueError("proactive_every must be at least 1")
         self.adapters = tuple(adapters)
@@ -97,15 +95,10 @@ class NetworkSimulationFlow(Flow[NetworkSimulationState]):
         return "initialized"
 
     @listen(initialize_flow)
-    async def execute_simulation(self, status: str) -> str:
-        return status
+    async def execute_simulation(self, _status: str) -> SimLoopResult:
+        return await self._run_ticks(ticks=self.state.total_ticks)
 
-    async def run_flow(self, *, ticks: int) -> SimLoopResult:
-        if ticks < 1:
-            raise ValueError("ticks must be at least 1")
-        self.state.total_ticks = ticks
-        self.run_dir.mkdir(parents=True, exist_ok=True)
-
+    async def _run_ticks(self, *, ticks: int) -> SimLoopResult:
         results: list[TickResult] = []
         with (
             override_rate_limits(self.rate_limit_per_hour),
@@ -151,7 +144,12 @@ class NetworkSimulationFlow(Flow[NetworkSimulationState]):
         return SimLoopResult(ticks=tuple(results), post_office=self.post_office)
 
     async def run(self, *, ticks: int) -> SimLoopResult:
-        return await self.run_flow(ticks=ticks)
+        if ticks < 1:
+            raise ValueError("ticks must be at least 1")
+        result = await self.kickoff_async(inputs={"total_ticks": ticks})
+        if not isinstance(result, SimLoopResult):
+            raise RuntimeError("simulation flow returned an unexpected result")
+        return result
 
     async def _run_persona_turns(self, tick: int, *, total_ticks: int) -> int:
         semaphore = asyncio.Semaphore(self.turn_concurrency)
