@@ -10,6 +10,10 @@ from crewai.tools import BaseTool
 from pydantic import Field
 
 from thenetwork.email.threading import clean_message_id, clean_references
+from thenetwork.sim.personas.consent import (
+    make_reply_thread_faithful,
+    thread_token_of,
+)
 from thenetwork.sim.personas.persona import (
     EmailFormat,
     PersonaConfig,
@@ -79,11 +83,18 @@ class SimMailboxTool(BaseTool):
     reply_to: Any = Field(default=None, description="Optional reply_to EmailMessage")
     messages_sent: int = Field(default=0, description="Counter of sent messages")
 
+    def update_turn(
+        self, *, tick: int, reply_to: EmailMessage | None = None
+    ) -> None:
+        """Update the turn-specific message context while retaining shared state."""
+        self.tick = tick
+        self.reply_to = reply_to
+
     def _run(
         self, action: str = "read", body: str = "", subject: str = "The Network"
     ) -> str:
         if action == "read":
-            messages = self.post_office.messages_for(self.config.email)
+            messages = self.post_office.pop_all(self.config.email)
             if not messages:
                 return "No unread messages."
             rendered = []
@@ -93,16 +104,25 @@ class SimMailboxTool(BaseTool):
                 )
             return "\n---\n".join(rendered)
         elif action == "send":
+            self.messages_sent = self.post_office.sent_count(self.config.email)
             if self.messages_sent >= self.config.message_budget:
                 return "Error: Message budget exhausted."
+            active_thread = (
+                thread_token_of(self.reply_to) if self.reply_to is not None else None
+            )
+            thread_kind = active_thread[0] if active_thread is not None else "intro"
+            thread_token = active_thread[1] if active_thread is not None else None
+            faithful_body = make_reply_thread_faithful(
+                body, thread_token, thread_kind
+            )
             email_msg = build_sim_email_message(
                 self.config,
-                body,
+                faithful_body,
                 tick=self.tick,
                 subject=subject,
                 reply_to=self.reply_to,
             )
             self.post_office.deliver(email_msg)
-            self.messages_sent += 1
+            self.messages_sent = self.post_office.record_sent(self.config.email)
             return "Email sent successfully."
         return f"Unknown action: {action}"
