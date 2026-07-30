@@ -74,18 +74,18 @@ class SimMailboxTool(BaseTool):
     """Custom CrewAI tool allowing agents to read unread mailbox messages and send emails."""
 
     name: str = "SimMailboxTool"
-    description: str = (
-        "Reads unread email messages from your simulation mailbox or sends an email reply/message to The Network."
-    )
+    description: str = "Reads unread email messages from your simulation mailbox or sends an email reply/message to The Network."
     config: Any = Field(description="PersonaConfig for the persona")
     post_office: Any = Field(description="SimPostOffice instance")
     tick: int = Field(default=1, description="Current simulation tick")
     reply_to: Any = Field(default=None, description="Optional reply_to EmailMessage")
     messages_sent: int = Field(default=0, description="Counter of sent messages")
+    allow_send: bool = Field(
+        default=True,
+        description="Whether this tool owns outbound transport for the current runtime",
+    )
 
-    def update_turn(
-        self, *, tick: int, reply_to: EmailMessage | None = None
-    ) -> None:
+    def update_turn(self, *, tick: int, reply_to: EmailMessage | None = None) -> None:
         """Update the turn-specific message context while retaining shared state."""
         self.tick = tick
         self.reply_to = reply_to
@@ -104,6 +104,11 @@ class SimMailboxTool(BaseTool):
                 )
             return "\n---\n".join(rendered)
         elif action == "send":
+            if not self.allow_send:
+                return (
+                    "Email transport is managed by the simulation runtime. "
+                    "Return the plain-text email body as the task result instead."
+                )
             self.messages_sent = self.post_office.sent_count(self.config.email)
             if self.messages_sent >= self.config.message_budget:
                 return "Error: Message budget exhausted."
@@ -112,9 +117,7 @@ class SimMailboxTool(BaseTool):
             )
             thread_kind = active_thread[0] if active_thread is not None else "intro"
             thread_token = active_thread[1] if active_thread is not None else None
-            faithful_body = make_reply_thread_faithful(
-                body, thread_token, thread_kind
-            )
+            faithful_body = make_reply_thread_faithful(body, thread_token, thread_kind)
             email_msg = build_sim_email_message(
                 self.config,
                 faithful_body,

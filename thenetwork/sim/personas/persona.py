@@ -119,6 +119,7 @@ class TinyPersonEmailAdapter:
         reply_to: EmailMessage | None = None,
         fallback_body: Callable[[PersonaConfig], str] | None = None,
         body_filter: Callable[[str], str] | None = None,
+        post_office: Any | None = None,
     ) -> EmailMessage | None:
         """Async variant; personas exposing `alisten_and_act` may decline to write."""
         listener = getattr(self.person, "alisten_and_act", None)
@@ -133,6 +134,9 @@ class TinyPersonEmailAdapter:
             )
         if self.exhausted:
             return None
+        prepare_turn = getattr(self.person, "prepare_turn", None)
+        if prepare_turn is not None:
+            prepare_turn(post_office=post_office, tick=tick, reply_to=reply_to)
         body = extract_action_text(await listener(stimulus))
         if body and body_filter is not None:
             body = body_filter(body)
