@@ -386,10 +386,11 @@ VPS suffices.
 ## Double-opt-in simulation
 
 CrewAI is confined to the simulation harness; the production email agent remains on
-pydantic-ai. The simulation package sets `CREWAI_DISABLE_TELEMETRY=true` before its CLI,
-flow, or persona submodules can import CrewAI. `.env.example` repeats the opt-out for
-visibility, but simulation runs do not depend on operators copying or preserving that
-setting.
+pydantic-ai. The simulation package sets `CREWAI_DISABLE_TELEMETRY=true` and
+`CREWAI_TESTING=true` before its CLI, flow, or persona submodules can import CrewAI. The
+testing policy suppresses CrewAI's first-run tracing-preference prompt in fresh
+environments. `.env.example` repeats the telemetry opt-out for visibility, but simulation
+runs do not depend on operators copying or preserving either setting.
 
 The deterministic introduction simulation exercises the production
 `propose_introduction` tool and `process_email` consent path without calling an LLM or
