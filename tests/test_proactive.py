@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 import pytest
@@ -45,6 +46,37 @@ def _person(pid, email):
     p.id = pid
     p.email = email
     return p
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "today",
+        "tonight",
+        "tomorrow",
+        "this week",
+        "this weekend",
+        "in town for three days",
+        "until 2026-08-05",
+        "through Friday",
+        "before Friday",
+        "deadline Friday",
+        "deadline is Friday",
+        "closes Friday",
+        "closes on Monday",
+        "closes on 2026-08-05",
+    ],
+)
+def test_closing_window_pattern_matches_supported_phrases(text):
+    from thenetwork.worker.proactive import _CLOSING_WINDOW_RE
+
+    assert _CLOSING_WINDOW_RE.search(text)
+
+
+def test_closing_window_pattern_rejects_bare_closes():
+    from thenetwork.worker.proactive import _CLOSING_WINDOW_RE
+
+    assert _CLOSING_WINDOW_RE.search("registration closes") is None
 
 
 @pytest.mark.asyncio
@@ -309,12 +341,13 @@ async def test_scan_reads_person_emails_before_real_session_closes(seeded_db):
 # --- scan_for_matches (semantic rematch) -----------------------------------
 
 
-def _memory(mid, refs, gist):
+def _memory(mid, refs, gist, *, created_at=None):
     m = MagicMock()
     m.id = mid
     m.refs = refs
     m.gist = gist
     m.embedding = [0.0]  # match_memories is mocked, so the value is unused
+    m.created_at = created_at or datetime.now(timezone.utc)
     return m
 
 
@@ -638,6 +671,119 @@ async def test_rematch_gate_rejects_thin_overlap_keeps_specific_match():
     for call in mock_pe.defer.call_args_list:
         assert "nora" not in call.kwargs["body"]
         assert "ines" not in call.kwargs["body"]
+
+
+@pytest.mark.asyncio
+async def test_rematch_surfaces_urgent_active_sender_below_static_floor():
+    """Recent write velocity plus a closing window lowers the floor to 0.50."""
+    from thenetwork.search.match import MemoryMatch
+    from thenetwork.worker.proactive import scan_for_matches
+
+    now = datetime.now(timezone.utc)
+    recent = [
+        _memory(
+            "q-window",
+            ["Q"],
+            "in town for three days and open to an imperfect founder match",
+            created_at=now - timedelta(hours=4),
+        ),
+        _memory(
+            "q-followup",
+            ["Q"],
+            "actively looking for local founders to meet",
+            created_at=now - timedelta(hours=1),
+        ),
+    ]
+    matches = [MemoryMatch("m-p", "P", "open to meeting visiting founders", 0.50)]
+    persons = {"P": _person("P", "p@test.com"), "Q": _person("Q", "q@test.com")}
+
+    with (
+        patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()),
+        patch(
+            "thenetwork.worker.proactive.get_session",
+            return_value=_rematch_session(recent, persons),
+        ),
+        patch(
+            "thenetwork.worker.proactive.match_memories", return_value=matches
+        ) as mock_match,
+        patch("thenetwork.worker.proactive.process_email") as mock_pe,
+    ):
+        await scan_for_matches.func(0)
+
+    assert mock_pe.defer.call_count == 1
+    assert all(
+        call.kwargs["min_similarity"] == pytest.approx(0.50)
+        for call in mock_match.call_args_list
+    )
+
+
+@pytest.mark.asyncio
+async def test_rematch_keeps_dormant_sender_at_configured_floor():
+    """An old standing note does not admit the same 0.50 candidate."""
+    from thenetwork.search.match import MemoryMatch
+    from thenetwork.worker.proactive import scan_for_matches
+
+    recent = [
+        _memory(
+            "q-old",
+            ["Q"],
+            "generally open to meeting founders",
+            created_at=datetime.now(timezone.utc) - timedelta(days=30),
+        )
+    ]
+    matches = [MemoryMatch("m-p", "P", "open to meeting founders", 0.50)]
+    persons = {"P": _person("P", "p@test.com"), "Q": _person("Q", "q@test.com")}
+
+    with (
+        patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()),
+        patch(
+            "thenetwork.worker.proactive.get_session",
+            return_value=_rematch_session(recent, persons),
+        ),
+        patch("thenetwork.worker.proactive.match_memories", return_value=matches),
+        patch("thenetwork.worker.proactive.process_email") as mock_pe,
+    ):
+        await scan_for_matches.func(0)
+
+    assert not mock_pe.defer.called
+
+
+@pytest.mark.asyncio
+async def test_rematch_shortens_surface_cooldown_for_recently_active_sender():
+    """A recent sender uses the six-hour pair rotation, not the global day."""
+    from thenetwork.search.match import MemoryMatch
+    from thenetwork.worker.proactive import scan_for_matches
+
+    recent = [
+        _memory("q-1", ["Q"], "looking for robotics peers"),
+        _memory("q-2", ["Q"], "available to meet robotics founders"),
+    ]
+    matches = [MemoryMatch("m-p", "P", "robotics founder seeking peers", 0.70)]
+    persons = {"P": _person("P", "p@test.com"), "Q": _person("Q", "q@test.com")}
+    pair = ("P", "Q")
+
+    with (
+        patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()),
+        patch(
+            "thenetwork.worker.proactive.get_session",
+            return_value=_rematch_session(recent, persons),
+        ),
+        patch("thenetwork.worker.proactive.match_memories", return_value=matches),
+        patch(
+            "thenetwork.worker.proactive.recently_surfaced_pairs",
+            side_effect=[{pair}, set()],
+        ) as mock_recent_pairs,
+        patch("thenetwork.worker.proactive.process_email") as mock_pe,
+    ):
+        await scan_for_matches.func(0)
+
+    assert mock_recent_pairs.call_count == 2
+    cooldown_delta = (
+        mock_recent_pairs.call_args_list[1].kwargs["since"]
+        - mock_recent_pairs.call_args_list[0].kwargs["since"]
+    )
+    assert cooldown_delta == timedelta(hours=18)
+    assert mock_pe.defer.call_count == 1
 
 
 @pytest.mark.asyncio

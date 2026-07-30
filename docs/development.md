@@ -688,8 +688,12 @@ connection density, so it says nothing at cold start.
 
 `scan_for_matches` (`cron="30 * * * *"`, semantic rematch) is the cold-start /
 dormant-user path. Every run re-evaluates standing intents for people without an active
-consent pair and defers eligible counterparts above `proactive_match_threshold` (0.6).
-Declined pairs remain suppressed for the 90-day
+consent pair. `proactive_match_threshold` (0.6 by default) is the ceiling and remains the
+effective floor for a dormant sender. For other senders the scan derives a per-person
+floor from sealed memory history: at least two memories within two days lowers it by
+0.05, and a recent gist with an explicit closing-window phrase lowers it by another
+0.05. The two independent reductions are capped at 0.10, so the effective floor cannot
+fall below 0.50 with the default setting. Declined pairs remain suppressed for the 90-day
 cooldown, while a no-action surface becomes eligible again after the proactive-surface
 cooldown. Pairs already connected in the projected graph are skipped, and the trigger body
 groups a deterministic, bounded set of supporting PII-stripped gists under each opaque
@@ -699,9 +703,11 @@ Both scans order candidates deterministically by score descending with canonical
 as a tiebreak. The agent's per-run proposal cap and the server-side consent-request caps
 bound outbound activity.
 Pairs handed to either scan are also recorded by opaque ids in `proactive_surfaces`.
-They are not re-deferred for `proactive_surface_cooldown_seconds` (24 hours by default),
-even when the agent chose not to propose an introduction, so later scans rotate to the
-next eligible candidate.
+For a dormant sender they are not re-deferred for
+`proactive_surface_cooldown_seconds` (24 hours by default), even when the agent chose not
+to propose an introduction. A sender with either recent-activity signal above instead
+uses a cooldown capped at six hours, so later scans rotate to the next eligible candidate
+sooner. The configured cooldown remains the ceiling and the dormant-sender behavior.
 
 `scan_for_event_recommendations` (`cron="45 * * * *"`) is separate from both people scans.
 It loads only active, embedded events through a server-side projection that omits raw event

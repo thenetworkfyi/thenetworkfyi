@@ -6,6 +6,7 @@ what the LLM outputs. They do not require a live DB or LLM.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 import logging
 
@@ -598,7 +599,11 @@ async def test_proactive_semantic_trigger_never_sets_quote_inputs():
     from thenetwork.worker.proactive import scan_for_matches
 
     recent = MagicMock(
-        id="recent", refs=["arrival"], gist="arrival gist", embedding=[0.0]
+        id="recent",
+        refs=["arrival"],
+        gist="arrival gist",
+        embedding=[0.0],
+        created_at=datetime.now(timezone.utc),
     )
     standing_person = MagicMock(id="standing", email="standing@example.com")
     session = MagicMock()
