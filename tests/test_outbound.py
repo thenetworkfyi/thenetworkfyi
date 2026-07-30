@@ -21,7 +21,7 @@ from imap_tools import MailMessageFlags
 import pytest
 
 from thenetwork.audit import LOGGER_NAME
-from thenetwork.email.render import RenderedEmail
+from thenetwork.email.render import RenderedEmail, standard_signature_lines
 from thenetwork.sim.html_validation import assert_html_email_contract
 
 
@@ -396,12 +396,13 @@ def test_proxy_introduction_messages_preserve_valid_multipart_alternatives(smtp_
     assert len(messages) == 2
     proxy = "hidden-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa@relay.example.com"
     for message in messages:
+        signature_address = standard_signature_lines()[1]
         inspection = assert_html_email_contract(
             message,
             required_text=(
                 proxy,
                 "The Network",
-                "join@thenetwork.fyi",
+                signature_address,
             ),
         )
         assert inspection.part_types == ("text/plain", "text/html")
@@ -429,11 +430,12 @@ def test_event_fyi_uses_fixed_subject_template_and_standard_signature(smtp_sink)
         "text/plain",
         "text/html",
     ]
+    signature_address = standard_signature_lines()[1]
     for body in (plain, unescape(html)):
         assert body.count("A sealed event gist") == 1
         assert body.count(EventRecommendationNotice.FIRST.value) == 1
         assert body.count("The Network") == 1
-        assert body.count("join@thenetwork.fyi") == 1
+        assert body.count(signature_address) == 1
         assert "agent@example.com" not in body
 
 
@@ -446,9 +448,10 @@ def test_send_reply_uses_short_standard_signature(smtp_sink):
         send_reply(to_address="recipient@example.com", subject="Hi", body_text="Body")
 
     body = smtp_sink.messages[0].get_body(preferencelist=("plain",)).get_content()
+    signature_address = standard_signature_lines()[1]
     assert body.count("The Network") == 1
-    assert body.count("join@thenetwork.fyi") == 1
-    assert body.endswith("The Network\njoin@thenetwork.fyi\n")
+    assert body.count(signature_address) == 1
+    assert body.endswith(f"The Network\n{signature_address}\n")
     for removed_text in (
         "An automated connection service",
         "Reply anytime.",
@@ -647,7 +650,7 @@ def test_send_reply_places_signature_before_quoted_trail(smtp_sink):
 
     plain = smtp_sink.messages[0].get_body(preferencelist=("plain",)).get_content()
     reply_index = plain.index("Hello")
-    footer_index = plain.index("The Network\njoin@thenetwork.fyi")
+    footer_index = plain.index("\n".join(standard_signature_lines()))
     quote_index = plain.index("On Sat, 04 Jul 2026 12:00:00 -0700, you wrote:")
     assert reply_index < footer_index < quote_index
 
