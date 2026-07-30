@@ -446,7 +446,7 @@ git pull origin main && docker compose pull worker && docker compose up -d --for
 
 `.github/workflows/ci.yml` runs exactly that over SSH (`deploy` job,
 `environment: production`) on every push to `main`, once the `test` job passes and a
-separate `build` job has pushed the worker image to GHCR. The VPS never builds the image
+separate `build` job has pushed the public worker image to GHCR (package settings set to public visibility; audit verified images contain no secrets). The VPS never builds the image
 itself - it only pulls the tag CI just built, since the server needs its resources for
 serving, not building. The deploy commands live inline in the workflow file itself (not a
 script checked out on the server), so every run executes the version from the commit that

@@ -99,8 +99,10 @@ jobs:
             cd /opt/thenetwork
             echo "==> Pulling latest code..."
             git pull origin main
-            echo "==> Logging in to GHCR..."
-            echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u ${{ secrets.GHCR_USERNAME }} --password-stdin
+            if [ -n "${{ secrets.GHCR_PAT }}" ] && [ -n "${{ secrets.GHCR_USERNAME }}" ]; then
+              echo "==> Logging in to GHCR..."
+              echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u ${{ secrets.GHCR_USERNAME }} --password-stdin
+            fi
             echo "==> Pulling latest worker image..."
             docker compose pull worker
             echo "==> Recreating containers..."
