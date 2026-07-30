@@ -185,6 +185,20 @@ sender-authentication results, SES identity/DKIM/SMTP setup, and deployment prob
 Provider selection is by model-string prefix, not by code paths - there is no LiteLLM /
 proxy layer.
 
+## GitHub repository protections
+
+Before making the repository public, configure these controls in GitHub. They cannot be
+enforced by files in the repository:
+
+- Add a branch ruleset for `main` that requires pull requests, requires the CI workflow's
+  test job to pass, dismisses stale approvals when new commits are pushed, requires
+  conversation resolution, and blocks force pushes and deletion.
+- Create a `production` deployment environment and require designated production
+  reviewers. Keep deployment credentials as environment secrets so they are unavailable
+  until a reviewer approves the deployment.
+- Make the branch ruleset and production environment protections apply to repository
+  administrators as well as other contributors.
+
 ## Content scanner
 
 The normal project installation includes the pinned LlamaFirewall inbound
