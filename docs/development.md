@@ -676,16 +676,23 @@ push to `main`, only after `test` passes: it logs in to `ghcr.io` with the ephem
 
 Since the `ghcr.io/thenetworkfyi/agent` package is set to public visibility in GHCR package settings (audit verified images contain no baked-in secrets), the `deploy` job SSHes into the server (host,
 user, and key come from the `production` environment's `DEPLOY_HOST`/`DEPLOY_USER`/
-`DEPLOY_SSH_KEY` secrets), runs `git pull origin main`, pulls the public image via `docker compose pull worker` (logging in with optional `GHCR_USERNAME`/`GHCR_PAT` secrets only if configured for private packages), then runs
-`docker compose up -d --force-recreate`, and prints the resulting `worker` status. These
+`DEPLOY_SSH_KEY` secrets), runs `git pull origin main`, exports `IMAGE` with the
+immutable `ghcr.io/<owner>/agent:<commit-sha>` tag produced by that workflow run, pulls
+that public image via `docker compose pull worker` (logging in with optional
+`GHCR_USERNAME`/`GHCR_PAT` secrets only if configured for private packages), then runs
+`docker compose up -d`, and prints the resulting `worker` status. These
 commands are inline in the workflow's `script:` block rather than a script checked out on
 the server, so the deploy step always runs the version from the commit that just passed
 CI, never a stale on-disk copy. `docker-compose.yml`'s `worker.image` defaults to
 `ghcr.io/thenetworkfyi/agent:latest` (override with `IMAGE=` in `.env`); local
 development still uses `docker compose up -d --build`, which builds from the Dockerfile
 and tags the result locally under that same name, so no pull is attempted. Run the same
-`git pull` + `docker compose pull worker` + `docker compose up -d --force-recreate`
-commands by hand on the server for a manual redeploy. `scripts/backup.sh` dumps the DB
+`git pull` + SHA-tagged `IMAGE` export + `docker compose pull worker` +
+`docker compose up -d` commands by hand on the server for a manual redeploy.
+After a successful deploy, the `cleanup-images` job keeps the three newest GHCR
+package versions and deletes older versions. This registry retention is independent of
+host-side Docker image and builder-cache pruning.
+`scripts/backup.sh` dumps the DB
 (the only source of truth) via the `db` container - wire it as a host cron job.
 
 ## Proactive outreach

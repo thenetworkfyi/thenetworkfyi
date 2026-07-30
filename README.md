@@ -445,16 +445,18 @@ time to drain.
 A deploy is therefore just:
 
 ```bash
-git pull origin main && docker compose pull worker && docker compose up -d --force-recreate
+export IMAGE=ghcr.io/thenetworkfyi/agent:<commit-sha>
+git pull origin main && docker compose pull worker && docker compose up -d
 ```
 
 `.github/workflows/ci.yml` runs exactly that over SSH (`deploy` job,
 `environment: production`) on every push to `main`, once the `test` job passes and a
 separate `build` job has pushed the public worker image to GHCR (package settings set to public visibility; audit verified images contain no secrets). The VPS never builds the image
-itself - it only pulls the tag CI just built, since the server needs its resources for
+itself - it pulls the immutable commit-SHA tag CI just built, since the server needs its resources for
 serving, not building. The deploy commands live inline in the workflow file itself (not a
 script checked out on the server), so every run executes the version from the commit that
-just passed CI rather than whatever happens to be on disk.
+just passed CI rather than whatever happens to be on disk. After deployment, CI retains
+the three newest GHCR package versions and deletes older versions.
 
 ### Backups
 
@@ -503,4 +505,3 @@ AGENTS.md     repository guidance (`CLAUDE.md` is a symlink to this file)
 
 Suggested GitHub topics for repository maintainers to apply:
 `ai-agent`, `pydantic-ai`, `email-agent`, `pgvector`, `privacy`, `security-seal`, `python`
-
