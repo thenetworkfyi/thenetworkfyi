@@ -26,6 +26,7 @@ real_import = builtins.__import__
 def checked_import(name, globals=None, locals=None, fromlist=(), level=0):
     if name == "crewai" or name.startswith("crewai."):
         assert os.environ.get("CREWAI_DISABLE_TELEMETRY") == "true"
+        assert os.environ.get("CREWAI_TESTING") == "true"
         raise CrewAIImportObserved
     return real_import(name, globals, locals, fromlist, level)
 
@@ -40,5 +41,6 @@ else:
 """
     env = os.environ.copy()
     env.pop("CREWAI_DISABLE_TELEMETRY", None)
+    env.pop("CREWAI_TESTING", None)
 
     subprocess.run([sys.executable, "-c", script], env=env, check=True)
