@@ -6,7 +6,7 @@ from thenetwork.sim.personas.crew_model import build_crew_llm
 
 def test_build_crew_llm_defaults():
     custom_settings = Settings(
-        agent_model="openai/gpt-4o",
+        agent_model="anthropic:claude-sonnet-5",
         small_agent_model="openai/gpt-4o-mini",
         embed_model="openai/text-embedding-3-small",
         relay_domain="example.test",
@@ -15,8 +15,8 @@ def test_build_crew_llm_defaults():
     )
     llm = build_crew_llm(settings=custom_settings)
 
-    assert llm.model == "gpt-4o"
-    assert llm.provider == "openai"
+    assert llm.model == "claude-sonnet-5"
+    assert llm.provider == "anthropic"
     assert llm.api_key == "default-api-key"
     assert llm.timeout == 45.0
 
@@ -31,14 +31,14 @@ def test_build_crew_llm_explicit_overrides():
         model_request_timeout_seconds=30.0,
     )
     llm = build_crew_llm(
-        model="anthropic/claude-3-5-sonnet",
+        model="openai:gpt-4.1",
         api_key="override-key",
         settings=custom_settings,
         temperature=0.5,
     )
 
-    assert llm.model == "claude-3-5-sonnet"
-    assert llm.provider == "anthropic"
+    assert llm.model == "gpt-4.1"
+    assert llm.provider == "openai"
     assert llm.api_key == "override-key"
     assert llm.timeout == 30.0
     assert llm.temperature == 0.5
@@ -59,3 +59,19 @@ def test_build_crew_llm_without_api_key():
     assert llm.provider == "ollama"
     assert llm.api_key in (None, "", "ollama")
     assert llm.timeout == 60.0
+
+
+def test_build_crew_llm_infers_provider_for_bare_model():
+    custom_settings = Settings(
+        agent_model="gpt-4o",
+        small_agent_model="openai/gpt-4o-mini",
+        embed_model="openai/text-embedding-3-small",
+        relay_domain="example.test",
+        agent_api_key="bare-model-key",
+    )
+
+    llm = build_crew_llm(settings=custom_settings)
+
+    assert llm.model == "gpt-4o"
+    assert llm.provider == "openai"
+    assert llm.api_key == "bare-model-key"
