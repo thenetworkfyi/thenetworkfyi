@@ -75,3 +75,22 @@ def test_build_crew_llm_infers_provider_for_bare_model():
     assert llm.model == "gpt-4o"
     assert llm.provider == "openai"
     assert llm.api_key == "bare-model-key"
+
+
+def test_build_crew_llm_openrouter_provider_prefix_with_slash():
+    custom_settings = Settings(
+        agent_model="anthropic:claude-sonnet-5",
+        small_agent_model="openai/gpt-4o-mini",
+        embed_model="openai/text-embedding-3-small",
+        relay_domain="example.test",
+        agent_api_key="default-api-key",
+    )
+    llm = build_crew_llm(
+        model="openrouter:google/gemma-4-31b-it",
+        api_key="openrouter-key",
+        settings=custom_settings,
+    )
+
+    assert llm.model == "google/gemma-4-31b-it"
+    assert llm.provider == "openrouter"
+    assert llm.api_key == "openrouter-key"
