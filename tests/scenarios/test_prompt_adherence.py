@@ -38,11 +38,11 @@ succeeded. Run it deliberately:
     uv run pytest -m live_model --record-mode=once \
         tests/scenarios/test_prompt_adherence.py::test_prompt_adherence_case
 
-`BASELINE_PATH` (`docs/prompt-adherence-baseline.json`) is the immutable
+`BASELINE_PATH` (`docs/notes/prompt-adherence-baseline.json`) is the immutable
 flat-prompt reference measured before this chain started - a run never
 overwrites it, because a comparison needs a fixed reference point. Each run
 appends a record to `MEASUREMENTS_PATH`
-(`docs/prompt-adherence-measurements.json`) carrying the per-commitment rate,
+(`docs/notes/prompt-adherence-measurements.json`) carrying the per-commitment rate,
 the model, the commit, and the per-commitment comparison against the baseline.
 Commitments that did not exist at the baseline - the bullets this chain split
 into interactive and proactive variants - are recorded as
@@ -88,14 +88,14 @@ from tests.scenarios.test_live_archetypes import (
     run_scenario,
 )
 
-_DOCS = Path(__file__).resolve().parents[2] / "docs"
+_NOTES = Path(__file__).resolve().parents[2] / "docs" / "notes"
 
 #: The flat-prompt reference. Read, never written - a comparison needs a fixed
 #: point, and re-measuring the flat prompt is impossible now that it is gone.
-BASELINE_PATH = _DOCS / "prompt-adherence-baseline.json"
+BASELINE_PATH = _NOTES / "prompt-adherence-baseline.json"
 
 #: Append-only log of later measurements, newest last.
-MEASUREMENTS_PATH = _DOCS / "prompt-adherence-measurements.json"
+MEASUREMENTS_PATH = _NOTES / "prompt-adherence-measurements.json"
 
 #: Recorded on every measurement so a reader cannot mistake the delta for a
 #: pure prompt-shape effect: the scenario harness itself changed after the
