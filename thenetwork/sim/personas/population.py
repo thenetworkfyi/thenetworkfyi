@@ -38,10 +38,15 @@ CHLOE_EMAIL = "chloe.sim@example.test"
 LEILA_EMAIL = "leila.sim@example.test"
 ROSA_EMAIL = "rosa.sim@example.test"
 DEZ_EMAIL = "dez.sim@example.test"
+MARISOL_EMAIL = "marisol.sim@example.test"
+QUINN_EMAIL = "quinn.sim@example.test"
 # The data/ML-infrastructure personas Rosa's day job overlaps with on keywords
 # alone. She is not asking to meet any of them.
 _DATA_INFRA_EMAILS = frozenset(
     {"priya.sim@example.test", "samir.sim@example.test", "arun.sim@example.test"}
+)
+_MARISOL_DAY_JOB_EMAILS = frozenset(
+    {"priya.sim@example.test", "samir.sim@example.test"}
 )
 
 _INTRODUCTION_SUBJECT = "Your introduction"
@@ -129,6 +134,20 @@ _LEILA_PROFILE_EVIDENCE_GROUPS = (
 _LEILA_MATCH_EVIDENCE_GROUPS = (
     ("peer product designer", "workflow-adoption"),
     ("remotely", "every other week", "three months"),
+)
+_MARISOL_WINDOW_EVIDENCE_GROUP = (
+    "in town for three days",
+    "three-day window",
+    "next three days",
+)
+_MARISOL_TOLERANCE_EVIDENCE_GROUP = (
+    "volume over precision",
+    "imperfect match",
+)
+_QUINN_OPENNESS_EVIDENCE_GROUP = (
+    "outside my field",
+    "without exact professional overlap",
+    "no exact professional overlap",
 )
 
 
@@ -220,6 +239,10 @@ _EMAIL_PRESENTATIONS = {
         format=EmailFormat.MULTIPART_ALTERNATIVE,
         signature=EmailSignature(lines=("Leila Hart", "Community Lab Product Design")),
     ),
+    MARISOL_EMAIL: EmailPresentation(
+        signature=EmailSignature(lines=("Marisol Vega", "ML Infrastructure")),
+    ),
+    QUINN_EMAIL: EmailPresentation(format=EmailFormat.MULTIPART_ALTERNATIVE),
 }
 
 
@@ -756,6 +779,171 @@ def _rosa_pair_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
     }
 
 
+def _marisol_inbound_bodies(outcome: ScenarioOutcome) -> tuple[str, ...]:
+    return tuple(
+        message.body.casefold()
+        for message in outcome.mail_facts
+        if parseaddr(message.sender)[1].casefold() == MARISOL_EMAIL
+    )
+
+
+def _marisol_prerequisites(outcome: ScenarioOutcome) -> tuple[bool, bool]:
+    bodies = _marisol_inbound_bodies(outcome)
+    return (
+        any(
+            marker in body
+            for body in bodies
+            for marker in _MARISOL_WINDOW_EVIDENCE_GROUP
+        ),
+        any(
+            marker in body
+            for body in bodies
+            for marker in _MARISOL_TOLERANCE_EVIDENCE_GROUP
+        ),
+    )
+
+
+def _marisol_tool_names(outcome: ScenarioOutcome) -> list[str]:
+    sender_id_hash = outcome.sender_id_hashes.get(MARISOL_EMAIL)
+    if sender_id_hash is None:
+        return []
+    return [
+        str(event["tool_name"])
+        for event in outcome.audit_events
+        if event.get("event") == "agent.tool.completed"
+        and event.get("outcome") == "success"
+        and event.get("sender_id_hash") == sender_id_hash
+        and event.get("tool_name") in {"forget", "remember", "propose_introduction"}
+    ]
+
+
+def _marisol_situation_exercised(outcome: ScenarioOutcome) -> bool:
+    return all(_marisol_prerequisites(outcome))
+
+
+def _marisol_messages_consolidate(outcome: ScenarioOutcome) -> bool:
+    """Judge consolidation only after Marisol states her window and tolerance."""
+    if not _marisol_situation_exercised(outcome):
+        return True
+    tool_names = _marisol_tool_names(outcome)
+    forget_positions = [
+        index for index, tool_name in enumerate(tool_names) if tool_name == "forget"
+    ]
+    remember_positions = [
+        index for index, tool_name in enumerate(tool_names) if tool_name == "remember"
+    ]
+    return (
+        outcome.memory_counts.get(MARISOL_EMAIL, 0) == 1
+        and bool(forget_positions)
+        and all(
+            any(remember_index > forget_index for remember_index in remember_positions)
+            for forget_index in forget_positions
+        )
+    )
+
+
+def _marisol_consolidation_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
+    tool_names = _marisol_tool_names(outcome)
+    window_stated, tolerance_stated = _marisol_prerequisites(outcome)
+    return {
+        "window_stated": window_stated,
+        "tolerance_stated": tolerance_stated,
+        "memory_count": outcome.memory_counts.get(MARISOL_EMAIL, 0),
+        "forget_count": tool_names.count("forget"),
+        "remember_count": tool_names.count("remember"),
+    }
+
+
+def _marisol_proposal_messages(outcome: ScenarioOutcome):
+    return tuple(
+        message
+        for message in outcome.mail_facts
+        if MARISOL_EMAIL in message.recipients
+        and message.subject.startswith("Possible introduction")
+    )
+
+
+def _marisol_qualification_questions(outcome: ScenarioOutcome):
+    return tuple(
+        message
+        for message in outcome.mail_facts
+        if MARISOL_EMAIL in message.recipients
+        and message.subject != _INTRODUCTION_SUBJECT
+        and not message.subject.startswith("Possible introduction")
+        and "?" in message.body
+    )
+
+
+def _marisol_receives_proposal_inside_window(outcome: ScenarioOutcome) -> bool:
+    """The three-day ask should produce a proposal, not more qualification."""
+    if not _marisol_situation_exercised(outcome):
+        return True
+    proposals = _marisol_proposal_messages(outcome)
+    return (
+        len(proposals) == 1
+        and proposals[0].tick is not None
+        and 1 <= proposals[0].tick <= 3
+        and not _marisol_qualification_questions(outcome)
+    )
+
+
+def _marisol_proposal_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
+    window_stated, tolerance_stated = _marisol_prerequisites(outcome)
+    return {
+        "window_stated": window_stated,
+        "tolerance_stated": tolerance_stated,
+        "proposal_ticks": [
+            message.tick for message in _marisol_proposal_messages(outcome)
+        ],
+        "qualification_question_count": len(_marisol_qualification_questions(outcome)),
+    }
+
+
+def _quinn_stated_openness(outcome: ScenarioOutcome) -> bool:
+    bodies = (
+        message.body.casefold()
+        for message in outcome.mail_facts
+        if parseaddr(message.sender)[1].casefold() == QUINN_EMAIL
+    )
+    return any(
+        marker in body for body in bodies for marker in _QUINN_OPENNESS_EVIDENCE_GROUP
+    )
+
+
+def _marisol_is_matched_on_mutual_openness(outcome: ScenarioOutcome) -> bool:
+    """Urgency may admit a thin mutual-intent match, never a keyword-only one."""
+    if not _marisol_situation_exercised(outcome):
+        return True
+    pairs = tuple(
+        row for row in outcome.consent_rows if _pair_involves(row, MARISOL_EMAIL)
+    )
+    return (
+        _quinn_stated_openness(outcome)
+        and len(pairs) == 1
+        and pairs[0].participant_emails == frozenset((MARISOL_EMAIL, QUINN_EMAIL))
+        and pairs[0].status in {"proposed", "one_consented", "introduced"}
+    )
+
+
+def _marisol_match_summary(outcome: ScenarioOutcome) -> dict[str, Any]:
+    window_stated, tolerance_stated = _marisol_prerequisites(outcome)
+    pairs = tuple(
+        row for row in outcome.consent_rows if _pair_involves(row, MARISOL_EMAIL)
+    )
+    return {
+        "window_stated": window_stated,
+        "tolerance_stated": tolerance_stated,
+        "counterpart_openness_stated": _quinn_stated_openness(outcome),
+        "pair_count": len(pairs),
+        "open_counterpart_pair_count": sum(
+            QUINN_EMAIL in row.participant_emails for row in pairs
+        ),
+        "day_job_keyword_pair_count": sum(
+            bool(row.participant_emails & _MARISOL_DAY_JOB_EMAILS) for row in pairs
+        ),
+    }
+
+
 def _omar_consent_events(outcome: ScenarioOutcome) -> list[dict[str, Any]]:
     sender_id_hash = outcome.sender_id_hashes.get(OMAR_EMAIL)
     if sender_id_hash is None:
@@ -1161,6 +1349,35 @@ DEFAULT_OUTCOME_CHECKS = (
         requires_llm_personas=True,
         evidence=_rosa_pair_summary,
     ),
+    OutcomeCheck(
+        description=(
+            "Marisol's consecutive updates consolidate into one standing memory"
+        ),
+        predicate=_marisol_messages_consolidate,
+        requires_real_process=True,
+        requires_llm_personas=True,
+        evidence=_marisol_consolidation_summary,
+    ),
+    OutcomeCheck(
+        description=(
+            "Marisol receives a proposal inside her three-day window rather than "
+            "another qualification question"
+        ),
+        predicate=_marisol_receives_proposal_inside_window,
+        requires_real_process=True,
+        requires_llm_personas=True,
+        evidence=_marisol_proposal_summary,
+    ),
+    OutcomeCheck(
+        description=(
+            "Marisol is matched with the stated-open counterpart rather than on "
+            "day-job keyword overlap"
+        ),
+        predicate=_marisol_is_matched_on_mutual_openness,
+        requires_real_process=True,
+        requires_llm_personas=True,
+        evidence=_marisol_match_summary,
+    ),
 )
 
 
@@ -1230,6 +1447,21 @@ DEFAULT_EXPECTATIONS = (
         persona_email=ROSA_EMAIL,
         inbound_contains_any=_ROSA_MUSIC_EVIDENCE_GROUP,
         inbound_required_groups=(_ROSA_MUSIC_EVIDENCE_GROUP,),
+    ),
+    MemoryExpectation(
+        description=(
+            "Marisol's standing memory retains her three-day window and fit tolerance"
+        ),
+        gist_contains="three days",
+        persona_email=MARISOL_EMAIL,
+        inbound_contains_any=(
+            *_MARISOL_WINDOW_EVIDENCE_GROUP,
+            *_MARISOL_TOLERANCE_EVIDENCE_GROUP,
+        ),
+        inbound_required_groups=(
+            _MARISOL_WINDOW_EVIDENCE_GROUP,
+            _MARISOL_TOLERANCE_EVIDENCE_GROUP,
+        ),
     ),
 )
 
@@ -1764,12 +1996,76 @@ def default_population(
             ),
         ),
     )
+    time_boxed_match = (
+        PopulationPersona(
+            config=PersonaConfig(
+                name="Marisol Vega",
+                email=MARISOL_EMAIL,
+                goal=(
+                    "On tick 1, send a first email that states all of this in your "
+                    "own words: you work in ML infrastructure, you are in town for "
+                    "three days, and you want to fit in several conversations while "
+                    "you are here. Say plainly that you want volume over precision "
+                    "and will accept an imperfect match; a willing person outside "
+                    "your field is more useful than a perfect match after you leave. "
+                    "If no introduction has been proposed, send a concise follow-up "
+                    "on each of ticks 2 and 3 that preserves the three-day window "
+                    "and your tolerance for an imperfect match rather than narrowing "
+                    "to an ML specialty. If an introduction is proposed inside the "
+                    "window, reply Yes with its [intro:...] token."
+                ),
+                stop_condition=(
+                    "Stop after consenting to an introduction or after tick 3."
+                ),
+                message_budget=4,
+                agent_address=agent_address,
+                presentation=_presentation_for(MARISOL_EMAIL),
+            ),
+            opening_body=(
+                "I work in ML infrastructure and I am in town for three days. I want "
+                "to fit in several conversations, so volume over precision is the "
+                "right tradeoff and I will accept an imperfect match, including a "
+                "willing person outside my field."
+            ),
+        ),
+        PopulationPersona(
+            config=PersonaConfig(
+                name="Quinn Harper",
+                email=QUINN_EMAIL,
+                goal=(
+                    "Your first email must state all of this in your own words: you "
+                    "coordinate volunteers for a neighborhood arts venue, you are "
+                    "receptive to meeting visitors and people outside your field, "
+                    "and you do not require exact professional overlap. Say that you "
+                    "are unspecific about whether you meet for coffee, a walk, or a "
+                    "short call; mutual willingness and curiosity are enough. Answer "
+                    "focused questions honestly without inventing a professional "
+                    "matching requirement. If an introduction is proposed, reply "
+                    "Yes with its [intro:...] token."
+                ),
+                stop_condition=(
+                    "Stop after consenting to an introduction or once your openness "
+                    "is registered."
+                ),
+                message_budget=3,
+                agent_address=agent_address,
+                presentation=_presentation_for(QUINN_EMAIL),
+            ),
+            opening_body=(
+                "I coordinate volunteers for a neighborhood arts venue. I am open "
+                "to meeting visitors and people outside my field without exact "
+                "professional overlap. Coffee, a walk, or a short call all work; "
+                "mutual willingness and curiosity are enough."
+            ),
+        ),
+    )
     return (
         *original_population,
         *additions,
         *top_of_funnel,
         *progressive_match,
         *multi_register,
+        *time_boxed_match,
     )
 
 

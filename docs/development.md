@@ -449,8 +449,8 @@ The compose stack uses `pgvector/pgvector:pg17`; use the corresponding local Pos
 
 ### Population situations
 
-`sim run` uses the authored population of 27 personas by default. The original first ten
-remain available for backward-compatible smoke runs with `--personas 10`; the 17 later
+`sim run` uses the authored population of 29 personas by default. The original first ten
+remain available for backward-compatible smoke runs with `--personas 10`; the 19 later
 personas are deliberately varied situations, not a scenario script. Their replies remain
 prompt-emergent when `--llm-personas` is enabled, so the checks describe observable
 outcomes rather than force a particular conversation.
@@ -524,6 +524,19 @@ outcomes rather than force a particular conversation.
   match, and the evidence records whether the right one fired.
   Both predicates are guarded on Rosa having actually stated both pursuits, so a truncated or
   offline run records the situation as unexercised rather than as a passing no-op.
+- **Marisol Vega** is in town for three days and sends consecutive updates because she wants
+  several conversations before leaving. She states that volume matters more than precision and
+  that she will accept an imperfect match, while her ML-infrastructure day job creates tempting
+  keyword overlap with existing personas. **Quinn Harper** is the deliberately low-similarity
+  counterpart: an arts-venue volunteer coordinator who is receptive to visitors, does not
+  require professional overlap, and is unspecific about meeting for coffee, a walk, or a call.
+  Tier 2 requires Marisol's consolidated standing memory to retain the three-day window.
+  Outcome scoring requires one memory after a forget-plus-remember consolidation, a consent
+  proposal by tick 3 instead of another qualification question, and the Marisol-Quinn pair
+  rather than an ML-keyword pair. Each predicate is guarded on Marisol actually stating both
+  the window and her tolerance for an imperfect match; truncated and offline runs therefore
+  remain visibly unexercised. Rosa's independent wrong-match checks remain the control that
+  urgency lowers the fit floor without turning keyword overlap into a two-sided thesis.
 
 Authoring note that applies to every persona: under `--llm-personas` the persona **never sends
 `opening_body`**. Each turn is written by the model from `config.goal` alone
@@ -576,6 +589,9 @@ turns so it can consider the versioned event for Mina. Later even-numbered scans
 deduplication by producing no second trigger, ledger row, or delivered FYI for the stable
 recurring series. Omitting `--message-budget` preserves each authored persona's configured
 budget.
+The same invocation exercises Marisol's time-boxed people-match situation: her first three
+ticks create and consolidate the urgency evidence, and the periodic semantic scan gets a
+chance to surface Quinn while the stated window is still open.
 
 In `events.jsonl`, `sim.proactive_job_deferred` distinguishes event work with
 `trigger_kind: "event"`; it carries only a stable `event_key`, `event_version`, trace id, fixed
