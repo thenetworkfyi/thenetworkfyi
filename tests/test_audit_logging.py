@@ -1019,7 +1019,7 @@ async def test_agent_no_tool_call_is_flagged_without_admin_notification(caplog):
         patch("thenetwork.email.outbound.notify_admins") as notify_admins,
     ):
         await run_agent_for_email(
-            sender_email="mike@mkly.io",
+            sender_email="mike@example.com",
             sender_user_id=None,
             email_subject="I'm hungry",
             email_body="I would really like a pizza.",
@@ -1048,7 +1048,7 @@ async def test_empty_agent_output_does_not_escalate_as_undispatched():
         patch("thenetwork.email.outbound.notify_admins") as notify_admins,
     ):
         await run_agent_for_email(
-            sender_email="mike@mkly.io",
+            sender_email="mike@example.com",
             sender_user_id=None,
             email_subject="No action",
             email_body="FYI",
@@ -1073,7 +1073,7 @@ async def test_proactive_no_action_is_audited_without_admin_notification(
     ):
         for _ in range(run_count):
             await run_agent_for_email(
-                sender_email="mike@mkly.io",
+                sender_email="mike@example.com",
                 sender_user_id="person-mike",
                 email_subject="[Proactive] Possible connection",
                 email_body="[System match] Consider a connection.",
@@ -1123,7 +1123,7 @@ async def test_dispatch_activity_prevents_undispatched_escalation(
         patch("thenetwork.email.outbound.notify_admins") as notify_admins,
     ):
         await run_agent_for_email(
-            sender_email="mike@mkly.io",
+            sender_email="mike@example.com",
             sender_user_id="person-mike",
             email_subject="Introduce me",
             email_body="Please make the introduction.",
