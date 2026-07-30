@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from thenetwork.email.render import standard_signature_lines
 from thenetwork.sim.run.mail import (
     SimMessageMeta,
     SimPostOffice,
@@ -49,7 +50,7 @@ def test_post_office_captures_send_reply_at_smtp_seam():
     assert captured["Message-ID"]
     plain_body = captured.get_body(preferencelist=("plain",)).get_content()
     assert "The Network" in plain_body
-    assert "join@thenetwork.fyi" in plain_body
+    assert standard_signature_lines()[1] in plain_body
 
 
 def test_post_office_appends_delivered_messages_to_mbox(tmp_path):

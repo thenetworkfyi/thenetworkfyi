@@ -19,6 +19,8 @@ from jinja2 import (
     select_autoescape,
 )
 
+from thenetwork.settings import get_settings
+
 
 class SignatureVariant(str, Enum):
     """Server-owned signature variants for user-facing mail."""
@@ -193,7 +195,14 @@ _INFRASTRUCTURE_REJECTION_COPY = {
     ),
 }
 
-_STANDARD_SIGNATURE_TEXT = "The Network\njoin@thenetwork.fyi"
+
+def standard_signature_lines() -> tuple[str, str]:
+    """Return the server-configured standard signature shared by all renderers."""
+    settings = get_settings()
+    return (
+        "The Network",
+        settings.email_signature_address or settings.email_from,
+    )
 
 
 def render_conversational_email(
@@ -394,8 +403,13 @@ def _signature_context(variant: SignatureVariant) -> dict[str, str | bool]:
     if not isinstance(variant, SignatureVariant):
         raise TypeError("signature_variant must be a SignatureVariant")
     if variant is SignatureVariant.NONE:
-        return {"plain": "", "show": False}
-    return {"plain": _STANDARD_SIGNATURE_TEXT, "show": True}
+        return {"plain": "", "address": "", "show": False}
+    name, address = standard_signature_lines()
+    return {
+        "plain": f"{name}\n{address}",
+        "address": address,
+        "show": True,
+    }
 
 
 def _quote_context(

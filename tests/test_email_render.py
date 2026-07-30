@@ -23,6 +23,7 @@ from thenetwork.email.render import (
     _ENVIRONMENT,
     render_conversational_email,
     render_fixed_email,
+    standard_signature_lines,
 )
 
 
@@ -266,10 +267,38 @@ def test_signature_variants_are_rendered_once(variant, expected_signature):
     )
 
     assert rendered.html is not None
+    signature_address = standard_signature_lines()[1]
     assert (rendered.text.count("The Network") == 1) is expected_signature
     assert (rendered.html.count("The Network") == 1) is expected_signature
-    assert (rendered.text.count("join@thenetwork.fyi") == 1) is expected_signature
-    assert (rendered.html.count("join@thenetwork.fyi") == 1) is expected_signature
+    assert (rendered.text.count(signature_address) == 1) is expected_signature
+    assert (rendered.html.count(signature_address) == 1) is expected_signature
+
+
+@pytest.mark.parametrize(
+    ("signature_address", "email_from", "expected"),
+    [
+        ("connections@example.net", "sender@example.net", "connections@example.net"),
+        (None, "sender@example.net", "sender@example.net"),
+    ],
+)
+def test_standard_signature_uses_settings(
+    monkeypatch, signature_address, email_from, expected
+):
+    import thenetwork.settings as settings_module
+
+    settings = settings_module.get_settings().model_copy(
+        update={
+            "email_signature_address": signature_address,
+            "email_from": email_from,
+        }
+    )
+    monkeypatch.setattr(settings_module, "_settings", settings)
+
+    rendered = render_conversational_email("A short note.")
+
+    assert rendered.html is not None
+    assert rendered.text.endswith(f"The Network\n{expected}")
+    assert expected in rendered.html
 
 
 def test_plain_and_html_have_equivalent_meaning_and_ordering():
@@ -281,12 +310,13 @@ def test_plain_and_html_have_equivalent_meaning_and_ordering():
     assert rendered.html is not None
     plain_visible = rendered.text.replace("\n> ", "\n")
     html_visible = _visible_html(rendered.html)
+    signature_address = standard_signature_lines()[1]
     for text in (
         "First line",
         "second line",
         "Second paragraph",
         "The Network",
-        "join@thenetwork.fyi",
+        signature_address,
     ):
         assert text in plain_visible
         assert text in html_visible

@@ -98,6 +98,9 @@ class Settings(BaseSettings):
     # Address used in the outbound From: header (distinct from smtp_account,
     # which is only the SMTP login credential).
     email_from: str = ""
+    # Address printed in the standard user-facing email signature. Set this to
+    # null to derive it from email_from instead.
+    email_signature_address: str | None = "join@thenetwork.fyi"
     # Domain whose Dovecot catch-all feeds the IMAP inbox. Introduction reply
     # aliases are generated beneath this domain; no inbound HTTP service is
     # involved. Deliberately no default: every deployment must explicitly own
