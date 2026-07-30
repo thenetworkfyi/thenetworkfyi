@@ -4,6 +4,7 @@ from email.message import EmailMessage
 
 import pytest
 
+from thenetwork.email.render import standard_signature_lines
 from thenetwork.db.models import Memory
 from thenetwork.sim.run.mail import SimMessageMeta, SimPostOffice
 from thenetwork.sim.scoring.scoring import (
@@ -220,6 +221,7 @@ def test_score_seal_mbox_rejects_unconsented_group_disclosure(tmp_path):
 
 def _presentation_message(*, html: str | None = None) -> EmailMessage:
     token = "[intro:11111111-1111-1111-1111-111111111111]"
+    signature_name, signature_address = standard_signature_lines()
     message = EmailMessage()
     message["From"] = "join@example.test"
     message["To"] = "alice@example.test"
@@ -228,14 +230,14 @@ def _presentation_message(*, html: str | None = None) -> EmailMessage:
     message.set_content(
         "Would you like an introduction?\n\n"
         f"{token}\n\n"
-        "The Network\njoin@thenetwork.fyi"
+        f"{signature_name}\n{signature_address}"
     )
     message.add_alternative(
         html
         or (
             "<html><body><p>Would you like an introduction?</p>"
-            f"<p>{token}</p><hr><p><strong>The Network</strong><br>"
-            "join@thenetwork.fyi</p></body></html>"
+            f"<p>{token}</p><hr><p><strong>{signature_name}</strong><br>"
+            f"{signature_address}</p></body></html>"
         ),
         subtype="html",
     )

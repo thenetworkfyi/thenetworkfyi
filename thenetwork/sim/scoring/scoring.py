@@ -16,6 +16,7 @@ from typing import Any, Iterable
 from pydantic_evals.evaluators import LLMJudge
 
 from thenetwork.db.models import Memory
+from thenetwork.email.render import standard_signature_lines
 from thenetwork.introductions import _TOKEN_RE
 from thenetwork.sim.html_validation import inspect_html_email
 from thenetwork.sim.personas.consent import _visible_lines
@@ -26,10 +27,6 @@ from thenetwork.sim.run.mail import _extract_body
 _CONSENT_REQUEST_SUBJECT_PREFIX = "Possible introduction"
 _SIM_DIRECTION_PERSONA_TO_AGENT = "persona->agent"
 _LEGACY_UNDISPATCHED_RESPONSE_SUBJECT = "[The Network] Agent response needs review"
-_PRESENTATION_SIGNATURE_TEXT = (
-    "The Network",
-    "join@thenetwork.fyi",
-)
 _RELAY_ADDRESS_RE = re.compile(
     r"\bhidden-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-"
     r"[0-9a-f]{12}@[a-z0-9.-]+\b",
@@ -334,7 +331,7 @@ def score_presentation_mbox(
         messages_checked += 1
         plain_text = _extract_body(message)
         required_text = (
-            *_PRESENTATION_SIGNATURE_TEXT,
+            *standard_signature_lines(),
             *(match.group(0) for match in _TOKEN_RE.finditer(plain_text)),
             *(match.group(0) for match in _RELAY_ADDRESS_RE.finditer(plain_text)),
         )
