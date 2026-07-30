@@ -16,9 +16,7 @@ from tenacity import (
 )
 
 from thenetwork.sim.personas.persona import PersonaConfig
-
-
-PASS_SENTINEL = "PASS"
+from thenetwork.sim.personas.response import PASS_SENTINEL, _is_pass_sentinel
 
 
 class TransientPersonaError(RuntimeError):
@@ -63,12 +61,6 @@ or different thread.
 If your stop condition is met, or you have nothing genuinely new to say this
 tick, reply with exactly {pass_sentinel} and nothing else.
 """
-
-
-def _is_pass_sentinel(text: str) -> bool:
-    """Recognize malformed sentinel replies without suppressing normal email text."""
-    first_line = text.split("\n", maxsplit=1)[0].strip()
-    return first_line.upper().startswith(PASS_SENTINEL)
 
 
 class LLMTinyPerson:

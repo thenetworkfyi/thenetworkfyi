@@ -99,6 +99,8 @@ def test_sim_mailbox_tool_read_and_send():
     read_output = tool._run(action="read")
     assert "From: join@example.test" in read_output
     assert "Hello Priya!" in read_output
+    assert tool._run(action="read") == "No unread messages."
+    assert post_office.pop_all(config.email) == ()
 
     # Test sending first email
     send_output = tool._run(action="send", body="Hello, excited to join!", subject="Hello")
@@ -117,3 +119,46 @@ def test_sim_mailbox_tool_read_and_send():
     # Test sending third email (budget exhausted)
     exhausted_output = tool._run(action="send", body="Third message")
     assert "budget exhausted" in exhausted_output.lower()
+
+
+def test_sim_mailbox_tool_normalizes_consent_reply_for_active_thread():
+    config = _config()
+    post_office = SimPostOffice()
+    active_token = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    other_token = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+    reply_to = EmailMessage()
+    reply_to["Subject"] = f"Intro Request [intro:{active_token}]"
+    reply_to["Message-ID"] = "<request@example.test>"
+    reply_to.set_content("Do you accept the introduction?")
+    tool = SimMailboxTool(config=config, post_office=post_office)
+    tool.update_turn(tick=4, reply_to=reply_to)
+
+    assert (
+        tool._run(
+            action="send", body=f"YES\n[intro:{other_token}]", subject="Reply"
+        )
+        == "Email sent successfully."
+    )
+
+    delivered = post_office.messages_for(config.agent_address)
+    assert len(delivered) == 1
+    body = _extract_body(delivered[0])
+    assert f"YES\n[intro:{active_token}]" in body
+    assert f"[intro:{other_token}]" not in body
+    assert delivered[0]["X-Sim-Tick"] == "4"
+    assert delivered[0]["In-Reply-To"] == "<request@example.test>"
+
+
+def test_sim_mailbox_tool_budget_is_shared_across_tool_instances():
+    config = _config(message_budget=1)
+    post_office = SimPostOffice()
+
+    first_turn = SimMailboxTool(config=config, post_office=post_office, tick=1)
+    assert first_turn._run(action="send", body="First") == "Email sent successfully."
+
+    second_turn = SimMailboxTool(config=config, post_office=post_office, tick=2)
+    result = second_turn._run(action="send", body="Second")
+
+    assert result == "Error: Message budget exhausted."
+    assert second_turn.messages_sent == 1
+    assert len(post_office.messages_for(config.agent_address)) == 1

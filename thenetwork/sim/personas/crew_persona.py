@@ -6,17 +6,9 @@ from typing import Any
 
 from crewai import Agent, LLM, Task
 
+from thenetwork.sim.personas.crew_mail_tool import SimMailboxTool
 from thenetwork.sim.personas.persona import PersonaConfig
-
-PASS_SENTINEL = "PASS"
-
-
-def _is_pass_sentinel(text: str) -> bool:
-    """Recognize malformed sentinel replies without suppressing normal email text."""
-    if not text:
-        return True
-    first_line = text.split("\n", maxsplit=1)[0].strip()
-    return first_line.upper().startswith(PASS_SENTINEL)
+from thenetwork.sim.personas.response import PASS_SENTINEL, _is_pass_sentinel
 
 
 def build_persona_agent(
@@ -80,12 +72,14 @@ def build_persona_turn_task(
 
 def extract_persona_response(output: Any) -> dict[str, str]:
     """Extract and parse persona turn response text from CrewAI task output."""
-    if hasattr(output, "raw") and isinstance(output.raw, str):
+    if isinstance(output, str):
+        text = output.strip()
+    elif hasattr(output, "raw") and isinstance(output.raw, str):
         text = output.raw.strip()
     elif hasattr(output, "result") and isinstance(output.result, str):
         text = output.result.strip()
     else:
-        text = str(output).strip()
+        raise TypeError("CrewAI persona output must contain a string response")
 
     if _is_pass_sentinel(text):
         return {"content": ""}
@@ -96,13 +90,28 @@ class CrewTinyPerson:
     """A conversational persona backed by a CrewAI agent."""
 
     def __init__(self, config: PersonaConfig, llm: LLM) -> None:
+        self.name = config.name
         self.config = config
         self.agent = build_persona_agent(config, llm)
         self.llm = llm
+        self.mailbox_tool: SimMailboxTool | None = None
+        self._tick: int | None = None
+
+    def prepare_turn(self, *, post_office: Any, tick: int, reply_to: Any) -> None:
+        """Bind the CrewAI mailbox capability to the current runtime turn."""
+        self.mailbox_tool = SimMailboxTool(
+            config=self.config,
+            post_office=post_office,
+            tick=tick,
+            reply_to=reply_to,
+            allow_send=False,
+        )
+        self._tick = tick
+        self.agent.tools = [self.mailbox_tool]
 
     async def alisten_and_act(self, stimulus: str) -> dict[str, str]:
-        task = build_persona_turn_task(self.agent, stimulus)
-        output = task.execute_sync()
+        task = build_persona_turn_task(self.agent, stimulus, tick=self._tick)
+        output = await task.execute_async()
         return extract_persona_response(output)
 
     def listen_and_act(

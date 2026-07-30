@@ -76,6 +76,7 @@ class SimPostOffice:
     _messages: dict[str, list[EmailMessage]] = field(
         default_factory=lambda: defaultdict(list)
     )
+    _sent_counts: dict[str, int] = field(default_factory=lambda: defaultdict(int))
 
     def deliver(
         self, message: EmailMessage, meta: SimMessageMeta | None = None
@@ -108,6 +109,16 @@ class SimPostOffice:
         if not held:
             return
         self._messages[_normalize_address(address)][:0] = held
+
+    def sent_count(self, address: str) -> int:
+        """Return the durable number of persona messages sent from ``address``."""
+        return self._sent_counts[_normalize_address(address)]
+
+    def record_sent(self, address: str) -> int:
+        """Record one persona send and return the updated durable count."""
+        normalized = _normalize_address(address)
+        self._sent_counts[normalized] += 1
+        return self._sent_counts[normalized]
 
     @property
     def all_messages(self) -> tuple[EmailMessage, ...]:
