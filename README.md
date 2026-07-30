@@ -1,5 +1,8 @@
 # The Network
 
+[![CI](https://github.com/thenetworkfyi/agent/actions/workflows/ci.yml/badge.svg)](https://github.com/thenetworkfyi/agent/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 An **email-driven agentic connection engine**. People email a single address; an
 LLM agent reads each message, decides what (if anything) it's worth doing, and
 acts - it might capture a fact about someone, surface an event to people who'd
@@ -12,8 +15,9 @@ all behavior (onboarding, attribute capture, introductions, one-way FYIs) is
 
 The whole thing runs on a single VPS against Postgres.
 
-> **Status:** active development. See [`docs/design-decisions.md`](./docs/design-decisions.md)
-> for the design rationale and the list of deliberately rejected approaches. Three
+> **Status & Maintenance:** Active development. External contributions are welcome,
+> but must align with the architectural decisions in [`docs/design-decisions.md`](./docs/design-decisions.md)
+> and preserve THE SEAL security invariant (`tests/security/`). Three
 > independent hourly scans surface graph matches, semantic people matches, and relevant
 > events. The scans only enqueue sealed candidates; the agent decides whether to act, and
 > server-owned capabilities enforce what can leave the system. An optional separate hourly
@@ -492,3 +496,11 @@ docs/         architecture, security, development, operations, and review runboo
 tests/        unit, security, scenario, simulation, and integration suites
 AGENTS.md     repository guidance (`CLAUDE.md` is a symlink to this file)
 ```
+
+---
+
+## Repository Topics
+
+Suggested GitHub topics for repository maintainers to apply:
+`ai-agent`, `pydantic-ai`, `email-agent`, `pgvector`, `privacy`, `security-seal`, `python`
+
