@@ -22,7 +22,9 @@ from thenetwork.sim.personas.population import (
     GABI_EMAIL,
     HUGO_EMAIL,
     LEILA_EMAIL,
+    MARISOL_EMAIL,
     PETRA_EMAIL,
+    QUINN_EMAIL,
     ROSA_EMAIL,
     TARIQ_EMAIL,
     SimSchedule,
@@ -137,7 +139,7 @@ def test_expectation_markers_appear_in_the_goal_not_only_the_opening_body():
 def test_default_population_has_authored_personas_and_schedule():
     population = default_population(agent_address="join@example.test")
 
-    assert len(population) == 27
+    assert len(population) == 29
     assert len({persona.config.email for persona in population}) == len(population)
     assert all(persona.opening_body for persona in population)
 
@@ -227,6 +229,8 @@ def test_default_population_has_authored_personas_and_schedule():
         "Leila Hart",
         "Rosa Vance",
         "Dez Okonkwo",
+        "Marisol Vega",
+        "Quinn Harper",
     }
     assert additions["Ruth Calder"].config.goal.endswith(
         "include the [intro:...] token line from the proposal."
@@ -351,6 +355,17 @@ def test_default_population_has_authored_personas_and_schedule():
     assert "not looking for work" in rosa.config.goal
     dez = additions["Dez Okonkwo"]
     assert dez.config.email == DEZ_EMAIL
+    marisol = additions["Marisol Vega"]
+    assert marisol.config.email == MARISOL_EMAIL
+    assert "in town for three days" in marisol.config.goal
+    assert "volume over precision" in marisol.config.goal
+    assert "imperfect match" in marisol.config.goal
+    assert marisol.config.message_budget == 4
+    quinn = additions["Quinn Harper"]
+    assert quinn.config.email == QUINN_EMAIL
+    assert "people outside your field" in quinn.config.goal
+    assert "do not require exact professional overlap" in quinn.config.goal
+    assert quinn.config.message_budget == 3
     assert all(
         persona.config.agent_address == "join@example.test"
         for persona in additions.values()

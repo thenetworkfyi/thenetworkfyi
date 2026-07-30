@@ -64,6 +64,7 @@ CLOSING_WINDOW_MAX_AGE = timedelta(days=14)
 RECENT_ACTIVITY_MEMORY_COUNT = 2
 MATCH_THRESHOLD_STEP = 0.05
 MAX_MATCH_THRESHOLD_REDUCTION = 0.10
+MAX_RECEPTIVENESS_ADJUSTMENT = 0.05
 ACTIVE_SURFACE_COOLDOWN_SECONDS = 6 * 60 * 60
 _CLOSING_WINDOW_RE = re.compile(
     r"\b(?:"
@@ -116,6 +117,39 @@ def _activity_adjustments(
         )
         effective_thresholds[person_id] = max(0.0, base_threshold - reduction)
     return effective_thresholds, recently_active
+
+
+def _receptiveness_adjustments(consent_rows: list) -> dict[str, float]:
+    """Derive a bounded counterpart prior from server-owned consent history.
+
+    An explicit consent is positive evidence for that participant. A declined
+    pair is negative evidence only for a participant who had not consented;
+    unresolved proposals carry no behavioral signal. People with no such
+    history remain neutral.
+    """
+    outcomes: dict[str, list[int]] = {}
+    for row in consent_rows:
+        participants = (
+            (row.person_a_id, row.person_a_consented),
+            (row.person_b_id, row.person_b_consented),
+        )
+        for person_id, consented in participants:
+            if consented:
+                outcomes.setdefault(person_id, []).append(1)
+            elif row.status == "declined":
+                outcomes.setdefault(person_id, []).append(-1)
+
+    return {
+        person_id: max(
+            -MAX_RECEPTIVENESS_ADJUSTMENT,
+            min(
+                MAX_RECEPTIVENESS_ADJUSTMENT,
+                (sum(person_outcomes) / len(person_outcomes))
+                * MAX_RECEPTIVENESS_ADJUSTMENT,
+            ),
+        )
+        for person_id, person_outcomes in outcomes.items()
+    }
 
 
 def _defer_proactive_jobs(payloads: list[dict]) -> None:
@@ -248,6 +282,16 @@ async def scan_for_matches(timestamp: int) -> None:
             now=now,
             base_threshold=s.proactive_match_threshold,
         )
+        consent_history = session.exec(
+            select(
+                IntroductionConsent.person_a_id,
+                IntroductionConsent.person_b_id,
+                IntroductionConsent.person_a_consented,
+                IntroductionConsent.person_b_consented,
+                IntroductionConsent.status,
+            )
+        ).all()
+        receptiveness_adjustments = _receptiveness_adjustments(consent_history)
         surfaced_pairs = recently_surfaced_pairs(
             session,
             since=now - timedelta(seconds=s.proactive_surface_cooldown_seconds),
@@ -263,7 +307,7 @@ async def scan_for_matches(timestamp: int) -> None:
         email_cache: dict[str, str | None] = {}
         active_cache: dict[str, bool] = {}
         seen: set[frozenset[str]] = set()
-        candidates: list[tuple[float, tuple[str, str], dict]] = []
+        candidates: list[tuple[float, float, tuple[str, str], dict]] = []
         recent_evidence: dict[str, list[SealedMemoryEvidence]] = {}
         for memory in memories:
             if not memory.gist:
@@ -310,17 +354,26 @@ async def scan_for_matches(timestamp: int) -> None:
                     limit=s.proactive_rematch_top_k,
                     min_similarity=max(
                         0.0,
-                        s.proactive_match_threshold - MAX_MATCH_THRESHOLD_REDUCTION,
+                        s.proactive_match_threshold
+                        - MAX_MATCH_THRESHOLD_REDUCTION
+                        - MAX_RECEPTIVENESS_ADJUSTMENT,
                     ),
                 )
                 for match in matches:
                     counterpart_id = match.person_id
+                    receptiveness_adjustment = receptiveness_adjustments.get(
+                        counterpart_id, 0.0
+                    )
+                    candidate_threshold = min(
+                        1.0,
+                        max(0.0, effective_threshold - receptiveness_adjustment),
+                    )
                     pair = frozenset((recipient_id, counterpart_id))
                     if (
                         counterpart_id == recipient_id
                         or len(pair) != 2
                         or pair in seen
-                        or match.similarity < effective_threshold
+                        or match.similarity < candidate_threshold
                         or graph.has_edge(recipient_id, counterpart_id)
                         or pair_is_suppressed(
                             session,
@@ -388,6 +441,7 @@ async def scan_for_matches(timestamp: int) -> None:
                     )
                     candidates.append(
                         (
+                            match.similarity + receptiveness_adjustment,
                             match.similarity,
                             pair_key,
                             {
@@ -401,9 +455,11 @@ async def scan_for_matches(timestamp: int) -> None:
                         )
                     )
 
-        candidates.sort(key=lambda candidate: (-candidate[0], candidate[1]))
-        payloads = [payload for _score, _pair_key, payload in candidates]
-        selected_pairs = {pair_key for _score, pair_key, _payload in candidates}
+        candidates.sort(
+            key=lambda candidate: (-candidate[0], -candidate[1], candidate[2])
+        )
+        payloads = [payload for _rank, _score, _pair_key, payload in candidates]
+        selected_pairs = {pair_key for _rank, _score, pair_key, _payload in candidates}
         mark_pairs_surfaced(session, selected_pairs, surfaced_at=now)
 
     _defer_proactive_jobs(payloads)

@@ -32,6 +32,7 @@ from thenetwork.sim.run.loop import (
     run_proactive_scans,
 )
 from thenetwork.sim.run.mail import (
+    SimMessageMeta,
     SimPostOffice,
     _extract_body,
     capture_outbound,
@@ -102,7 +103,13 @@ class NetworkSimulationFlow(Flow[NetworkSimulationState]):
         results: list[TickResult] = []
         with (
             override_rate_limits(self.rate_limit_per_hour),
-            capture_outbound(self.post_office),
+            capture_outbound(
+                self.post_office,
+                meta_factory=lambda: SimMessageMeta(
+                    tick=self.state.current_tick,
+                    direction="agent->persona",
+                ),
+            ),
         ):
             for tick in range(1, ticks + 1):
                 self.state.current_tick = tick
