@@ -3,8 +3,10 @@
 import pytest
 from pydantic_ai.models.test import TestModel
 
+from thenetwork.sim.cli import _build_person
 from thenetwork.sim.personas.llm_persona import LLMTinyPerson
 from thenetwork.sim.personas.persona import PersonaConfig, TinyPersonEmailAdapter
+from thenetwork.sim.personas.population import default_population
 from thenetwork.sim.run.crew_flow import NetworkSimulationFlow
 
 
@@ -19,6 +21,25 @@ def _config(**overrides) -> PersonaConfig:
     )
     defaults.update(overrides)
     return PersonaConfig(**defaults)
+
+
+def test_cli_person_builder_selects_crewai_backend(monkeypatch):
+    crew_llm = object()
+    built_person = object()
+    built_with = []
+    monkeypatch.setattr(
+        "thenetwork.sim.personas.crew_model.build_crew_llm", lambda: crew_llm
+    )
+    monkeypatch.setattr(
+        "thenetwork.sim.personas.crew_persona.CrewTinyPerson",
+        lambda config, llm: built_with.append((config, llm)) or built_person,
+    )
+
+    population_persona = default_population()[0]
+    person = _build_person(population_persona, False, True)
+
+    assert person is built_person
+    assert built_with == [(population_persona.config, crew_llm)]
 
 
 @pytest.mark.asyncio
