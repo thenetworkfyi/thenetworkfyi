@@ -48,6 +48,37 @@ def _person(pid, email):
     return p
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "today",
+        "tonight",
+        "tomorrow",
+        "this week",
+        "this weekend",
+        "in town for three days",
+        "until 2026-08-05",
+        "through Friday",
+        "before Friday",
+        "deadline Friday",
+        "deadline is Friday",
+        "closes Friday",
+        "closes on Monday",
+        "closes on 2026-08-05",
+    ],
+)
+def test_closing_window_pattern_matches_supported_phrases(text):
+    from thenetwork.worker.proactive import _CLOSING_WINDOW_RE
+
+    assert _CLOSING_WINDOW_RE.search(text)
+
+
+def test_closing_window_pattern_rejects_bare_closes():
+    from thenetwork.worker.proactive import _CLOSING_WINDOW_RE
+
+    assert _CLOSING_WINDOW_RE.search("registration closes") is None
+
+
 @pytest.mark.asyncio
 async def test_scan_enqueues_high_proximity_pair():
     """Pairs sharing a common neighbor (Jaccard > 0) above threshold are deferred."""
