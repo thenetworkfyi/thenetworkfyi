@@ -128,6 +128,7 @@ class MailFacts:
     recipients: frozenset[str]
     subject: str
     body: str
+    tick: int | None = None
 
 
 @dataclass(frozen=True)

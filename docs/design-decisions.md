@@ -29,6 +29,15 @@ thin wrapper over a well-adopted library, swappable by config.
   Jaccard scoring only becomes meaningful once there's real connection density.
 - **The graph is a projection, never a table.** "Who knows whom" is derived from
   multi-ref memories at query time; there is no curated edge table to keep in sync.
+- **Match eligibility reflects urgency and receptiveness, not one flat similarity
+  constant.** Semantic similarity is retrieval evidence, not a complete fit score. A
+  sender's recent write velocity and closing-window language can lower their bounded
+  retrieval floor, while a counterpart's server-owned consent history supplies a bounded
+  receptiveness prior; the agent still requires a stated two-sided thesis before proposing.
+  These signals are derived at scan time from `memories.created_at`, sealed gist text, and
+  `introduction_consents`. They are not urgency, expiry, or receptiveness columns because
+  those labels would freeze contextual judgments into stale profile state and create new
+  synchronization work for facts the system already records.
 - **Behaviors are emergent, not scripted.** Onboarding, matchmaking, introductions, and
   one-way FYIs come from system-prompt guidance plus `pydantic-evals` cases asserting
   *reasonable* behavior - no branching control flow, no scenario `if user_record IS NULL`.
