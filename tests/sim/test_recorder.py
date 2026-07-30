@@ -34,6 +34,7 @@ from thenetwork.db.models import (
     Person,
 )
 from thenetwork.email.outbound import send_proxy_introduction, send_relay_email
+from thenetwork.email.render import standard_signature_lines
 from thenetwork.security.sender_identifier import optional_sender_identifier
 from thenetwork.sim.cli import main, run_sim
 from thenetwork.sim.scoring.compare import compare_runs, load_run_metrics
@@ -394,7 +395,9 @@ async def test_recorder_presentation_failure_has_bounded_stable_evidence(tmp_pat
         agent_address="join@example.test",
     )
     token = "[intro:11111111-1111-1111-1111-111111111111]"
-    private_body = f"Malformed presentation {token}\n\nThe Network\njoin@thenetwork.fyi"
+    private_body = (
+        f"Malformed presentation {token}\n\n{'\n'.join(standard_signature_lines())}"
+    )
 
     async def process(**_kwargs):
         send_relay_email(
@@ -941,7 +944,7 @@ async def test_run_recorder_logs_delivery_metadata_without_public_message_bodies
         "agent->persona",
     ]
     canonical_plain_reply = (
-        "Here is why you may fit.\n\nThe Network\njoin@thenetwork.fyi\n"
+        f"Here is why you may fit.\n\n{'\n'.join(standard_signature_lines())}\n"
     )
     assert [
         (delivery["subject"], delivery["body_chars"]) for delivery in deliveries

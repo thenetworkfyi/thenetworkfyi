@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from thenetwork.email.render import standard_signature_lines
 from thenetwork.sim.html_validation import (
     assert_html_email_contract,
     inspect_html_email,
@@ -15,11 +16,12 @@ from thenetwork.sim.run.mail import _extract_body
 
 def _synthetic_multipart_email(*, html: str | None = None) -> EmailMessage:
     token = "[intro:abcdef123456]"
+    signature_name, signature_address = standard_signature_lines()
     plain = (
         "Hello Casey,\n\n"
         "Would you like an introduction?\n\n"
         f"{token}\n\n"
-        "The Network\njoin@thenetwork.fyi"
+        f"{signature_name}\n{signature_address}"
     )
     message = EmailMessage()
     message["From"] = "join@example.test"
@@ -28,9 +30,9 @@ def _synthetic_multipart_email(*, html: str | None = None) -> EmailMessage:
     message.set_content(plain)
     message.add_alternative(
         html
-        or """<html><body><p>Hello Casey,</p><p>Would you like an introduction?</p>
+        or f"""<html><body><p>Hello Casey,</p><p>Would you like an introduction?</p>
 <p>[intro:abcdef123456]</p><hr><p><strong>The Network</strong><br>
-join@thenetwork.fyi</p></body></html>""",
+{signature_address}</p></body></html>""",
         subtype="html",
     )
     return message
@@ -84,8 +86,7 @@ def test_synthetic_multipart_fixture_has_canonical_plain_text_and_safe_html():
         message,
         required_text=(
             "[intro:abcdef123456]",
-            "The Network",
-            "join@thenetwork.fyi",
+            *standard_signature_lines(),
         ),
     )
 
@@ -101,8 +102,7 @@ def test_production_conversational_mime_with_quote_passes_contract():
         message,
         required_text=(
             "Would you like an introduction?",
-            "The Network",
-            "join@thenetwork.fyi",
+            *standard_signature_lines(),
             "On Tuesday, you wrote:",
             "Original note",
             "Second original line",
