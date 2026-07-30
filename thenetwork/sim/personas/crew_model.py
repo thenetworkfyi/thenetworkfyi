@@ -9,6 +9,14 @@ from crewai import LLM
 from thenetwork.settings import Settings, get_settings
 
 
+def _crewai_model_name(model: str) -> str:
+    """Translate pydantic-ai's ``provider:model`` form for CrewAI."""
+    provider, separator, model_name = model.partition(":")
+    if separator and provider and model_name and "/" not in provider:
+        return f"{provider}/{model_name}"
+    return model
+
+
 def build_crew_llm(
     model: str | None = None,
     api_key: str | None = None,
@@ -23,7 +31,8 @@ def build_crew_llm(
     if settings is None:
         settings = get_settings()
 
-    effective_model = model if model is not None else settings.agent_model
+    configured_model = model if model is not None else settings.agent_model
+    effective_model = _crewai_model_name(configured_model)
     effective_api_key = api_key if api_key is not None else settings.agent_api_key
 
     llm_kwargs: dict[str, Any] = {
