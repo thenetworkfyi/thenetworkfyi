@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from thenetwork.db.models import Memory
+from thenetwork.email.outbound import send_reply
 from thenetwork.sim.personas.population import (
     CHLOE_EMAIL,
     DEFAULT_EXPECTATIONS,
@@ -35,6 +37,8 @@ from thenetwork.sim.scoring.scoring import (
     score_memory_expectations,
     score_scenario_outcomes,
 )
+from thenetwork.sim.run.mail import SimMessageMeta, SimPostOffice, capture_outbound
+from thenetwork.sim.run.recorder import _mail_facts
 
 
 def _outcome() -> ScenarioOutcome:
@@ -895,6 +899,67 @@ def test_time_boxed_outcome_evidence_is_privacy_safe():
         "ML infrastructure",
     ):
         assert private_value not in evidence
+
+
+@pytest.mark.parametrize(
+    ("proposal_tick", "expected_pass"),
+    ((1, True), (2, True), (3, True), (4, False)),
+)
+def test_time_boxed_outcome_uses_captured_proposal_tick(
+    tmp_path, proposal_tick: int, expected_pass: bool
+):
+    settings = MagicMock(
+        smtp_host="smtp.example.test",
+        smtp_port=587,
+        smtp_account="agent@example.test",
+        smtp_password="secret",
+        email_from="join@example.test",
+        imap_account="join@example.test",
+        growth_footer_enabled=False,
+    )
+    mbox_path = tmp_path / f"proposal-tick-{proposal_tick}.mbox"
+    post_office = SimPostOffice(mbox_path=mbox_path)
+
+    with (
+        patch("thenetwork.email.outbound.get_settings", return_value=settings),
+        capture_outbound(
+            post_office,
+            SimMessageMeta(
+                tick=proposal_tick,
+                direction="agent->persona",
+            ),
+        ),
+    ):
+        send_reply(
+            to_address=MARISOL_EMAIL,
+            subject="Possible introduction",
+            body_text="A willing local person may be worth meeting while you are here.",
+        )
+
+    (captured_proposal,) = _mail_facts(mbox_path)
+    base_outcome = _default_outcome()
+    outcome = replace(
+        base_outcome,
+        mail_facts=tuple(
+            message
+            for message in base_outcome.mail_facts
+            if not (
+                MARISOL_EMAIL in message.recipients
+                and message.subject == "Possible introduction"
+            )
+        )
+        + (captured_proposal,),
+    )
+
+    score = score_scenario_outcomes(
+        outcome,
+        (DEFAULT_OUTCOME_CHECKS[24],),
+        real_process=True,
+        llm_personas=True,
+    )
+
+    assert captured_proposal.tick == proposal_tick
+    assert score.passed is expected_pass
 
 
 def test_rosa_evidence_does_not_expose_mail_content():
