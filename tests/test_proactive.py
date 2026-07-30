@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -320,7 +321,7 @@ def _memory(mid, refs, gist, *, created_at=None):
     return m
 
 
-def _rematch_session(recent, persons):
+def _rematch_session(recent, persons, *, consent_history=()):
     """A mock session that serves recent memories from .exec().all() and
     resolves Person rows from .get(Person, pid)."""
     s = MagicMock()
@@ -330,7 +331,12 @@ def _rematch_session(recent, persons):
     def execute(statement):
         result = MagicMock()
         query = str(statement)
-        result.all.return_value = recent if "memories" in query else []
+        if "memories" in query:
+            result.all.return_value = recent
+        elif "introduction_consents.person_a_consented" in query:
+            result.all.return_value = consent_history
+        else:
+            result.all.return_value = []
         result.first.return_value = None
         return result
 
@@ -681,9 +687,98 @@ async def test_rematch_surfaces_urgent_active_sender_below_static_floor():
 
     assert mock_pe.defer.call_count == 1
     assert all(
-        call.kwargs["min_similarity"] == pytest.approx(0.50)
+        call.kwargs["min_similarity"] == pytest.approx(0.45)
         for call in mock_match.call_args_list
     )
+
+
+@pytest.mark.asyncio
+async def test_rematch_uses_counterpart_receptiveness_for_floor_and_ordering():
+    """A receptive counterpart clears a floor that a decline-heavy one does not."""
+    from thenetwork.search.match import MemoryMatch
+    from thenetwork.worker.proactive import scan_for_matches
+
+    now = datetime.now(timezone.utc)
+    recent = [
+        _memory(
+            "q-window",
+            ["Q"],
+            "in town for three days and open to an imperfect founder match",
+            created_at=now - timedelta(hours=4),
+        ),
+        _memory(
+            "q-followup",
+            ["Q"],
+            "actively looking for local founders to meet",
+            created_at=now - timedelta(hours=1),
+        ),
+    ]
+    matches = [
+        MemoryMatch("m-r", "receptive", "open to visiting founders", 0.49),
+        MemoryMatch("m-d", "decliner", "sometimes meets founders", 0.51),
+    ]
+    persons = {
+        person_id: _person(person_id, f"{person_id}@test.com")
+        for person_id in ("Q", "receptive", "decliner")
+    }
+    consent_history = [
+        SimpleNamespace(
+            person_a_id="receptive",
+            person_b_id="prior-match",
+            person_a_consented=True,
+            person_b_consented=True,
+            status="introduced",
+        ),
+        SimpleNamespace(
+            person_a_id="decliner",
+            person_b_id="prior-decline",
+            person_a_consented=False,
+            person_b_consented=False,
+            status="declined",
+        ),
+    ]
+
+    with (
+        patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()),
+        patch(
+            "thenetwork.worker.proactive.get_session",
+            return_value=_rematch_session(
+                recent,
+                persons,
+                consent_history=consent_history,
+            ),
+        ),
+        patch("thenetwork.worker.proactive.match_memories", return_value=matches),
+        patch("thenetwork.worker.proactive.process_email") as mock_pe,
+    ):
+        await scan_for_matches.func(0)
+
+    mock_pe.defer.assert_called_once()
+    assert mock_pe.defer.call_args.kwargs["proactive_candidate_id"] == "receptive"
+
+
+def test_receptiveness_adjustment_is_bounded_and_cold_start_is_neutral():
+    from thenetwork.worker.proactive import (
+        MAX_RECEPTIVENESS_ADJUSTMENT,
+        _receptiveness_adjustments,
+    )
+
+    histories = [
+        SimpleNamespace(
+            person_a_id="open",
+            person_b_id="decline-heavy",
+            person_a_consented=True,
+            person_b_consented=False,
+            status="declined",
+        )
+        for _ in range(20)
+    ]
+
+    adjustments = _receptiveness_adjustments(histories)
+
+    assert adjustments["open"] == MAX_RECEPTIVENESS_ADJUSTMENT
+    assert adjustments["decline-heavy"] == -MAX_RECEPTIVENESS_ADJUSTMENT
+    assert adjustments.get("cold-start", 0.0) == 0.0
 
 
 @pytest.mark.asyncio
@@ -757,7 +852,7 @@ async def test_rematch_shortens_surface_cooldown_for_recently_active_sender():
 
 @pytest.mark.asyncio
 async def test_rematch_orders_candidates_by_score_then_pair_key():
-    """Every eligible pair is deferred in deterministic relevance order."""
+    """Counterpart receptiveness breaks close scores before the pair key."""
     from thenetwork.search.match import MemoryMatch
     from thenetwork.worker.proactive import scan_for_matches
 
@@ -767,15 +862,28 @@ async def test_rematch_orders_candidates_by_score_then_pair_key():
     ]
     per_call_matches = [
         [MemoryMatch("ma", "A", "runs ml in factories", 0.75)],
-        [MemoryMatch("mb", "B", "wants ml manufacturing peers", 0.65)],
+        [MemoryMatch("mb", "B", "wants ml manufacturing peers", 0.72)],
     ]
     persons = {p: _person(p, f"{p.lower()}@test.com") for p in ("A", "B", "C")}
+    consent_history = [
+        SimpleNamespace(
+            person_a_id="B",
+            person_b_id="prior-match",
+            person_a_consented=True,
+            person_b_consented=True,
+            status="introduced",
+        )
+    ]
 
     with (
         patch("thenetwork.worker.proactive.build_graph", return_value=nx.Graph()),
         patch(
             "thenetwork.worker.proactive.get_session",
-            return_value=_rematch_session(recent, persons),
+            return_value=_rematch_session(
+                recent,
+                persons,
+                consent_history=consent_history,
+            ),
         ),
         patch(
             "thenetwork.worker.proactive.match_memories", side_effect=per_call_matches
@@ -786,7 +894,7 @@ async def test_rematch_orders_candidates_by_score_then_pair_key():
 
     assert [
         call.kwargs["proactive_candidate_id"] for call in mock_pe.defer.call_args_list
-    ] == ["A", "B"]
+    ] == ["B", "A"]
 
 
 @pytest.mark.asyncio
