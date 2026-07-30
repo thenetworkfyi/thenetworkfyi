@@ -16,9 +16,11 @@ from thenetwork.sim.personas.population import (
     GABI_EMAIL,
     HUGO_EMAIL,
     LEILA_EMAIL,
+    MARISOL_EMAIL,
     MATEO_EMAIL,
     NADIA_EMAIL,
     PETRA_EMAIL,
+    QUINN_EMAIL,
     ROSA_EMAIL,
     TARIQ_EMAIL,
 )
@@ -188,6 +190,11 @@ def _default_outcome() -> ScenarioOutcome:
                 person_b_email=MATEO_EMAIL,
                 status="proposed",
             ),
+            IntroductionConsentState(
+                person_a_email=MARISOL_EMAIL,
+                person_b_email=QUINN_EMAIL,
+                status="proposed",
+            ),
         ),
         audit_events=(
             {
@@ -229,6 +236,21 @@ def _default_outcome() -> ScenarioOutcome:
                     "propose_introduction",
                 )
             ),
+            *(
+                {
+                    "event": "agent.tool.completed",
+                    "tool_name": tool_name,
+                    "outcome": "success",
+                    "sender_id_hash": "snd_v1_marisol",
+                }
+                for tool_name in (
+                    "remember",
+                    "remember",
+                    "forget",
+                    "remember",
+                    "propose_introduction",
+                )
+            ),
         ),
         sender_id_hashes={
             "omar.sim@example.test": "snd_v1_omar",
@@ -237,6 +259,7 @@ def _default_outcome() -> ScenarioOutcome:
             EVENT_ATTENDEE_EMAIL: "snd_v1_mina",
             EVENT_CONTROL_EMAIL: "snd_v1_theo",
             LEILA_EMAIL: "snd_v1_leila",
+            MARISOL_EMAIL: "snd_v1_marisol",
         },
         mail_facts=(
             MailFacts(
@@ -291,6 +314,53 @@ def _default_outcome() -> ScenarioOutcome:
                 ),
             ),
             MailFacts(
+                sender=MARISOL_EMAIL,
+                recipients=frozenset({"join@example.test"}),
+                subject="Three days in town",
+                body=(
+                    "I work in ML infrastructure and I am in town for three days. "
+                    "I want volume over precision and will accept an imperfect match."
+                ),
+                tick=1,
+            ),
+            MailFacts(
+                sender=QUINN_EMAIL,
+                recipients=frozenset({"join@example.test"}),
+                subject="Open to meeting people",
+                body=(
+                    "I am receptive to meeting visitors and people outside my field "
+                    "without exact professional overlap."
+                ),
+                tick=1,
+            ),
+            MailFacts(
+                sender=MARISOL_EMAIL,
+                recipients=frozenset({"join@example.test"}),
+                subject="Re: Three days in town",
+                body=(
+                    "I still want several conversations during this three-day window, "
+                    "and an imperfect match remains useful."
+                ),
+                tick=2,
+            ),
+            MailFacts(
+                sender=MARISOL_EMAIL,
+                recipients=frozenset({"join@example.test"}),
+                subject="Re: Three days in town",
+                body=(
+                    "This is my last follow-up while I am here; volume over precision "
+                    "still matters."
+                ),
+                tick=3,
+            ),
+            MailFacts(
+                sender="join@example.test",
+                recipients=frozenset({MARISOL_EMAIL}),
+                subject="Possible introduction",
+                body="A willing local person may be worth meeting while you are here.",
+                tick=3,
+            ),
+            MailFacts(
                 sender=ROSA_EMAIL,
                 recipients=frozenset({"join@example.test"}),
                 subject="Hello from Oakland",
@@ -325,7 +395,11 @@ def _default_outcome() -> ScenarioOutcome:
                 ),
             ),
         ),
-        memory_counts={"vic.sim@example.test": 6, LEILA_EMAIL: 1},
+        memory_counts={
+            "vic.sim@example.test": 6,
+            LEILA_EMAIL: 1,
+            MARISOL_EMAIL: 1,
+        },
         event_rows=(
             EventOutcomeFact(
                 event_key="evt_v1_default",
@@ -383,7 +457,7 @@ def test_default_outcome_checks_cover_all_persona_situations():
     )
 
     assert score.passed is True
-    assert len(score.findings) == 23
+    assert len(score.findings) == 26
     assert all(check.requires_real_process for check in DEFAULT_OUTCOME_CHECKS)
     assert all(check.requires_llm_personas for check in DEFAULT_OUTCOME_CHECKS)
 
@@ -700,6 +774,127 @@ def test_leila_checks_are_unexercised_when_she_never_states_her_scope():
         and finding.evidence["match_evidence_exercised"] is False
         for finding in score.findings
     )
+
+
+def test_time_boxed_checks_are_unexercised_without_window_and_tolerance():
+    outcome = replace(
+        _default_outcome(),
+        mail_facts=tuple(
+            message
+            for message in _default_outcome().mail_facts
+            if message.sender != MARISOL_EMAIL
+        ),
+        memory_counts={MARISOL_EMAIL: 3},
+        consent_rows=(
+            IntroductionConsentState(
+                person_a_email=MARISOL_EMAIL,
+                person_b_email="priya.sim@example.test",
+                status="proposed",
+            ),
+        ),
+    )
+
+    score = score_scenario_outcomes(
+        outcome,
+        DEFAULT_OUTCOME_CHECKS[23:26],
+        real_process=True,
+        llm_personas=True,
+    )
+
+    assert score.passed is True
+    assert all(
+        finding.evidence["window_stated"] is False
+        and finding.evidence["tolerance_stated"] is False
+        for finding in score.findings
+    )
+
+
+@pytest.mark.parametrize(
+    ("check_index", "outcome"),
+    [
+        (23, replace(_default_outcome(), memory_counts={MARISOL_EMAIL: 2})),
+        (
+            24,
+            replace(
+                _default_outcome(),
+                mail_facts=tuple(
+                    replace(message, tick=4)
+                    if MARISOL_EMAIL in message.recipients
+                    and message.subject == "Possible introduction"
+                    else message
+                    for message in _default_outcome().mail_facts
+                ),
+            ),
+        ),
+        (
+            24,
+            replace(
+                _default_outcome(),
+                mail_facts=(
+                    *_default_outcome().mail_facts,
+                    MailFacts(
+                        sender="join@example.test",
+                        recipients=frozenset({MARISOL_EMAIL}),
+                        subject="Re: Three days in town",
+                        body="Which ML specialty should the match work in?",
+                        tick=2,
+                    ),
+                ),
+            ),
+        ),
+        (
+            25,
+            replace(
+                _default_outcome(),
+                consent_rows=tuple(
+                    row
+                    for row in _default_outcome().consent_rows
+                    if MARISOL_EMAIL not in row.participant_emails
+                )
+                + (
+                    IntroductionConsentState(
+                        person_a_email=MARISOL_EMAIL,
+                        person_b_email="priya.sim@example.test",
+                        status="proposed",
+                    ),
+                ),
+            ),
+        ),
+    ],
+)
+def test_time_boxed_outcome_checks_have_failure_fixtures(
+    check_index: int,
+    outcome: ScenarioOutcome,
+):
+    score = score_scenario_outcomes(
+        outcome,
+        (DEFAULT_OUTCOME_CHECKS[check_index],),
+        real_process=True,
+        llm_personas=True,
+    )
+
+    assert score.passed is False
+    assert score.findings[0].passed is False
+
+
+def test_time_boxed_outcome_evidence_is_privacy_safe():
+    score = score_scenario_outcomes(
+        _default_outcome(),
+        DEFAULT_OUTCOME_CHECKS[23:26],
+        real_process=True,
+        llm_personas=True,
+    )
+
+    evidence = repr([finding.evidence for finding in score.findings])
+    assert score.passed is True
+    for private_value in (
+        MARISOL_EMAIL,
+        QUINN_EMAIL,
+        "Marisol Vega",
+        "Quinn Harper",
+        "ML infrastructure",
+    ):
+        assert private_value not in evidence
 
 
 def test_rosa_evidence_does_not_expose_mail_content():

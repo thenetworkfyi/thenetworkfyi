@@ -648,7 +648,7 @@ async def test_sim_run_cli_function_creates_run_directory(tmp_path):
     assert artifacts.audit_path.name == "audit.jsonl"
     assert not artifacts.audit_path.exists()
     config = json.loads(artifacts.config_path.read_text())
-    assert len(config["personas"]) == 27
+    assert len(config["personas"]) == 29
     assert len(config["outcome_checks"]) == len(DEFAULT_OUTCOME_CHECKS)
     assert config["llm_personas"] is False
     events = [
@@ -1142,6 +1142,7 @@ def test_outcome_assembly_reads_fixture_mail_audit_and_database_state(tmp_path):
     message["From"] = "join@example.test"
     message["To"] = "nadia.sim@example.test"
     message["Subject"] = "A note"
+    message["X-Sim-Tick"] = "3"
     message.set_content("Bakery supply co-op update")
     artifacts.private_dir.mkdir()
     SimPostOffice(mbox_path=artifacts.raw_mbox_path).deliver(message)
@@ -1214,6 +1215,7 @@ def test_outcome_assembly_reads_fixture_mail_audit_and_database_state(tmp_path):
     )
     assert outcome.mail_facts[0].recipients == frozenset({"nadia.sim@example.test"})
     assert outcome.mail_facts[0].body == "Bakery supply co-op update\n"
+    assert outcome.mail_facts[0].tick == 3
     assert outcome.memory_counts == memory_counts
     assert outcome.event_rows == event_rows
     assert outcome.event_recommendation_rows == event_recommendation_rows

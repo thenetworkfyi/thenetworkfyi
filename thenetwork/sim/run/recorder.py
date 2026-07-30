@@ -729,11 +729,21 @@ def _mail_facts(path: Path) -> tuple[MailFacts, ...]:
                 ),
                 subject=message.get("Subject", ""),
                 body=_extract_body(message),
+                tick=_sim_tick(message.get("X-Sim-Tick")),
             )
             for message in box
         )
     finally:
         box.close()
+
+
+def _sim_tick(value: str | None) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
 
 
 def _memory_counts(
