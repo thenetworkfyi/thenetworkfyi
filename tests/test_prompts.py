@@ -100,6 +100,20 @@ def test_match_guidance_treats_similarity_as_discovery_only() -> None:
     assert "act without interrogating" in guidance
 
 
+def test_match_guidance_treats_a_closing_window_as_consequential_evidence() -> None:
+    guidance = _guidance(KNOWN_SENDER, "search_similarity_discovery_only")
+
+    assert "sender-stated closing window" in guidance
+    assert "itself consequential match evidence" in guidance
+    assert "prefer proposing within the window" in guidance
+    assert "qualifying further or waiting until the opportunity expires" in guidance
+    assert "Urgency may lower the fit bar" in guidance
+    assert "never the two-sided-thesis bar" in guidance
+    assert "in town this week" in guidance
+    assert "want to meet people" in guidance
+    assert "shared keyword or city without stated intent is still no thesis" in guidance
+
+
 def test_sender_owned_group_is_the_only_search_evidence_with_memory_ids() -> None:
     guidance = _guidance(KNOWN_SENDER, "sender_owned_evidence_memory_ids")
 
