@@ -170,6 +170,7 @@ def match_memories(
     limit: int = 10,
     min_similarity: float = 0.0,
     exclude_memory_id: str | None = None,
+    sole_ref_person_id: str | None = None,
 ) -> list[MemoryMatch]:
     """Semantic search over person-referencing memories with a gist (SEAL-sanitized)."""
     vec_literal = "[" + ",".join(str(v) for v in query_vec) + "]"
@@ -191,6 +192,10 @@ def match_memories(
                 m.embedding IS NOT NULL
                 AND m.gist IS NOT NULL
                 AND array_length(m.refs, 1) >= 1
+                AND (
+                    CAST(:sole_ref_person_id AS text) IS NULL
+                    OR m.refs = ARRAY[CAST(:sole_ref_person_id AS text)]
+                )
         )
         SELECT
             c.memory_id AS memory_id,
@@ -219,6 +224,7 @@ def match_memories(
             "min_sim": min_similarity,
             "limit": limit,
             "exclude_id": exclude_memory_id,
+            "sole_ref_person_id": sole_ref_person_id,
             "recency_half_life_days": RECENCY_HALF_LIFE_DAYS,
         },
     ).fetchall()

@@ -456,12 +456,14 @@ async def remember(
             query_embedding = list(memory.embedding or [])
             session.commit()
             matches: list[MemoryMatch] = []
-            if query_embedding:
+            sender_user_id = ctx.deps.sender_user_id
+            if query_embedding and sender_user_id and refs == [sender_user_id]:
                 matches = ctx.deps.capabilities.match_memories(
                     query_embedding,
                     session,
                     limit=_CONSOLIDATION_QUERY_LIMIT,
                     exclude_memory_id=memory_id,
+                    sole_ref_person_id=sender_user_id,
                 )
         audit_event(
             "database.action",

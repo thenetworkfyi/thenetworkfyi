@@ -1381,6 +1381,7 @@ async def test_remember_returns_empty_consolidation_candidates():
     }
     mock_match.assert_called_once()
     assert mock_match.call_args.kwargs["exclude_memory_id"] == added[0].id
+    assert mock_match.call_args.kwargs["sole_ref_person_id"] == "user-alice"
 
 
 @pytest.mark.asyncio
@@ -1388,14 +1389,22 @@ async def test_remember_returns_sealed_duplicate_consolidation_candidates():
     """Consolidation candidates expose only memory IDs, gists, and similarities."""
     from thenetwork.agent.tools import remember
 
-    ctx = FakeCtx()
+    ctx = FakeCtx(sender_user_id="user-bob")
     added: list[object] = []
     ctx._mock_sess.add.side_effect = added.append
     raw_other_person_text = (
         "Bob Stone can be reached at bob.secret@example.com and researches privacy."
     )
 
-    def fake_match_memories(_query_vec, _session, *, limit, exclude_memory_id):
+    def fake_match_memories(
+        _query_vec,
+        _session,
+        *,
+        limit,
+        exclude_memory_id,
+        sole_ref_person_id,
+    ):
+        assert sole_ref_person_id == "user-bob"
         return [
             MemoryMatch(
                 memory_id=exclude_memory_id,
@@ -1405,25 +1414,25 @@ async def test_remember_returns_sealed_duplicate_consolidation_candidates():
             ),
             MemoryMatch(
                 memory_id="old-memory-1",
-                person_id="other-person-id",
+                person_id="user-bob",
                 gist="[name] researches privacy.",
                 similarity=0.9819,
             ),
             MemoryMatch(
                 memory_id="old-memory-2",
-                person_id="another-person-id",
+                person_id="user-bob",
                 gist="[name] works on ML systems.",
                 similarity=0.8765,
             ),
             MemoryMatch(
                 memory_id="old-memory-3",
-                person_id="third-person-id",
+                person_id="user-bob",
                 gist="[name] is seeking privacy collaborators.",
                 similarity=0.7654,
             ),
             MemoryMatch(
                 memory_id="old-memory-4",
-                person_id="fourth-person-id",
+                person_id="user-bob",
                 gist="[name] should be trimmed by the bound.",
                 similarity=0.6543,
             ),
@@ -1475,7 +1484,15 @@ async def test_remember_dedupes_consolidation_candidates_by_memory_id():
     added: list[object] = []
     ctx._mock_sess.add.side_effect = added.append
 
-    def fake_match_memories(_query_vec, _session, *, limit, exclude_memory_id):
+    def fake_match_memories(
+        _query_vec,
+        _session,
+        *,
+        limit,
+        exclude_memory_id,
+        sole_ref_person_id,
+    ):
+        assert sole_ref_person_id == "user-alice"
         return [
             # a 2-ref memory: match_memories attributes it once per ref,
             # so it shows up twice with the same memory_id/gist/score.
@@ -1516,6 +1533,54 @@ async def test_remember_dedupes_consolidation_candidates_by_memory_id():
     assert memory_ids == ["intro-memory", "other-memory"]
     assert len(candidates) <= MAX_CONSOLIDATION_CANDIDATES
     assert added[0].id not in [c["memory_id"] for c in candidates]
+
+
+@pytest.mark.asyncio
+async def test_remember_only_queries_sender_owned_consolidation_candidates():
+    """Other people's memories cannot occupy the consolidation hint slots."""
+    from thenetwork.agent.tools import remember
+
+    ctx = FakeCtx()
+    added: list[object] = []
+    ctx._mock_sess.add.side_effect = added.append
+
+    def fake_match_memories(
+        _query_vec,
+        _session,
+        *,
+        limit,
+        exclude_memory_id,
+        sole_ref_person_id,
+    ):
+        assert sole_ref_person_id == "user-alice"
+        return [
+            MemoryMatch(
+                memory_id="alice-memory",
+                person_id=sole_ref_person_id,
+                gist="[name] is visiting for three days.",
+                similarity=0.91,
+            )
+        ]
+
+    ctx.deps.capabilities.embed_text = AsyncMock(return_value=[0.0] * 1536)
+    ctx.deps.capabilities.sanitize_memory = MagicMock(
+        return_value="[name] wants to meet people this week."
+    )
+    ctx.deps.capabilities.match_memories = MagicMock(side_effect=fake_match_memories)
+
+    result = await remember(
+        ctx,
+        text="Alice wants to meet people while visiting for three days",
+        refs=["user-alice"],
+    )
+
+    assert result["consolidation_candidates"] == [
+        {
+            "memory_id": "alice-memory",
+            "gist": "[name] is visiting for three days.",
+            "similarity": 0.91,
+        }
+    ]
 
 
 @pytest.mark.asyncio
