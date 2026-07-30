@@ -32,6 +32,13 @@ thin wrapper over a well-adopted library, swappable by config.
 - **Behaviors are emergent, not scripted.** Onboarding, matchmaking, introductions, and
   one-way FYIs come from system-prompt guidance plus `pydantic-evals` cases asserting
   *reasonable* behavior - no branching control flow, no scenario `if user_record IS NULL`.
+- **CrewAI is adopted only for the simulation harness.** Its Flow and Agent primitives
+  provide established orchestration for concurrent persona turns and simulated tool use,
+  where framework behavior is itself part of what the harness exercises. It does not enter
+  the production email agent, memory, or privacy-seal boundary, so this remains compatible
+  with rejecting proxy and framework glue in the application runtime. Simulation entry
+  points disable CrewAI's telemetry before importing it; harness activity and authored
+  persona content must not leave through a framework telemetry channel.
 - **Inbound body extraction leans on imap-tools + BeautifulSoup, not hand-rolled MIME
   walking.** Strict attachment-boundary pruning was deliberately relaxed: `MAX_BODY_CHARS`
   truncation is the real size guard regardless of how the body was assembled, and the
