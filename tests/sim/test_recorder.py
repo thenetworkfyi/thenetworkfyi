@@ -52,6 +52,7 @@ from thenetwork.sim.run.recorder import (
     _config_payload,
     _database_outcome_state,
     _event_correlation_key,
+    _mail_facts,
     _recording_process,
     write_redacted_json,
 )
@@ -943,6 +944,9 @@ async def test_run_recorder_logs_delivery_metadata_without_public_message_bodies
         "persona->agent",
         "agent->persona",
     ]
+    assert [delivery["tick"] for delivery in deliveries] == [1, 1]
+    assert deliveries[1]["persona"] is None
+    assert deliveries[1]["trace_id"] is None
     canonical_plain_reply = (
         f"Here is why you may fit.\n\n{'\n'.join(standard_signature_lines())}\n"
     )
@@ -952,6 +956,25 @@ async def test_run_recorder_logs_delivery_metadata_without_public_message_bodies
         ("Simulation tick 1", len("Inbound details.\n")),
         ("A possible connection", len(canonical_plain_reply)),
     ]
+    raw_box = mailbox.mbox(artifacts.raw_mbox_path)
+    try:
+        outbound = next(
+            message
+            for message in raw_box
+            if message.get("Subject") == "A possible connection"
+        )
+        assert outbound["X-Sim-Tick"] == "1"
+        assert outbound["X-Sim-Direction"] == "agent->persona"
+        assert outbound.get("X-Sim-Persona") is None
+        assert outbound.get("X-Sim-Trace-Id") is None
+    finally:
+        raw_box.close()
+    (outbound_fact,) = tuple(
+        fact
+        for fact in _mail_facts(artifacts.raw_mbox_path)
+        if fact.subject == "A possible connection"
+    )
+    assert outbound_fact.tick == 1
     assert "Inbound details." not in artifacts.events_path.read_text()
     assert "Here is why you may fit." not in artifacts.events_path.read_text()
 
