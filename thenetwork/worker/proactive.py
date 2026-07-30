@@ -70,7 +70,7 @@ _CLOSING_WINDOW_RE = re.compile(
     r"today|tonight|tomorrow|this (?:week|weekend)|"
     r"in town (?:for )?(?:the next )?(?:\d+|one|two|three|four|five|six|seven) "
     r"(?:hours?|days?|weeks?)|"
-    r"(?:until|through|before|deadline(?: is)?|closes? (?:on )?) "
+    r"(?:until|through|before|deadline(?: is)?|closes?(?: on)?) "
     r"(?:today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|"
     r"\d{4}-\d{1,2}-\d{1,2})"
     r")\b",
