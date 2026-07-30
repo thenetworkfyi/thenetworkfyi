@@ -51,9 +51,7 @@ def test_build_sim_email_message_reply_threading_and_signature():
             format=EmailFormat.MULTIPART_ALTERNATIVE,
             signature=EmailSignature(
                 lines=("Priya Shah", "Lead"),
-                link=SignatureLink(
-                    text="Company", url="https://example.test/priya"
-                ),
+                link=SignatureLink(text="Company", url="https://example.test/priya"),
             ),
         )
     )
@@ -63,9 +61,7 @@ def test_build_sim_email_message_reply_threading_and_signature():
     reply_to["Reply-To"] = "agent@example.test"
     reply_to.set_content("Do you accept the introduction?")
 
-    msg = build_sim_email_message(
-        config, "YES\n[intro:123]", tick=2, reply_to=reply_to
-    )
+    msg = build_sim_email_message(config, "YES\n[intro:123]", tick=2, reply_to=reply_to)
 
     assert msg["To"] == "agent@example.test"
     assert msg["Subject"] == "Re: Intro Request [intro:123]"
@@ -103,7 +99,9 @@ def test_sim_mailbox_tool_read_and_send():
     assert post_office.pop_all(config.email) == ()
 
     # Test sending first email
-    send_output = tool._run(action="send", body="Hello, excited to join!", subject="Hello")
+    send_output = tool._run(
+        action="send", body="Hello, excited to join!", subject="Hello"
+    )
     assert send_output == "Email sent successfully."
     assert tool.messages_sent == 1
 
@@ -134,9 +132,7 @@ def test_sim_mailbox_tool_normalizes_consent_reply_for_active_thread():
     tool.update_turn(tick=4, reply_to=reply_to)
 
     assert (
-        tool._run(
-            action="send", body=f"YES\n[intro:{other_token}]", subject="Reply"
-        )
+        tool._run(action="send", body=f"YES\n[intro:{other_token}]", subject="Reply")
         == "Email sent successfully."
     )
 
