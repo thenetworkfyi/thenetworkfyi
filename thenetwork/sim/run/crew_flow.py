@@ -244,6 +244,7 @@ class NetworkSimulationFlow(Flow[NetworkSimulationState]):
                 body_filter=lambda body, token=thread_token, kind=thread_kind: (
                     make_reply_thread_faithful(body, token, kind)
                 ),
+                post_office=self.post_office,
             )
         except BaseException as exc:
             timing_fields.update(

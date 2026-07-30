@@ -37,7 +37,14 @@ class ScriptedTinyPerson:
         return {"content": self.body}
 
 
-def _build_person(persona: PopulationPersona, llm_personas: bool):
+def _build_person(
+    persona: PopulationPersona, llm_personas: bool, crew_personas: bool = False
+):
+    if crew_personas:
+        from thenetwork.sim.personas.crew_model import build_crew_llm
+        from thenetwork.sim.personas.crew_persona import CrewTinyPerson
+
+        return CrewTinyPerson(persona.config, build_crew_llm())
     if not llm_personas:
         return ScriptedTinyPerson(persona.config.name, persona.opening_body)
     from thenetwork.model_config import model_with_api_key
@@ -81,11 +88,17 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Retain the per-run Postgres database after a real-process run.",
     )
-    run_parser.add_argument(
+    persona_backends = run_parser.add_mutually_exclusive_group()
+    persona_backends.add_argument(
         "--llm-personas",
         action="store_true",
         help="Drive personas with SMALL_AGENT_MODEL so they hold a real conversation "
         "instead of repeating their scripted opening line.",
+    )
+    persona_backends.add_argument(
+        "--crew-personas",
+        action="store_true",
+        help="Drive personas through CrewAI using AGENT_MODEL.",
     )
     run_parser.add_argument(
         "--message-budget",
@@ -117,6 +130,7 @@ def main(argv: list[str] | None = None) -> None:
                 keep_db=args.keep_db,
                 personas=args.personas,
                 llm_personas=args.llm_personas,
+                crew_personas=args.crew_personas,
                 message_budget=args.message_budget,
                 progress=lambda message: print(message, file=sys.stderr, flush=True),
             )
@@ -144,6 +158,7 @@ async def run_sim(
     keep_db: bool = False,
     personas: int | None = None,
     llm_personas: bool = False,
+    crew_personas: bool = False,
     message_budget: int | None = None,
     progress: Callable[[str], None] | None = None,
 ):
@@ -165,7 +180,9 @@ async def run_sim(
         )
     configs = tuple(persona.config for persona in population)
     adapters = tuple(
-        TinyPersonEmailAdapter(_build_person(persona, llm_personas), persona.config)
+        TinyPersonEmailAdapter(
+            _build_person(persona, llm_personas, crew_personas), persona.config
+        )
         for persona in population
     )
     database_name = new_sim_database_name() if not mock_process else None
@@ -177,7 +194,7 @@ async def run_sim(
         mock_process=mock_process,
         expectations=DEFAULT_EXPECTATIONS,
         outcome_checks=DEFAULT_OUTCOME_CHECKS,
-        llm_personas=llm_personas,
+        llm_personas=llm_personas or crew_personas,
         database_name=database_name,
     )
 
