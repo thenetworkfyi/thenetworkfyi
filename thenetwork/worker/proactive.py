@@ -24,6 +24,7 @@ the canonical pair key. Proposal caps remain enforced at the server boundary in
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import re
 from uuid import uuid4
 
 from sqlmodel import col, select
@@ -49,6 +50,72 @@ from thenetwork.worker.metrics import record_network_density
 from thenetwork.worker.tasks import app, process_email
 
 PROXIMITY_THRESHOLD = 0.3
+
+# Semantic rematching can spend a lower retrieval floor on people whose own
+# recent, sealed memory history says waiting is costly. Two writes inside two
+# days are a bounded activity signal; an explicit closing-window phrase in a
+# recent gist is a separate urgency signal. Each can lower the configured floor
+# by 0.05, capped at 0.10 total, so activity improves recall without turning a
+# weak keyword hit into an automatic introduction (the agent still judges the
+# two-sided thesis). Recently-active senders also rotate candidates within six
+# hours instead of spending the default 24-hour cooldown on one candidate.
+RECENT_ACTIVITY_WINDOW = timedelta(days=2)
+CLOSING_WINDOW_MAX_AGE = timedelta(days=14)
+RECENT_ACTIVITY_MEMORY_COUNT = 2
+MATCH_THRESHOLD_STEP = 0.05
+MAX_MATCH_THRESHOLD_REDUCTION = 0.10
+ACTIVE_SURFACE_COOLDOWN_SECONDS = 6 * 60 * 60
+_CLOSING_WINDOW_RE = re.compile(
+    r"\b(?:"
+    r"today|tonight|tomorrow|this (?:week|weekend)|"
+    r"in town (?:for )?(?:the next )?(?:\d+|one|two|three|four|five|six|seven) "
+    r"(?:hours?|days?|weeks?)|"
+    r"(?:until|through|before|deadline(?: is)?|closes? (?:on )?) "
+    r"(?:today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|"
+    r"\d{4}-\d{1,2}-\d{1,2})"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def _activity_adjustments(
+    memories: list,
+    *,
+    now: datetime,
+    base_threshold: float,
+) -> tuple[dict[str, float], set[str]]:
+    """Derive bounded per-person floors and activity from sealed memory rows."""
+    recent_counts: dict[str, int] = {}
+    closing_window_people: set[str] = set()
+    for memory in memories:
+        age = now - memory.created_at
+        person_ids = {person_id for person_id in memory.refs if person_id}
+        if timedelta(0) <= age <= RECENT_ACTIVITY_WINDOW:
+            for person_id in person_ids:
+                recent_counts[person_id] = recent_counts.get(person_id, 0) + 1
+        if (
+            timedelta(0) <= age <= CLOSING_WINDOW_MAX_AGE
+            and memory.gist
+            and _CLOSING_WINDOW_RE.search(memory.gist)
+        ):
+            closing_window_people.update(person_ids)
+
+    recently_active = {
+        person_id
+        for person_id, count in recent_counts.items()
+        if count >= RECENT_ACTIVITY_MEMORY_COUNT
+    } | closing_window_people
+    effective_thresholds: dict[str, float] = {}
+    for person_id in set(recent_counts) | closing_window_people:
+        signal_count = int(
+            recent_counts.get(person_id, 0) >= RECENT_ACTIVITY_MEMORY_COUNT
+        ) + int(person_id in closing_window_people)
+        reduction = min(
+            signal_count * MATCH_THRESHOLD_STEP,
+            MAX_MATCH_THRESHOLD_REDUCTION,
+        )
+        effective_thresholds[person_id] = max(0.0, base_threshold - reduction)
+    return effective_thresholds, recently_active
 
 
 def _defer_proactive_jobs(payloads: list[dict]) -> None:
@@ -176,9 +243,22 @@ async def scan_for_matches(timestamp: int) -> None:
             return
 
         graph = build_graph()
+        effective_thresholds, recently_active = _activity_adjustments(
+            memories,
+            now=now,
+            base_threshold=s.proactive_match_threshold,
+        )
         surfaced_pairs = recently_surfaced_pairs(
             session,
             since=now - timedelta(seconds=s.proactive_surface_cooldown_seconds),
+        )
+        active_cooldown_seconds = min(
+            s.proactive_surface_cooldown_seconds,
+            ACTIVE_SURFACE_COOLDOWN_SECONDS,
+        )
+        recently_active_surfaced_pairs = recently_surfaced_pairs(
+            session,
+            since=now - timedelta(seconds=active_cooldown_seconds),
         )
         email_cache: dict[str, str | None] = {}
         active_cache: dict[str, bool] = {}
@@ -221,11 +301,17 @@ async def scan_for_matches(timestamp: int) -> None:
             for recipient_id in (person_id for person_id in memory.refs if person_id):
                 if has_active_consent(recipient_id) or email_for(recipient_id) is None:
                     continue
+                effective_threshold = effective_thresholds.get(
+                    recipient_id, s.proactive_match_threshold
+                )
                 matches = match_memories(
                     memory.embedding,
                     session,
                     limit=s.proactive_rematch_top_k,
-                    min_similarity=s.proactive_match_threshold,
+                    min_similarity=max(
+                        0.0,
+                        s.proactive_match_threshold - MAX_MATCH_THRESHOLD_REDUCTION,
+                    ),
                 )
                 for match in matches:
                     counterpart_id = match.person_id
@@ -234,7 +320,7 @@ async def scan_for_matches(timestamp: int) -> None:
                         counterpart_id == recipient_id
                         or len(pair) != 2
                         or pair in seen
-                        or match.similarity < s.proactive_match_threshold
+                        or match.similarity < effective_threshold
                         or graph.has_edge(recipient_id, counterpart_id)
                         or pair_is_suppressed(
                             session,
@@ -245,7 +331,15 @@ async def scan_for_matches(timestamp: int) -> None:
                     ):
                         continue
                     pair_key: tuple[str, str] = tuple(sorted(pair))  # type: ignore[assignment]
-                    if pair_key in surfaced_pairs or email_for(counterpart_id) is None:
+                    recipient_surfaced_pairs = (
+                        recently_active_surfaced_pairs
+                        if recipient_id in recently_active
+                        else surfaced_pairs
+                    )
+                    if (
+                        pair_key in recipient_surfaced_pairs
+                        or email_for(counterpart_id) is None
+                    ):
                         continue
                     seen.add(pair)
                     pair_contexts = {
