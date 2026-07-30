@@ -485,7 +485,7 @@ thenetwork/
   db/         SQLModel models + session
   email/      IMAP intake, SMTP output, hidden-address relay, templates
   embed/      OpenAI embedding wrapper (1536 dimensions)
-  memory/     the SEAL: sanitize (gist) + seal (self/other gate)
+  memory/     gist sanitization, recent-context, and sent-email memory helpers
   search/     semantic match over memories + NetworkX graph projection
   security/   rate limiting + optional content scan
   sim/        deterministic and model-driven end-to-end simulation harness
