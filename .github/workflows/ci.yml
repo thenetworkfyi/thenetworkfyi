@@ -106,9 +106,27 @@ jobs:
               echo "==> Logging in to GHCR..."
               echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u ${{ secrets.GHCR_USERNAME }} --password-stdin
             fi
-            echo "==> Pulling latest worker image..."
+            export IMAGE="ghcr.io/${{ github.repository }}:${{ github.sha }}"
+            echo "==> Pulling worker image ${IMAGE}..."
             docker compose pull worker
-            echo "==> Recreating containers..."
+            echo "==> Applying Compose changes..."
             docker compose up -d
             echo "==> Deploy complete. Worker status:"
             docker compose ps worker
+
+  cleanup-images:
+    name: Retain recent worker images
+    needs: deploy
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Retain the three newest GHCR versions
+        uses: actions/delete-package-versions@e5bc658cc4c965c472efe991f8beea3981499c55 # v5
+        with:
+          package-name: ${{ github.event.repository.name }}
+          package-type: container
+          min-versions-to-keep: 3
