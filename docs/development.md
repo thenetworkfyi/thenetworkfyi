@@ -373,11 +373,12 @@ under `alembic/versions/`.
   deterministic. Each case is scored by structural assertions (was the expected tool
   called, did the reply leak another person's PII, etc.) plus an `LLMJudge` evaluator that
   grades the action against a rubric. The suite requires `AGENT_API_KEY`,
-  `TEST_LLM_JUDGE_MODEL`, and `TEST_LLM_JUDGE_API_KEY` when recording; it never falls back
+  `TEST_LLM_JUDGE_MODEL`, and `TEST_LLM_JUDGE_API_KEY`; it never falls back
   to pydantic-evals' implicit third-party judge default.
-- There is no cassette-replay prompt-adherence measurement. A per-commitment harness
+- There is no cassette replay anywhere in the suite, and no `pytest-recording`/`vcrpy`
+  dependency. A per-commitment prompt-adherence harness
   existed (32 `live_model` cases, their cassettes, and a committed baseline under
-  `docs/notes/`) and was removed: `tests/conftest.py`'s `vcr_config` sets no `match_on`,
+  `docs/notes/`) and was removed: its `vcr_config` set no `match_on`,
   so VCR matched on method and URL only. Every provider call is a POST to the same path,
   so replay returned the recorded responses regardless of the prompt actually sent - a
   prompt edit produced no cassette miss and no rate change, and the suite reported a green
@@ -404,6 +405,14 @@ pydantic-ai. The simulation package sets `CREWAI_DISABLE_TELEMETRY=true` and
 testing policy suppresses CrewAI's first-run tracing-preference prompt in fresh
 environments. `.env.example` repeats the telemetry opt-out for visibility, but simulation
 runs do not depend on operators copying or preserving either setting.
+
+That confinement is now enforced by packaging, not just by import discipline. CrewAI and
+`pydantic-evals` live in the `sim` optional-dependency extra, which `dev` pulls in
+(`uv pip install -e ".[dev]"` still gets everything). The Dockerfile's `uv sync` installs
+no extras, so the deployed worker image contains neither - about 55 fewer packages,
+including LiteLLM and ChromaDB, which CrewAI drags in and which
+@docs/design-decisions.md rejects for the runtime. Running `sim` from an install without
+the extra fails at CrewAI import; install `.[sim]` or `.[dev]` first.
 
 The deterministic introduction simulation exercises the production
 `propose_introduction` tool and `process_email` consent path without calling an LLM or

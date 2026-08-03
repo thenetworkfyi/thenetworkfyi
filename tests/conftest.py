@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import json
 import socket
 import ssl
 import uuid
@@ -20,116 +19,7 @@ from dotenv import dotenv_values
 
 # Default-deny every provider-backed model request in the test process. The
 # autouse fixture below opens this gate only for a test carrying live_model.
-# Cassette replay still traverses pydantic-ai's provider model classes before
-# its HTTP transport is intercepted, so replay tests must keep the live_model
-# marker even though replay itself performs no network request or paid call.
 pydantic_ai_models.ALLOW_MODEL_REQUESTS = False
-
-_CASSETTE_SECRET_HEADERS = (
-    "authorization",
-    "api-key",
-    "x-api-key",
-    "openai-organization",
-    "openai-project",
-)
-_CASSETTE_PROVIDER_ID_FIELDS = frozenset(
-    {"id", "request_id", "request-id", "system_fingerprint", "tool_call_id"}
-)
-
-
-def _redact_provider_ids(value):
-    if isinstance(value, dict):
-        return {
-            key: (
-                "[REDACTED_PROVIDER_ID]"
-                if key.casefold() in _CASSETTE_PROVIDER_ID_FIELDS
-                else _redact_provider_ids(item)
-            )
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [_redact_provider_ids(item) for item in value]
-    return value
-
-
-def scrub_cassette_response(response):
-    """Keep only successful, scrubbed provider responses in a cassette."""
-    status_code = response.get("status", {}).get("code")
-    if isinstance(status_code, int) and not 200 <= status_code < 300:
-        return None
-
-    headers = response.get("headers", {})
-    for name in list(headers):
-        if name.casefold() in {
-            *_CASSETTE_SECRET_HEADERS,
-            "x-request-id",
-            "request-id",
-            "x-generation-id",
-            "cf-ray",
-            "set-cookie",
-        }:
-            headers.pop(name)
-
-    body = response.get("body", {}).get("string")
-    if not body:
-        return response
-    was_bytes = isinstance(body, bytes)
-    try:
-        payload = json.loads(body.decode() if was_bytes else body)
-    except (UnicodeDecodeError, json.JSONDecodeError, TypeError):
-        return response
-    redacted = json.dumps(_redact_provider_ids(payload), separators=(",", ":"))
-    response["body"]["string"] = redacted.encode() if was_bytes else redacted
-    return response
-
-
-def scrub_cassette_request(request):
-    """Remove provider-generated ids echoed into later request bodies."""
-    body = request.body
-    if not body:
-        return request
-    was_bytes = isinstance(body, bytes)
-    try:
-        payload = json.loads(body.decode() if was_bytes else body)
-    except (UnicodeDecodeError, json.JSONDecodeError, TypeError):
-        return request
-    redacted = json.dumps(_redact_provider_ids(payload), separators=(",", ":"))
-    request.body = redacted.encode() if was_bytes else redacted
-    return request
-
-
-def discard_cassette_on_test_failure(cassette, report) -> None:
-    """Make a VCR recording transactional with its pytest test result.
-
-    pytest-recording closes and saves its cassette after dependent fixtures
-    tear down. Clearing ``dirty`` here prevents a failed parametrized case from
-    leaving a partial cassette that VCR's ``once`` mode would treat as final on
-    the next run.
-    """
-    if cassette is None or (report is not None and report.passed):
-        return
-
-    cassette.dirty = False
-    cassette_path = getattr(cassette, "_path", None)
-    if cassette_path:
-        Path(cassette_path).unlink(missing_ok=True)
-
-
-@pytest.hookimpl(hookwrapper=True)
-def pytest_runtest_makereport(item, call):
-    outcome = yield
-    report = outcome.get_result()
-    setattr(item, f"report_{report.when}", report)
-
-
-@pytest.fixture
-def successful_cassette_only(request, vcr):
-    """Persist a VCR cassette only when the test call succeeds."""
-    yield
-    discard_cassette_on_test_failure(
-        vcr,
-        getattr(request.node, "report_call", None),
-    )
 
 
 # The model settings are deliberately required (no defaults - see
@@ -166,18 +56,6 @@ def model_request_gate(request, monkeypatch):
         "ALLOW_MODEL_REQUESTS",
         request.node.get_closest_marker("live_model") is not None,
     )
-
-
-@pytest.fixture
-def vcr_config():
-    """Replay by default and scrub credentials before a cassette reaches disk."""
-    return {
-        "filter_headers": list(_CASSETTE_SECRET_HEADERS),
-        "filter_query_parameters": ["key", "api_key", "access_token"],
-        "before_record_request": scrub_cassette_request,
-        "before_record_response": scrub_cassette_response,
-        "decode_compressed_response": True,
-    }
 
 
 @dataclass

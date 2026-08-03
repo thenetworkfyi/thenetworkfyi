@@ -51,12 +51,18 @@ from sqlmodel import select
 
 pytestmark = [pytest.mark.integration, pytest.mark.live_model]
 
-_CASSETTE_REPLAY_API_KEY = "cassette-replay-placeholder"
+_UNSET_API_KEY_PLACEHOLDER = "unset-api-key-placeholder"
 
 
 def _provider_api_key(configured_key: str) -> str:
-    """Construct provider clients during key-free cassette replay."""
-    return configured_key or _CASSETTE_REPLAY_API_KEY
+    """Let the judge model below build at import time with no key configured.
+
+    The module builds ``_judge_model`` during collection, which every test
+    session pays even though ``_skip_without_credentials`` skips the one test
+    that runs it. A provider client refuses to construct with an empty key, so
+    a credential-free collection would fail here instead of skipping.
+    """
+    return configured_key or _UNSET_API_KEY_PLACEHOLDER
 
 
 def _skip_without_credentials() -> None:
