@@ -13,15 +13,6 @@ substrate is a store of **freeform memories** it reads, writes, and searches;
 all behavior (onboarding, attribute capture, introductions, one-way FYIs) is
 *emergent* from a system prompt plus tools, not from branching control flow.
 
-The whole thing runs on a single VPS against Postgres.
-
-> **Status & Maintenance:** Active development. External contributions are welcome,
-> but must align with the architectural decisions in [`docs/design-decisions.md`](./docs/design-decisions.md)
-> and preserve THE SEAL security invariant (`tests/security/`). Three
-> independent hourly scans surface graph matches, semantic people matches, and relevant
-> events. The scans only enqueue sealed candidates; the agent decides whether to act, and
-> server-owned capabilities enforce what can leave the system. An optional separate hourly
-> judge can pause primary intake from sealed cross-account abuse patterns.
 
 ---
 
