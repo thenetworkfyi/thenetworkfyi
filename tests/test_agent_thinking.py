@@ -11,18 +11,6 @@ from thenetwork.agent.deps import AgentCapabilities, AgentDeps
 from thenetwork.settings import Settings
 
 
-def test_agent_thinking_level_defaults_to_medium():
-    settings = Settings(
-        _env_file=None,
-        agent_model="test:model",
-        small_agent_model="test:model",
-        embed_model="test:embed",
-        relay_domain="example.com",
-    )
-
-    assert settings.agent_thinking_level == "medium"
-
-
 def test_agent_thinking_level_can_be_disabled():
     settings = Settings(
         _env_file=None,

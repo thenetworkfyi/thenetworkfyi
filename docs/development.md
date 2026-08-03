@@ -375,21 +375,20 @@ under `alembic/versions/`.
   grades the action against a rubric. The suite requires `AGENT_API_KEY`,
   `TEST_LLM_JUDGE_MODEL`, and `TEST_LLM_JUDGE_API_KEY` when recording; it never falls back
   to pydantic-evals' implicit third-party judge default.
-- Live prompt-adherence measurement is split into 32 parametrized
-  `test_prompt_adherence_case` runs. Each scenario has its own cassette beneath
-  `tests/scenarios/cassettes/`, so a failed or missing case can be recorded independently.
-  The default record mode is replay-only (`none`) and fails on a cassette miss. Deliberate,
-  credentialed recording is an explicit opt-in:
-
-  ```bash
-  uv run pytest -m live_model --record-mode=once \
-    tests/scenarios/test_prompt_adherence.py::test_prompt_adherence_case
-  ```
-
-  Cassette hooks remove credential headers and query parameters and scrub provider ids
-  before successful recordings reach disk. Set
-  `PROMPT_ADHERENCE_WRITE_MEASUREMENT=1` separately on a complete run to append the
-  aggregate measurement; recording or replaying cases alone does not write one.
+- There is no cassette-replay prompt-adherence measurement. A per-commitment harness
+  existed (32 `live_model` cases, their cassettes, and a committed baseline under
+  `docs/notes/`) and was removed: `tests/conftest.py`'s `vcr_config` sets no `match_on`,
+  so VCR matched on method and URL only. Every provider call is a POST to the same path,
+  so replay returned the recorded responses regardless of the prompt actually sent - a
+  prompt edit produced no cassette miss and no rate change, and the suite reported a green
+  "measurement" of a frozen transcript. Its bullet-inventory guard is fully covered by
+  `tests/test_prompts.py`'s `test_per_mode_bullet_membership_is_pinned`, which pins the
+  exact `JUDGMENT_BULLETS` slug set per mode, so adding, splitting, or deleting a bullet
+  still fails loudly and for free. Real behavioral measurement of the prompt belongs to
+  `tests/scenarios/test_live_archetypes.py` and the simulation harness below, both of
+  which run the model against live state. If cassette replay is ever reintroduced for
+  prompt work, `match_on` must include `body`, or replay is not evidence about the
+  current prompt.
 
 ## Deployment
 
