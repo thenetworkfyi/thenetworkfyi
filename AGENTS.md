@@ -57,10 +57,6 @@ it has no database, so anything DB-backed must be marked `integration`.
 - @docs/development.md - settings, migrations, test fixtures, deployment, proactive scan, sharp edges
 - @docs/design-decisions.md - the *why*: guiding principle + the list of deliberately rejected approaches
 
-## Tone
-
-Never use "!" or other fake happy copy (e.g. "Great!", "Awesome!", "You're all set!") in
-code, commit messages, docs, or responses. Keep it straightforward and professional.
 
 ## Gotchas worth knowing up front
 
