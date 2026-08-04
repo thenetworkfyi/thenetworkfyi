@@ -71,90 +71,34 @@ It adds no webhook, inbound HTTP endpoint, or separate receiving service.
 
 ## Data model
 
-`people` and `memories` are the core domain substrate. Narrow operational tables enforce
-security and lifecycle invariants that cannot safely be left to model reasoning; they do
-not turn freeform memories into a networking schema. Procrastinate also owns its durable
-queue tables in the same Postgres database.
+Two tables carry the domain. `people` is pure identity and addressing - an opaque `id`
+(the only person reference the LLM ever sees), an `email` the mailer resolves
+server-side, and a name. `memories` is the substrate: freeform `text`, a
+`Vector(1536)` embedding for semantic recall, a `refs` array of the `people.id`s the
+chunk concerns, a PII-stripped `gist`, and `created_at`.
 
-### `people`
-Pure identity, addressing, and the security boundary. Nothing about *why* a person
-is here lives on this row.
+There is no `kind`/`direction`/`status`/`category`/`tags` column. Those are distinctions
+the agent draws from `text` at reasoning time, not facts the DB enforces. The cardinality
+of `refs` is the only structure, and it's incidental - zero refs is a general note, one
+ref is an attribute about a person, and two or more *also* contributes an undirected edge
+between them.
 
-| column | meaning |
-|---|---|
-| `id` (uuid str, pk) | opaque internal id - the only thing the LLM ever sees |
-| `email` (unique, indexed) | resolved server-side by the mailer, never by the LLM |
-| `name` | display name |
+That last case is where the social graph comes from. "Who knows whom" is never stored:
+nodes are people, an edge exists because some memory references both, and edge weight
+comes from the count and recency of shared memories.
+[NetworkX](https://networkx.org/) does the multi-hop proximity math at query time
+(`thenetwork/search/graph.py`); the LLM does the language → reference mapping at write
+time.
 
-### `memories`
-A growing pile of freeform chunks the agent owns.
+A handful of narrow operational tables enforce what cannot safely be left to model
+reasoning - consent and the relay token, event lifecycle and delivery deduplication,
+rate limits, intake idempotency, bans, PGP replay protection, and the intake circuit
+breaker. They are security and lifecycle state, not a networking schema over memories.
+Procrastinate owns its own durable queue tables in the same database.
 
-| column | meaning |
-|---|---|
-| `id` (uuid str, pk) | |
-| `text` | freeform content - the source of truth |
-| `embedding` `Vector(1536)` | pgvector, HNSW cosine, for semantic recall |
-| `refs` `text[]` | the `people.id`s this memory concerns (0..N) |
-| `gist` | PII-stripped summary; the *only* thing cross-user search may return |
-| `created_at` | recency / perishability signal |
-
-The cardinality of `refs` is the only structure, and it's incidental:
-
-- **0 refs** → general knowledge / agent notes (e.g. "a Rust meetup Thursday")
-- **1 ref** → an attribute about a person ("just moved to Berlin")
-- **2+ refs** → *also* contributes an undirected edge between those people
-
-There is no `kind`/`direction`/`status`/`category`/`tags` column. Those are
-distinctions the agent draws from `text` at reasoning time, not facts the DB
-enforces.
-
-### Operational and security state
-
-- `introduction_consents` stores server-owned pairwise consent, decline/revocation,
-  sanitized proposal snapshots, and the opaque token used by the hidden-address relay.
-- `proactive_surfaces` rotates recently surfaced people pairs so scans can reach later
-  candidates without repeatedly emailing the same pair.
-- `events`, `event_recommendations`, and `event_suppressions` enforce stable event identity,
-  ownership, lifecycle, version-bound delivery deduplication, and event-only opt-out. Event
-  meaning remains freeform.
-- `rate_limits`, `processed_messages`, `banned_emails`, and `admin_nonces` provide durable
-  abuse controls, intake idempotency, bans, and PGP-admin replay protection.
-- `primary_intake_state`, `primary_intake_observations`, and
-  `primary_intake_judge_state` implement the primary-only circuit breaker using keyed
-  fingerprints and an idempotent judge cursor, never raw campaign content.
-
-### The graph is a projection, not a table
-"Who knows whom" is derived: nodes are people, an edge exists between two people
-because some memory references both, and edge weight comes from the count/recency
-of shared memories. [NetworkX](https://networkx.org/) does the multi-hop proximity
-math at query time (`thenetwork/search/graph.py`); the LLM does the language →
-reference mapping at write time.
-
----
-
-## Agent surface
-
-The agent has seventeen tools (`thenetwork/agent/tools.py`):
-
-| tool | description |
-|---|---|
-| `remember(text, refs)` | write a chunk; a PII-stripped gist is produced automatically for any memory with refs |
-| `forget(memory_id)` | delete a sender-owned, single-ref chunk (edit = forget + remember, so embeddings never go stale) |
-| `search(query) -> [{person_id, evidence: [{gist}], similarity}]` | semantic candidate discovery returning bounded, grouped **opaque ids + sealed gists only** for other people; sender-owned evidence items also carry their own `memory_id` for edits |
-| `reply_to_sender(subject, body_text, sent_email_summary)` | reply only to the authenticated inbound sender; an unfamiliar sender can be answered without registration, while known recipients get a post-SMTP summary memory |
-| `send_first_contact_welcome()` | send fixed server-owned usage guidance to an authenticated unfamiliar sender, with the recipient, copy, threading, and daily quota outside model control |
-| `send_outreach(recipient_user_id, subject, body_text, sent_email_summary)` | send unthreaded outreach by opaque id and remember only the post-SMTP summary; resolve the address server-side |
-| `propose_introduction(other_person_id, sender_gist, other_gist)` | create a sealed pairwise proposal; server-owned consent controls the anonymous relay handoff |
-| `register_person(name)` | self-register an authenticated first-contact sender; the server supplies the sender address |
-| `escalate(reason)` | flag the inbound email for human review; authenticated unknown senders receive fixed first-contact guidance instead |
-| `no_action(reason)` | explicitly end a run without dispatching or mutating anything |
-| `create_event(text, expires_at, recurrence)` | create a sender-owned event or recurring series with a sealed cross-user gist |
-| `update_event(event_id, text, expires_at, recurrence)` | replace an owned event while retaining its stable id and refreshing its version, gist, and embedding |
-| `cancel_event(event_id)` | cancel an owned event so it cannot be searched or recommended |
-| `search_events(query)` | search active events through an opaque-id + sealed-gist projection |
-| `send_event_recommendation(event_id)` | send only the scan-bound event to the current proactive recipient using server-composed copy |
-| `stop_event_recommendations()` | suppress event FYIs for the authenticated sender without affecting people matching |
-| `resume_event_recommendations()` | remove only the authenticated sender's event-FYI suppression |
+See [`docs/architecture.md`](./docs/architecture.md) for the full column-level model and
+the agent's seventeen tools; the tools themselves are defined in
+`thenetwork/agent/tools.py`.
 
 ---
 
@@ -169,67 +113,24 @@ cofounder"* is raw PII inside `text`. Returning it for anyone but Bob would let 
 prompt-injection exfiltrate it, so the privacy boundary cannot be "withhold a
 column." Instead:
 
-1. **Two-layer memory for person-referencing chunks.** Each carries a **raw form**
-   (the durable substrate, read only by the sanitizer and the PGP-verified admin
-   channel) and a **sanitized gist** (PII-stripped) that is the only form any
-   search may return.
-2. **Cross-user retrieval and the LLM only ever touch gists + opaque ids.** A
-   hijacked model has no identifying text to leak. This applies to person memories and
-   events; real addresses and event submitter identities never enter LLM context.
-3. **Search projections are the chokepoints** (`thenetwork/search/match.py`,
-   `thenetwork/search/events.py`): their SQL selects only sanitized gists, opaque ids,
-   and minimum lifecycle fields. Raw memory/event text, raw event recurrence, and event
-   submitter identity never enter a cross-user result set.
-4. **The sanitizer is a separate, narrowly-scoped step**
-   (`thenetwork/memory/sanitize.py`) - one mandatory local span classifier
-   (`openai/privacy-filter`) redacts names, email addresses, phone numbers, addresses,
-   profile URLs, and account numbers, while keeping dates, organizations, and
-   locations for search recall. There is no pattern tier, no per-write model call, and
-   no setting that disables it: a model that cannot load is a deployment error, not a
-   silent downgrade. The component that sees raw cross-user data stays small and
-   auditable; the main agent never self-censors.
-5. **Capability-style email tools (confused-deputy fix).** `reply_to_sender`
-   derives its only recipient from the authenticated inbound sender, including an
-   unfamiliar sender who does not need to be registered just to receive an answer.
-   `send_first_contact_welcome` derives the same recipient and sends only fixed copy.
-   `send_outreach` accepts an
-   opaque `recipient_user_id`; the address is resolved server-side at send time.
-   `send_event_recommendation` accepts only a server-bound opaque event id, derives the
-   recipient from authenticated context, and composes fixed mail from a sanitized gist.
-   None of these tools lets the LLM see or supply a raw address.
-6. **Double-opt-in introduction.** Only authenticated consent from both participants lets
-   server code send the fixed introductions. Their bodies omit participant names and real
-   addresses, print only the server-owned relay address, and use server-resanitized
-   proposal gists for the match recap.
-7. **Server-only address relay.** After introduction, replies to the stable pair alias are
-   authenticated and authorized before any model execution. Server code resolves only the
-   other participant and preserves the participant-authored MIME body while replacing
-   source routing headers.
-8. **Role separation.** The untrusted inbound body is passed as user-role message
-   content, never into the system prompt (`thenetwork/agent/core.py`).
-9. **Mail-loop prevention (RFC 3834).** Inbound carrying `Auto-Submitted` /
-   `Precedence: bulk|list` / `List-*` is skipped; automated agent replies set
-   `Auto-Submitted: auto-replied`, while human-to-human relay mail omits it.
-10. **Rate limiting / anti-DoS.** Disposable-domain rejection, Postgres-backed inbound and outbound quotas via
-    [`limits`](https://limits.readthedocs.io/), a global processed-email quota, and bounded
-    Procrastinate worker concurrency cap LLM and email spend. Optional primary-only burst
-    detection and a fixed-prompt, no-tools judge use keyed fingerprints and opaque labels;
-    only a coordinated-abuse verdict can pause intake.
-11. **PII-safe audit correlation.** Opaque trace ids follow each message, while stable
-    sender correlation requires an HMAC-derived pseudonym; raw sender addresses are never
-    logged.
-12. **Credentials.** Never hardcoded - loaded from env / `.env` via
-   pydantic-settings.
-13. **Optional content scanner.** LlamaFirewall's local Llama Prompt Guard 2 86M
-    classifier is opt-in defense-in-depth, never the primary defense. The complete
-    capped body is scanned in overlapping, tokenizer-aware windows that include the
-    model's special tokens within its 512-token context.
-14. **Mutating-tool replay boundary.** Server-side fingerprints prevent a pydantic-ai
-    retry from repeating completed database, SMTP, quota, or sent-memory effects within
-    one agent run.
+Every person-referencing memory carries two layers - the raw text, read only by the
+sanitizer and the PGP-verified admin channel, and a PII-stripped **gist**. Cross-user
+retrieval and the LLM only ever touch gists and opaque ids, so a hijacked model has no
+identifying text to leak. The search projections are the chokepoint: their SQL selects
+sanitized gists and opaque ids and nothing else, so there is no runtime branch an
+attacker can steer toward raw text.
 
-The PGP-verified admin channel is separate from the agent-facing SEAL. See
-[`docs/security.md`](./docs/security.md) for the complete threat model and contracts.
+The email tools are capabilities rather than free-form senders. `reply_to_sender` has no
+recipient argument at all and derives one from the authenticated inbound sender;
+`send_outreach` takes an opaque id the mailer resolves server-side; introductions require
+authenticated double opt-in and are composed entirely by server code. The LLM never sees
+or supplies a raw address. The untrusted inbound body is user-role message content and is
+never concatenated into the system prompt.
+
+[`docs/security.md`](./docs/security.md) has the full threat model: all fourteen layers,
+the sanitizer's redaction policy, the anonymous relay, rate limiting and the intake
+circuit breaker, PII-safe audit correlation, the optional content scanner, and the
+separate PGP-verified admin channel.
 
 The red-team suite (`tests/security/`) proves it: adversarial emails must produce
 **zero** raw other-person memory text - no names, emails, or bios - in the reply
@@ -276,52 +177,14 @@ For the complete mail-host, SES, application, and deployment validation procedur
 
 ### 1. Configure
 
-Create a `.env` in the project root. Defaults live in `thenetwork/settings.py`;
-the common overrides:
-
-```dotenv
-POSTGRES_HOST=localhost   # docker compose overrides this to `db` for the worker
-POSTGRES_PORT=5432
-POSTGRES_DB=network_db
-POSTGRES_USER=network
-POSTGRES_PASSWORD=network   # literal password; Settings.database_url percent-encodes it
-
-# LLM - provider is chosen by the model string prefix
-AGENT_MODEL=anthropic:claude-sonnet-5
-SMALL_AGENT_MODEL=anthropic:claude-haiku-4-5
-EMBED_MODEL=text-embedding-3-small  # OpenAI, 1536 dimensions
-AGENT_API_KEY=
-SMALL_AGENT_API_KEY=
-EMBED_API_KEY=
-
-# Mailbox - IMAP (inbound polling) and SMTP (outbound send) are separate
-# accounts/credentials, potentially on different providers
-IMAP_ACCOUNT=agent@example.com
-IMAP_PASSWORD=...
-IMAP_HOST=imap.gmail.com
-IMAP_PORT=993
-# Optional; both use the same IMAP host/port above
-RELAY_IMAP_ACCOUNT=relay-inbox@relay.example.com
-RELAY_IMAP_PASSWORD=...
-SMTP_ACCOUNT=agent@example.com
-SMTP_PASSWORD=...
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-EMAIL_FROM=agent@example.com
-# Dovecot catch-all domain; SES must be allowed to send From this domain
-RELAY_DOMAIN=relay.example.com
-REQUIRE_SENDER_AUTH=true
-
-# Tuning
-WORKER_CONCURRENCY=4
-RATE_LIMIT_PER_HOUR=20
-UNAUTHENTICATED_RATE_LIMIT_PER_HOUR=6
-GLOBAL_EMAIL_RATE_LIMIT_PER_HOUR=200
-SENDER_IDENTIFIER_SECRET=long-random-server-secret
-PRIMARY_INTAKE_BURST_MONITORING_ENABLED=false
-CONTENT_SCAN_ENABLED=false
-HF_TOKEN=                 # first enabled startup only, until the model is cached
+```bash
+cp .env.example .env
 ```
+
+`.env.example` is the annotated list of every setting; defaults live in
+`thenetwork/settings.py`. At minimum you need Postgres credentials, the three model
+strings and their API keys (the provider is chosen by the model string's prefix), the
+IMAP and SMTP mailbox credentials, and `RELAY_DOMAIN`.
 
 ### 2. Install
 
@@ -378,50 +241,29 @@ Dovecot catch-all mailbox, not an application endpoint.
 
 ### Single-VPS Docker Compose
 
-`docker-compose.yml` runs two services: `db` (pgvector Postgres, bound to
-`127.0.0.1` only, state in the `pgdata` volume) and `worker`. Postgres on the
-box is fine at this scale.
+`docker-compose.yml` runs `db` (pgvector Postgres, bound to `127.0.0.1` only, state in
+the `pgdata` volume), `worker`, and the observability services below. Postgres on the box
+is fine at this scale.
 
 ```bash
 cp .env.example .env          # fill in secrets
-docker compose up -d --build  # builds the image, starts db + worker
+docker compose up -d --build  # builds the image, starts the stack
 docker compose logs -f worker
 ```
-
-To enable scanning, set `CONTENT_SCAN_ENABLED=true`. On the first enabled start,
-provide `HF_TOKEN`; compose persists the downloaded Prompt Guard 2 model in the
-`hf-cache` volume at `HF_HOME`. The worker refuses to start if scanning is enabled
-without either that cache or a non-interactive token, and it finishes model
-initialization before accepting jobs. Scanner-disabled deployments load no
-LlamaFirewall code and require neither model weights nor Hugging Face credentials.
 
 The container entrypoint runs `alembic upgrade head` before starting, so
 migrations apply automatically on every deploy.
 
-### OpenTelemetry Logs, Loki, and Local Prometheus Metrics
+### Observability
 
-`docker-compose.yml` includes explicitly version-pinned OpenTelemetry Collector contrib and Loki services. The Collector receives worker JSON logs via Docker's `fluentd` logging driver, preserves and sends every original line to Loki, and derives local Prometheus counters from selected redacted audit records on the same pipeline. Loki retains 30 days in the persistent `loki-data` volume and exposes its API only at `127.0.0.1:3100`. The default stack requires no external telemetry backend and does not include Grafana.
+The compose stack also runs pinned OpenTelemetry Collector, Loki, Prometheus, Alertmanager,
+and Grafana services. Worker JSON logs reach the Collector over Docker's `fluentd` driver;
+it forwards every line to Loki and derives a bounded catalog of Prometheus counters from
+redacted audit records on the same pipeline. All four UIs bind to `127.0.0.1` only, the
+worker opens no metrics port, and no external telemetry backend is required.
 
-The same redacted log pipeline derives a bounded counter catalog for account creation, message processing and rejection, agent runs and tools, introduction transitions, outbound email, and relay forwarding. The worker also exports unlabelled producer-success, runnable-backlog, oldest-pending-age, and durable-intake-state gauges outbound to the Collector over OTLP/HTTP. A version-pinned Prometheus LTS service scrapes those metrics and the collector's own pipeline metrics over the internal Compose network. Prometheus persists its TSDB in `prometheus-data`, retains samples for 30 days, and binds its UI only to `http://127.0.0.1:9090`. Pinned Alertmanager receives rule state internally, persists notification and silence state, and binds its UI only to `http://127.0.0.1:9093`. Operator email uses deployment-provided SMTP settings from `.env`. The worker opens no metrics port. Collector conditions allow-list every projected counter category value; trace IDs, run IDs, sender pseudonyms, mail content, exception text, job arguments, and opaque person/event identifiers are never metric labels or notification content. See [docs/monitoring.md](docs/monitoring.md) for metric semantics, alert thresholds, routing, runbooks, and validation.
-
-Rollout and verification commands:
-```bash
-docker compose config
-docker run --rm \
-  -v ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml \
-  otel/opentelemetry-collector-contrib:0.118.0 validate --config=/etc/otelcol-contrib/config.yaml
-docker run --rm --entrypoint /bin/promtool \
-  -v "$PWD/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
-  -v "$PWD/prometheus-alert-rules.yml:/etc/prometheus/rules/thenetwork.yml:ro" \
-  prom/prometheus:v3.5.5 check config /etc/prometheus/prometheus.yml
-docker compose up -d
-curl http://127.0.0.1:9090/api/v1/targets
-curl --get http://127.0.0.1:3100/loki/api/v1/query_range \
-  --data-urlencode 'query={service_name="thenetwork-worker"}' \
-  --data-urlencode 'since=1h'
-```
-
-The targets page/API should report `otel-collector-internal`, `thenetwork-audit-activity`, and `loki` as `up`, and the LogQL query should return the worker's own JSON lines unchanged. [docs/monitoring.md](docs/monitoring.md#validation) has the full per-file validation sequence.
+[docs/monitoring.md](docs/monitoring.md) has the metric catalog and semantics, the label
+allow-list, alert thresholds, routing, runbooks, and the per-file validation sequence.
 
 ### Safe redeploys (no lost or half-processed jobs)
 

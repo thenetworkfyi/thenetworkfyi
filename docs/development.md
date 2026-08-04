@@ -3,53 +3,12 @@
 ## Configuration
 
 All config is pydantic-settings (`thenetwork/settings.py`), read from env / `.env`, with
-defaults in that file. `get_settings()` caches a singleton. Common overrides
-(see `.env.example`):
+defaults in that file. `get_settings()` caches a singleton.
 
-```dotenv
-POSTGRES_HOST=localhost   # docker compose overrides this to `db` for the worker
-POSTGRES_PORT=5432
-POSTGRES_DB=network_db
-POSTGRES_USER=network
-POSTGRES_PASSWORD=network   # literal password; Settings.database_url percent-encodes it
-AGENT_MODEL=anthropic:claude-sonnet-5   # provider chosen by the string prefix
-SMALL_AGENT_MODEL=anthropic:claude-haiku-4-5   # cheaper tier for fixed-prompt subtasks (e.g. the abuse judge)
-EMBED_MODEL=text-embedding-3-small  # OpenAI, 1536 dimensions
-AGENT_API_KEY=
-SMALL_AGENT_API_KEY=
-EMBED_API_KEY=
-TEST_LLM_JUDGE_MODEL=       # tests/scenarios/test_live_archetypes.py's LLMJudge; unset skips that suite
-TEST_LLM_JUDGE_API_KEY=     # rather than falling back to pydantic_evals' own openai:gpt-5.2 default
-IMAP_ACCOUNT=agent@example.com  # polled for inbound
-IMAP_PASSWORD=...
-IMAP_HOST=imap.gmail.com
-RELAY_IMAP_ACCOUNT=             # optional separate relay inbox; same IMAP host/port
-RELAY_IMAP_PASSWORD=            # set both relay credentials together
-SMTP_ACCOUNT=agent@example.com  # SMTP login credential; can be a different account/provider
-SMTP_PASSWORD=...
-SMTP_HOST=smtp.gmail.com
-EMAIL_FROM=agent@example.com    # address used in the outbound From: header
-RELAY_DOMAIN=relay.example.com  # Dovecot catch-all domain for pair reply aliases
-REQUIRE_SENDER_AUTH=true        # reject if the IMAP provider supplies no passing verdict
-IMAP_SENT_FOLDER=Sent       # outbound replies are IMAP-appended here after SMTP send
-WORKER_CONCURRENCY=4        # worker concurrency ceiling
-RATE_LIMIT_PER_HOUR=20      # authenticated sender bucket
-UNAUTHENTICATED_RATE_LIMIT_PER_HOUR=6
-GLOBAL_EMAIL_RATE_LIMIT_PER_HOUR=200
-SENDER_IDENTIFIER_SECRET=long-random-server-secret
-PRIMARY_INTAKE_BURST_MONITORING_ENABLED=false # opt in; requires the secret above
-CONTENT_SCAN_ENABLED=false
-HF_TOKEN=                         # first enabled scanner startup only; omit after cache is populated
-# SANITIZE_MODEL is deliberately absent: compose pins it to the image's baked weights
-RECENT_MEMORY_CONTEXT_MAX_COUNT=20  # newest sender-owned gists loaded into an agent run
-RECENT_MEMORY_CONTEXT_MAX_CHARS=4000 # total rendered user-role memory-context budget
-EVENT_MATCH_THRESHOLD=0.6         # independent event-to-person semantic relevance floor
-EVENT_MATCH_TOP_K=20
-EVENT_SCAN_ACTIVE_EVENT_LIMIT=100
-EVENT_SCAN_MAX_CANDIDATES=50      # whole-scan bounded fan-out
-EVENT_SCAN_MAX_PER_PERSON=1
-DAILY_AGENT_TOKEN_CAP=15000000    # rolling-24h ceiling on AGENT_MODEL/SMALL_AGENT_MODEL tokens; <= 0 disables it
-```
+**`.env.example` is the authoritative list of settings** - every key, its default, and
+the reasoning where it isn't obvious. Copy it rather than reconstructing one from prose.
+The sections below cover only the settings whose behavior needs more explanation than a
+comment can carry.
 
 ### Daily token budget
 
@@ -211,7 +170,9 @@ preloads the model and validates inference readiness before opening the queue; i
 neither the model cache nor a token exists, startup fails before LlamaFirewall can
 open an interactive login prompt. Once cached under `HF_HOME`, the token is no
 longer required. Disabled startup does not import LlamaFirewall or inspect the
-cache.
+cache. Under compose that cache is the named `hf-cache` volume, mounted at the
+`HF_HOME` compose exports (`/home/appuser/.cache/huggingface`), so it survives
+restarts and rebuilds.
 
 Prompt Guard 2 has a 512-token context. `content_scan.py` tokenizes the complete
 10,000-character capped body, reserves room for model special tokens, and scans
@@ -341,10 +302,7 @@ under `alembic/versions/`.
   only for deliberate, credentialed live-model runs.
 - Model access is default-deny for the entire test session. `tests/conftest.py` sets
   pydantic-ai's `ALLOW_MODEL_REQUESTS = False`, and the autouse `model_request_gate`
-  fixture opens it only for tests marked `live_model`. Cassette replay still constructs
-  pydantic-ai provider models before VCR intercepts their HTTP transport, so replay tests
-  must retain the `live_model` marker even though replay makes no network request or paid
-  model call.
+  fixture opens it only for tests marked `live_model`.
 - `tests/conftest.py` fixtures:
   - `seeded_people` - in-memory `Person` objects, no DB.
   - `pg_engine` (session-scoped) - connects to `TEST_DATABASE_URL` (default
@@ -375,27 +333,70 @@ under `alembic/versions/`.
   grades the action against a rubric. The suite requires `AGENT_API_KEY`,
   `TEST_LLM_JUDGE_MODEL`, and `TEST_LLM_JUDGE_API_KEY`; it never falls back
   to pydantic-evals' implicit third-party judge default.
-- There is no cassette replay anywhere in the suite, and no `pytest-recording`/`vcrpy`
-  dependency. A per-commitment prompt-adherence harness
-  existed (32 `live_model` cases, their cassettes, and a committed baseline under
-  `docs/notes/`) and was removed: its `vcr_config` set no `match_on`,
-  so VCR matched on method and URL only. Every provider call is a POST to the same path,
-  so replay returned the recorded responses regardless of the prompt actually sent - a
-  prompt edit produced no cassette miss and no rate change, and the suite reported a green
-  "measurement" of a frozen transcript. Its bullet-inventory guard is fully covered by
-  `tests/test_prompts.py`'s `test_per_mode_bullet_membership_is_pinned`, which pins the
-  exact `JUDGMENT_BULLETS` slug set per mode, so adding, splitting, or deleting a bullet
-  still fails loudly and for free. Real behavioral measurement of the prompt belongs to
-  `tests/scenarios/test_live_archetypes.py` and the simulation harness below, both of
-  which run the model against live state. If cassette replay is ever reintroduced for
-  prompt work, `match_on` must include `body`, or replay is not evidence about the
-  current prompt.
+- There is deliberately no cassette replay and no `pytest-recording`/`vcrpy` dependency.
+  A prompt-adherence harness built on it was removed because its `vcr_config` set no
+  `match_on`: every provider call is a POST to the same path, so replay returned the
+  recorded responses no matter what prompt was actually sent, and the suite reported a
+  green "measurement" of a frozen transcript. Prompt behavior is measured instead by
+  `tests/scenarios/test_live_archetypes.py` and the simulation harness, which run the
+  model against live state, plus `tests/test_prompts.py`'s
+  `test_per_mode_bullet_membership_is_pinned` for the bullet inventory. If replay ever
+  comes back for prompt work, `match_on` must include `body`.
 
 ## Deployment
 
 No inbound network access: the service polls IMAP (outbound), pulls jobs from local
 Postgres, and calls LLM/SMTP APIs (outbound). No web server or public port. A single small
 VPS suffices.
+
+`docker-compose.yml` runs `db` (pgvector, bound to `127.0.0.1`, state in the `pgdata`
+volume), `worker`, and the observability services below. Redeploys are safe by design:
+durable job rows, `SKIP LOCKED` dequeue, SIGTERM graceful drain
+(`stop_grace_period: 300s`), `max_attempts=3`, and idempotent intake (IMAP marked seen
+only after enqueue) mean an ungraceful kill at worst re-runs a job.
+
+```bash
+cp .env.example .env
+docker compose up -d --build      # local: build and start the whole stack
+git pull origin main && docker compose pull worker && docker compose up -d --force-recreate   # redeploy (pulls the CI-built image)
+```
+
+### Observability
+
+The stack also runs pinned OpenTelemetry Collector, Loki, Prometheus, Alertmanager, and
+Grafana services. Worker JSON logs reach the Collector over Docker's `fluentd` driver; it
+forwards every line to Loki and derives Prometheus counters from redacted audit records on
+the same pipeline. The worker additionally pushes state, usage, cost, and latency metrics
+outbound to the Collector's OTLP/HTTP receiver - it opens no inbound port of its own, and
+every UI binds to `127.0.0.1`. No external telemetry backend is required.
+
+[monitoring.md](monitoring.md) is the authority for all of it: the metric catalog and its
+queue/timestamp semantics, the label policy, Loki queries and retention, Alertmanager
+settings and routing, alert thresholds and runbooks, and the per-file validation sequence.
+
+### The image is built by CI, not on the server
+
+The VPS is a **git checkout**, but it does not build the worker image itself - the server
+needs its spare CPU/memory for serving, not for a `docker build`. On a push to `main`,
+after `test` passes, `.github/workflows/ci.yml`'s `build` job pushes the worker image to
+`ghcr.io/<owner>/agent` as both `:latest` and `:<commit-sha>`. The `deploy` job then SSHes
+in with the `production` environment's `DEPLOY_HOST`/`DEPLOY_USER`/`DEPLOY_SSH_KEY`
+secrets, runs `git pull origin main`, exports `IMAGE` with that run's immutable SHA tag,
+and runs `docker compose pull worker && docker compose up -d`. Those commands are inline in
+the workflow rather than a script on the server, so a deploy always runs the version from
+the commit that just passed CI, never a stale on-disk copy. Run the same four commands by
+hand for a manual redeploy.
+
+The `ghcr.io/thenetworkfyi/agent` package is public (audited: the images bake in no
+secrets), so the pull needs no credentials; the optional `GHCR_USERNAME`/`GHCR_PAT` secrets
+exist only for a private package. `worker.image` defaults to the `:latest` tag - override
+with `IMAGE=` in `.env`. Local development uses `docker compose up -d --build`, which
+builds and tags locally under the same name, so no pull is attempted. After a successful
+deploy the `cleanup-images` job keeps the three newest GHCR versions, independent of
+host-side image and builder-cache pruning.
+
+`scripts/backup.sh` dumps the DB - the only source of truth - via the `db` container. Wire
+it up as a host cron job.
 
 ## Double-opt-in simulation
 
@@ -432,25 +433,20 @@ POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=5432 \
 ```
 
 The printed run directory contains publishable, redacted `events.jsonl`, `audit.jsonl`,
-`all-mail.mbox`, and `transcript.md`. The recorder keeps the exact mbox and optional database
-dump required for deterministic scoring beneath `private/`, created with owner-only permissions.
-Those raw files are not normal log artifacts: do not open them for ordinary review, upload them,
-or treat them as safe for an LLM. Delete `private/` immediately after a completed score/review
-unless an approved incident or reproducibility procedure requires it; then delete the entire run
-directory on the simulation retention schedule (seven days by default). On teardown, the run
-provisions a disposable database, migrates it, and
-(`thenetwork/sim/run/database.py`) shells out to whatever `pg_dump` is first on `PATH` to
-write the private dump before dropping the database.
+`all-mail.mbox`, and `transcript.md`. The recorder keeps the exact mbox and optional
+database dump the deterministic scorers need beneath `private/`, created with owner-only
+permissions - `thenetwork/sim/run/database.py` shells out to whatever `pg_dump` is first
+on `PATH` to write that dump before dropping the disposable database.
+**Those raw files are not normal log artifacts: do not open them for ordinary review,
+upload them, or treat them as safe for an LLM.**
+[simulation-review.md](simulation-review.md) has the handling and retention rules.
 
-Simulation `config.json` records a versioned `runtime_provenance` section with public-safe
-model identifiers by role, active-role flags, request limits, timeout, sanitizer mode, and
-SHA-256 hashes of static system-prompt text. Since the agent composes its system prompt per
-run mode (`thenetwork/agent/prompts.py`'s `SYSTEM_PROMPTS`), `static_prompt_sha256` records
-one hash per mode - `agent_known_sender`, `agent_first_contact`, `agent_people_trigger`,
-`agent_event_trigger` - alongside `persona_template`, rather than a single flat `agent` hash.
-It never records API keys, credentials, rendered persona prompts, identities, or message
-content. See `docs/simulation-review.md` for how to treat older runs that predate this
-section.
+`config.json` records a versioned `runtime_provenance` section - public-safe model
+identifiers by role, active-role flags, request limits, timeout, sanitizer mode, and
+SHA-256 hashes of static system-prompt text, never credentials, identities, or message
+content. Because the agent composes its system prompt per run mode
+(`thenetwork/agent/prompts.py`'s `SYSTEM_PROMPTS`), `static_prompt_sha256` carries one
+hash per mode plus `persona_template`, not a single flat `agent` hash.
 
 The compose stack uses `pgvector/pgvector:pg17`; use the corresponding local PostgreSQL and
 `pg_dump` major version for a simulation database.
@@ -618,90 +614,6 @@ a comparison with a compatible baseline, interpret the artifacts and score tiers
 cited transcript behavior, and write a reproducible report. Comparison is a reviewer
 procedure over the two runs' score findings, not a command; there is deliberately no
 aggregate before/after metric tool.
-
-`docker-compose.yml` runs `db` (pgvector, bound to `127.0.0.1`, state in `pgdata` volume)
-and `worker`. Redeploys are safe by design: durable job rows, `SKIP LOCKED` dequeue,
-SIGTERM graceful drain (`stop_grace_period: 300s`), `max_attempts=3`, and idempotent intake
-(IMAP marked seen only after enqueue) mean an ungraceful kill at worst re-runs a job.
-
-```bash
-cp .env.example .env
-docker compose up -d --build      # build + start db, worker, collector, Prometheus
-git pull origin main && docker compose pull worker && docker compose up -d --force-recreate   # redeploy (pulls the CI-built image)
-```
-
-### OpenTelemetry Logs, Loki, and Local Prometheus Metrics
-
-The Compose stack runs an OpenTelemetry Collector contrib service (`otel-collector`) using `otel-collector-config.yaml`. Worker JSON logs are routed via Docker's `fluentd` logging driver. The Collector preserves each original JSON line, extracts its fields as structured metadata, writes every line to the pinned local Loki service, and derives local Prometheus counters from the same records. Loki persists 30 days in `loki-data` and binds its HTTP API only to `127.0.0.1:3100`. The default deployment requires no external telemetry backend and does not install Grafana.
-
-The collector counts selected records whose redacted logger is `thenetwork.audit` and exports the bounded catalog documented in [monitoring.md](monitoring.md). Prometheus scrapes that endpoint at `otel-collector:8889`, collector pipeline-health metrics at `otel-collector:8888`, and Loki health metrics at `loki:3100` over the internal Compose network. Prometheus uses the pinned `prom/prometheus:v3.5.5` LTS image, persists its TSDB in the `prometheus-data` volume, retains samples for 30 days, and binds its UI to `127.0.0.1:9090`. It sends alert state to pinned Alertmanager `v0.32.1` over the internal network. Alertmanager persists notification and silence state in `alertmanager-data` and binds its UI only to `127.0.0.1:9093`. The worker exposes no inbound metrics port.
-
-The worker's background OpenTelemetry reader sends liveness, queue, durable intake, logical model/embedding usage, estimated cost, and request/lifecycle latency metrics to the Collector's internal OTLP/HTTP receiver at `otel-collector:4318`. Its database reads and exports are best effort and cannot gate the producer or worker. State collection uses an isolated connection with a two-second default connect and statement timeout; OTLP export has a five-second default timeout. `WORKER_METRICS_OTLP_ENDPOINT`, `WORKER_METRICS_EXPORT_INTERVAL_SECONDS`, `WORKER_METRICS_EXPORT_TIMEOUT_SECONDS`, and `WORKER_METRICS_COLLECTION_TIMEOUT_SECONDS` configure this outbound path. No additional environment variable is required for LLM accounting. See [monitoring.md](monitoring.md) for exact queue and timestamp semantics, Loki trace queries, PromQL, and the distinction between recorded cost estimates and provider billing.
-
-Every log-derived label is a closed audit category and is independently allow-listed in the Collector condition before a series can be created. Direct LLM metrics use closed workload/provider/outcome/token categories plus a process-local registry capped at eight deployment-configured model labels. Never add `trace_id`, `run_id`, sender pseudonyms, email/content, exception text, or opaque person/event identifiers as metric labels; they are identifying and/or unbounded. Prometheus also adds its bounded `job` and `instance` scrape-target labels.
-
-Required settings:
-- `ALERTMANAGER_OPERATOR_EMAIL`: dedicated operator mailbox, never an application intake address
-- `ALERTMANAGER_SMTP_SMARTHOST`, `ALERTMANAGER_SMTP_FROM`, `ALERTMANAGER_SMTP_PASSWORD`, and optional `ALERTMANAGER_SMTP_USERNAME`: operator-notification SMTP connection
-- `ALERTMANAGER_SMTP_REQUIRE_TLS`: keep `true` in production
-
-Rollout & verification:
-- Validate compose: `docker compose config`
-- Validate collector configuration: `docker run --rm -v ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml otel/opentelemetry-collector-contrib:0.118.0 validate --config=/etc/otelcol-contrib/config.yaml`
-- Validate Loki configuration: `docker run --rm -v ./loki-config.yaml:/etc/loki/config.yaml grafana/loki:3.6.11 -config.file=/etc/loki/config.yaml -verify-config=true`
-- Validate Prometheus configuration and rules: `docker run --rm --entrypoint /bin/promtool -v "$PWD/prometheus.yml:/etc/prometheus/prometheus.yml:ro" -v "$PWD/prometheus-alert-rules.yml:/etc/prometheus/rules/thenetwork.yml:ro" prom/prometheus:v3.5.5 check config /etc/prometheus/prometheus.yml`
-- Start service: `docker compose up -d`
-- Open the local UI: `http://127.0.0.1:9090`
-- Open the local Alertmanager UI: `http://127.0.0.1:9093`
-- Query Loki directly: `curl --get http://127.0.0.1:3100/loki/api/v1/query_range --data-urlencode 'query={service_name="thenetwork-worker"}' --data-urlencode 'since=1h'`
-- Verify all four targets are up: `curl http://127.0.0.1:9090/api/v1/targets`
-- Query application activity after an audit event: `curl 'http://127.0.0.1:9090/api/v1/query?query=thenetwork_worker_audit_events_total'`
-- Check the worker-state OTLP path: `curl 'http://127.0.0.1:9090/api/v1/query?query=thenetwork_worker_process_resident_memory_bytes'`
-
-Grafana already ships (`grafana/`, bound to `127.0.0.1:3000`), and host and
-Postgres metrics ship via the `hostmetrics` and `postgresql` Collector
-receivers plus the worker's own process/cgroup OTLP gauges (see
-[monitoring.md](monitoring.md)'s host/Postgres/worker metrics catalog and the
-`system-resources.json` dashboard). Traces, historical log migration, and
-migration of old metrics remain out of scope. See [monitoring.md](monitoring.md)
-for Loki queries and retention, alert thresholds, routing, secret provisioning,
-silencing, validation, and runbooks.
-
-All compose builds install the scanner dependencies. To enable model loading and
-scanning, set `CONTENT_SCAN_ENABLED=true` and `HF_TOKEN` for the first start, then run
-`docker compose up -d --build`. The named `hf-cache` volume is mounted at
-`/home/appuser/.cache/huggingface`, which compose exports as `HF_HOME`, so later
-restarts preload from local weights without credentials or a download.
-Scanner-disabled deployments load no model and require no Hugging Face account or
-token.
-
-The VPS is a **git checkout**, but it does not build the worker image itself - the
-server needs its spare CPU/memory for serving, not for a `docker build`. Instead,
-`.github/workflows/ci.yml`'s `build` job (`permissions: packages: write`) runs only on a
-push to `main`, only after `test` passes: it logs in to `ghcr.io` with the ephemeral
-`GITHUB_TOKEN` and pushes the worker image as both `ghcr.io/<owner>/agent:latest` and
-`ghcr.io/<owner>/agent:<commit-sha>`.
-
-Since the `ghcr.io/thenetworkfyi/agent` package is set to public visibility in GHCR package settings (audit verified images contain no baked-in secrets), the `deploy` job SSHes into the server (host,
-user, and key come from the `production` environment's `DEPLOY_HOST`/`DEPLOY_USER`/
-`DEPLOY_SSH_KEY` secrets), runs `git pull origin main`, exports `IMAGE` with the
-immutable `ghcr.io/<owner>/agent:<commit-sha>` tag produced by that workflow run, pulls
-that public image via `docker compose pull worker` (logging in with optional
-`GHCR_USERNAME`/`GHCR_PAT` secrets only if configured for private packages), then runs
-`docker compose up -d`, and prints the resulting `worker` status. These
-commands are inline in the workflow's `script:` block rather than a script checked out on
-the server, so the deploy step always runs the version from the commit that just passed
-CI, never a stale on-disk copy. `docker-compose.yml`'s `worker.image` defaults to
-`ghcr.io/thenetworkfyi/agent:latest` (override with `IMAGE=` in `.env`); local
-development still uses `docker compose up -d --build`, which builds from the Dockerfile
-and tags the result locally under that same name, so no pull is attempted. Run the same
-`git pull` + SHA-tagged `IMAGE` export + `docker compose pull worker` +
-`docker compose up -d` commands by hand on the server for a manual redeploy.
-After a successful deploy, the `cleanup-images` job keeps the three newest GHCR
-package versions and deletes older versions. This registry retention is independent of
-host-side Docker image and builder-cache pruning.
-`scripts/backup.sh` dumps the DB
-(the only source of truth) via the `db` container - wire it as a host cron job.
 
 ## Proactive outreach
 
