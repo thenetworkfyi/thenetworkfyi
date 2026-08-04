@@ -224,8 +224,7 @@ the baked repo at build time with `--build-arg SANITIZE_MODEL_REPO=...`.
 The `settings.py` default stays the hub id (`openai/privacy-filter`) so a local
 `uv run` uses the developer's own Hugging Face cache; only the image pins a path.
 
-There is no setting that disables it and no fallback path - see `docs/security.md`
-layer 4 for the allow-list.
+`docs/security.md` layer 4 has the allow-list.
 
 `thenetwork/security/log_redaction.py` shares this classifier through
 `sanitize.classify_spans`, so the weights load once per process rather than twice.

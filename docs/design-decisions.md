@@ -79,10 +79,6 @@ thin wrapper over a well-adopted library, swappable by config.
   numbers - so `security/log_redaction.py` goes through `sanitize.classify_spans` and
   the 2.7 GB of weights load once per process instead of twice. The allow-lists stay
   separate: logs also redact `private_date`, which gists keep.
-- **Sanitization has no off switch.** There is no `SANITIZE_*_ENABLED` setting and no
-  fallback path. A sanitizer that can be disabled or that degrades silently is a
-  sanitizer you cannot reason about at the SEAL boundary, and the failure mode is a
-  cross-user gist carrying a raw name.
 - **The classifier's coverage is probabilistic, and the answer to that is a later
   sweep, not a regex backstop.** Adding pattern matching under the model reintroduces
   exactly the brittle, word-list-dependent code this replaced, in exchange for cases the
@@ -136,10 +132,9 @@ understanding why it was dropped.
 - ❌ LLM handling raw email addresses → capability tool, server-side resolution.
 - ❌ Any sanitizer fallback or downgrade path → fail fast; a silent downgrade can
   produce cross-user gists with raw names.
-- ❌ Regex/word-list handle matching under the classifier → the model already catches
-  handles, dictionary-word handles, and obfuscated addresses the patterns missed.
-- ❌ A per-write LLM sanitizer tier → one local forward pass, plus a periodic
-  large-model sweep over stored gists for what the classifier missed.
+- ❌ Another tier under or over the classifier - regex/word-list handle matching, or a
+  per-write LLM pass → one local forward pass, plus a periodic large-model sweep over
+  stored gists for the residue.
 - ❌ Presidio + a custom regex recognizer list in the response-log redactor → the same
   classifier, one loaded copy, one shared span function, its own allow-list.
 - ❌ LiteLLM / proxy glue → pydantic-ai native multi-provider.
