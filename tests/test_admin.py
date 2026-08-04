@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import base64
+import subprocess
 import tempfile
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -28,36 +31,50 @@ import pytest
 # no_protection=True need no passphrase at all, so the bug is simply avoided.
 
 
-def _gen_gpg_identity(name_email: str) -> SimpleNamespace:
-    home = tempfile.mkdtemp(prefix="thenetwork-test-gpg-")
-    gpg = gnupg.GPG(gnupghome=home)
-    gpg.encoding = "utf-8"
-    key_input = gpg.gen_key_input(
-        key_type="eddsa",
-        key_curve="ed25519",
-        name_email=name_email,
-        expire_date="0",
-        no_protection=True,
-    )
-    key = gpg.gen_key(key_input)
-    fingerprint = str(key)
-    if not fingerprint:
-        pytest.skip(f"gpg keygen failed: {key.stderr}")
-    return SimpleNamespace(
-        gpg=gpg, fingerprint=fingerprint, public_key=gpg.export_keys(fingerprint)
-    )
+@contextmanager
+def _gpg_identity(name_email: str) -> Iterator[SimpleNamespace]:
+    home = tempfile.TemporaryDirectory(prefix="thenetwork-test-gpg-")
+    try:
+        gpg = gnupg.GPG(gnupghome=home.name)
+        gpg.encoding = "utf-8"
+        key_input = gpg.gen_key_input(
+            key_type="eddsa",
+            key_curve="ed25519",
+            name_email=name_email,
+            expire_date="0",
+            no_protection=True,
+        )
+        key = gpg.gen_key(key_input)
+        fingerprint = str(key)
+        if not fingerprint:
+            pytest.skip(f"gpg keygen failed: {key.stderr}")
+        yield SimpleNamespace(
+            gpg=gpg,
+            fingerprint=fingerprint,
+            public_key=gpg.export_keys(fingerprint),
+        )
+    finally:
+        subprocess.run(
+            ["gpgconf", "--homedir", home.name, "--kill", "gpg-agent"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        home.cleanup()
 
 
 @pytest.fixture(scope="module")
 def admin_identity():
     """The trusted admin signer: its public key is what ADMIN_GPG_PUBLIC_KEY holds."""
-    return _gen_gpg_identity("admin@example.com")
+    with _gpg_identity("admin@example.com") as identity:
+        yield identity
 
 
 @pytest.fixture(scope="module")
 def attacker_identity():
     """A different keypair, never imported as the trusted key."""
-    return _gen_gpg_identity("attacker@evil.com")
+    with _gpg_identity("attacker@evil.com") as identity:
+        yield identity
 
 
 def _build_signed_part(cleartext: str) -> bytes:
@@ -148,11 +165,9 @@ def _reset_gpg_cache():
     clear it so each test's _settings(public_key=...) is actually re-imported."""
     import thenetwork.admin.auth as auth_mod
 
-    auth_mod._gpg_instance = None
-    auth_mod._gpg_key_material = None
+    auth_mod._clear_gpg_cache()
     yield
-    auth_mod._gpg_instance = None
-    auth_mod._gpg_key_material = None
+    auth_mod._clear_gpg_cache()
 
 
 # ─── Auth ────────────────────────────────────────────────────────────────────
