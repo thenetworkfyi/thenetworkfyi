@@ -489,10 +489,3 @@ docs/         architecture, security, development, operations, and review runboo
 tests/        unit, security, scenario, simulation, and integration suites
 AGENTS.md     repository guidance (`CLAUDE.md` is a symlink to this file)
 ```
-
----
-
-## Repository Topics
-
-Suggested GitHub topics for repository maintainers to apply:
-`ai-agent`, `pydantic-ai`, `email-agent`, `pgvector`, `privacy`, `security-seal`, `python`
