@@ -338,8 +338,7 @@ under `alembic/versions/`.
 ## Deployment
 
 No inbound network access: the service polls IMAP (outbound), pulls jobs from local
-Postgres, and calls LLM/SMTP APIs (outbound). No web server or public port. A single small
-VPS suffices.
+Postgres, and calls LLM/SMTP APIs (outbound). No web server or public port.
 
 `docker-compose.yml` runs `db` (pgvector, bound to `127.0.0.1`, state in the `pgdata`
 volume), `worker`, and the observability services below. Redeploys are safe by design:

@@ -235,11 +235,11 @@ uv run thenetwork-producer          # optional: one manual IMAP poll cycle
 
 This service needs **no application-owned inbound network access** - it polls IMAP (outbound),
 pulls jobs from local Postgres, and calls LLM/SMTP APIs (outbound). So there's
-no web server, reverse proxy, or public port to expose. A single small VPS with
-SSH access is enough. Hidden-address replies arrive through the existing
+no web server, reverse proxy, or public port to expose - a host with SSH access is
+all the deploy needs. Hidden-address replies arrive through the existing
 Dovecot catch-all mailbox, not an application endpoint.
 
-### Single-VPS Docker Compose
+### Docker Compose
 
 `docker-compose.yml` runs `db` (pgvector Postgres, bound to `127.0.0.1` only, state in
 the `pgdata` volume), `worker`, and the observability services below. Postgres on the box
