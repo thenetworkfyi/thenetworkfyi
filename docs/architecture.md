@@ -62,8 +62,8 @@ a manual one-shot poll for cron/debugging.
   retain a bounded HTTP(S) href suffix: each rendered URL is at most 120 characters,
   query and fragment data is dropped when truncation is needed, duplicate destinations
   are omitted, and at most 20 distinct links are added. Other schemes are not rendered,
-  and this is extraction fidelity only - the agent does not fetch link destinations. No
-  hand-rolled MIME walking or attachment traversal - imap-tools has already done that. Attachments are
+  and this is extraction fidelity only - the agent does not fetch link destinations.
+  Attachments are
   never read on the ordinary agent path. Intake derives a bounded count of non-inline
   attachments from imap-tools' parsed metadata and carries only that integer through the
   durable job into agent context, so the agent can accurately ask the sender to paste

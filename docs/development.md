@@ -225,10 +225,7 @@ The `settings.py` default stays the hub id (`openai/privacy-filter`) so a local
 `uv run` uses the developer's own Hugging Face cache; only the image pins a path.
 
 There is no setting that disables it and no fallback path - see `docs/security.md`
-layer 4 for the allow-list and `docs/design-decisions.md` for why the previous
-Presidio/spaCy + handle-regex + per-write-LLM stack was removed. `transformers` is a
-core dependency; `presidio-analyzer`, `spacy`, and `en_core_web_lg` are not dependencies
-of this project at all.
+layer 4 for the allow-list.
 
 `thenetwork/security/log_redaction.py` shares this classifier through
 `sanitize.classify_spans`, so the weights load once per process rather than twice.
@@ -251,9 +248,7 @@ The redactor runs the same local span classifier the gist sanitizer uses, throug
 differs: a gist is a search projection that deliberately keeps dates for perishability,
 while a diagnostic log has no recall requirement, so it also redacts `private_date`.
 The redacted labels are `private_person`, `private_email`, `private_phone`,
-`private_address`, `private_url`, `private_date`, and `account_number`. There is no
-pattern tier under it; the same reasoning as `docs/design-decisions.md`'s rejection of
-a regex backstop applies.
+`private_address`, `private_url`, `private_date`, and `account_number`.
 
 Coverage is a classifier's, so it is probabilistic rather than exhaustive. Redaction is
 defense in depth for diagnostics, not a boundary anything is allowed to depend on - a
@@ -311,7 +306,7 @@ under `alembic/versions/`.
     that instead; database-backed tests skip only if neither path is available.
   - `scenario_database` - gives every live scenario run a separate PostgreSQL schema and
     real SQLModel session factory. Concurrent dataset cases can reuse their opaque fixture
-    ids without colliding; the scenario suites no longer substitute a `MagicMock` session.
+    ids without colliding.
   - `seeded_db` - persists alice/bob/carol/dave + four memories with hand-built
     embeddings; `monkeypatch`es `db.session._engine`/`_SessionLocal` so app code hits the
     test DB. Read its docstring before asserting on similarity ordering - the embedding
@@ -333,15 +328,6 @@ under `alembic/versions/`.
   grades the action against a rubric. The suite requires `AGENT_API_KEY`,
   `TEST_LLM_JUDGE_MODEL`, and `TEST_LLM_JUDGE_API_KEY`; it never falls back
   to pydantic-evals' implicit third-party judge default.
-- There is deliberately no cassette replay and no `pytest-recording`/`vcrpy` dependency.
-  A prompt-adherence harness built on it was removed because its `vcr_config` set no
-  `match_on`: every provider call is a POST to the same path, so replay returned the
-  recorded responses no matter what prompt was actually sent, and the suite reported a
-  green "measurement" of a frozen transcript. Prompt behavior is measured instead by
-  `tests/scenarios/test_live_archetypes.py` and the simulation harness, which run the
-  model against live state, plus `tests/test_prompts.py`'s
-  `test_per_mode_bullet_membership_is_pinned` for the bullet inventory. If replay ever
-  comes back for prompt work, `match_on` must include `body`.
 
 ## Deployment
 
@@ -407,13 +393,12 @@ testing policy suppresses CrewAI's first-run tracing-preference prompt in fresh
 environments. `.env.example` repeats the telemetry opt-out for visibility, but simulation
 runs do not depend on operators copying or preserving either setting.
 
-That confinement is now enforced by packaging, not just by import discipline. CrewAI and
-`pydantic-evals` live in the `sim` optional-dependency extra, which `dev` pulls in
-(`uv pip install -e ".[dev]"` still gets everything). The Dockerfile's `uv sync` installs
-no extras, so the deployed worker image contains neither - about 55 fewer packages,
-including LiteLLM and ChromaDB, which CrewAI drags in and which
-@docs/design-decisions.md rejects for the runtime. Running `sim` from an install without
-the extra fails at CrewAI import; install `.[sim]` or `.[dev]` first.
+Packaging enforces the confinement. CrewAI and `pydantic-evals` live in the `sim`
+optional-dependency extra, which `dev` pulls in (`uv pip install -e ".[dev]"` still gets
+everything). The Dockerfile's `uv sync` installs no extras, so the deployed worker image
+contains neither - about 55 fewer packages, including the LiteLLM and ChromaDB that
+CrewAI drags in. Running `sim` from an install without the extra fails at CrewAI import;
+install `.[sim]` or `.[dev]` first.
 
 The deterministic introduction simulation exercises the production
 `propose_introduction` tool and `process_email` consent path without calling an LLM or
@@ -421,8 +406,7 @@ an external mail service. It provisions and migrates a disposable database, send
 `YES` replies, verifies two separate proxy-addressed introduction messages, relays a
 message in each direction, then sends `REVOKE` and verifies that later relay delivery and
 another proposal for the pair are suppressed. Tier 1 runs after revocation over the whole
-mailbox and continues to reject every exact cross-persona PII disclosure; anonymous fixed
-introductions need no consent-based scoring exception.
+mailbox and rejects every exact cross-persona PII disclosure.
 
 Run it against any local pgvector PostgreSQL instance:
 
@@ -673,10 +657,9 @@ event FYI includes a concise opt-out notice; later FYIs carry only a concise eve
 stop instruction.
 
 A recurring series is one stable event id and therefore produces at most one FYI per person.
-Expired or cancelled events cannot be selected or sent. There are no occurrence jobs,
-reminders, RSVP or attendance tracking, post-event follow-up, calendar integration, or
-people-recommendation opt-out. `event_suppressions` is not read by either people scan, so a
-person who stops event FYIs remains eligible for introductions and people matching.
+Expired or cancelled events cannot be selected or sent. `event_suppressions` is not read
+by either people scan, so a person who stops event FYIs remains eligible for introductions
+and people matching.
 
 The abuse judge is a fourth hourly periodic task, but is not discovery and never enters the
 agent path. `judge_primary_email_abuse` runs at minute 15 only when primary monitoring is

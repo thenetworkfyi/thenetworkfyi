@@ -44,26 +44,23 @@ thin wrapper over a well-adopted library, swappable by config.
 - **CrewAI is adopted only for the simulation harness.** Its Flow and Agent primitives
   provide established orchestration for concurrent persona turns and simulated tool use,
   where framework behavior is itself part of what the harness exercises. It does not enter
-  the production email agent, memory, or privacy-seal boundary, so this remains compatible
-  with rejecting proxy and framework glue in the application runtime. Simulation entry
+  the production email agent, memory, or privacy-seal boundary. Simulation entry
   points disable CrewAI's telemetry before importing it; harness activity and authored
   persona content must not leave through a framework telemetry channel.
 - **Inbound body extraction leans on imap-tools + BeautifulSoup, not hand-rolled MIME
   walking.** Strict attachment-boundary pruning was deliberately relaxed: `MAX_BODY_CHARS`
   truncation is the real size guard regardless of how the body was assembled, and the
   inbound body is untrusted content either way - the SEAL governs what can leave the
-  system, not what can enter it. Chasing exact attachment-subtree exclusion added
-  bespoke parsing code for a property the size cap and the SEAL already cover. Ordinary
+  system, not what can enter it. Ordinary
   agent processing still never reads attachments. It uses imap-tools' parsed attachment
   metadata only to derive a bounded non-inline count that crosses the queue and enters
   agent context. The signal is count-only because filenames, MIME types, and other
   attachment metadata are attacker-authored strings; only the server-derived integer is
-  trusted enough to tell the agent that unread content exists. This does not reinstate
-  attachment-subtree parsing, and the original message remains in INBOX. The HTML
+  trusted enough to tell the agent that unread content exists. The HTML
   fallback does preserve descriptive anchor targets as bounded HTTP(S) text, with
   per-URL and per-message limits, because losing the referent changes what the sender
-  said. This does not add link fetching or make a URL's text evidence for what is behind
-  it. URLs are deliberately not redacted from raw memory text; the sanitizer still
+  said - the agent still never fetches a link, and a URL's text is not evidence for what
+  is behind it. URLs are deliberately not redacted from raw memory text; the sanitizer still
   replaces identifying profile handles in cross-user gists while generic project URLs
   may remain useful recall text.
 - **One mandatory local span classifier does all gist sanitization.** `SANITIZE_MODEL`
@@ -78,14 +75,10 @@ thin wrapper over a well-adopted library, swappable by config.
   credential and no network call, and it removes `presidio-analyzer`, `spacy`,
   `en_core_web_lg`, and a per-write model call from the write path.
 - **Response-log redaction runs the same classifier, not its own recognizer stack.**
-  `security/log_redaction.py` used to be Presidio plus eight hand-written regexes for
-  intro tokens, UUIDs, `user_`/`request_`/`trace_` prefixes, and provider key shapes.
-  The classifier labels what matters on its own: URLs, emails, names, and phone
-  numbers. Both
-  callers now go through `sanitize.classify_spans`, so the 2.7 GB of weights load once
-  per process instead of twice, and the last reason to depend on `presidio-analyzer`
-  is gone. The allow-lists stay separate: logs also redact `private_date`, which gists
-  keep.
+  The classifier labels what a log needs on its own - URLs, emails, names, and phone
+  numbers - so `security/log_redaction.py` goes through `sanitize.classify_spans` and
+  the 2.7 GB of weights load once per process instead of twice. The allow-lists stay
+  separate: logs also redact `private_date`, which gists keep.
 - **Sanitization has no off switch.** There is no `SANITIZE_*_ENABLED` setting and no
   fallback path. A sanitizer that can be disabled or that degrades silently is a
   sanitizer you cannot reason about at the SEAL boundary, and the failure mode is a
@@ -150,7 +143,6 @@ understanding why it was dropped.
 - ❌ Presidio + a custom regex recognizer list in the response-log redactor → the same
   classifier, one loaded copy, one shared span function, its own allow-list.
 - ❌ LiteLLM / proxy glue → pydantic-ai native multi-provider.
-- ❌ `np.random.rand(1536)` placeholder embeddings → OpenAI embedding wrapper constrained to 1536 dimensions.
 - ❌ Bespoke rate limiting → `limits`.
 - ❌ Introduction digest batching → skip capped proactive candidates and retry them on a
   later sweep; a person's declines remain the meaningful rate limiter.

@@ -28,8 +28,8 @@ prompt-injection exfiltrate it, so the privacy boundary cannot be "withhold a co
 4. **The sanitizer is a separate, narrowly-scoped step** (`memory/sanitize.py`): one
    mandatory local span classifier (`SANITIZE_MODEL`, `openai/privacy-filter`) labels
    spans in the raw text, and every span whose label is in the module's allow-list is
-   replaced with a bracket token. There is no pattern tier and no per-write model call
-   behind it - see `docs/design-decisions.md` for why both were removed. Weights are
+   replaced with a bracket token. The classifier is the whole policy: there is no
+   pattern tier and no per-write model call behind it. Weights are
    local and ungated, so this costs no credential and no network call; a model that
    cannot load is a deployment error, not a silent downgrade, and there is no setting
    that disables sanitization.
@@ -37,10 +37,9 @@ prompt-injection exfiltrate it, so the privacy boundary cannot be "withhold a co
    `private_address`, `private_url`, and `account_number` are redacted;
    `private_date` is not, because "a Rust meetup Thursday" is the perishability and
    recall signal a gist exists to carry. Organizations and place names have no label in
-   this taxonomy at all, which matches the long-standing decision to keep them for
-   company/place search recall. `private_url` *is* redacted, unlike the pattern tier it
-   replaces: a profile URL is a handle, and a handle names a real person outside this
-   system, which costs generic project URLs as recall text and is worth it.
+   this taxonomy at all, so they survive for company/place search recall. `private_url`
+   *is* redacted: a profile URL is a handle, and a handle names a real person outside
+   this system, which costs generic project URLs as recall text and is worth it.
    The model labels tokens, not words, so one value can arrive in fragments
    (`' mike_l'` + `'ay'`). `_merge_spans` coalesces adjacent same-label spans before
    substitution, so no fragment whose own label fell outside the allow-list can leave
