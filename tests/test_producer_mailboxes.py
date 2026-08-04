@@ -103,6 +103,81 @@ def test_disposable_sender_is_rejected_before_enqueue(mailbox):
     mark_seen.assert_called_once_with(["7"], mailbox=mailbox)
 
 
+def test_cc_only_primary_is_rejected_before_budget_without_reply():
+    message = _message("cc-1", "sender@gmail.com")
+    message.cc_only_service_recipient = True
+
+    with (
+        patch("thenetwork.worker.producer.poll_unseen", return_value=[message]),
+        patch(
+            "thenetwork.worker.producer.check_daily_token_budget", return_value=False
+        ) as check_budget,
+        patch(
+            "thenetwork.worker.producer._send_infrastructure_rejection_reply"
+        ) as send_reply,
+        patch("thenetwork.worker.producer.process_email") as process_email,
+        patch("thenetwork.worker.producer.mark_messages_seen") as mark_seen,
+        patch("thenetwork.worker.producer.mark_message_processed") as mark_processed,
+    ):
+        assert _poll_mailbox_and_enqueue("primary") == 0
+
+    check_budget.assert_not_called()
+    send_reply.assert_not_called()
+    process_email.defer.assert_not_called()
+    mark_processed.assert_not_called()
+    mark_seen.assert_called_once_with(["cc-1"], mailbox="primary")
+
+
+def test_cc_only_relay_candidate_is_exempt():
+    message = _message("cc-2", "member@gmail.com")
+    message.cc_only_service_recipient = True
+    message.recipient_address = (
+        "hidden-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa@relay.example.com"
+    )
+
+    with (
+        patch("thenetwork.worker.producer.poll_unseen", return_value=[message]),
+        patch("thenetwork.worker.producer.process_email") as process_email,
+        patch("thenetwork.worker.producer.mark_messages_seen") as mark_seen,
+    ):
+        assert _poll_mailbox_and_enqueue("primary") == 1
+
+    process_email.defer.assert_called_once()
+    mark_seen.assert_called_once_with(["cc-2"], mailbox="primary")
+
+
+def test_cc_only_admin_candidate_is_exempt():
+    message = _message("cc-3", "admin@gmail.com")
+    message.cc_only_service_recipient = True
+    message.subject = "ADMIN: intake-status"
+    message.raw_message = b"signed candidate"
+
+    with (
+        patch("thenetwork.worker.producer.poll_unseen", return_value=[message]),
+        patch("thenetwork.worker.producer.process_email") as process_email,
+        patch("thenetwork.worker.producer.mark_messages_seen") as mark_seen,
+    ):
+        assert _poll_mailbox_and_enqueue("primary") == 1
+
+    process_email.defer.assert_called_once()
+    mark_seen.assert_called_once_with(["cc-3"], mailbox="primary")
+
+
+def test_cc_only_classification_does_not_affect_relay_mailbox():
+    message = _message("cc-4", "member@gmail.com")
+    message.cc_only_service_recipient = True
+
+    with (
+        patch("thenetwork.worker.producer.poll_unseen", return_value=[message]),
+        patch("thenetwork.worker.producer.process_email") as process_email,
+        patch("thenetwork.worker.producer.mark_messages_seen") as mark_seen,
+    ):
+        assert _poll_mailbox_and_enqueue("relay") == 1
+
+    process_email.defer.assert_called_once()
+    mark_seen.assert_called_once_with(["cc-4"], mailbox="relay")
+
+
 @pytest.mark.parametrize("domain", ["gmail.com", "outlook.com", "proton.me"])
 def test_established_provider_is_accepted(domain):
     message = _message("8", f"sender@{domain}")

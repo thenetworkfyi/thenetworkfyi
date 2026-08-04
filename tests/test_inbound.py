@@ -160,6 +160,70 @@ def test_poll_unseen_caps_subject(fake_mailbox: _FakeMailBox):
     assert messages[0].subject == "s" * inbound.MAX_SUBJECT_CHARS
 
 
+@pytest.mark.parametrize(
+    ("headers", "expected"),
+    [
+        pytest.param(
+            {"to": ["person@example.com"], "cc": ["AGENT@EXAMPLE.COM"]},
+            True,
+            id="service_only_in_cc",
+        ),
+        pytest.param(
+            {"to": ["The Network <agent@example.com>"], "cc": ["agent@example.com"]},
+            False,
+            id="service_also_in_to",
+        ),
+        pytest.param(
+            {"to": ["person@example.com"], "cc": ["other@example.com"]},
+            False,
+            id="service_absent_from_both",
+        ),
+        pytest.param(
+            {
+                "to": ["person@example.com, The Network <agent@example.com>"],
+                "cc": ["agent@example.com"],
+            },
+            False,
+            id="service_among_multiple_to_recipients",
+        ),
+    ],
+)
+def test_poll_unseen_classifies_cc_only_service_recipient(
+    fake_mailbox: _FakeMailBox, headers: dict[str, list[str]], expected: bool
+):
+    fake_mailbox.fetch.return_value = [_fake_message(headers=headers)]
+
+    [message] = inbound.poll_unseen()
+
+    assert message.cc_only_service_recipient is expected
+
+
+@pytest.mark.parametrize(
+    "service_address",
+    ["agent@example.com", "outbound@example.com", "relay@relay.example.com"],
+)
+def test_poll_unseen_derives_all_service_addresses_from_settings(
+    fake_mailbox: _FakeMailBox, service_address: str
+):
+    settings = _settings()
+    settings.email_from = "outbound@example.com"
+    settings.relay_imap_account = "relay@relay.example.com"
+    fake_mailbox.fetch.return_value = [
+        _fake_message(
+            headers={
+                "to": ["person@example.com"],
+                "cc": [f"The Network <{service_address}>"],
+            }
+        )
+    ]
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(inbound, "get_settings", lambda: settings)
+        [message] = inbound.poll_unseen()
+
+    assert message.cc_only_service_recipient is True
+
+
 def test_poll_unseen_captures_dovecot_catchall_recipient(
     fake_mailbox: _FakeMailBox,
 ):

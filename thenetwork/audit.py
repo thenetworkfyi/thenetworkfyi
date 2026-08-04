@@ -321,6 +321,7 @@ _SAFE_CATEGORIES = {
             "admin_auth_failed",
             "body_empty",
             "body_oversize",
+            "cc_only_recipient",
             "content_scan",
             "daily_token_budget_exhausted",
             "disposable_domain",

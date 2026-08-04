@@ -142,6 +142,19 @@ def test_worker_fixed_templates_have_equivalent_plain_and_html_parts(
     assert "Original line" in html_visible
 
 
+def test_first_contact_welcome_explains_direct_addressing_rule():
+    rendered = render_fixed_email(
+        FixedEmailTemplate.FIRST_CONTACT_WELCOME,
+        FirstContactWelcomeEmailContext(),
+        signature_variant=SignatureVariant.NONE,
+    )
+
+    rule = "Messages that include it only in Cc are not processed."
+    assert rule in " ".join(rendered.text.split())
+    assert rendered.html is not None
+    assert rule in _visible_html(rendered.html)
+
+
 def test_fixed_renderer_rejects_mismatched_or_untrusted_worker_contexts():
     with pytest.raises(TypeError, match="first_contact_welcome"):
         render_fixed_email(

@@ -133,6 +133,12 @@ def test_collector_derives_bounded_counter_catalog_from_redacted_audit_logs():
             assert f'IsString(attributes["{label_name}"])' in condition
             assert f'IsMatch(attributes["{label_name}"]' in condition
 
+    rejection_condition = " ".join(
+        count_config["thenetwork.messages.rejected"]["conditions"]
+    )
+    assert "intake|worker" in rejection_condition
+    assert "cc_only_recipient" in rejection_condition
+
     pipelines = _COLLECTOR_CONFIG["service"]["pipelines"]
     assert pipelines["logs"]["exporters"] == ["otlphttp/loki", "count/audit"]
     assert pipelines["metrics/audit"] == {

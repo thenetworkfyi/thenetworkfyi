@@ -57,6 +57,10 @@ class InboundMessage:
     # Dovecot preserves the catch-all destination in a delivery/To header.
     # This bounded value is queue data only and must not be audit-logged.
     recipient_address: str | None = None
+    # True only when a configured service address appears explicitly in Cc
+    # and no configured service address appears in To. Carry only the bounded
+    # classification downstream; raw recipient headers are never queue data.
+    cc_only_service_recipient: bool = False
     # From: header display name (e.g. "First Last" in "First Last
     # <first.last@gmail.com>"), if any. Untrusted like the body/subject - the
     # From: header alone is spoofable and imap-tools does no verification of
@@ -117,6 +121,16 @@ def cap_sender_name(name: str | None) -> str | None:
     return name[:MAX_SENDER_NAME_CHARS] or None
 
 
+def _bounded_addresses(header_values: list[str]) -> list[str]:
+    """Parse addresses while discarding empty or unreasonably long values."""
+    addresses = []
+    for _, address in getaddresses(header_values):
+        address = address.strip()
+        if address and len(address) <= MAX_RECIPIENT_CHARS:
+            addresses.append(address)
+    return addresses
+
+
 def _delivery_recipient(msg, relay_domain: str) -> str | None:
     """Extract one bounded destination, preferring this deployment's relay."""
 
@@ -124,15 +138,28 @@ def _delivery_recipient(msg, relay_domain: str) -> str | None:
     for name in ("x-original-to", "delivered-to", "envelope-to", "to"):
         header_values.extend(msg.headers.get(name) or [])
 
-    addresses = [
-        address
-        for _, address in getaddresses(header_values)
-        if address and len(address) <= MAX_RECIPIENT_CHARS
-    ]
+    addresses = _bounded_addresses(header_values)
     for address in addresses:
         if is_relay_address_candidate(address, relay_domain):
             return address
     return addresses[0] if addresses else None
+
+
+def _is_cc_only_service_recipient(msg, service_addresses: set[str]) -> bool:
+    """Return whether the service is explicitly copied but not addressed."""
+    if not service_addresses:
+        return False
+    to_addresses = {
+        address.casefold()
+        for address in _bounded_addresses(msg.headers.get("to") or [])
+    }
+    if service_addresses & to_addresses:
+        return False
+    cc_addresses = {
+        address.casefold()
+        for address in _bounded_addresses(msg.headers.get("cc") or [])
+    }
+    return bool(service_addresses & cc_addresses)
 
 
 def cap_body(body: str) -> str:
@@ -315,6 +342,16 @@ def poll_unseen(*, mailbox: MailboxKind = "primary") -> list[InboundMessage]:
         for address in (s.imap_account, s.relay_imap_account, s.email_from)
         if address
     }
+    service_addresses = {
+        address.casefold()
+        for address in _bounded_addresses(
+            [
+                address
+                for address in (s.imap_account, s.relay_imap_account, s.email_from)
+                if address
+            ]
+        )
+    }
 
     with MailBox(s.imap_host, s.imap_port).login(account, password) as mb:
         mb.email_message_class = _RawCapturingMailMessage
@@ -333,6 +370,9 @@ def poll_unseen(*, mailbox: MailboxKind = "primary") -> list[InboundMessage]:
                 msg.from_values.name if msg.from_values else None
             )
             recipient_address = _delivery_recipient(msg, s.relay_domain)
+            cc_only_service_recipient = _is_cc_only_service_recipient(
+                msg, service_addresses
+            )
             # Admin verification needs byte-exact MIME, while the server-only
             # relay needs the original MIME body so participant-authored HTML
             # and attachments survive address-header rewriting.
@@ -361,6 +401,7 @@ def poll_unseen(*, mailbox: MailboxKind = "primary") -> list[InboundMessage]:
                         auto_submitted=auto_sub[0] if auto_sub else None,
                         sender_authenticated=_is_sender_authenticated(msg),
                         recipient_address=recipient_address,
+                        cc_only_service_recipient=cc_only_service_recipient,
                         rejection_reason=REJECT_BODY_OVERSIZE,
                         body_chars=exc.body_chars,
                         attachment_count=attachment_count,
@@ -386,6 +427,7 @@ def poll_unseen(*, mailbox: MailboxKind = "primary") -> list[InboundMessage]:
                     auto_submitted=auto_sub[0] if auto_sub else None,
                     sender_authenticated=_is_sender_authenticated(msg),
                     recipient_address=recipient_address,
+                    cc_only_service_recipient=cc_only_service_recipient,
                     body_chars=len(body),
                     attachment_count=attachment_count,
                     raw_message=raw_message,

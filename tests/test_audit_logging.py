@@ -44,6 +44,7 @@ from thenetwork.search.match import MemoryMatch
 from thenetwork.security.sender_identifier import sender_identifier
 from thenetwork.settings import Settings
 from thenetwork.worker.producer import (
+    REJECT_CC_ONLY_RECIPIENT,
     REJECT_DISPOSABLE_DOMAIN,
     _poll_and_enqueue,
     _poll_mailbox_and_enqueue,
@@ -1373,6 +1374,13 @@ def test_intake_enqueue_audits_and_defers_same_trace_id(poll_env, monkeypatch, c
             {"reason": REJECT_DISPOSABLE_DOMAIN},
             False,
             id="disposable_domain",
+        ),
+        pytest.param(
+            {"cc_only_service_recipient": True},
+            "intake.message_rejected",
+            {"reason": REJECT_CC_ONLY_RECIPIENT},
+            False,
+            id="cc_only_recipient",
         ),
     ],
 )

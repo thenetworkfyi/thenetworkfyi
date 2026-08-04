@@ -30,6 +30,7 @@ from thenetwork.email.dedup import (
     unmark_message_processed,
 )
 from thenetwork.email.inbound import (
+    InboundMessage,
     MailboxKind,
     mark_messages_seen,
     poll_unseen,
@@ -54,6 +55,7 @@ from thenetwork.worker.tasks import (
 )
 
 REJECT_DISPOSABLE_DOMAIN = "disposable_domain"
+REJECT_CC_ONLY_RECIPIENT = "cc_only_recipient"
 DEFER_DAILY_TOKEN_BUDGET_EXHAUSTED = "daily_token_budget_exhausted"
 
 
@@ -65,6 +67,15 @@ def _is_relay_candidate(recipient_address: str | None) -> bool:
     if not recipient_address:
         return False
     return is_relay_address_candidate(recipient_address, get_settings().relay_domain)
+
+
+def _is_cc_only_rejection(mailbox: MailboxKind, message: InboundMessage) -> bool:
+    return (
+        mailbox == "primary"
+        and message.cc_only_service_recipient
+        and not _is_admin_candidate(message.subject, message.raw_message)
+        and not _is_relay_candidate(message.recipient_address)
+    )
 
 
 def _poll_mailbox_and_enqueue(
@@ -83,6 +94,7 @@ def _poll_mailbox_and_enqueue(
             for message in messages
             if not _is_admin_candidate(message.subject, message.raw_message)
             and not _is_relay_candidate(message.recipient_address)
+            and not _is_cc_only_rejection(mailbox, message)
         ]
         burst = observe_primary_intake_batch(
             observation_messages,
@@ -107,6 +119,18 @@ def _poll_mailbox_and_enqueue(
         ):
             auto_submitted = msg.auto_submitted
             body_chars = msg.body_chars if msg.body_chars is not None else len(msg.body)
+            if _is_cc_only_rejection(mailbox, msg):
+                audit_event(
+                    "intake.message_rejected",
+                    sender_present=bool(msg.sender),
+                    subject_chars=len(msg.subject),
+                    body_chars=body_chars,
+                    auto_submitted_present=bool(auto_submitted),
+                    header_names=["from", "subject", "auto-submitted"],
+                    reason=REJECT_CC_ONLY_RECIPIENT,
+                )
+                handled_uids.append(msg.uid)
+                continue
             if (
                 mailbox == "primary"
                 and primary_paused

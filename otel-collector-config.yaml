@@ -89,7 +89,7 @@ connectors:
       thenetwork.messages.rejected:
         description: Count of messages rejected before agent processing.
         conditions:
-          - 'attributes["logger"] == "thenetwork.audit" and attributes["event"] == "worker.message_rejected" and IsString(attributes["reason"]) and IsMatch(attributes["reason"], "^(admin_auth_failed|banned|body_oversize|content_scan|daily_token_budget_exhausted|primary_intake_paused|prompt_injection_detected|rate_limit|relay_forbidden|relay_invalid|scanner_error|unauthenticated_unknown_sender)$")'
+          - 'attributes["logger"] == "thenetwork.audit" and IsString(attributes["event"]) and IsMatch(attributes["event"], "^(intake|worker)\\.message_rejected$") and IsString(attributes["reason"]) and IsMatch(attributes["reason"], "^(admin_auth_failed|banned|body_oversize|cc_only_recipient|content_scan|daily_token_budget_exhausted|disposable_domain|primary_intake_paused|prompt_injection_detected|rate_limit|relay_forbidden|relay_invalid|scanner_error|unauthenticated_unknown_sender)$")'
         attributes:
           - key: reason
       thenetwork.agent.runs:
