@@ -1,6 +1,6 @@
 # The Network
 
-[![CI](https://github.com/thenetworkfyi/agent/actions/workflows/ci.yml/badge.svg)](https://github.com/thenetworkfyi/agent/actions/workflows/ci.yml)
+[![CI](https://github.com/thenetworkfyi/thenetworkfyi/actions/workflows/ci.yml/badge.svg)](https://github.com/thenetworkfyi/thenetworkfyi/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 An **email-driven agentic connection engine**. People email a single address; an
@@ -278,7 +278,7 @@ time to drain.
 A deploy is therefore just:
 
 ```bash
-export IMAGE=ghcr.io/thenetworkfyi/agent:<commit-sha>
+export IMAGE=ghcr.io/thenetworkfyi/thenetworkfyi:<commit-sha>
 git pull origin main && docker compose pull worker && docker compose up -d
 ```
 

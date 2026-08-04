@@ -371,15 +371,15 @@ settings and routing, alert thresholds and runbooks, and the per-file validation
 The VPS is a **git checkout**, but it does not build the worker image itself - the server
 needs its spare CPU/memory for serving, not for a `docker build`. On a push to `main`,
 after `test` passes, `.github/workflows/ci.yml`'s `build` job pushes the worker image to
-`ghcr.io/<owner>/agent` as both `:latest` and `:<commit-sha>`. The `deploy` job then SSHes
-in with the `production` environment's `DEPLOY_HOST`/`DEPLOY_USER`/`DEPLOY_SSH_KEY`
+`ghcr.io/<owner>/thenetworkfyi` as both `:latest` and `:<commit-sha>`. The `deploy` job
+then SSHes in with the `production` environment's `DEPLOY_HOST`/`DEPLOY_USER`/`DEPLOY_SSH_KEY`
 secrets, runs `git pull origin main`, exports `IMAGE` with that run's immutable SHA tag,
 and runs `docker compose pull worker && docker compose up -d`. Those commands are inline in
 the workflow rather than a script on the server, so a deploy always runs the version from
 the commit that just passed CI, never a stale on-disk copy. Run the same four commands by
 hand for a manual redeploy.
 
-The `ghcr.io/thenetworkfyi/agent` package is public (audited: the images bake in no
+The `ghcr.io/thenetworkfyi/thenetworkfyi` package is public (audited: the images bake in no
 secrets), so the pull needs no credentials; the optional `GHCR_USERNAME`/`GHCR_PAT` secrets
 exist only for a private package. `worker.image` defaults to the `:latest` tag - override
 with `IMAGE=` in `.env`. Local development uses `docker compose up -d --build`, which

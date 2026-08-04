@@ -70,10 +70,10 @@ thenetwork-producer = "thenetwork.worker.tasks:producer_main"
 sim = "thenetwork.sim.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/thenetworkfyi/agent"
-Repository = "https://github.com/thenetworkfyi/agent"
-Documentation = "https://github.com/thenetworkfyi/agent#readme"
-Issues = "https://github.com/thenetworkfyi/agent/issues"
+Homepage = "https://github.com/thenetworkfyi/thenetworkfyi"
+Repository = "https://github.com/thenetworkfyi/thenetworkfyi"
+Documentation = "https://github.com/thenetworkfyi/thenetworkfyi#readme"
+Issues = "https://github.com/thenetworkfyi/thenetworkfyi/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
