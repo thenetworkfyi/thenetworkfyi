@@ -37,7 +37,6 @@ from thenetwork.email.outbound import send_proxy_introduction, send_relay_email
 from thenetwork.email.render import standard_signature_lines
 from thenetwork.security.sender_identifier import optional_sender_identifier
 from thenetwork.sim.cli import main, run_sim
-from thenetwork.sim.scoring.compare import compare_runs, load_run_metrics
 from thenetwork.sim.run.mail import SimPostOffice, publish_redacted_mbox
 from thenetwork.sim.personas.persona import PersonaConfig, TinyPersonEmailAdapter
 from thenetwork.sim.personas.llm_persona import _PERSONA_PROMPT
@@ -912,7 +911,6 @@ async def test_run_recorder_logs_delivery_metadata_without_public_message_bodies
         smtp_password="secret",
         email_from="agent@example.test",
         imap_account="join@example.test",
-        growth_footer_enabled=False,
     )
 
     async def reply(**kwargs):
@@ -1927,52 +1925,21 @@ async def test_run_recorder_does_not_multiply_or_drop_outcome_metrics(tmp_path):
         adapters, config, process=zero_tool_calls_with_tokens
     )
 
-    multi_metrics = load_run_metrics(multi_tool.run_dir)
-    zero_metrics = load_run_metrics(zero_tool.run_dir)
-
-    assert multi_metrics.token_usage == 100
-    assert multi_metrics.cost_usd == pytest.approx(0.02)
-    assert zero_metrics.token_usage == 50
-    assert zero_metrics.cost_usd == pytest.approx(0.01)
-
-
-@pytest.mark.asyncio
-async def test_two_recorded_runs_produce_a_comparable_non_empty_delta(tmp_path):
-    configs = default_strong_match_configs(agent_address="join@example.test")
-    adapters = tuple(
-        TinyPersonEmailAdapter(ScriptedTinyPerson(f"body {index}"), config)
-        for index, config in enumerate(configs, start=1)
-    )
-
-    async def quiet_process(**_kwargs):
-        return {"judge_score": 0}
-
-    async def busy_process(**_kwargs):
-        return {
-            "tool_calls": ("send_outreach",),
-            "total_tokens": 120,
-            "cost_usd": 0.01,
-            "judge_score": 8,
-        }
-
-    clock_calls = iter(
-        [
-            datetime(2026, 7, 8, 1, 0, 0, tzinfo=timezone.utc),
-            datetime(2026, 7, 8, 1, 0, 0, tzinfo=timezone.utc) + timedelta(minutes=1),
+    def totals(run_dir) -> tuple[int, float]:
+        events = [
+            json.loads(line)
+            for line in (run_dir / "events.jsonl").read_text().splitlines()
+            if line.strip()
         ]
-    )
-    recorder = SimRunRecorder(runs_dir=tmp_path, clock=lambda: next(clock_calls))
-    config = SimRunConfig(
-        scenario="strong-match", ticks=1, proactive_every=10, personas=configs
-    )
+        return (
+            sum(int(event.get("total_tokens") or 0) for event in events),
+            sum(float(event.get("cost_usd") or 0.0) for event in events),
+        )
 
-    before = await recorder.run(adapters, config, process=quiet_process)
-    after = await recorder.run(adapters, config, process=busy_process)
+    multi_tokens, multi_cost = totals(multi_tool.run_dir)
+    zero_tokens, zero_cost = totals(zero_tool.run_dir)
 
-    deltas = compare_runs(before.run_dir, after.run_dir)
-    delta_by_name = {delta.name: delta.delta for delta in deltas}
-    assert delta_by_name["introductions"] == "+0"
-    assert delta_by_name["judge_score"] not in ("n/a", "+0.00")
-    assert delta_by_name["token_usage"] not in ("+0", "n/a")
-    assert delta_by_name["cost_usd"] not in ("+0.0000", "n/a")
-    assert any(delta != "+0" and delta != "n/a" for delta in delta_by_name.values())
+    assert multi_tokens == 100
+    assert multi_cost == pytest.approx(0.02)
+    assert zero_tokens == 50
+    assert zero_cost == pytest.approx(0.01)

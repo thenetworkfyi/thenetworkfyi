@@ -915,7 +915,6 @@ def test_time_boxed_outcome_uses_captured_proposal_tick(
         smtp_password="secret",
         email_from="join@example.test",
         imap_account="join@example.test",
-        growth_footer_enabled=False,
     )
     mbox_path = tmp_path / f"proposal-tick-{proposal_tick}.mbox"
     post_office = SimPostOffice(mbox_path=mbox_path)

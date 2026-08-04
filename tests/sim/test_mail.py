@@ -25,7 +25,6 @@ def test_post_office_captures_send_reply_at_smtp_seam():
     settings.smtp_password = "secret"
     settings.email_from = "agent@example.com"
     settings.imap_account = "join@example.com"
-    settings.growth_footer_enabled = True
     post_office = SimPostOffice()
 
     with (
@@ -98,7 +97,6 @@ def test_capture_outbound_can_stamp_agent_to_persona_headers(tmp_path):
     settings.smtp_password = "secret"
     settings.email_from = "agent@example.com"
     settings.imap_account = "join@example.com"
-    settings.growth_footer_enabled = False
     post_office = SimPostOffice(mbox_path=tmp_path / "all-mail.mbox")
     meta = SimMessageMeta(
         tick=4,

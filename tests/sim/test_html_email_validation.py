@@ -59,7 +59,6 @@ def _production_conversational_multipart() -> EmailMessage:
         imap_account="join@example.test",
         imap_password="secret",
         imap_sent_folder="Sent",
-        growth_footer_enabled=False,
     )
 
     with (

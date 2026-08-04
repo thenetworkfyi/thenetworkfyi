@@ -9,7 +9,6 @@ from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
-from thenetwork.sim.scoring.compare import compare_runs, render_compare
 from thenetwork.sim.run.database import new_sim_database_name, provision_sim_database
 from thenetwork.sim.intro_flow import run_intro_flow_sim
 from thenetwork.sim.personas.persona import TinyPersonEmailAdapter
@@ -106,9 +105,6 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="Override each persona's max messages for the run.",
     )
-    compare_parser = subcommands.add_parser("compare")
-    compare_parser.add_argument("before", type=Path)
-    compare_parser.add_argument("after", type=Path)
     intro_parser = subcommands.add_parser("intro-flow")
     intro_parser.add_argument("--runs-dir", type=Path, default=Path("runs"))
     intro_parser.add_argument(
@@ -136,8 +132,6 @@ def main(argv: list[str] | None = None) -> None:
             )
         )
         print(artifacts.run_dir)
-    elif args.command == "compare":
-        print(render_compare(compare_runs(args.before, args.after)), end="")
     elif args.command == "intro-flow":
         artifacts = asyncio.run(
             run_intro_flow_sim(

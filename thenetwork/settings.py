@@ -199,10 +199,6 @@ class Settings(BaseSettings):
     # deployments must confirm that the provider adds its verdict there.
     require_sender_auth: bool = True
 
-    # Growth: footer appended to outbound user-facing replies (mailer-level,
-    # not agent-composed, so prompt injection can't alter or suppress it)
-    growth_footer_enabled: bool = True
-
     # Proactive semantic rematch (worker/proactive.py:scan_for_matches). Every
     # run revisits sanitized standing notes for people without an active consent
     # pair. This is unsolicited outreach, so the similarity floor is deliberately

@@ -591,7 +591,6 @@ async def test_petra_qualification_turn_precedes_specific_interest_memory(tmp_pa
         smtp_password="secret",
         email_from="join@example.test",
         imap_account="join@example.test",
-        growth_footer_enabled=False,
     )
     loop = SimTickLoop(
         [TinyPersonEmailAdapter(person, petra.config)],
@@ -663,7 +662,6 @@ async def test_leila_progressively_answers_one_match_gap_per_turn(tmp_path):
         smtp_password="secret",
         email_from="join@example.test",
         imap_account="join@example.test",
-        growth_footer_enabled=False,
     )
     loop = SimTickLoop(
         [TinyPersonEmailAdapter(person, leila.config)],

@@ -162,7 +162,6 @@ def smtp_sink(_smtp_sink_server, monkeypatch):
             "imap_sent_folder": "Sent",
             "relay_domain": "relay.example.com",
             "admin_emails": [],
-            "growth_footer_enabled": False,
         }
     )
     monkeypatch.setattr(settings_module, "_settings", sink_settings)

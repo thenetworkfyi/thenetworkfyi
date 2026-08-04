@@ -381,17 +381,16 @@ answers:
 - Are differences caused by the code, configuration, or plausible persona variance?
 - Does the transcript reveal a problem that no current scorer covers?
 
-`sim compare` is supplemental only:
+There is no automated comparison command. Compare the two runs by their score findings: for
+each tier 1, presentation, tier 2, and outcome finding, note whether it passed, failed, or
+was unexercised in each run, and treat only the pass/fail flips as the comparison result.
+That diff is deterministic, is per-persona, and preserves the unexercised distinction, so a
+truncated or offline baseline cannot read as a regression.
 
-```bash
-uv run sim compare "$BASELINE" "$RUN"
-```
-
-The current command reads `events.jsonl`. Real-process runs do not copy their audit tool calls
-or model usage into that file, and they normally have no transcript-judge event. Consequently,
-`sim compare` can report zero introductions, zero tokens, zero cost, and `n/a` judge scores for
-a run that did real work. Never use those values as acceptance evidence without confirming
-that the corresponding events exist.
+Do not compare run-level aggregates such as summed tokens, cost, introduction counts, or a
+mean judge score. Two runs are a sample of one against a sample of one, and under
+`--llm-personas` the personas author every turn from `config.goal`, so persona variance is
+not separable from the code change at that granularity.
 
 ## Classify the result
 

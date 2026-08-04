@@ -412,7 +412,6 @@ def test_event_fyi_uses_fixed_subject_template_and_standard_signature(smtp_sink)
     from thenetwork.email.outbound import EVENT_RECOMMENDATION_SUBJECT, send_event_fyi
     from thenetwork.email.render import EventRecommendationNotice
 
-    smtp_sink.override(growth_footer_enabled=True)
     mock_mailbox, _mb_instance = _mock_mailbox_success()
 
     with patch("thenetwork.email.outbound.MailBox", mock_mailbox):
@@ -636,7 +635,6 @@ def test_send_reply_quote_is_in_both_user_facing_alternatives(smtp_sink):
 def test_send_reply_places_signature_before_quoted_trail(smtp_sink):
     from thenetwork.email.outbound import send_reply
 
-    smtp_sink.override(growth_footer_enabled=True)
     mock_mailbox, _mb_instance = _mock_mailbox_success()
 
     with patch("thenetwork.email.outbound.MailBox", mock_mailbox):

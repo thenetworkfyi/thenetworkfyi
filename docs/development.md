@@ -615,9 +615,9 @@ that must not be copied into a publishable artifact even when it contains no rec
 
 Use [simulation-review.md](simulation-review.md) to conduct either an isolated run review or
 a comparison with a compatible baseline, interpret the artifacts and score tiers, inspect
-cited transcript behavior, and write a reproducible report. In particular, do not treat
-`sim compare` as authoritative for real-process token, cost, introduction, or judge metrics;
-those values are not all recorded in `events.jsonl`.
+cited transcript behavior, and write a reproducible report. Comparison is a reviewer
+procedure over the two runs' score findings, not a command; there is deliberately no
+aggregate before/after metric tool.
 
 `docker-compose.yml` runs `db` (pgvector, bound to `127.0.0.1`, state in `pgdata` volume)
 and `worker`. Redeploys are safe by design: durable job rows, `SKIP LOCKED` dequeue,

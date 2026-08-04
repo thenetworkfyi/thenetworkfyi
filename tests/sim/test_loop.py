@@ -380,7 +380,6 @@ async def test_tick_loop_captures_replies_without_touching_real_smtp(tmp_path):
     settings.smtp_password = "secret"
     settings.email_from = "agent@example.com"
     settings.imap_account = "join@example.com"
-    settings.growth_footer_enabled = False
 
     async def process(**kwargs):
         from thenetwork.email.outbound import send_reply
