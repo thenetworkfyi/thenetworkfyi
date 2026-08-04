@@ -41,9 +41,11 @@ nothing to run by hand.
 
 from __future__ import annotations
 
+import atexit
 import email
 import hashlib
 import re
+import subprocess
 import tempfile
 import time
 from datetime import datetime, timedelta, timezone
@@ -61,6 +63,30 @@ _COMMAND_RE = re.compile(r"^COMMAND:\s*(.+?)\s*$", re.MULTILINE)
 
 _gpg_instance: gnupg.GPG | None = None
 _gpg_key_material: str | None = None
+_gpg_home: tempfile.TemporaryDirectory[str] | None = None
+
+
+def _clear_gpg_cache() -> None:
+    """Stop the private agent and remove the cached temporary GPG home."""
+    global _gpg_instance, _gpg_key_material, _gpg_home
+    if _gpg_home is not None:
+        try:
+            subprocess.run(
+                ["gpgconf", "--homedir", _gpg_home.name, "--kill", "gpg-agent"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError:
+            # GPG is optional at process startup, and cleanup must remain best-effort.
+            pass
+        _gpg_home.cleanup()
+    _gpg_instance = None
+    _gpg_key_material = None
+    _gpg_home = None
+
+
+atexit.register(_clear_gpg_cache)
 
 
 def _matches_admin_candidate(
@@ -84,11 +110,18 @@ def _get_gpg(public_key: str) -> gnupg.GPG:
     configured via ADMIN_GPG_PUBLIC_KEY, and re-imports if that setting
     changes (e.g. between tests).
     """
-    global _gpg_instance, _gpg_key_material
+    global _gpg_instance, _gpg_key_material, _gpg_home
     if _gpg_instance is None or _gpg_key_material != public_key:
-        home = tempfile.mkdtemp(prefix="thenetwork-admin-gpg-")
-        _gpg_instance = gnupg.GPG(gnupghome=home)
-        _gpg_instance.import_keys(public_key)
+        _clear_gpg_cache()
+        home = tempfile.TemporaryDirectory(prefix="thenetwork-admin-gpg-")
+        try:
+            gpg = gnupg.GPG(gnupghome=home.name)
+            gpg.import_keys(public_key)
+        except Exception:
+            home.cleanup()
+            raise
+        _gpg_home = home
+        _gpg_instance = gpg
         _gpg_key_material = public_key
     return _gpg_instance
 
