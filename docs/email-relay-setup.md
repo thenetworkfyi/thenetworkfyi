@@ -229,7 +229,7 @@ as relay attempts so they fail closed instead of reaching the agent.
 No relay-specific table or service is required. Pair aliases reuse
 `IntroductionConsent.reply_token`; the worker polls each configured IMAP inbox and sends
 through SMTP. On a production host (a git checkout, redeployed by pulling the CI-built
-image - see `.github/workflows/ci.yml`'s `build` and `deploy` jobs):
+image; see `.github/workflows/ci.yml`'s `build` and `deploy` jobs):
 
 ```bash
 git pull origin main

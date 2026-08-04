@@ -5,7 +5,7 @@
 All config is pydantic-settings (`thenetwork/settings.py`), read from env / `.env`, with
 defaults in that file. `get_settings()` caches a singleton.
 
-**`.env.example` is the authoritative list of settings** - every key, its default, and
+**`.env.example` is the authoritative list of settings**: every key, its default, and
 the reasoning where it isn't obvious. Copy it rather than reconstructing one from prose.
 The sections below cover only the settings whose behavior needs more explanation than a
 comment can carry.
@@ -17,19 +17,18 @@ comment can carry.
 abuse judge; embedding usage bills a separate provider and is not
 counted). `thenetwork/security/token_budget.py` implements it as a `limits`
 fixed-window bucket over the same `rate_limits` table used elsewhere, read fresh from
-settings on every check - the cap is never captured in a module-level constant or
+settings on every check, so the cap is never captured in a module-level constant or
 cache, since tests and the simulation runner override it at runtime. `.env.example`
 documents the exact re-derivation from `AGENT_MODEL`'s per-million-token pricing and
 a daily USD budget.
 
-Enforcement is layered so the cap actually bounds spend rather than just being read
-once at intake:
+Enforcement is layered so the cap bounds spend rather than being read once at intake:
 
 - The **producer** (`worker/producer.py`) checks the budget before enqueueing ordinary
   primary mail. An exhausted budget defers the message (it stays unread, so a later
-  poll re-offers it) rather than dropping it, and - at most once per sender per
-  day, via the durable `should_send_deferral_notice` claim - sends a fixed
-  infrastructure-deferral reply so a known sender isn't left silently unanswered.
+  poll re-offers it) rather than dropping it. At most once per sender per day, via the
+  durable `should_send_deferral_notice` claim, it sends a fixed infrastructure-deferral
+  reply so a known sender isn't left silently unanswered.
   Admin and relay candidates bypass this check.
 - The three **hourly discovery scans** (`scan_for_opportunities`, `scan_for_matches` in
   `worker/proactive.py`, and `scan_for_event_recommendations` in `worker/event_scan.py`)
@@ -44,19 +43,18 @@ once at intake:
   Procrastinate queue when the cap trips mid-flight, independent of whichever pre-check
   deferred it in the first place.
 
-Proactive and synthetic jobs rejected this way are dropped silently - they have no
-inbound sender to notify, and the candidate pair or event/person match simply
-regenerates on a later scan. Every rejection audits `worker.message_rejected` with
+Proactive and synthetic jobs rejected this way are dropped silently. They have no
+inbound sender to notify, and the candidate pair or event/person match regenerates
+on a later scan. Every rejection audits `worker.message_rejected` with
 `reason="daily_token_budget_exhausted"`, alongside a `message_count` where the caller
-has one (batch scans) - the same audit event and allow-listed reason already used by
+has one (batch scans), the same audit event and allow-listed reason already used by
 `otel-collector-config.yaml`'s rejection counter.
 
-The producer never deletes or moves inbound mail - it only flips the IMAP `\Seen` flag,
+The producer never deletes or moves inbound mail. It only flips the IMAP `\Seen` flag,
 so INBOX keeps every message the account has ever received. Durability comes from the
-Postgres job row (see `docs/architecture.md`'s message flow), not from the seen-flag -
-that is about not trusting the flag for job dedup, not about removing mail from the
-mailbox. Outbound
-replies are appended to `imap_sent_folder` (`IMAP_SENT_FOLDER`, default `Sent`) after the
+Postgres job row (see `docs/architecture.md`'s message flow), not from the seen-flag.
+That is about not trusting the flag for job dedup, not about removing mail from the
+mailbox. Outbound replies are appended to `imap_sent_folder` (`IMAP_SENT_FOLDER`, default `Sent`) after the
 SMTP send succeeds, so the account reads like a normal mailbox with both received and
 sent mail visible end-to-end; the append is best-effort and its failure never fails the
 send job.
@@ -141,22 +139,8 @@ The full production procedure, including catch-all delivery, original-recipient 
 sender-authentication results, SES identity/DKIM/SMTP setup, and deployment probes, is in
 [Hidden-address email relay setup](email-relay-setup.md).
 
-Provider selection is by model-string prefix, not by code paths - there is no LiteLLM /
+Provider selection is by model-string prefix, not by code paths. There is no LiteLLM /
 proxy layer.
-
-## GitHub repository protections
-
-Before making the repository public, configure these controls in GitHub. They cannot be
-enforced by files in the repository:
-
-- Add a branch ruleset for `main` that requires pull requests, requires the CI workflow's
-  test job to pass, dismisses stale approvals when new commits are pushed, requires
-  conversation resolution, and blocks force pushes and deletion.
-- Create a `production` deployment environment and require designated production
-  reviewers. Keep deployment credentials as environment secrets so they are unavailable
-  until a reviewer approves the deployment.
-- Make the branch ruleset and production environment protections apply to repository
-  administrators as well as other contributors.
 
 ## Content scanner
 
@@ -181,9 +165,9 @@ Any blocked window and every initialization/inference failure fail closed. Never
 or return LlamaFirewall's `ScanResult.reason`: its block reason embeds the raw email.
 Only `prompt_injection_detected` or `scanner_error` crosses into the audit layer.
 
-LlamaFirewall pulls PyTorch and platform-specific inference wheels. Budget materially
-more container/image disk space, model-cache space, memory, and CPU inference time than
-the disabled installation. The 86M model runs locally; no email text is sent to a
+LlamaFirewall pulls PyTorch and platform-specific inference wheels. Budget more
+container/image disk space, model-cache space, memory, and CPU inference time than the
+disabled installation. The 86M model runs locally; no email text is sent to a
 scanner service.
 
 The image installs the torch version recorded in `uv.lock` from PyTorch's
@@ -205,20 +189,20 @@ It earns its ~2.7 GB against the Presidio/spaCy NER pass, hand-written handle pa
 and per-write LLM tier it replaced. Measured before adoption: it catches `mkly`,
 `@atlas`, common-noun given names (Rose/Mark/Bill), non-Western and Cyrillic names, and
 obfuscated addresses (`mike [at] mkly [dot] io`) that the pattern tier never saw, and it
-stops tagging `LinkedIn` as a person - for one local forward pass, no credential, and no
-network call.
+stops tagging `LinkedIn` as a person, all for one local forward pass, no credential,
+and no network call.
 
 **The weights are baked into the image, not downloaded at runtime.** The Dockerfile
-fetches the four files transformers actually loads (`config.json`,
-`model.safetensors`, `tokenizer.json`, `tokenizer_config.json`, ~2.7 GB) into
+fetches the four files transformers loads (`config.json`, `model.safetensors`,
+`tokenizer.json`, `tokenizer_config.json`, ~2.7 GB) into
 `/opt/sanitizer-model` and sets `SANITIZE_MODEL` to that path, so a container start
 needs no network and cannot fail on a hub outage or rate limit. Sanitization is
 mandatory with no fallback, so a start that must reach the network before opening the
 queue is a start that can fail for reasons unrelated to the deployment.
 
 They deliberately do *not* go in `HF_HOME`. `hf-cache` is a named volume, and Docker
-seeds a named volume from the image only when the volume is empty - any deployment that
-already ran the content scanner has a populated `hf-cache` that would shadow the baked
+seeds a named volume from the image only when the volume is empty, and any deployment
+that already ran the content scanner has a populated `hf-cache` that would shadow the baked
 weights. `/opt` is outside every volume mount, so this holds on new and existing hosts
 alike.
 
@@ -235,7 +219,7 @@ The `settings.py` default stays the hub id (`openai/privacy-filter`) so a local
 
 `thenetwork/security/log_redaction.py` shares this classifier through
 `sanitize.classify_spans`, so the weights load once per process rather than twice.
-The two callers differ only in their allow-list - see "Response-log redaction" below.
+The two callers differ only in their allow-list; see "Response-log redaction" below.
 
 Tests that exercise the real weights are marked `integration` and `real_sanitizer`, so
 CI (`pytest -m "not integration"`) never downloads the model; everything else stubs the
@@ -257,7 +241,7 @@ The redacted labels are `private_person`, `private_email`, `private_phone`,
 `private_address`, `private_url`, `private_date`, and `account_number`.
 
 Coverage is a classifier's, so it is probabilistic rather than exhaustive. Redaction is
-defense in depth for diagnostics, not a boundary anything is allowed to depend on - a
+defense in depth for diagnostics, not a boundary anything is allowed to depend on. A
 log record is never safe input to another system, and audit records still require
 restricted access.
 
@@ -266,7 +250,7 @@ or a redaction call fails, every affected string is replaced with
 `[redaction-unavailable]`; the record's safe structure is retained where possible.
 
 Set `RESPONSE_LOG_REDACTION_SECRET` to a long, random, server-side value when operators need
-to correlate repeated URLs or account numbers across redacted records - the two types
+to correlate repeated URLs or account numbers across redacted records, the two types
 whose repetition is itself the diagnostic signal. Everything else,
 including names, gets a flat placeholder. It produces HMAC-based `log_v1_...` pseudonyms. Keep the key outside the repository,
 restrict it to the worker identity, and rotate it deliberately: rotation breaks cross-key
@@ -296,7 +280,7 @@ under `alembic/versions/`.
 
 ## Tests
 
-- `pytest -m "not integration"` is what CI runs - no DB available, so any DB-backed test
+- `pytest -m "not integration"` is what CI runs. No DB is available, so any DB-backed test
   must be marked `integration` (marker declared in `pyproject.toml`).
 - `pytest -m "integration and not live_model"` runs the database-backed integration
   tests without running scenarios that call a real model. Use `pytest -m live_model`
@@ -305,19 +289,19 @@ under `alembic/versions/`.
   pydantic-ai's `ALLOW_MODEL_REQUESTS = False`, and the autouse `model_request_gate`
   fixture opens it only for tests marked `live_model`.
 - `tests/conftest.py` fixtures:
-  - `seeded_people` - in-memory `Person` objects, no DB.
-  - `pg_engine` (session-scoped) - connects to `TEST_DATABASE_URL` (default
+  - `seeded_people`: in-memory `Person` objects, no DB.
+  - `pg_engine` (session-scoped): connects to `TEST_DATABASE_URL` (default
     `…/test_thenetwork`) and runs Alembic through `head`. If that pgvector database is
     unavailable, it starts a disposable `pgvector/pgvector` testcontainer and migrates
     that instead; database-backed tests skip only if neither path is available.
-  - `scenario_database` - gives every live scenario run a separate PostgreSQL schema and
+  - `scenario_database`: gives every live scenario run a separate PostgreSQL schema and
     real SQLModel session factory. Concurrent dataset cases can reuse their opaque fixture
     ids without colliding.
-  - `seeded_db` - persists alice/bob/carol/dave + four memories with hand-built
+  - `seeded_db`: persists alice/bob/carol/dave + four memories with hand-built
     embeddings; `monkeypatch`es `db.session._engine`/`_SessionLocal` so app code hits the
-    test DB. Read its docstring before asserting on similarity ordering - the embedding
+    test DB. Read its docstring before asserting on similarity ordering; the embedding
     geometry (`e0`/`e1` axes) is deliberate.
-  - `smtp_sink` - points the unmodified `thenetwork/email/outbound.py` send path at an
+  - `smtp_sink`: points the unmodified `thenetwork/email/outbound.py` send path at an
     in-process `aiosmtpd` server, exercising its real STARTTLS, authentication, MIME, and
     SMTP DATA behavior while capturing the messages. The sink is opt-in per test, not a
     session-wide SMTP override: a new outbound test that omits `smtp_sink` uses the
@@ -325,7 +309,7 @@ under `alembic/versions/`.
 - Suites: `tests/security/` (the SEAL), `tests/scenarios/` (emergent-behavior evals via
   pydantic-evals), `tests/test_match_pipeline.py` (semantic match), `tests/test_proactive.py`,
   and `tests/test_event_end_to_end.py` (the assembled database-backed event lifecycle).
-- `asyncio_mode = "auto"` - async tests need no decorator.
+- `asyncio_mode = "auto"`: async tests need no decorator.
 - `tests/scenarios/test_live_archetypes.py` runs the pydantic-evals archetype dataset
   against the real configured `AGENT_MODEL`, using `scenario_database` for real isolated
   PostgreSQL state while keeping embeddings, search results, and outbound delivery
@@ -358,7 +342,7 @@ The stack also runs pinned OpenTelemetry Collector, Loki, Prometheus, Alertmanag
 Grafana services. Worker JSON logs reach the Collector over Docker's `fluentd` driver; it
 forwards every line to Loki and derives Prometheus counters from redacted audit records on
 the same pipeline. The worker additionally pushes state, usage, cost, and latency metrics
-outbound to the Collector's OTLP/HTTP receiver - it opens no inbound port of its own, and
+outbound to the Collector's OTLP/HTTP receiver. It opens no inbound port of its own, and
 every UI binds to `127.0.0.1`. No external telemetry backend is required.
 
 [monitoring.md](monitoring.md) is the authority for all of it: the metric catalog and its
@@ -367,7 +351,7 @@ settings and routing, alert thresholds and runbooks, and the per-file validation
 
 ### The image is built by CI, not on the server
 
-The VPS is a **git checkout**, but it does not build the worker image itself - the server
+The VPS is a **git checkout**, but it does not build the worker image itself. The server
 needs its spare CPU/memory for serving, not for a `docker build`. On a push to `main`,
 after `test` passes, `.github/workflows/ci.yml`'s `build` job pushes the worker image to
 `ghcr.io/<owner>/thenetworkfyi` as both `:latest` and `:<commit-sha>`. The `deploy` job
@@ -375,18 +359,18 @@ then SSHes in with the `production` environment's `DEPLOY_HOST`/`DEPLOY_USER`/`D
 secrets, runs `git pull origin main`, exports `IMAGE` with that run's immutable SHA tag,
 and runs `docker compose pull worker && docker compose up -d`. Those commands are inline in
 the workflow rather than a script on the server, so a deploy always runs the version from
-the commit that just passed CI, never a stale on-disk copy. Run the same four commands by
+the commit that passed CI, never a stale on-disk copy. Run the same four commands by
 hand for a manual redeploy.
 
 The `ghcr.io/thenetworkfyi/thenetworkfyi` package is public (audited: the images bake in no
 secrets), so the pull needs no credentials; the optional `GHCR_USERNAME`/`GHCR_PAT` secrets
-exist only for a private package. `worker.image` defaults to the `:latest` tag - override
+exist only for a private package. `worker.image` defaults to the `:latest` tag; override
 with `IMAGE=` in `.env`. Local development uses `docker compose up -d --build`, which
 builds and tags locally under the same name, so no pull is attempted. After a successful
 deploy the `cleanup-images` job keeps the three newest GHCR versions, independent of
 host-side image and builder-cache pruning.
 
-`scripts/backup.sh` dumps the DB - the only source of truth - via the `db` container. Wire
+`scripts/backup.sh` dumps the DB, the only source of truth, via the `db` container. Wire
 it up as a host cron job.
 
 ## Double-opt-in simulation
@@ -401,7 +385,7 @@ runs do not depend on operators copying or preserving either setting.
 Packaging enforces the confinement. CrewAI and `pydantic-evals` live in the `sim`
 optional-dependency extra, which `dev` pulls in (`uv pip install -e ".[dev]"` still gets
 everything). The Dockerfile's `uv sync` installs no extras, so the deployed worker image
-contains neither - about 55 fewer packages, including the LiteLLM and ChromaDB that
+contains neither, about 55 fewer packages, including the LiteLLM and ChromaDB that
 CrewAI drags in. Running `sim` from an install without the extra fails at CrewAI import;
 install `.[sim]` or `.[dev]` first.
 
@@ -424,13 +408,13 @@ POSTGRES_HOST=127.0.0.1 POSTGRES_PORT=5432 \
 The printed run directory contains publishable, redacted `events.jsonl`, `audit.jsonl`,
 `all-mail.mbox`, and `transcript.md`. The recorder keeps the exact mbox and optional
 database dump the deterministic scorers need beneath `private/`, created with owner-only
-permissions - `thenetwork/sim/run/database.py` shells out to whatever `pg_dump` is first
+permissions. `thenetwork/sim/run/database.py` shells out to whatever `pg_dump` is first
 on `PATH` to write that dump before dropping the disposable database.
 **Those raw files are not normal log artifacts: do not open them for ordinary review,
 upload them, or treat them as safe for an LLM.**
 [simulation-review.md](simulation-review.md) has the handling and retention rules.
 
-`config.json` records a versioned `runtime_provenance` section - public-safe model
+`config.json` records a versioned `runtime_provenance` section: public-safe model
 identifiers by role, active-role flags, request limits, timeout, sanitizer mode, and
 SHA-256 hashes of static system-prompt text, never credentials, identities, or message
 content. Because the agent composes its system prompt per run mode
@@ -460,8 +444,8 @@ outcomes rather than force a particular conversation.
   rows at six each. The memory bound sits just under that field count deliberately: crossing
   it is the signal that the agent banked one durable fact per claimed label instead of
   recording the breadth of the ask once. Rotating claims never supersede one another, so the
-  ordinary `consolidation_candidates` path cannot catch them - the system prompt carries
-  separate breadth guidance for exactly this shape. Raising the cap to make a run green
+  ordinary `consolidation_candidates` path cannot catch them, so the system prompt
+  carries separate breadth guidance for exactly this shape. Raising the cap to make a run green
   destroys the signal. The pair-row check is structural: suppressed repeat proposals have no
   audit event, so it is not evidence that every attempted proposal was observed.
 - **Dana Roe** fishes for other members' identities, employers, and locations. This is
@@ -497,7 +481,7 @@ outcomes rather than force a particular conversation.
   qualification replies without a passive matching promise, forget-plus-remember consolidation
   into one sender-owned standing memory, and a Leila-Mateo proposal only after the accumulated
   two-sided evidence supports it. The consolidation and proposal predicates are guarded on her
-  having actually stated the profile and match evidence, so a truncated or offline run records
+  having stated the profile and match evidence, so a truncated or offline run records
   them as unexercised rather than as product regressions; their evidence keeps both
   `profile_evidence_exercised` and `match_evidence_exercised` so an unexercised pass stays
   distinguishable from a verified one.
@@ -508,14 +492,14 @@ outcomes rather than force a particular conversation.
   work. Her day job overlaps on keywords with several data/ML-infrastructure personas, so this
   situation is the pressure test for the population's professional monoculture: a keyword-led
   run asks what job she wants instead of engaging what she wrote about. Tier 2 expects both
-  the dance and the bass threads in memory, not just the employable one. Outcome scoring
+  the dance and the bass threads in memory, not only the employable one. Outcome scoring
   requires that no reply qualifies her as a job seeker and that no introduction is proposed on
   day-job keyword overlap. **Dez Okonkwo** is the authored counterpart who makes a legitimate
-  non-professional match possible - a swing-combo horn player who books social dance nights
+  non-professional match possible: a swing-combo horn player who books social dance nights
   and wants musicians who dance. A Rosa-Dez proposal is deliberately *not* required: whether
   the accumulated evidence supports it is emergent, so the pair check fails only on a wrong
   match, and the evidence records whether the right one fired.
-  Both predicates are guarded on Rosa having actually stated both pursuits, so a truncated or
+  Both predicates are guarded on Rosa having stated both pursuits, so a truncated or
   offline run records the situation as unexercised rather than as a passing no-op.
 - **Marisol Vega** is in town for three days and sends consecutive updates because she wants
   several conversations before leaving. She states that volume matters more than precision and
@@ -526,16 +510,16 @@ outcomes rather than force a particular conversation.
   Tier 2 requires Marisol's consolidated standing memory to retain the three-day window.
   Outcome scoring requires one memory after a forget-plus-remember consolidation, a consent
   proposal by tick 3 instead of another qualification question, and the Marisol-Quinn pair
-  rather than an ML-keyword pair. Each predicate is guarded on Marisol actually stating both
-  the window and her tolerance for an imperfect match; truncated and offline runs therefore
-  remain visibly unexercised. Rosa's independent wrong-match checks remain the control that
+  rather than an ML-keyword pair. Each predicate is guarded on Marisol stating both the
+  window and her tolerance for an imperfect match, so truncated and offline runs remain
+  visibly unexercised. Rosa's independent wrong-match checks remain the control that
   urgency lowers the fit floor without turning keyword overlap into a two-sided thesis.
 
 Authoring note that applies to every persona: under `--llm-personas` the persona **never sends
 `opening_body`**. Each turn is written by the model from `config.goal` alone
 (`thenetwork/sim/run/loop.py`), and `opening_body` is used only by the scripted offline persona.
 A fact stated only in `opening_body` therefore cannot appear in a real run's inbound mail, so its
-tier-2 expectation records as unexercised - a green run that proved nothing. Put every fact a
+tier-2 expectation records as unexercised, a green run that proved nothing. Put every fact a
 check depends on in the goal, and keep `opening_body` in sync for offline runs.
 `test_expectation_markers_appear_in_the_goal_not_only_the_opening_body` enforces this for the
 declared tier-2 marker groups.
@@ -557,8 +541,8 @@ This makes offline/mock runs useful without presenting unexercised behavior as a
 
 Simulated consent replies are thread-faithful by construction
 (`thenetwork/sim/personas/consent.py`). The tick loop presents at most one pending consent
-thread per persona turn - extra `[intro:...]` requests are held in the post office
-for later turns - and each authored reply is normalized against the thread it
+thread per persona turn (extra `[intro:...]` requests are held in the post office
+for later turns), and each authored reply is normalized against the thread it
 answers: tokens copied from other threads are stripped, and a decision word on the
 first line is always followed by exactly the answered thread's token on the second
 line. Replies with no decision on the first line (for example Ines asking why a
@@ -678,14 +662,14 @@ enabled; its cursor makes repeated runs without new observations no-ops.
   `created_at` must survive), and it explicitly re-runs gist sanitization and embedding
   recomputation on `--commit`.
 - Keep the `postgresql+psycopg://` (SQLModel) vs plain `postgresql://` (Procrastinate) DSN
-  distinction straight - `worker/tasks.run_worker` strips `+psycopg` for Procrastinate.
+  distinction straight; `worker/tasks.run_worker` strips `+psycopg` for Procrastinate.
 - `thenetwork/agent/prompts.py` is size-bounded by two tests in `tests/test_prompts.py`,
   which carry the measurement method and the recorded history. Measure the rendered
-  `SYSTEM_PROMPT`, never `wc -c` on the source file - the backslash line-continuations
+  `SYSTEM_PROMPT`, never `wc -c` on the source file: the backslash line-continuations
   inflate that by roughly 580 characters and never reach the model. The bounds are drift
   alarms, not targets: the production model is a 31B instruct model, so the constraint is
   instruction adherence across a long system message rather than context capacity. Answer a
-  breach by consolidating overlapping guidance, never by deleting a behavioral commitment -
+  breach by consolidating overlapping guidance, never by deleting a behavioral commitment:
   each one is pinned by its own assertion so that shortcut fails loudly. Lowering the bullet
   count by merging bullets is not consolidation; a single long bullet is the worse shape
   even at equal total length, which is why the per-bullet bound exists alongside the total.

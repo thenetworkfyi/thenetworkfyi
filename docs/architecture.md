@@ -41,7 +41,7 @@ a manual one-shot poll for cron/debugging.
 - **Producer** (`worker/producer.py`): polls the primary and, when configured, separate
   relay IMAP inboxes for unseen mail, enqueues exactly one durable job per message, and
   marks each message seen in its source mailbox *only after* enqueue. Durability lives
-  in the Postgres job row, not the IMAP seen-flag - a mid-run crash means the job retries
+  in the Postgres job row, not the IMAP seen-flag: a mid-run crash means the job retries
   (`max_attempts=3`) and nothing is lost. The producer only ever flips `\Seen`; it never
   deletes or moves inbound mail, so everything each account has received stays in INBOX
   permanently, the same as a normal mailbox.
@@ -61,15 +61,15 @@ a manual one-shot poll for cron/debugging.
   retain a bounded HTTP(S) href suffix: each rendered URL is at most 120 characters,
   query and fragment data is dropped when truncation is needed, duplicate destinations
   are omitted, and at most 20 distinct links are added. Other schemes are not rendered,
-  and this is extraction fidelity only - the agent does not fetch link destinations.
-  Attachments are
-  never read on the ordinary agent path. Intake derives a bounded count of non-inline
-  attachments from imap-tools' parsed metadata and carries only that integer through the
-  durable job into agent context, so the agent can accurately ask the sender to paste
-  relevant content. Filenames, MIME types, and other attachment-authored strings do not
-  cross that boundary. The extracted body is bounded by `MAX_BODY_CHARS`, which is the
-  size guard for downstream scanners and model context; a message whose decoded body
-  exceeds the hard reject limit is flagged rather than truncated silently.
+  and this is extraction fidelity only. The agent does not fetch link destinations.
+  Attachments are never read on the ordinary agent path. Intake derives a bounded count
+  of non-inline attachments from imap-tools' parsed metadata and carries only that
+  integer through the durable job into agent context, so the agent can accurately ask
+  the sender to paste relevant content. Filenames, MIME types, and other
+  attachment-authored strings do not cross that boundary. The extracted body is bounded by
+  `MAX_BODY_CHARS`, which is the size guard for downstream scanners and model context; a
+  message whose decoded body exceeds the hard reject limit is flagged rather than
+  truncated silently.
 - **Worker** (`worker/tasks.py`): Postgres-native Procrastinate (LISTEN/NOTIFY +
   `SKIP LOCKED`, no Redis/broker). Enforces per-sender rate limit and optional content
   scan, resolves whether the sender is a known `Person`, then calls
@@ -80,7 +80,7 @@ a manual one-shot poll for cron/debugging.
   later poll) rather than dropping it, and notifies an eligible known sender at most
   once per day. All three hourly discovery scans call `process_email.defer` directly,
   bypassing the producer, so each checks the budget itself immediately before
-  deferring - the event scan checks it before claiming any `event_recommendations`
+  deferring, and the event scan checks it before claiming any `event_recommendations`
   ledger row, since a committed pending row would otherwise suppress re-selection.
   `process_email` itself re-checks the budget for primary and proactive jobs as a
   race guard for work already queued when the cap trips. Proactive/synthetic
@@ -100,7 +100,7 @@ a manual one-shot poll for cron/debugging.
   appends the sent message to an IMAP folder (`imap_sent_folder`, default `Sent`),
   flagged `\Seen`, so the account looks like a normal end-to-end mailbox with both
   received and sent mail visible. This append is best-effort visibility, not part of the
-  delivery guarantee - a failure there is caught and audit-logged
+  delivery guarantee, so a failure there is caught and audit-logged
   (`email.imap_append.completed`, outcome `success`/`error`) but never fails the job or
   retries the send.
 - **Agent** (`agent/core.py`): pydantic-ai ReAct agent. The untrusted email body is
@@ -117,33 +117,33 @@ a manual one-shot poll for cron/debugging.
 Application-owned tables live in `db/models.py`. Procrastinate maintains its own durable
 queue tables in the same Postgres database.
 
-**`people`** - pure identity / addressing / the security boundary:
-- `id` (uuid str, pk) - opaque internal id, *the only person reference the LLM ever sees*
-- `email` (unique, indexed) - resolved server-side by the mailer, never by the LLM
+**`people`** carries pure identity, addressing, and the security boundary:
+- `id` (uuid str, pk): opaque internal id, *the only person reference the LLM ever sees*
+- `email` (unique, indexed): resolved server-side by the mailer, never by the LLM
 - `name`
 
-**`memories`** - the agent's freeform substrate:
-- `text` - freeform content, the source of truth
-- `embedding` `Vector(1536)` - pgvector, HNSW cosine, for semantic recall
-- `refs` `text[]` - the `people.id`s a memory concerns (0..N)
-- `gist` - PII-stripped summary; the **only** thing cross-user search may return
-- `created_at` - recency / perishability signal
+**`memories`** is the agent's freeform substrate:
+- `text`: freeform content, the source of truth
+- `embedding` `Vector(1536)`: pgvector, HNSW cosine, for semantic recall
+- `refs` `text[]`: the `people.id`s a memory concerns (0..N)
+- `gist`: PII-stripped summary; the **only** thing cross-user search may return
+- `created_at`: recency / perishability signal
 
 Small server-owned operational tables enforce boundaries that cannot safely be left to
 model reasoning:
 
-- **`admin_nonces`** - replay protection for verified PGP/MIME admin requests
-- **`rate_limits`** - durable counters for inbound and outbound quotas
-- **`processed_messages`** - durable Message-ID idempotency beyond the IMAP `\Seen` flag
-- **`banned_emails`** - normalized addresses blocked before agent execution
-- **`primary_intake_state`** - durable primary-only pause reason and timestamp
-- **`primary_intake_observations`** - keyed fingerprints and authentication/known-sender
+- **`admin_nonces`**: replay protection for verified PGP/MIME admin requests
+- **`rate_limits`**: durable counters for inbound and outbound quotas
+- **`processed_messages`**: durable Message-ID idempotency beyond the IMAP `\Seen` flag
+- **`banned_emails`**: normalized addresses blocked before agent execution
+- **`primary_intake_state`**: durable primary-only pause reason and timestamp
+- **`primary_intake_observations`**: keyed fingerprints and authentication/known-sender
   booleans; no raw sender, domain, subject, or body
-- **`primary_intake_judge_state`** - idempotent observation cursor plus enum verdict/reason
-- **`proactive_surfaces`** - recently surfaced opaque people pairs, used to rotate scan
+- **`primary_intake_judge_state`**: idempotent observation cursor plus enum verdict/reason
+- **`proactive_surfaces`**: recently surfaced opaque people pairs, used to rotate scan
   candidates through a configurable cooldown
 
-**`introduction_consents`** - security state for anonymous relay introductions:
+**`introduction_consents`** holds security state for anonymous relay introductions:
 - one row per unordered person pair
 - server-written consent flags and state (`proposed`, `one_consented`,
   `introduced`, `declined` (temporary cooldown), or `revoked` (permanent)
@@ -162,13 +162,13 @@ Event recommendations add a similarly narrow operational exception to the freefo
 substrate. Event meaning remains freeform; these tables hold only state that server code
 must enforce:
 
-- **`events`** - stable owner and series identity, a monotonic content version, raw
+- **`events`**: stable owner and series identity, a monotonic content version, raw
   owner-controlled text, sealed gist and embedding, freeform recurrence, expiry, and
   cancellation. A recurring series is one row and one stable id.
-- **`event_recommendations`** - one consideration/delivery ledger row per stable event id
+- **`event_recommendations`**: one consideration/delivery ledger row per stable event id
   and person, bound to the event version whose gist was evaluated. `notified_at` is written
   only after SMTP succeeds.
-- **`event_suppressions`** - person-level event-FYI suppression. It is never consulted by
+- **`event_suppressions`**: person-level event-FYI suppression. It is never consulted by
   the people-matching or introduction paths.
 
 Raw event text, recurrence, and submitter identity do not enter cross-user search or agent
@@ -191,7 +191,7 @@ exists because some memory references both, edge weight comes from count/recency
 memories. NetworkX does multi-hop proximity math; the LLM does the language→reference
 mapping at write time. Semantic match over memories lives in `search/match.py`.
 
-## Agent surface - seventeen tools (`agent/tools.py`)
+## Agent surface: seventeen tools (`agent/tools.py`)
 
 | tool | description |
 |---|---|
@@ -202,9 +202,9 @@ mapping at write time. Semantic match over memories lives in `search/match.py`.
 | `send_first_contact_welcome()` | send fixed usage guidance to an authenticated unfamiliar sender; recipient, subject, body, threading, one-response-per-run enforcement, and daily quota are server-owned |
 | `send_outreach(recipient_user_id, subject, body_text, sent_email_summary)` | send a new, unthreaded message to another user by opaque id; the address is resolved server-side, and the post-SMTP summary is remembered without storing the subject, body, address, or headers |
 | `propose_introduction(other_person_id, sender_gist, other_gist)` | creates a pairwise proposal and sends fixed anonymous opt-in requests; authenticated replies are handled server-side before the model runs |
-| `register_person(name)` | onboard an authenticated sender on first contact; self-registration only, with the address supplied from the verified inbound sender - the id it returns is what later `remember` calls key off |
+| `register_person(name)` | onboard an authenticated sender on first contact; self-registration only, with the address supplied from the verified inbound sender, and the id it returns is what later `remember` calls key off |
 | `escalate(reason)` | flag this email for human review and notify `admin_emails`; authenticated unknown senders also receive the fixed first-contact welcome when its server-side gates allow it. The fallback when no safe, useful action is clear |
-| `no_action(reason)` | record that no reply, outreach, or memory is warranted (spam, automated mail, no genuine ask); a no-op that notifies no one - the explicit way to end a run without dispatching anything, so a deliberate no-op is distinguishable from a dropped response |
+| `no_action(reason)` | record that no reply, outreach, or memory is warranted (spam, automated mail, no genuine ask); a no-op that notifies no one, and the explicit way to end a run without dispatching anything, so a deliberate no-op is distinguishable from a dropped response |
 | `create_event(text, expires_at, recurrence)` | create one authenticated sender-owned event or recurring series; sanitize and embed its cross-user gist |
 | `update_event(event_id, text, expires_at, recurrence)` | replace an authenticated owner's event content while preserving its stable id and refreshing its gist/embedding |
 | `cancel_event(event_id)` | cancel an authenticated owner's event so it cannot be searched or recommended |
@@ -224,6 +224,6 @@ string) · OpenAI `embed_text` wrapper (`embed/`, fixed at 1536 dimensions) · N
 pydantic-settings · imap-tools · BeautifulSoup (HTML-to-visible-text fallback for inbound
 bodies) · transformers (`SANITIZE_MODEL`, the local gist span classifier) ·
 stdlib `EmailMessage`/`smtplib` · Procrastinate · `limits` · pytest +
-pydantic-evals. Vendor-agnosticism comes from pydantic-ai, selected by `AGENT_MODEL` - no
-LiteLLM, no proxy glue. `EMBED_MODEL` is OpenAI-only and is validated against the
+pydantic-evals. Vendor-agnosticism comes from pydantic-ai, selected by `AGENT_MODEL`, with no
+LiteLLM and no proxy glue. `EMBED_MODEL` is OpenAI-only and is validated against the
 `Vector(1536)` schema at startup.

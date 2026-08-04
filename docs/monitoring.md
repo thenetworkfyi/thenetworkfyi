@@ -45,17 +45,17 @@ workload/provider/model/outcome/cost_status), token counts
 and summed across all series), and p95 request latency
 (`thenetwork_llm_request_duration_seconds`). The estimated-cost panels draw a
 fixed $50/day reference line matching the `DailyLlmCostDrift` alert condition
-in `prometheus-alert-rules.yml` (`sum(increase(thenetwork_llm_estimated_cost_usd_total[24h])) > 50`) -
-update both the dashboard threshold and the alert expression together if that
+in `prometheus-alert-rules.yml` (`sum(increase(thenetwork_llm_estimated_cost_usd_total[24h])) > 50`).
+Update both the dashboard threshold and the alert expression together if that
 budget changes. Every panel here also stays within the documented label set
 (`workload`, `provider`, `model`, `outcome`, `cost_status`, `token_type`); no
 `trace_id` or other unbounded/identifying label is used.
 
 `grafana/dashboards/growth-kpi.json` is "The Network - Growth & Network Health":
 the North Star dashboard. The core value-creation event for a network-effects
-product like this one is not a processed email, it is a *completed
-introduction* - two people who reached mutual consent and can now talk - so
-this dashboard leads with introductions reaching the `introduced` consent
+product like this one is a *completed introduction*: two people who reached
+mutual consent and can now talk. The dashboard therefore leads with the
+introductions that reach the `introduced` consent
 state (`thenetwork_introduction_transitions{action="consent",consent_state="introduced"}`)
 as its hero panel, trended both as a rolling-7-day total and per day. Below
 that, the full funnel (`proposed` -> `one_consented` -> `introduced`) and the
@@ -66,7 +66,7 @@ Every panel filters by `action` (`propose`/`consent`/`decline`/`revoke`), not
 `consent_state` alone: a `clarify` reply (someone asking why a match was
 proposed, rather than accepting/declining) also emits a
 `introduction.consent_transition` audit event, carrying the proposal's
-current, unchanged `consent_state` - filtering on `consent_state` alone would
+current, unchanged `consent_state`, so filtering on `consent_state` alone would
 double-count those clarifications against genuine `propose`/`consent`
 transitions. This dashboard uses only the pre-existing `thenetwork_introduction_transitions`
 counter and its `action`/`consent_state` labels; see the
@@ -76,12 +76,12 @@ Below the funnel, a network-health row adds four unlabeled gauge panels:
 registered people (`thenetwork_people_total`, a live count, not the cumulative
 `thenetwork_accounts_created_total` counter), activated people
 (`thenetwork_activated_people_total`, people referenced by at least one
-memory - the Cold Start Problem's "hard side" liquidity signal), a derived
+memory, the Cold Start Problem's "hard side" liquidity signal), a derived
 activation-rate panel (activated / registered, no new metric), weekly active
 senders (`thenetwork_active_senders_weekly`, a 7-day proxy for distinct active
 senders), and network density (`thenetwork_network_density`, average graph
 degree sampled from the existing hourly `scan_for_opportunities` graph
-projection - the network-effects flywheel signal). See the gauge table above
+projection, the network-effects flywheel signal). See the gauge table above
 for exact semantics and the proxy caveats on the two people-activity metrics.
 
 `grafana/dashboards/system-resources.json` is "The Network - System Resources":
@@ -136,7 +136,7 @@ batches emit the same accounting record without changing its batching or retry
 behavior.
 
 The request record includes the existing opaque `trace_id`, one of the bounded
-workloads `email_agent`, `memory_sanitizer` (currently unemitted - gist
+workloads `email_agent`, `memory_sanitizer` (currently unemitted, since gist
 sanitization is a local classifier that bills no model endpoint; the label is
 reserved for the planned periodic gist sweep), `abuse_judge`, or `embedding`, the
 provider and model, request outcome and duration, input/output/cache token
@@ -198,16 +198,16 @@ Every gauge below is registered in `thenetwork/worker/metrics.py` with a UCUM
 curly-brace annotation unit (for example `"{jobs}"`, `"{people}"`,
 `"{paused}"`), never the dimensionless unit `"1"`. The OTel Collector's
 Prometheus exporter silently appends a `_ratio` suffix to any gauge
-instrument registered with unit `"1"`, regardless of whether the value is
-actually a fraction; the metric names below matched exactly what every
-consuming dashboard and `prometheus-alert-rules.yml` expression already
-expected, so an earlier `unit="1"` registration here would make the affected
+instrument registered with unit `"1"`, regardless of whether the value is a
+fraction; the metric names below matched exactly what every consuming
+dashboard and `prometheus-alert-rules.yml` expression already expected, so
+an earlier `unit="1"` registration here would make the affected
 panels and alerts silently see no data. Keep new dimensionless worker gauges
 on an annotation unit rather than `"1"` to avoid reintroducing this.
 
 `configure_worker_metrics` builds its `MeterProvider` with a fixed
-`service.name`/`service.instance.id` of `thenetwork-worker` - the same value
-the logs pipeline already uses - rather than the OTel SDK's default
+`service.name`/`service.instance.id` of `thenetwork-worker`, the same value
+the logs pipeline already uses, rather than the OTel SDK's default
 per-process random `service.instance.id`. There is exactly one long-lived
 worker process, so a stable identity is correct here. Without it, every
 worker restart mints a new `service.instance.id`, which the Collector's
@@ -226,10 +226,10 @@ its own after the 30-day Prometheus retention window.
 | `thenetwork_job_queue_depth` | None | Number of Procrastinate `todo` jobs that are immediately runnable or whose `scheduled_at` is due. Future-scheduled periodic or retry work and jobs already running are excluded. Due work waiting behind a queue or task lock remains backlog. |
 | `thenetwork_oldest_pending_job_age_seconds` | None | Oldest runnable age in seconds. Age starts at `scheduled_at` for due scheduled work and at the initial `deferred` event for immediately runnable work. An empty queue reports zero. |
 | `thenetwork_primary_intake_paused` | `reason` | `1` when the durable `PrimaryIntakeState` singleton is paused; `0` when active or absent. `reason` is one of `none`, `admin`, `new_sender_burst`, `coordinated_abuse`, or fail-closed `unknown`, allowing rules to distinguish automated stops from administrator-requested pauses. |
-| `thenetwork_people_total` | None | Live count of registered `people` rows, sampled fresh each collection interval - not a cumulative "accounts created" counter. |
+| `thenetwork_people_total` | None | Live count of registered `people` rows, sampled fresh each collection interval, not a cumulative "accounts created" counter. |
 | `thenetwork_activated_people_total` | None | Count of distinct people referenced by at least one memory (`unnest(memories.refs)`), a network-effects "hard side liquidity" signal. |
 | `thenetwork_active_senders_weekly` | None | Distinct people referenced by a memory created in the trailing 7-day window. This is a proxy for active senders, not a literal authenticated-sender count: no table tracks per-person send timestamps. |
-| `thenetwork_network_density` | None | Average graph degree (`2 * edges / nodes`) sampled from the existing hourly `scan_for_opportunities` graph projection - it does not trigger a second graph build. Zero when the graph has no nodes. |
+| `thenetwork_network_density` | None | Average graph degree (`2 * edges / nodes`) sampled from the existing hourly `scan_for_opportunities` graph projection; it does not trigger a second graph build. Zero when the graph has no nodes. |
 
 | Prometheus counter | Labels | Meaning |
 | --- | --- | --- |
@@ -271,8 +271,8 @@ et al. and the audit `model_name` field. After the fix, new OpenRouter series
 appear under their real `vendor/model` label instead. Any dashboard panel or
 alert that filters or breaks down by `model="unknown"` for an OpenRouter
 deployment will see that series stop accumulating and a new one appear under
-the actual id - this is expected, not a data loss, but a saved dashboard query
-pinned to `model="unknown"` will silently go quiet rather than error.
+the actual id. That is expected rather than data loss, but a saved dashboard
+query pinned to `model="unknown"` goes quiet rather than erroring.
 
 ## Host, Postgres, and worker resource metrics
 
@@ -282,7 +282,7 @@ process/cgroup self-metrics over its existing OTLP path. All of these exit
 through the separate `prometheus/host` exporter on `:8890` (host and Postgres)
 or the existing `prometheus/audit` exporter on `:8889` (worker), scraped as
 the `thenetwork-host-metrics` and `thenetwork-audit-activity` Prometheus jobs
-respectively - never the redacted `thenetwork.audit` log pipeline, since none
+respectively, never the redacted `thenetwork.audit` log pipeline, since none
 of this is derived from application log records.
 
 The `hostmetrics` receiver reads `/proc` and `/sys` through a read-only bind
@@ -320,7 +320,7 @@ migration.
 
 | Prometheus metric | Labels | Meaning |
 | --- | --- | --- |
-| `postgresql_backends` | None | Active connection count, sampled live from `pg_stat_activity` at scrape time. Reports no series at all when zero connections are active at that instant - this is expected gauge-snapshot behavior, not a scrape failure; a running worker's connection pool normally keeps this nonzero. |
+| `postgresql_backends` | None | Active connection count, sampled live from `pg_stat_activity` at scrape time. Reports no series at all when zero connections are active at that instant. This is expected gauge-snapshot behavior, not a scrape failure; a running worker's connection pool normally keeps this nonzero. |
 | `postgresql_connection_max` | None | Configured `max_connections`. |
 | `postgresql_database_count` | None | Number of user databases visible to the role. |
 | `postgresql_db_size_bytes` | None | On-disk size of the configured database. |
@@ -349,11 +349,11 @@ sender, or job identifier.
 
 The OTel Collector's Prometheus exporter appends a `_ratio` suffix to any
 gauge instrument registered with the dimensionless unit `"1"`, regardless of
-whether the value is actually a fraction. Every dimensionless gauge in this
+whether the value is a fraction. Every dimensionless gauge in this
 codebase (worker process open FDs and thread count here; queue depth,
 primary-intake-paused, and the growth gauges documented above) instead uses a
 UCUM curly-brace annotation unit (for example `"{fds}"`, `"{threads}"`) so the
-exporter emits the plain metric name below with no suffix - see
+exporter emits the plain metric name below with no suffix. See
 `thenetwork/worker/metrics.py` for the full instrument registrations.
 
 | Prometheus metric | Labels | Meaning |
@@ -363,7 +363,7 @@ exporter emits the plain metric name below with no suffix - see
 | `thenetwork_worker_process_open_fds` | None | Open file descriptor count, from the size of `/proc/self/fd`. |
 | `thenetwork_worker_process_threads` | None | Thread count, from `/proc/self/status` `Threads`. |
 | `thenetwork_worker_cgroup_memory_current_bytes` | None | Current cgroup v2 memory usage, from `/sys/fs/cgroup/memory.current`. |
-| `thenetwork_worker_cgroup_memory_max_bytes` | None | Configured cgroup v2 memory limit, from `memory.max`. Absent when unlimited (the file literally reads `"max"`). |
+| `thenetwork_worker_cgroup_memory_max_bytes` | None | Configured cgroup v2 memory limit, from `memory.max`. Absent when unlimited (the file reads `"max"`). |
 | `thenetwork_worker_cgroup_memory_peak_bytes` | None | Peak cgroup v2 memory usage, from `memory.peak`. Absent on kernels that don't expose this file. |
 | `thenetwork_worker_cgroup_cpu_periods_total` | None | Elapsed CPU scheduling periods, from `cpu.stat` `nr_periods`. |
 | `thenetwork_worker_cgroup_cpu_throttled_periods_total` | None | Scheduling periods in which the container was throttled, from `cpu.stat` `nr_throttled`. |
@@ -564,7 +564,7 @@ application does not send a second admin email.
 ### DailyLlmCostDrift
 
 `DAILY_AGENT_TOKEN_CAP` (see @docs/development.md) bounds spend in tokens, not
-dollars, and per-million-token pricing varies by 25-40x across models - the
+dollars, and per-million-token pricing varies by 25-40x across models: the
 default 15M-token cap costs roughly $5.40/day worst case on a cheap model such
 as `openrouter:google/gemma-4-31b-it`, but 25-40x that (~$135-216/day) on
 `anthropic:claude-sonnet-5`, `.env.example`'s documented `AGENT_MODEL`. This
