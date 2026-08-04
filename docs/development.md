@@ -333,7 +333,7 @@ only after enqueue) mean an ungraceful kill at worst re-runs a job.
 ```bash
 cp .env.example .env
 docker compose up -d --build      # local: build and start the whole stack
-git pull origin main && docker compose pull worker && docker compose up -d --force-recreate   # redeploy (pulls the CI-built image)
+sudo systemctl start thenetwork-deploy.service   # host: force a deploy check now instead of waiting for the timer
 ```
 
 ### Observability
@@ -354,28 +354,52 @@ settings and routing, alert thresholds and runbooks, and the per-file validation
 The VPS is a **git checkout**, but it does not build the worker image itself. The server
 needs its spare CPU/memory for serving, not for a `docker build`. On a push to `main`,
 after `test` passes, `.github/workflows/ci.yml`'s `build` job pushes the worker image to
-`ghcr.io/<owner>/thenetworkfyi` as both `:latest` and `:<commit-sha>`. The `deploy` job
-then SSHes in with the `production` environment's `DEPLOY_HOST`/`DEPLOY_USER`/`DEPLOY_SSH_KEY`
-secrets, runs `git pull origin main`, exports `IMAGE` with that run's immutable SHA tag,
-and runs `docker compose pull worker && docker compose up -d`. Those commands are inline in
-the workflow rather than a script on the server, so a deploy always runs the version from
-the commit that passed CI, never a stale on-disk copy. Run the same four commands by
-hand for a manual redeploy.
+`ghcr.io/<owner>/thenetworkfyi` as both `:latest` and `:<commit-sha>`. CI stops there.
 
-The `ghcr.io/thenetworkfyi/thenetworkfyi` package is private, so the host pull needs a
-registry credential. That credential lives only on the deploy host: run `docker login
-ghcr.io` there once with a token carrying `read:packages`, and Docker persists it in
-`~/.docker/config.json` for every later `docker compose pull worker`. The workflow holds
-no registry secret and performs no `docker login`, so the pull token never passes through
-Actions. Publishing is separate and also needs no token of its own - the `build` job
-pushes with the workflow's automatic `GITHUB_TOKEN` under its `packages: write`
-permission. A pull that starts failing with `denied`/`unauthorized` mid-deploy usually
-means that host-side login expired; re-run it on the host.
+### The host pulls; CI never reaches in
+
+There is no deploy job and no deployment credential in GitHub. `thenetwork-deploy.timer`
+runs `scripts/deploy-poll.sh` as the `deploy` user every minute. Each tick fast-forwards
+the checkout to `origin/main`, runs `docker compose pull worker`, and calls
+`docker compose up -d` only when the git SHA or the resolved image id actually changed, so
+a quiet minute costs one registry manifest check and nothing else. A `flock` keeps a slow
+pull from overlapping the next tick. `journalctl -u thenetwork-deploy.service` is the
+deploy log.
+
+This is the same posture as the rest of the service: no inbound network access, everything
+outbound. Because the `production` environment holds no secrets, a malicious commit merged
+to `main` has no deployment credential to exfiltrate. The remaining trust boundary is the
+image itself, which only `build` can publish.
+
+The cost of pulling rather than pushing: a release lands up to a minute late, and both
+rollback and a forced redeploy are host-side actions rather than a button in the Actions
+UI. To roll back, set `IMAGE` to a known-good `:<commit-sha>` tag in `.env` and run
+`docker compose up -d` on the host - but note that a pinned `IMAGE` also stops the timer
+from picking up new releases, so clear it again afterwards. To force a check immediately
+instead of waiting for the next tick, run `sudo systemctl start thenetwork-deploy.service`.
+
+Install the unit files from `deploy/` on the host:
+
+```bash
+sudo install -m 755 scripts/deploy-poll.sh /usr/local/bin/deploy-poll.sh
+sudo install -m 644 deploy/thenetwork-deploy.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now thenetwork-deploy.timer
+```
+
+The `ghcr.io/thenetworkfyi/thenetworkfyi` package is private, so the pull needs a registry
+credential. It lives only on the host and only for the user the timer runs as: run
+`sudo -u deploy docker login ghcr.io` once with a token carrying `read:packages`, and
+Docker persists it in `/home/deploy/.docker/config.json`. A login as any other user does
+not help, since that file is per-user. Publishing needs no token of its own - the `build`
+job pushes with the workflow's automatic `GITHUB_TOKEN` under its `packages: write`
+permission. Pulls failing with `denied`/`unauthorized` in the timer's journal mean that
+host-side login expired; re-run it as `deploy`.
 `worker.image` defaults to the `:latest` tag; override
 with `IMAGE=` in `.env`. Local development uses `docker compose up -d --build`, which
 builds and tags locally under the same name, so no pull is attempted. After a successful
-deploy the `cleanup-images` job keeps the three newest GHCR versions, independent of
-host-side image and builder-cache pruning.
+build the `cleanup-images` job keeps the three newest GHCR versions, independent of
+host-side image and builder-cache pruning. Keep more than a couple if you want older
+`:<commit-sha>` tags to stay available as rollback targets.
 
 `scripts/backup.sh` dumps the DB, the only source of truth, via the `db` container. Wire
 it up as a host cron job.

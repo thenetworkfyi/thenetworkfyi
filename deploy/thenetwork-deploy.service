@@ -1,0 +1,28 @@
+[Unit]
+Description=The Network pull-based deploy check
+Documentation=https://github.com/thenetworkfyi/thenetworkfyi/blob/main/docs/development.md
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=deploy
+Group=deploy
+WorkingDirectory=/opt/thenetwork
+ExecStart=/usr/local/bin/deploy-poll.sh
+
+# A cold pull of the ~2.7GB sanitizer layer can be slow; the flock in the
+# script is what actually prevents overlap, this is only a runaway guard.
+TimeoutStartSec=20min
+
+NoNewPrivileges=true
+# /tmp stays shared so the script's flock is visible to a manual
+# `systemctl start` of the same unit.
+PrivateTmp=false
+ProtectSystem=full
+# ProtectHome is deliberately not set: the GHCR pull credential lives in
+# /home/deploy/.docker/config.json and the Docker CLI writes there.
+
+[Install]
+WantedBy=multi-user.target

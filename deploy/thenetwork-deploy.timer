@@ -1,0 +1,12 @@
+[Unit]
+Description=Check for a new The Network worker image every minute
+Documentation=https://github.com/thenetworkfyi/thenetworkfyi/blob/main/docs/development.md
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=60s
+AccuracySec=10s
+Unit=thenetwork-deploy.service
+
+[Install]
+WantedBy=timers.target
