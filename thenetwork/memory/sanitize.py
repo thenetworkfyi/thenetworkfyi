@@ -1,7 +1,7 @@
 """The SEAL's sanitization boundary: raw freeform text in, gist-safe text out.
 
-One local span classifier does all of it. There is no pattern tier and no
-per-write model call - see docs/design-decisions.md for why both were removed.
+One local span classifier does all of it: there is no pattern tier and no
+per-write model call behind it.
 """
 
 from __future__ import annotations

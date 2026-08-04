@@ -46,7 +46,7 @@ dependencies = [
 # The simulation harness only. `thenetwork.sim` (the `sim` console script) is the
 # sole importer of all three. Moving CrewAI and pydantic-evals here keeps them out
 # of the deployed image entirely - CrewAI in particular drags LiteLLM into whatever
-# installs it, which docs/design-decisions.md rejects for the runtime. `tenacity` is
+# installs it, and the runtime uses pydantic-ai directly. `tenacity` is
 # listed for accurate provenance rather than image size: llama-index-core and
 # pydantic-ai already pull it transitively either way.
 sim = [

@@ -1,7 +1,6 @@
 # Architecture
 
-The "big picture" that requires reading several files to reconstruct. See
-@docs/design-decisions.md for the rationale behind each choice.
+The "big picture" that requires reading several files to reconstruct.
 
 ## Message flow
 

@@ -13,11 +13,19 @@ prompt plus seventeen tools over a store of freeform **memories**. Runs as a sin
 long-lived worker on one VPS against Postgres (pgvector). No application-owned inbound
 network access.
 
-The README has the full prose; the docs below are the working details. The one rule that
-shapes everything: hand-write only the genuine domain glue (memory + the privacy seal);
-for queues, ORM, rate limiting, embeddings, graph math, and mail, use the established
-library. Most "cleaner schema" ideas were already considered and rejected - see
-@docs/design-decisions.md before proposing one.
+The README has the full prose; the docs below are the working details.
+
+## The guiding principle
+
+**Use mainstream, well-adopted open-source frameworks and prior art. Do not reinvent
+solved problems. Do not depend on flimsy low-star libraries.** Hand-write only the
+genuine domain glue; for everything else - queues, rate limiting, ORM, migrations,
+embeddings, graph math, mail - use the established solution, which is sometimes just the
+Python stdlib.
+
+The genuine glue here is exactly one thing: **memory + the privacy seal over freeform
+memory** (`thenetwork/memory/`). Everything else is a thin wrapper over a well-adopted
+library, swappable by config.
 
 ## The non-negotiable invariant: THE SEAL
 
@@ -55,7 +63,6 @@ it has no database, so anything DB-backed must be marked `integration`.
 - @docs/architecture.md - message flow, data model, the graph projection, agent surface
 - @docs/security.md - THE SEAL: the layers, the gate, what the red-team enforces
 - @docs/development.md - settings, migrations, test fixtures, deployment, proactive scan, sharp edges
-- @docs/design-decisions.md - the *why*: guiding principle + the list of deliberately rejected approaches
 
 
 ## Gotchas worth knowing up front

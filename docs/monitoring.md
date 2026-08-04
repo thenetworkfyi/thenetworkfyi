@@ -99,7 +99,7 @@ and CPU time by state from `/proc/self`, plus cgroup v2 memory
 current/max/peak and CPU scheduling-period/throttling counters from
 `/sys/fs/cgroup`. See the [host, Postgres, and worker resource
 metrics](#host-postgres-and-worker-resource-metrics) section below for the
-full catalog, exact label sets, and the `docker_stats` rejection rationale.
+full catalog and exact label sets.
 Every panel here queries only those documented names and labels; none use
 `trace_id`, `run_id`, a sender pseudonym, or any opaque person/event id.
 
@@ -228,7 +228,7 @@ its own after the 30-day Prometheus retention window.
 | `thenetwork_primary_intake_paused` | `reason` | `1` when the durable `PrimaryIntakeState` singleton is paused; `0` when active or absent. `reason` is one of `none`, `admin`, `new_sender_burst`, `coordinated_abuse`, or fail-closed `unknown`, allowing rules to distinguish automated stops from administrator-requested pauses. |
 | `thenetwork_people_total` | None | Live count of registered `people` rows, sampled fresh each collection interval - not a cumulative "accounts created" counter. |
 | `thenetwork_activated_people_total` | None | Count of distinct people referenced by at least one memory (`unnest(memories.refs)`), a network-effects "hard side liquidity" signal. |
-| `thenetwork_active_senders_weekly` | None | Distinct people referenced by a memory created in the trailing 7-day window. This is a proxy for active senders, not a literal authenticated-sender count: no table tracks per-person send timestamps, and this observability addition does not add one. |
+| `thenetwork_active_senders_weekly` | None | Distinct people referenced by a memory created in the trailing 7-day window. This is a proxy for active senders, not a literal authenticated-sender count: no table tracks per-person send timestamps. |
 | `thenetwork_network_density` | None | Average graph degree (`2 * edges / nodes`) sampled from the existing hourly `scan_for_opportunities` graph projection - it does not trigger a second graph build. Zero when the graph has no nodes. |
 
 | Prometheus counter | Labels | Meaning |
@@ -285,35 +285,14 @@ the `thenetwork-host-metrics` and `thenetwork-audit-activity` Prometheus jobs
 respectively - never the redacted `thenetwork.audit` log pipeline, since none
 of this is derived from application log records.
 
-### Why not `docker_stats`
-
-Docker's container-stats API (`docker stats` / the Engine API's
-`/containers/{id}/stats`) was considered and rejected as the source for this
-work in favor of the two socket-free receivers actually used:
-
-- It requires bind-mounting the Docker socket into the Collector container,
-  handing it a credential that can create, exec into, or delete *any*
-  container on the host, including the database - a large privilege
-  escalation surface for a metrics sidecar that has no other reason to reach
-  the Engine API.
-- It only reports cgroup-level counters for the containers it is told about,
-  never true host-wide state - free disk space, host load average, and
-  network-interface counters are not container-scoped and are absent from its
-  output entirely.
-- It reports nothing about Postgres internals (backends, commits, cache hit
-  ratio, bloat) - that requires talking to Postgres itself, not the container
-  runtime.
-
-The `hostmetrics` receiver instead reads `/proc` and `/sys` directly through a
-read-only bind mount (`- /:/hostfs:ro` in `docker-compose.yml`, `root_path:
-/hostfs` in `otel-collector-config.yaml`) - filesystem visibility only, no
-Docker socket, no container/Engine API access of any kind. The `postgresql`
-receiver connects to Postgres directly over SQL using the dedicated
-least-privilege `pg_monitor` role (see `docs/development.md`'s migration
-notes), which exposes exactly the built-in statistics views Postgres itself
-maintains. The worker's process and cgroup metrics read `/proc/self` and
-`/sys/fs/cgroup` directly from inside its own container - no socket, no
-sidecar, no separate collection path.
+The `hostmetrics` receiver reads `/proc` and `/sys` through a read-only bind
+mount (`- /:/hostfs:ro` in `docker-compose.yml`, `root_path: /hostfs` in
+`otel-collector-config.yaml`). The `postgresql` receiver connects to Postgres
+over SQL using the dedicated least-privilege `pg_monitor` role (see
+`docs/development.md`'s migration notes), which exposes the built-in
+statistics views. The worker's process and cgroup metrics read `/proc/self`
+and `/sys/fs/cgroup` from inside its own container. None of the three needs
+the Docker socket.
 
 ### Host metrics (`hostmetrics` receiver, Prometheus job `thenetwork-host-metrics`)
 

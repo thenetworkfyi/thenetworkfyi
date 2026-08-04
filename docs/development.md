@@ -53,9 +53,9 @@ has one (batch scans) - the same audit event and allow-listed reason already use
 
 The producer never deletes or moves inbound mail - it only flips the IMAP `\Seen` flag,
 so INBOX keeps every message the account has ever received. Durability comes from the
-Postgres job row (see `docs/architecture.md`'s message flow), not from the seen-flag; the
-"IMAP seen-flag as unit of durability" entry in `docs/design-decisions.md` is about not
-trusting that flag for job dedup, not about removing mail from the mailbox. Outbound
+Postgres job row (see `docs/architecture.md`'s message flow), not from the seen-flag -
+that is about not trusting the flag for job dedup, not about removing mail from the
+mailbox. Outbound
 replies are appended to `imap_sent_folder` (`IMAP_SENT_FOLDER`, default `Sent`) after the
 SMTP send succeeds, so the account reads like a normal mailbox with both received and
 sent mail visible end-to-end; the append is best-effort and its failure never fails the
@@ -200,6 +200,13 @@ regenerated lockfile.
 Face token, and it runs locally, so no memory text leaves the host. Weights load once
 per process; `thenetwork-worker` calls `assert_sanitizer_ready()` at startup so a
 missing or unloadable model fails before the queue opens rather than at the first write.
+
+It earns its ~2.7 GB against the Presidio/spaCy NER pass, hand-written handle patterns,
+and per-write LLM tier it replaced. Measured before adoption: it catches `mkly`,
+`@atlas`, common-noun given names (Rose/Mark/Bill), non-Western and Cyrillic names, and
+obfuscated addresses (`mike [at] mkly [dot] io`) that the pattern tier never saw, and it
+stops tagging `LinkedIn` as a person - for one local forward pass, no credential, and no
+network call.
 
 **The weights are baked into the image, not downloaded at runtime.** The Dockerfile
 fetches the four files transformers actually loads (`config.json`,
