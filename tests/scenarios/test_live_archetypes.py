@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import partial
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 from pydantic_evals import Case, Dataset
@@ -43,6 +44,7 @@ from thenetwork.db.models import (
     Memory,
     Person,
 )
+from thenetwork.introductions import propose_pair
 from thenetwork.model_config import model_with_api_key
 from thenetwork.search.events import EventMatch
 from thenetwork.search.match import MemoryMatch
@@ -279,7 +281,27 @@ async def run_scenario(
         return None
 
     def fake_propose_pair(**kwargs):
-        return {"status": "proposed"}
+        """Run the real pairing path with only its two I/O seams replaced.
+
+        `propose_pair` resolves both participants server-side and sends the
+        fixed consent requests through `thenetwork.introductions.send_reply`,
+        which the capability bundle does not route. Returning a canned
+        `{"status": "proposed"}` here would make the harness report a proposal
+        that dispatched nothing, so the real function runs and its mail is
+        captured like every other delivery.
+
+        The gist re-sanitization is a second, independent SEAL boundary running
+        the same multi-gigabyte local classifier CI does not have; its accuracy
+        is covered by tests/test_sanitize.py's integration cases.
+        """
+        with (
+            patch("thenetwork.introductions.send_reply", side_effect=fake_send_reply),
+            patch(
+                "thenetwork.introductions.sanitize_text",
+                side_effect=lambda text: f"sealed: {text}",
+            ),
+        ):
+            return propose_pair(**kwargs)
 
     with scenario_database() as session_factory:
         initial_memory_ids, initial_event_ids = _seed_scenario_database(

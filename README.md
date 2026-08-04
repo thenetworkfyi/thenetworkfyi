@@ -421,7 +421,7 @@ curl --get http://127.0.0.1:3100/loki/api/v1/query_range \
   --data-urlencode 'since=1h'
 ```
 
-The targets page/API should report `otel-collector-internal`, `thenetwork-audit-activity`, and `loki` as `up`. Run `./validate-monitoring.sh` to exercise the worker-state OTLP path and the complete Fluent Forward → Collector → Loki path, including a direct LogQL query and exactly-once metric derivation. It validates rules and Alertmanager without sending email. This increment deliberately excludes Grafana, host exporters, and Postgres exporters.
+The targets page/API should report `otel-collector-internal`, `thenetwork-audit-activity`, and `loki` as `up`, and the LogQL query should return the worker's own JSON lines unchanged. [docs/monitoring.md](docs/monitoring.md#validation) has the full per-file validation sequence.
 
 ### Safe redeploys (no lost or half-processed jobs)
 

@@ -119,12 +119,3 @@ async def embed_text(text: str) -> list[float]:
     """Embed a single string. Returns a 1536-dim vector."""
     client = _get_client()
     return await client.aget_text_embedding(text)
-
-
-async def embed_batch(texts: list[str]) -> list[list[float]]:
-    """Embed a batch using LlamaIndex's built-in batching + retry."""
-    client = _get_client()
-    return await client.aget_text_embedding_batch(texts)
-
-
-embed = embed_text

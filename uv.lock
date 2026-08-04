@@ -4505,7 +4505,6 @@ dependencies = [
     { name = "python-gnupg" },
     { name = "sqlmodel" },
     { name = "structlog" },
-    { name = "tenacity" },
     { name = "torch", version = "2.12.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'linux'" },
     { name = "torch", version = "2.12.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "sys_platform == 'linux'" },
     { name = "transformers" },
@@ -4519,12 +4518,14 @@ dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "ruff" },
+    { name = "tenacity" },
     { name = "testcontainers" },
     { name = "trustme" },
 ]
 sim = [
     { name = "crewai" },
     { name = "pydantic-evals" },
+    { name = "tenacity" },
 ]
 
 [package.metadata]
@@ -4556,7 +4557,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.12" },
     { name = "sqlmodel", specifier = ">=0.0.21" },
     { name = "structlog", specifier = ">=24.1" },
-    { name = "tenacity", specifier = ">=9.0" },
+    { name = "tenacity", marker = "extra == 'sim'", specifier = ">=9.0" },
     { name = "testcontainers", extras = ["postgres"], marker = "extra == 'dev'", specifier = ">=4.0" },
     { name = "thenetwork-agent", extras = ["sim"], marker = "extra == 'dev'" },
     { name = "torch", marker = "sys_platform != 'linux'", specifier = "==2.12.0" },

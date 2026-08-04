@@ -649,28 +649,28 @@ requires an independent external probe or dead-man monitor.
 
 ## Validation
 
-Run the repository-root validation script on a host with Docker and `jq`:
+There is no end-to-end validation script. Validate each configuration file on its
+own, then check the running stack through its own APIs:
 
 ```bash
-./validate-monitoring.sh
+docker compose config
+docker run --rm -v ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml \
+  otel/opentelemetry-collector-contrib:0.118.0 validate --config=/etc/otelcol-contrib/config.yaml
+docker run --rm -v ./loki-config.yaml:/etc/loki/config.yaml \
+  grafana/loki:3.6.11 -config.file=/etc/loki/config.yaml -verify-config=true
+docker run --rm --entrypoint /bin/promtool \
+  -v "$PWD/prometheus.yml:/etc/prometheus/prometheus.yml:ro" \
+  -v "$PWD/prometheus-alert-rules.yml:/etc/prometheus/rules/thenetwork.yml:ro" \
+  prom/prometheus:v3.5.5 check config /etc/prometheus/prometheus.yml
+curl http://127.0.0.1:9090/api/v1/targets
+curl --get http://127.0.0.1:3100/loki/api/v1/query_range \
+  --data-urlencode 'query={service_name="thenetwork-worker"}' --data-urlencode 'since=1h'
 ```
 
-It validates the Compose, Loki, Collector, worker-metric fixture, Prometheus
-rules, and Alertmanager configuration. It starts an isolated validation project
-on ephemeral loopback ports, sends seven fixed worker metrics over OTLP/HTTP,
-and checks them with Prometheus. It also injects one fixed worker JSON record
-through Docker's Fluent Forward logging driver, checks that Loki returns the
-original line exactly once, and checks that the derived Prometheus counter is
-exactly one. Promtool covers pending, firing, and resolved alert behavior. The
-script also starts Grafana in the same isolated project and, over its HTTP API,
-confirms the provisioned Prometheus and Loki datasources both report a healthy
-`/api/datasources/uid/<uid>/health` status and that
-`grafana/dashboards/worker-reliability.json`, `grafana/dashboards/llm-cost-usage.json`,
-`grafana/dashboards/growth-kpi.json`, and `grafana/dashboards/system-resources.json`
-were all loaded by the file-based dashboard provider, with no provisioning error
-in the Grafana container logs. It still does not send email or start the worker.
-Its containers, network, and validation-only named volumes are removed before
-it returns.
+Every Prometheus target should report `up`, the Loki query should return the
+worker's own JSON lines unchanged, and the Grafana datasource health pages at
+`http://127.0.0.1:3000` should be green for both Prometheus and Loki with all four
+provisioned dashboards loaded.
 
 For rollout recovery, keep `loki-data` when recreating services. A normal
 `docker compose up -d` reuses it. Do not use `docker compose down --volumes` in

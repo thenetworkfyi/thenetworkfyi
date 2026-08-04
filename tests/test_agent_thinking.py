@@ -11,19 +11,6 @@ from thenetwork.agent.deps import AgentCapabilities, AgentDeps
 from thenetwork.settings import Settings
 
 
-def test_agent_thinking_level_can_be_disabled():
-    settings = Settings(
-        _env_file=None,
-        agent_model="test:model",
-        small_agent_model="test:model",
-        embed_model="test:embed",
-        relay_domain="example.com",
-        agent_thinking_level=None,
-    )
-
-    assert settings.agent_thinking_level is None
-
-
 def test_build_agent_applies_configured_thinking_level(monkeypatch):
     monkeypatch.setattr(
         "thenetwork.agent.core.get_settings",

@@ -35,7 +35,6 @@ dependencies = [
     "opentelemetry-sdk>=1.42,<2",
     "opentelemetry-exporter-otlp-proto-http>=1.42,<2",
     "transformers>=4.60",
-    "tenacity>=9.0",
     "jinja2>=3.1",
     "python-disposable>=0.0.13",
     "llamafirewall==1.0.3",
@@ -45,12 +44,15 @@ dependencies = [
 
 [project.optional-dependencies]
 # The simulation harness only. `thenetwork.sim` (the `sim` console script) is the
-# sole importer of CrewAI and pydantic-evals; no production path reaches either,
-# so the deployed image installs neither. CrewAI in particular drags LiteLLM into
-# whatever installs it, which docs/design-decisions.md rejects for the runtime.
+# sole importer of all three. Moving CrewAI and pydantic-evals here keeps them out
+# of the deployed image entirely - CrewAI in particular drags LiteLLM into whatever
+# installs it, which docs/design-decisions.md rejects for the runtime. `tenacity` is
+# listed for accurate provenance rather than image size: llama-index-core and
+# pydantic-ai already pull it transitively either way.
 sim = [
     "crewai>=0.80.0",
     "pydantic-evals>=0.0.14",
+    "tenacity>=9.0",
 ]
 dev = [
     "thenetwork-agent[sim]",

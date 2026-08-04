@@ -656,7 +656,7 @@ Rollout & verification:
 - Query Loki directly: `curl --get http://127.0.0.1:3100/loki/api/v1/query_range --data-urlencode 'query={service_name="thenetwork-worker"}' --data-urlencode 'since=1h'`
 - Verify all four targets are up: `curl http://127.0.0.1:9090/api/v1/targets`
 - Query application activity after an audit event: `curl 'http://127.0.0.1:9090/api/v1/query?query=thenetwork_worker_audit_events_total'`
-- Exercise the worker-state OTLP path through Prometheus: `./validate-monitoring.sh`
+- Check the worker-state OTLP path: `curl 'http://127.0.0.1:9090/api/v1/query?query=thenetwork_worker_process_resident_memory_bytes'`
 
 Grafana already ships (`grafana/`, bound to `127.0.0.1:3000`), and host and
 Postgres metrics ship via the `hostmetrics` and `postgresql` Collector
