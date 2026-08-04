@@ -105,10 +105,6 @@ jobs:
             cd /opt/thenetwork
             echo "==> Pulling latest code..."
             git pull origin main
-            if [ -n "${{ secrets.GHCR_PAT }}" ] && [ -n "${{ secrets.GHCR_USERNAME }}" ]; then
-              echo "==> Logging in to GHCR..."
-              echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u ${{ secrets.GHCR_USERNAME }} --password-stdin
-            fi
             export IMAGE="ghcr.io/${{ github.repository }}:${{ github.sha }}"
             echo "==> Pulling worker image ${IMAGE}..."
             docker compose pull worker

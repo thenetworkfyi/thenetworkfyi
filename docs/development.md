@@ -362,9 +362,16 @@ the workflow rather than a script on the server, so a deploy always runs the ver
 the commit that passed CI, never a stale on-disk copy. Run the same four commands by
 hand for a manual redeploy.
 
-The `ghcr.io/thenetworkfyi/thenetworkfyi` package is public (audited: the images bake in no
-secrets), so the pull needs no credentials; the optional `GHCR_USERNAME`/`GHCR_PAT` secrets
-exist only for a private package. `worker.image` defaults to the `:latest` tag; override
+The `ghcr.io/thenetworkfyi/thenetworkfyi` package is private, so the host pull needs a
+registry credential. That credential lives only on the deploy host: run `docker login
+ghcr.io` there once with a token carrying `read:packages`, and Docker persists it in
+`~/.docker/config.json` for every later `docker compose pull worker`. The workflow holds
+no registry secret and performs no `docker login`, so the pull token never passes through
+Actions. Publishing is separate and also needs no token of its own - the `build` job
+pushes with the workflow's automatic `GITHUB_TOKEN` under its `packages: write`
+permission. A pull that starts failing with `denied`/`unauthorized` mid-deploy usually
+means that host-side login expired; re-run it on the host.
+`worker.image` defaults to the `:latest` tag; override
 with `IMAGE=` in `.env`. Local development uses `docker compose up -d --build`, which
 builds and tags locally under the same name, so no pull is attempted. After a successful
 deploy the `cleanup-images` job keeps the three newest GHCR versions, independent of

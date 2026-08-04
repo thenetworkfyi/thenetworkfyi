@@ -34,7 +34,7 @@ services:
     # `docker compose up --build` still works for local development: it
     # builds from the Dockerfile and tags the result with this same name, so
     # no pull is attempted.
-    image: ${IMAGE:-ghcr.io/thenetworkfyi/agent:latest}
+    image: ${IMAGE:-ghcr.io/thenetworkfyi/thenetworkfyi:latest}
     build: .
     env_file:
       - path: .env
