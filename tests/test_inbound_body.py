@@ -77,7 +77,7 @@ class _FakeMailBox:
 @pytest.fixture
 def fake_mailbox(monkeypatch: pytest.MonkeyPatch) -> _FakeMailBox:
     box = _FakeMailBox("imap.example.com", 993)
-    monkeypatch.setattr(inbound, "MailBox", lambda host, port: box)
+    monkeypatch.setattr(inbound, "MailBox", lambda host, port, timeout=None: box)
     monkeypatch.setattr(inbound, "get_settings", _settings)
     return box
 

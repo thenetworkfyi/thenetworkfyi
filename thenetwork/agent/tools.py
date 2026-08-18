@@ -251,8 +251,10 @@ def _unknown_sender_declines_participation(ctx: RunContext[AgentDeps]) -> bool:
     """Recognize an explicit refusal before an identity has been created.
 
     This is a narrow safety gate, not an intent classifier. Its only effect is
-    to prevent registration and escalation side effects for an authenticated
-    unknown sender who plainly says not to retain data or participate.
+    to prevent registration and welcome side effects for an authenticated
+    unknown sender who plainly says not to retain data, participate, or receive
+    more email. The refusal is still escalated so the operator can take any
+    durable follow-up action appropriate for this small deployment.
     """
     if ctx.deps.sender_user_id is not None:
         return False
@@ -263,6 +265,14 @@ def _unknown_sender_declines_participation(ctx: RunContext[AgentDeps]) -> bool:
         for phrase in (
             "opt out",
             "opting out",
+            "unsubscribe",
+            "stop emailing me",
+            "stop sending me emails",
+            "remove me from your list",
+            "remove me from this list",
+            "do not contact",
+            "don't contact",
+            "no more emails",
             "do not retain",
             "don't retain",
             "do not store",
@@ -884,21 +894,21 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
     Do not use this for an ordinary first contact that can be answered with
     reply_to_sender or send_first_contact_welcome. Authenticated unknown
     senders receive the fixed welcome before the operator is notified, unless
-    another response was already sent or the welcome quota is exhausted.
+    they explicitly decline participation, retention, or further email; those
+    refusals notify the operator without sending a welcome. Another response
+    already sent or an exhausted welcome quota also suppresses the welcome.
     """
     with audit_span("agent.tool", tool_name="escalate"):
         s = ctx.deps.settings
         sender = ctx.deps.sender_email
 
         if ctx.deps.sender_authenticated and ctx.deps.sender_user_id is None:
-            if _unknown_sender_declines_participation(ctx):
-                return _tool_result(
-                    {
-                        "status": "no_action",
-                        "reason": "sender_declined_participation",
-                    }
-                )
-            welcome_result = await _send_first_contact_welcome(ctx)
+            sender_declined = _unknown_sender_declines_participation(ctx)
+            welcome_result = (
+                {"status": "no_action"}
+                if sender_declined
+                else await _send_first_contact_welcome(ctx)
+            )
             subject = f"[The Network] Manual reply needed: {sender}"
             body = (
                 f"Email from {sender} was escalated for human review.\n\n"
@@ -910,6 +920,13 @@ async def escalate(ctx: RunContext[AgentDeps], reason: str) -> dict[str, str]:
                 s, subject, body, trace_id=ctx.deps.trace_id
             )
             ctx.deps.terminal_action_taken = True
+            if sender_declined:
+                return _tool_result(
+                    {
+                        "status": "escalated",
+                        "reason": "sender_declined_participation",
+                    }
+                )
             if welcome_result.get("status") == "sent":
                 return _tool_result({"status": "welcomed_and_escalated"})
             return _tool_result({"status": "escalated"})

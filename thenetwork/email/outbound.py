@@ -66,9 +66,11 @@ def _append_to_sent(msg: EmailMessage, trace_id: str | None = None) -> None:
         s = get_settings()
         started = monotonic()
         try:
-            with MailBox(s.imap_host, s.imap_port).login(
-                s.imap_account, s.imap_password
-            ) as mb:
+            with MailBox(
+                s.imap_host,
+                s.imap_port,
+                timeout=s.imap_timeout_seconds,
+            ).login(s.imap_account, s.imap_password) as mb:
                 mb.append(
                     msg.as_bytes(), s.imap_sent_folder, flag_set=[MailMessageFlags.SEEN]
                 )

@@ -69,9 +69,10 @@ class _FakeMailBox:
     delete, expunge, copy), all as spies so tests can assert on them.
     """
 
-    def __init__(self, host: str, port: int) -> None:
+    def __init__(self, host: str, port: int, timeout: float | None = None) -> None:
         self.host = host
         self.port = port
+        self.timeout = timeout
         self.fetch = MagicMock(return_value=[])
         self.flag = MagicMock()
         self.move = MagicMock()
@@ -90,7 +91,14 @@ class _FakeMailBox:
 @pytest.fixture
 def fake_mailbox(monkeypatch: pytest.MonkeyPatch) -> _FakeMailBox:
     box = _FakeMailBox("imap.example.com", 993)
-    monkeypatch.setattr(inbound, "MailBox", lambda host, port: box)
+
+    def mailbox_ctor(host, port, timeout=None):
+        box.host = host
+        box.port = port
+        box.timeout = timeout
+        return box
+
+    monkeypatch.setattr(inbound, "MailBox", mailbox_ctor)
     monkeypatch.setattr(inbound, "get_settings", _settings)
     return box
 
@@ -121,6 +129,12 @@ def test_poll_unseen_fetches_with_mark_seen_false(fake_mailbox: _FakeMailBox):
     assert kwargs["mark_seen"] is False
 
 
+def test_poll_unseen_applies_imap_timeout(fake_mailbox: _FakeMailBox):
+    inbound.poll_unseen()
+
+    assert fake_mailbox.timeout == _settings().imap_timeout_seconds
+
+
 def test_poll_unseen_uses_separate_relay_credentials(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -128,7 +142,7 @@ def test_poll_unseen_uses_separate_relay_credentials(
     settings.relay_imap_account = "relay@relay.example.com"
     settings.relay_imap_password = "relay-secret"
     box = _FakeMailBox(settings.imap_host, settings.imap_port)
-    monkeypatch.setattr(inbound, "MailBox", lambda host, port: box)
+    monkeypatch.setattr(inbound, "MailBox", lambda host, port, timeout=None: box)
     monkeypatch.setattr(inbound, "get_settings", lambda: settings)
 
     inbound.poll_unseen(mailbox="relay")
@@ -601,6 +615,12 @@ def test_mark_messages_seen_only_sets_seen_flag(fake_mailbox: _FakeMailBox):
     assert list(uids) == ["1", "2"]
     assert list(flags) == [MailMessageFlags.SEEN]
     assert value is True
+
+
+def test_mark_messages_seen_applies_imap_timeout(fake_mailbox: _FakeMailBox):
+    inbound.mark_messages_seen(["1"])
+
+    assert fake_mailbox.timeout == _settings().imap_timeout_seconds
 
 
 def test_mark_messages_seen_never_mutates_the_mailbox(fake_mailbox: _FakeMailBox):

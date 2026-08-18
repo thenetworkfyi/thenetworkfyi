@@ -353,7 +353,11 @@ def poll_unseen(*, mailbox: MailboxKind = "primary") -> list[InboundMessage]:
         )
     }
 
-    with MailBox(s.imap_host, s.imap_port).login(account, password) as mb:
+    with MailBox(
+        s.imap_host,
+        s.imap_port,
+        timeout=s.imap_timeout_seconds,
+    ).login(account, password) as mb:
         mb.email_message_class = _RawCapturingMailMessage
         for msg in mb.fetch(AND(seen=False), mark_seen=False, bulk=True):
             if _is_auto_message(msg):
@@ -442,5 +446,9 @@ def mark_messages_seen(uids: list[str], *, mailbox: MailboxKind = "primary") -> 
         return
     s = get_settings()
     account, password = _mailbox_credentials(mailbox)
-    with MailBox(s.imap_host, s.imap_port).login(account, password) as mb:
+    with MailBox(
+        s.imap_host,
+        s.imap_port,
+        timeout=s.imap_timeout_seconds,
+    ).login(account, password) as mb:
         mb.flag(uids, [MailMessageFlags.SEEN], True)

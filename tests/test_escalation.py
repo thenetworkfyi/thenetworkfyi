@@ -308,7 +308,7 @@ async def test_unknown_sender_escalation_remains_terminal_when_welcome_is_limite
 
 
 @pytest.mark.asyncio
-async def test_explicit_unknown_sender_opt_out_is_not_welcomed_or_escalated():
+async def test_explicit_unknown_sender_opt_out_escalates_without_welcome_or_memory():
     from thenetwork.agent.tools import escalate, register_person
 
     mock_notify = MagicMock()
@@ -339,13 +339,61 @@ async def test_explicit_unknown_sender_opt_out_is_not_welcomed_or_escalated():
         "reason": "sender_declined_participation",
     }
     assert escalation == {
-        "status": "no_action",
+        "status": "escalated",
         "reason": "sender_declined_participation",
     }
-    assert ctx.deps.terminal_action_taken is False
+    assert ctx.deps.terminal_action_taken is True
     mock_send.assert_not_called()
-    mock_notify.assert_not_called()
+    mock_notify.assert_called_once_with(
+        ctx.deps.settings,
+        "[The Network] Manual reply needed: private@example.com",
+        "Email from private@example.com was escalated for human review.\n\n"
+        "Reason: Unclear first contact\n\n"
+        "Trace ID: unavailable\n\n"
+        "Please reply to private@example.com manually.",
+        trace_id=None,
+    )
     mock_session.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Unsubscribe me.",
+        "Please stop emailing me.",
+        "Remove me from your list.",
+        "Do not contact me again.",
+        "No more emails, please.",
+    ],
+)
+async def test_common_unknown_sender_email_opt_outs_escalate(body):
+    from thenetwork.agent.tools import escalate
+
+    notify_admins = MagicMock()
+    send_reply = MagicMock()
+    capabilities = AgentCapabilities(
+        notify_admins=notify_admins,
+        send_reply=send_reply,
+    )
+    ctx = _ctx(
+        sender_email="private@example.com",
+        sender_authenticated=True,
+        inbound_subject="Remove me",
+        admin_emails=["admin@example.com"],
+        capabilities=capabilities,
+    )
+    ctx.deps.inbound_body = body
+
+    result = await escalate(ctx, reason="Sender requested no further contact")
+
+    assert result == {
+        "status": "escalated",
+        "reason": "sender_declined_participation",
+    }
+    assert ctx.deps.terminal_action_taken is True
+    send_reply.assert_not_called()
+    notify_admins.assert_called_once()
 
 
 @pytest.mark.asyncio

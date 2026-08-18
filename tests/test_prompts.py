@@ -317,12 +317,15 @@ def test_register_person_exists_guidance_present() -> None:
     assert "does not need" in guidance and "retry" in guidance
 
 
-def test_unknown_sender_can_be_answered_without_registration_guidance() -> None:
+def test_unknown_sender_answer_and_opt_out_escalation_guidance() -> None:
     guidance = _guidance(FIRST_CONTACT, "register_person_for_joining_only")
 
     assert "only asking what the service does" in guidance
-    assert "explicitly declines participation or data retention" in guidance
-    assert "without saving a memory or escalating" in guidance
+    assert (
+        "explicitly decline participation, data retention, or further email" in guidance
+    )
+    assert "call `escalate`" in guidance
+    assert "without registering them, saving a memory, or replying" in guidance
     # This phrasing lives in the neighboring `search_person_id_is_not_sender`
     # bullet, which also reaches first_contact mode.
     assert "authenticated inbound address without registering" in _guidance(

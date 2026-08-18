@@ -45,6 +45,7 @@ def _mock_mailbox_success():
 def test_append_called_on_success(smtp_sink):
     """After a successful SMTP send, the composed message is appended to IMAP."""
     from thenetwork.email.outbound import send_reply
+    from thenetwork.settings import get_settings
 
     mock_mailbox, mb_instance = _mock_mailbox_success()
 
@@ -57,6 +58,12 @@ def test_append_called_on_success(smtp_sink):
         )
 
     mb_instance.append.assert_called_once()
+    settings = get_settings()
+    mock_mailbox.assert_called_once_with(
+        settings.imap_host,
+        settings.imap_port,
+        timeout=settings.imap_timeout_seconds,
+    )
     assert len(smtp_sink.messages) == 1
 
 
